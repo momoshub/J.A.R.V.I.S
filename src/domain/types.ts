@@ -1,14 +1,14 @@
 /**
- * Core domain types for E.V.
+ * Core domain types for the bot
  *
  * These are plain, framework free data shapes. Nothing here knows about Slack,
  * SQLite or Anthropic - the outer layers map to and from these.
  */
 
-/** Role of a person that E.V. is allowed to talk to. */
+/** Role of a person that the bot is allowed to talk to. */
 export type UserRole = "owner" | "admin" | "member";
 
-/** A Slack user that is permitted to interact with E.V. */
+/** A Slack user that is permitted to interact with the bot */
 export type AllowedUser = {
   readonly slackId: string;
   readonly role: UserRole;
@@ -21,7 +21,7 @@ export type AllowedUser = {
 /** Author of a stored message within a conversation. */
 export type MessageRole = "user" | "assistant";
 
-/** A single turn stored as E.V.'s memory of a conversation. */
+/** A single turn stored as the bot's memory of a conversation. */
 export type StoredMessage = {
   readonly id: number;
   readonly channelId: string;
@@ -42,13 +42,13 @@ export type PromptMessage = {
   readonly speakerId?: string;
 };
 
-/** A person present in the conversation that E.V. may mention with a Slack tag. */
+/** A person present in the conversation that the bot may mention with a Slack tag. */
 export type Participant = {
   readonly id: string;
   readonly name?: string;
 };
 
-/** A durable fact E.V. has learned, shown and edited from the dashboard. */
+/** A durable fact the bot has learned, shown and edited from the dashboard. */
 export type Learning = {
   readonly id: number;
   readonly content: string;

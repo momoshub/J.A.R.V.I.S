@@ -1,5 +1,5 @@
 /**
- * Allowlist repository - the set of Slack users E.V. will talk to.
+ * Allowlist repository - the set of Slack users the bot will talk to.
  *
  * Functional factory: closes over the db handle and returns a bag of functions.
  * No classes, no shared mutable state beyond the connection itself.

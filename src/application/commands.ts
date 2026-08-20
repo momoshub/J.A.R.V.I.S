@@ -2,7 +2,7 @@
  * Admin command layer.
  *
  * Parsing is pure (`parseCommand`); execution (`executeCommand`) applies the
- * access rules from the domain and touches the repos. E.V. treats a message as a
+ * access rules from the domain and touches the repos. The bot treats a message as a
  * command only when it starts with `!` so normal chat is never swallowed.
  */
 import {
@@ -99,7 +99,7 @@ const HELP = [
   "- `!forget` - wipe my memory of this channel",
 ].join("\n");
 
-/** Execute a parsed command on behalf of `actor`. Returns E.V.'s reply text. */
+/** Execute a parsed command on behalf of `actor`. Returns the bot's reply text. */
 export const executeCommand = (
   deps: CommandDeps,
   actor: AllowedUser,

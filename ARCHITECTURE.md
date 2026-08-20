@@ -1,6 +1,6 @@
 # Architecture
 
-E.V. follows a clean, layered architecture. Dependencies point inward: outer
+the bot follows a clean, layered architecture. Dependencies point inward: outer
 layers know about inner ones, never the reverse. Every layer is functional -
 factories and pure functions, no classes.
 
@@ -24,9 +24,9 @@ factories and pure functions, no classes.
 No I/O, no frameworks. Just data shapes and functions of their inputs.
 
 - `types.ts` - core data shapes (`AllowedUser`, `StoredMessage`, ...)
-- `access.ts` - who may talk to E.V. and who may manage users
+- `access.ts` - who may talk to the bot and who may manage users
 - `conversation.ts` - context windowing and inbound-text cleanup
-- `personality.ts` - the system prompt (E.V.'s Tony Stark voice)
+- `personality.ts` - builds the system prompt from generic defaults + injected identity (no hardcoded bot)
 
 Fully unit tested, no mocks needed.
 
@@ -34,7 +34,8 @@ Fully unit tested, no mocks needed.
 
 Orchestrates the domain and depends on **ports**, not concrete adapters.
 
-- `ports.ts` - `LlmPort`, `Clock` seams
+- `botProfile.ts` - loads the instance identity (name, persona, labels) from settings, DB-first
+- `ports.ts` - `LlmPort` (with optional streaming), `Clock` seams
 - `handleMessage.ts` - the chat flow (access -> remember -> ask model -> remember)
 - `commands.ts` - parse and execute `!` admin commands
 - `respond.ts` - routes an inbound message to command or chat

@@ -14,11 +14,14 @@ export type BotProfile = {
   readonly persona?: string;
   /** Label for the "thinking" step shown on long messages. */
   readonly thinkingLabel: string;
+  /** Title the thinking step flips to once content arrives. */
+  readonly thinkingDoneLabel: string;
 };
 
 export type BotProfileDefaults = {
   readonly name?: string;
   readonly thinkingLabel: string;
+  readonly thinkingDoneLabel: string;
 };
 
 /** Read the current profile from settings, applying defaults. */
@@ -29,4 +32,6 @@ export const loadBotProfile = (
   name: settings.get(SETTING_KEYS.botName)?.trim() || defaults.name?.trim() || DEFAULT_BOT_NAME,
   persona: settings.get(SETTING_KEYS.systemPrompt) || undefined,
   thinkingLabel: settings.get(SETTING_KEYS.thinkingLabel)?.trim() || defaults.thinkingLabel,
+  thinkingDoneLabel:
+    settings.get(SETTING_KEYS.thinkingDoneLabel)?.trim() || defaults.thinkingDoneLabel,
 });

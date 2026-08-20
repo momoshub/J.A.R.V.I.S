@@ -1,7 +1,7 @@
 /**
  * Slack streaming renderer.
  *
- * Bridges E.V.'s `LlmStreamSink` onto Slack's native text-streaming API. Slack
+ * Bridges the bot's `LlmStreamSink` onto Slack's native text-streaming API. Slack
  * owns the message: we `append` text deltas and `task_update` chunks (tool
  * cards) and `stop` at the end - no manual edits, so no edit rate limiting. The
  * stream is started lazily on the first event, so non-streaming replies (e.g.
@@ -31,13 +31,14 @@ export type SlackStream = {
 };
 
 const THINKING_ID = "__thinking__";
-const THINKING_DONE_TITLE = "🐦‍🔥";
 
 const errMsg = (e: unknown): string => (e instanceof Error ? e.message : String(e));
 
 export const createSlackStream = (
   makeStreamer: () => Streamer,
   log: (msg: string) => void = () => {},
+  /** Title the thinking card flips to once real content arrives. */
+  thinkingDoneLabel = "✅",
 ): SlackStream => {
   let streamer: Streamer | undefined;
   let chain: Promise<unknown> = Promise.resolve();
@@ -66,7 +67,7 @@ export const createSlackStream = (
   const completeThinking = () => {
     if (!thinkingShown || thinkingDone) return;
     thinkingDone = true;
-    task({ type: "task_update", id: THINKING_ID, title: THINKING_DONE_TITLE, status: "complete" });
+    task({ type: "task_update", id: THINKING_ID, title: thinkingDoneLabel, status: "complete" });
   };
 
   const showThinking = (title: string) => {

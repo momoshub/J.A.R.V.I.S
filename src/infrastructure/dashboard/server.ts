@@ -3,7 +3,7 @@
  *
  * Token-gated (query `?token=` or `X-Dashboard-Token` header) and bound to
  * loopback only. The owner can browse conversations, curate learnings, edit
- * E.V.'s system prompt, and manage the allowlist. All storage goes through the
+ * the bot's system prompt, and manage the allowlist. All storage goes through the
  * repos so the rules stay in one place; the dashboard token represents
  * owner-level authority, so mutations still refuse to touch the owner record.
  */
@@ -17,6 +17,7 @@ import type { UserRepo } from "../db/userRepo.ts";
 import type { LearningsRepo } from "../db/learningsRepo.ts";
 import { SETTING_KEYS, type SettingsRepo } from "../db/settingsRepo.ts";
 import {
+  escapeHtml,
   layout,
   renderConversation,
   renderConversations,
@@ -59,7 +60,10 @@ const authorized = (req: Request, url: URL, token: string): boolean => {
   return tokensMatch(provided, token);
 };
 
-const LOOPBACK_HOSTS = new Set(["localhost", "127.0.0.1", "0.0.0.0", "::1", "[::1]"]);
+const LOOPBACK_HOSTS = new Set(["localhost", "127.0.0.1", "::1", "[::1]"]);
+
+const forbidden = (msg: string): Response =>
+  new Response(msg, { status: 403, headers: { "content-type": "text/plain; charset=utf-8" } });
 
 /**
  * CSRF guard for a token-gated, loopback-bound tool. A cross-site attacker's
@@ -98,7 +102,7 @@ const html = (body: string): Response =>
   new Response(body, { headers: { "content-type": "text/html; charset=utf-8" } });
 
 export const createDashboard = (config: DashboardConfig, deps: DashboardDeps) => {
-  const subtitle = `model: ${config.model} - owner: <code>${config.ownerSlackId}</code>`;
+  const subtitle = `model: ${escapeHtml(config.model)} - owner: <code>${escapeHtml(config.ownerSlackId)}</code>`;
   const redirect = (path: string): Response =>
     new Response(null, {
       status: 303,
@@ -140,6 +144,7 @@ export const createDashboard = (config: DashboardConfig, deps: DashboardDeps) =>
             "overview",
             "Overview",
             renderOverview({
+              botName: deps.profile().name,
               userCount: deps.users.list().length,
               messageCount: deps.messages.count(),
               learningCount: deps.learnings.list().length,
@@ -149,7 +154,11 @@ export const createDashboard = (config: DashboardConfig, deps: DashboardDeps) =>
         case "/users":
           return page("users", "Users", renderUsers(deps.users.list(), config.ownerSlackId, config.token));
         case "/learnings":
-          return page("learnings", "Learnings", renderLearnings(deps.learnings.list(), config.token));
+          return page(
+            "learnings",
+            "Learnings",
+            renderLearnings(deps.learnings.list(), config.token, deps.profile().name),
+          );
         case "/prompt": {
           const override = deps.settings.get(SETTING_KEYS.systemPrompt);
           const profile = deps.profile();
@@ -172,7 +181,11 @@ export const createDashboard = (config: DashboardConfig, deps: DashboardDeps) =>
         case "/conversation": {
           const channel = url.searchParams.get("channel") ?? "";
           const messages = channel ? deps.messages.recentForChannel(channel, CONVERSATION_LIMIT) : [];
-          return page("conversations", "Conversation", renderConversation({ channelId: channel, messages }, config.token));
+          return page(
+            "conversations",
+            "Conversation",
+            renderConversation({ channelId: channel, messages }, config.token, deps.profile().name),
+          );
         }
       }
     }
@@ -181,14 +194,15 @@ export const createDashboard = (config: DashboardConfig, deps: DashboardDeps) =>
     if (req.method === "POST") {
       if (!originAllowed(req, url, config.allowedOrigins ?? [])) {
         const origin = req.headers.get("origin") ?? "(none)";
+        // Log the offending origin server-side; keep the client body generic and
+        // plain-text so a reflected Origin can never become markup.
         console.warn(
           `[dashboard] blocked cross-origin POST from ${origin} (expected ${url.origin}). ` +
-            `If this is your dashboard, add it to DASHBOARD_ALLOWED_ORIGINS.`,
+            `If this is your dashboard, add its origin to DASHBOARD_ALLOWED_ORIGINS.`,
         );
-        return new Response(
-          `Forbidden: request Origin ${origin} is not allowed (server expected ${url.origin}). ` +
-            `Add ${origin} to DASHBOARD_ALLOWED_ORIGINS in .env to permit it.`,
-          { status: 403 },
+        return forbidden(
+          "Forbidden: cross-origin request rejected. If this is your dashboard behind a proxy, " +
+            "add its origin to DASHBOARD_ALLOWED_ORIGINS (see the server log for the exact value).",
         );
       }
       const form = await req.formData();
@@ -271,7 +285,7 @@ export const createDashboard = (config: DashboardConfig, deps: DashboardDeps) =>
   return {
     start: () => {
       server = Bun.serve({ port: config.port, hostname: "127.0.0.1", fetch: handle });
-      console.log(`[dashboard] E.V. control deck on http://localhost:${config.port}`);
+      console.log(`[dashboard] ${deps.profile().name} control deck on http://localhost:${config.port}`);
     },
     stop: () => server?.stop(),
     handle,

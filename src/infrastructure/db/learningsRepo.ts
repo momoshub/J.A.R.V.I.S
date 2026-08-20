@@ -1,5 +1,5 @@
 /**
- * Learnings repository - durable facts E.V. carries into every reply, curated
+ * Learnings repository - durable facts the bot carries into every reply, curated
  * from the dashboard.
  */
 import type { DbClient } from "./client.ts";

@@ -1,5 +1,5 @@
 /**
- * Anthropic adapter - the concrete `LlmPort` that gives E.V. her voice.
+ * Anthropic adapter - the concrete `LlmPort` that gives the bot her voice.
  *
  * Thin on purpose: map our neutral prompt shape onto the SDK, call it, and pull
  * the text back out. All prompt-building lives in the domain layer.

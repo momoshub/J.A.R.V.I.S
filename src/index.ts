@@ -25,7 +25,7 @@ import type { LlmPort } from "./application/ports.ts";
 import type { RespondDeps } from "./application/respond.ts";
 
 /**
- * Where the CLI runs. Default to a neutral dir outside E.V.'s own source so she
+ * Where the CLI runs. Default to a neutral dir outside the bot's own source so she
  * never picks up this repo's git status / CLAUDE.md as "her job" and cannot edit
  * her own code by accident. Override with CLAUDE_CWD to point her at a project.
  */
@@ -65,7 +65,11 @@ const main = async () => {
 
   // The bot's identity lives in the DB; env values only bootstrap a fresh clone.
   const profile = () =>
-    loadBotProfile(settings, { name: config.botName, thinkingLabel: config.botThinkingLabel });
+    loadBotProfile(settings, {
+      name: config.botName,
+      thinkingLabel: config.botThinkingLabel,
+      thinkingDoneLabel: config.botThinkingDoneLabel,
+    });
 
   const llm = buildLlm(config);
   console.log(`[llm] ${profile().name}'s brain: ${modelLabel(config)}`);
@@ -103,6 +107,7 @@ const main = async () => {
       streamUpdates: config.slackStreamUpdates,
       botName: profile().name,
       thinkingLabel: () => profile().thinkingLabel,
+      thinkingDoneLabel: () => profile().thinkingDoneLabel,
     },
     deps,
   );
@@ -120,6 +125,6 @@ const main = async () => {
 };
 
 main().catch((err) => {
-  console.error("E.V. failed to start:", err);
+  console.error("the bot failed to start:", err);
   process.exit(1);
 });

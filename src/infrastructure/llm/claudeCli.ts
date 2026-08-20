@@ -2,9 +2,9 @@
  * Claude Code CLI adapter - the concrete `LlmPort` that wraps the local `claude`
  * binary instead of calling the Anthropic API directly.
  *
- * This is what gives E.V. "full permissions from Claude": each turn runs through
- * Claude Code in print mode, so she can actually use tools (files, shell, MCP)
- * with whatever permissions the CLI is launched with. E.V. remains the memory
+ * This is what gives the bot "full permissions from Claude": each turn runs through
+ * Claude Code in print mode, so it can actually use tools (files, shell, MCP)
+ * with whatever permissions the CLI is launched with. The bot remains the memory
  * owner - her SQLite window is rendered into each stateless invocation, so no
  * CLI session state is relied upon.
  *
@@ -102,7 +102,7 @@ const spawnClaude = (config: ClaudeCliConfig, args: string[], prompt: string) =>
     stderr: "pipe",
     cwd: config.cwd,
     timeout: config.timeoutMs ?? 120_000,
-    // Non-interactive hint. process.env carries E.V.'s SLACK_BOT_TOKEN etc so the
+    // Non-interactive hint. process.env carries the bot's SLACK_BOT_TOKEN etc so the
     // CLI's Bash tool can call the Slack Web API with her own credentials.
     env: { ...process.env, IS_SANDBOX: "1" },
   });

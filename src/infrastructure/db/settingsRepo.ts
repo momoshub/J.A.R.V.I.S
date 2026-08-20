@@ -1,6 +1,6 @@
 /**
  * Settings repository - a small key/value store for editable configuration such
- * as E.V.'s overridden system prompt.
+ * as the bot's overridden system prompt.
  */
 import type { DbClient } from "./client.ts";
 
@@ -9,6 +9,7 @@ export const SETTING_KEYS = {
   botName: "bot_name",
   systemPrompt: "system_prompt",
   thinkingLabel: "thinking_label",
+  thinkingDoneLabel: "thinking_done_label",
 } as const;
 
 export type SettingsRepo = {

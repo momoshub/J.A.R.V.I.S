@@ -1,7 +1,7 @@
 /**
  * Pure access-control logic.
  *
- * E.V. answers to a fixed allowlist. The owner always wins and can never be
+ * the bot answers to a fixed allowlist. The owner always wins and can never be
  * locked out. Everything here is a pure function of its inputs so it is trivial
  * to test and reason about.
  */
@@ -15,7 +15,7 @@ export const canManageUsers = (role: UserRole): boolean =>
 export const canManageAdmins = (role: UserRole): boolean => role === "owner";
 
 /**
- * Decide whether a Slack user may talk to E.V.
+ * Decide whether a Slack user may talk to the bot
  *
  * The owner is allowed even if they are somehow missing from the allowlist, so
  * a broken database can never lock the owner out.

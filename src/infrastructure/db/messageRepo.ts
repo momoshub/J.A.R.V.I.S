@@ -1,5 +1,5 @@
 /**
- * Message repository - E.V.'s conversation memory, keyed by channel.
+ * Message repository - the bot's conversation memory, keyed by channel.
  */
 import type { DbClient } from "./client.ts";
 import type {

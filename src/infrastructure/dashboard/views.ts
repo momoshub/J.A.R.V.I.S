@@ -118,6 +118,7 @@ export const layout = (opts: {
 // --- sections ---
 
 export const renderOverview = (data: {
+  botName: string;
   userCount: number;
   messageCount: number;
   learningCount: number;
@@ -129,7 +130,7 @@ export const renderOverview = (data: {
     <div class="card"><div class="n">${data.messageCount}</div><div class="l">stored turns</div></div>
     <div class="card"><div class="n">${data.learningCount}</div><div class="l">learnings</div></div>
   </div>
-  <p class="muted">Use the tabs above to browse conversations, curate what E.V. has learned, and edit her personality and rules.</p>
+  <p class="muted">Use the tabs above to browse conversations, curate what ${escapeHtml(data.botName)} has learned, and edit its identity, personality and rules.</p>
 `;
 
 const roleBadge = (role: string): string =>
@@ -172,7 +173,11 @@ export const renderUsers = (
     </table>`;
 };
 
-export const renderLearnings = (learnings: readonly Learning[], token: string): string => {
+export const renderLearnings = (
+  learnings: readonly Learning[],
+  token: string,
+  botName: string,
+): string => {
   const rows =
     learnings.length === 0
       ? '<tr><td colspan="4" class="muted">Nothing learned yet.</td></tr>'
@@ -192,9 +197,9 @@ export const renderLearnings = (learnings: readonly Learning[], token: string): 
           )
           .join("\n");
   return `
-    <h2>Teach E.V. something</h2>
+    <h2>Teach ${escapeHtml(botName)} something</h2>
     <form class="row" method="POST" action="/api/learnings?${q(token)}">
-      <input name="content" placeholder="e.g. Our staging URL is staging.acme.com" required style="flex:1; min-width:280px;" />
+      <input name="content" placeholder="e.g. Our staging URL is staging.example.com" required style="flex:1; min-width:280px;" />
       <button type="submit">add learning</button>
     </form>
     <p class="muted">Learnings are injected into every reply as known facts.</p>
@@ -265,6 +270,7 @@ export const renderConversations = (
 export const renderConversation = (
   data: { channelId: string; messages: readonly StoredMessage[] },
   token: string,
+  botName: string,
 ): string => {
   const bubbles =
     data.messages.length === 0
@@ -273,7 +279,7 @@ export const renderConversation = (
           .map(
             (m) => `<div class="bubble">
               <div class="meta">
-                <span class="badge ${escapeHtml(m.role)}">${m.role === "assistant" ? "E.V." : "user"}</span>
+                <span class="badge ${escapeHtml(m.role)}">${m.role === "assistant" ? escapeHtml(botName) : "user"}</span>
                 <code>${escapeHtml(m.slackUserId)}</code>
                 <span>${fmtTime(m.createdAt)}</span>
               </div>

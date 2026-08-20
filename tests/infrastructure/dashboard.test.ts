@@ -17,7 +17,8 @@ const build = () => {
   const learnings = createLearningsRepo(db);
   const settings = createSettingsRepo(db);
   users.upsert({ slackId: OWNER, role: "owner", displayName: "Kai", addedBy: "system", createdAt: 1 });
-  const profile = () => loadBotProfile(settings, { name: "TestBot", thinkingLabel: "thinking..." });
+  const profile = () =>
+    loadBotProfile(settings, { name: "TestBot", thinkingLabel: "thinking...", thinkingDoneLabel: "✅" });
   const dash = createDashboard(
     { port: 0, token: TOKEN, ownerSlackId: OWNER, model: "claude-opus-4-8" },
     { users, messages, learnings, settings, clock: () => 99, profile },

@@ -1,7 +1,7 @@
 /**
  * Environment configuration - parsed and validated once at boot.
  *
- * Fails fast with a readable message if something required is missing, so E.V.
+ * Fails fast with a readable message if something required is missing, so the bot
  * never limps along half-configured.
  */
 import { z } from "zod";
@@ -23,8 +23,9 @@ const schema = z
     // dashboard-managed DB settings take precedence, so the code stays generic.
     BOT_NAME: z.string().default("Assistant"),
     BOT_THINKING_LABEL: z.string().default("working on it..."),
+    BOT_THINKING_DONE_LABEL: z.string().default("✅"),
 
-    // Which brain powers E.V.: the local Claude Code CLI (default) or the API.
+    // Which brain powers the bot: the local Claude Code CLI (default) or the API.
     LLM_PROVIDER: z.enum(["claude-cli", "anthropic"]).default("claude-cli"),
 
     // claude-cli provider
@@ -60,6 +61,7 @@ export type AppConfig = {
   slackStreamUpdates: boolean;
   botName: string;
   botThinkingLabel: string;
+  botThinkingDoneLabel: string;
   llmProvider: LlmProvider;
   claudeBin: string;
   claudeModel: string;
@@ -95,6 +97,7 @@ export const loadConfig = (source: Record<string, string | undefined> = process.
     slackStreamUpdates: env.SLACK_STREAM_UPDATES,
     botName: env.BOT_NAME,
     botThinkingLabel: env.BOT_THINKING_LABEL,
+    botThinkingDoneLabel: env.BOT_THINKING_DONE_LABEL,
     llmProvider: env.LLM_PROVIDER,
     claudeBin: env.CLAUDE_BIN,
     claudeModel: env.CLAUDE_MODEL,

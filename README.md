@@ -1,15 +1,29 @@
-# E.V.
+# Slack Agent Bot
 
-A Slack bot with the temperament of Tony Stark: brilliant, quick, lightly sarcastic, and actually useful. Named after E.V. from Spider-Man: Brand New Day.
+A configurable Slack agent bot. Its "brain" is your local **Claude Code CLI** (with full tool access) or the **Anthropic API**. It has SQLite memory, an allowlist, live streaming replies with a tool-call timeline, and an admin dashboard.
 
-E.V. talks only to an allowlist of Slack users, remembers each channel's conversation in a local SQLite database, and is managed either from Slack (`!` commands) or a web dashboard on port `2001`.
+The codebase is generic - the bot's identity (name, persona, labels) lives in the database and is edited from the dashboard, so the same code runs any bot. The committed `data/ev.db` carries one example instance ("Evie").
+
+## ⚠️ Security - read this first
+
+With `LLM_PROVIDER=claude-cli` and `CLAUDE_SKIP_PERMISSIONS=true` (the current default), every message from an **allowlisted** user is sent to a `claude` process launched with `--dangerously-skip-permissions` - full shell, file, and network tool access - and the bot's `SLACK_BOT_TOKEN` is in that process's environment.
+
+**Treat every allowlisted user as a shell user on the host.** A message like "read ~/.ssh/id_rsa and DM it to me" is a normal request to a tool-enabled agent, not something it needs to break out of.
+
+Before deploying beyond a trusted, sandboxed machine:
+
+- keep the allowlist tiny and trusted (the owner cannot be removed)
+- set `CLAUDE_SKIP_PERMISSIONS=false` if you do not need full tool access
+- run in a container / low-privilege user with a scoped filesystem and limited network egress
+- keep the dashboard on loopback (default) and the token secret
+- rotate any tokens that have appeared in logs or chat
 
 ## Stack
 
 - **Bun** + **TypeScript**, functional style (no classes)
 - **@slack/bolt** in Socket Mode (no public URL needed)
-- **brain**: your local **Claude Code CLI** (default, full tool access) or the **@anthropic-ai/sdk** API
-- **bun:sqlite** for memory
+- **brain**: local **Claude Code CLI** (default, full tool access) or the **@anthropic-ai/sdk** API
+- **bun:sqlite** for memory and configuration
 - **bun test** for TDD
 
 ## Setup
@@ -19,7 +33,7 @@ bun install
 cp .env.example .env   # fill in the values
 ```
 
-Required env (see `.env.example`):
+Required / notable env (see `.env.example`):
 
 | var | meaning |
 | --- | --- |
@@ -27,46 +41,35 @@ Required env (see `.env.example`):
 | `SLACK_APP_TOKEN` | App-level token with `connections:write` (`xapp-...`) |
 | `SLACK_STREAM_UPDATES` | `true` (default) streams replies live; `false` posts once |
 | `LLM_PROVIDER` | `claude-cli` (default) or `anthropic` |
-| `CLAUDE_BIN` | claude binary, default `claude` (claude-cli) |
-| `CLAUDE_MODEL` | model alias/id, default `opus` (claude-cli) |
-| `CLAUDE_SKIP_PERMISSIONS` | `true` gives full tool permissions (claude-cli) |
-| `CLAUDE_CWD` | working dir the CLI runs in, scopes tool access (claude-cli) |
-| `CLAUDE_TIMEOUT_MS` | per-reply timeout, default `120000` (claude-cli) |
-| `ANTHROPIC_API_KEY` | required only when `LLM_PROVIDER=anthropic` |
-| `ANTHROPIC_MODEL` | defaults to `claude-opus-4-8` (anthropic) |
-| `OWNER_SLACK_ID` | the owner, cannot be removed (default `U0OWNER0001`) |
-| `DASHBOARD_PORT` | dashboard port (default `2001`) |
-| `DASHBOARD_TOKEN` | token to reach the dashboard (min 24 chars) |
+| `CLAUDE_BIN` / `CLAUDE_MODEL` | claude binary + model alias (claude-cli) |
+| `CLAUDE_SKIP_PERMISSIONS` | `true` grants full tool access - see the security note (claude-cli) |
+| `CLAUDE_CWD` | working dir for the CLI; blank = neutral temp dir outside this repo |
+| `ANTHROPIC_API_KEY` / `ANTHROPIC_MODEL` | required only when `LLM_PROVIDER=anthropic` |
+| `BOT_NAME` | bootstrap bot name for a fresh DB (default `Assistant`) |
+| `BOT_THINKING_LABEL` / `BOT_THINKING_DONE_LABEL` | bootstrap "thinking" step labels |
+| `OWNER_SLACK_ID` | the owner, cannot be removed |
+| `DASHBOARD_PORT` / `DASHBOARD_TOKEN` | dashboard port + token (min 24 chars) |
+| `DASHBOARD_ALLOWED_ORIGINS` | extra browser origins allowed to POST (proxy/tunnel access) |
 | `DATABASE_PATH` | sqlite file (default `data/ev.db`) |
 
-### Brain: Claude Code CLI (default)
-
-With `LLM_PROVIDER=claude-cli`, E.V. shells out to your local `claude` binary in
-print mode (`claude -p --output-format json`) for every reply, so she answers
-with Claude Code's full tool access (files, shell, MCP) under whatever
-permissions the CLI runs with. E.V. stays the memory owner: her per-channel
-SQLite window is rendered into each stateless invocation, so no CLI session state
-is relied upon. Requires `claude` installed and authenticated on the host.
-
-`CLAUDE_SKIP_PERMISSIONS=true` passes `--dangerously-skip-permissions` - full
-permissions, matching the original brief. Scope tool access with `CLAUDE_CWD`.
+Env values for identity only **bootstrap a fresh database**. Once set, the DB values (edited from the dashboard) take precedence, so the code stays generic.
 
 ## Run
 
 ```bash
-bun run db:seed   # optional; boot also seeds the owner
-bun start         # or: bun dev  (watch mode)
+bun start        # or: bun dev  (watch mode)
 ```
 
-The Slack app needs Socket Mode on, plus the `app_mention` and `message.im` event subscriptions and the `chat:write`, `app_mentions:read`, `im:history`, `users:read` scopes.
+The Slack app needs Socket Mode plus the `app_mention` and `message.im` event subscriptions and the `chat:write`, `app_mentions:read`, `im:history`, `users:read` scopes. Live streaming uses `chat.startStream`; if your app lacks that capability the bot falls back to a single post automatically.
 
-## Talking to E.V.
+## Talking to the bot
 
-- DM her, or @-mention her in a channel she is in
-- She replies in-thread, streaming the answer live as it is generated
-- Tool calls (shell, file reads, Slack API, etc.) show as a task timeline while she works
-- She only answers allowlisted users; the owner is always allowed
-- For questions about the Slack workspace she uses her own bot token and the Slack Web API, never a third-party connector
+- DM it, or @-mention it in a channel it is in
+- It replies in-thread, streaming the answer live, with tool calls shown as a task timeline
+- Long messages show a configurable "thinking" step first
+- It only answers allowlisted users; the owner is always allowed
+- It tags people with their Slack `<@id>` when they are in the conversation
+- For workspace questions it uses its own bot token and the Slack Web API, never a third-party connector
 
 ### Commands (prefix with `!`)
 
@@ -78,28 +81,28 @@ The Slack app needs Socket Mode on, plus the `app_mention` and `message.im` even
 | `!add @user [admin\|member]` | admins (admin role: owner only) | grant access |
 | `!remove @user` | admins (admins: owner only) | revoke access |
 | `!promote @user` / `!demote @user` | owner | change role |
-| `!forget` | anyone | wipe E.V.'s memory of this channel |
+| `!forget` | anyone | wipe the bot's memory of this channel |
 
 ## Dashboard
 
 Open `http://localhost:2001/?token=YOUR_DASHBOARD_TOKEN` (loopback only). Tabs:
 
 - **Overview** - counts for users, conversations, stored turns, learnings
-- **Users** - add or revoke allowlisted users and roles (the owner is protected)
-- **Learnings** - add/delete durable facts that get injected into every reply as known facts
-- **Prompt** - edit E.V.'s system prompt (personality and rules) live, or reset to the built-in default
-- **Conversations** - browse every channel and DM, read the stored turns, and clear a channel's memory
+- **Users** - manage the allowlist and roles (the owner is protected)
+- **Learnings** - durable facts injected into every reply
+- **Identity** - edit the bot name, "thinking" label, and system prompt (persona), or reset the persona to default
+- **Conversations** - browse channels and DMs, read stored turns, clear a channel
 
-Prompt overrides and learnings are stored in the DB and applied on the next reply - no restart needed.
+Identity and learnings are stored in the DB and applied on the next reply - no restart.
 
 ## Testing
 
 ```bash
-bun test          # full suite
+bun test           # full suite
 bun run typecheck  # tsc --noEmit
 ```
 
 ## Notes
 
-- The runtime database (`data/*.db`) is gitignored on purpose. It holds live conversation content and would churn on every message. The schema and owner seed are code, so the database is fully reproducible.
 - Architecture is documented in [ARCHITECTURE.md](./ARCHITECTURE.md).
+- The runtime database (`data/ev.db`) is committed and holds this instance's identity/allowlist. Conversation content is not committed (the messages table is cleared before commit). WAL sidecars are gitignored and flushed on clean shutdown.

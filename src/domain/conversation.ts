@@ -1,7 +1,7 @@
 /**
  * Pure conversation/context logic.
  *
- * Turns E.V.'s stored memory into the message list handed to the LLM, applying a
+ * Turns the bot's stored memory into the message list handed to the LLM, applying a
  * window so prompts stay bounded regardless of how long a channel has been
  * chatting.
  */

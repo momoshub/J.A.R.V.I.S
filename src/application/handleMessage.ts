@@ -1,5 +1,5 @@
 /**
- * Core chat use case: an allowed user says something, E.V. replies in character
+ * Core chat use case: an allowed user says something, the bot replies in character
  * and both turns are remembered.
  *
  * All I/O is injected, so this reads as a straight line of business logic and is
@@ -27,6 +27,9 @@ export type HandleMessageDeps = {
   /** Supplies the editable base prompt + learnings; defaults to the built-in personality. */
   promptContext?: () => PromptContext;
 };
+
+/** Author id recorded for the bot's own turns (never a real Slack id). */
+export const ASSISTANT_AUTHOR = "assistant";
 
 export type InboundMessage = {
   channelId: string;
@@ -88,12 +91,13 @@ export const handleMessage = async (
       : await deps.llm.complete(params)
   ).trim();
 
-  const safeReply = reply.length > 0 ? reply : "I have got nothing useful to add there.";
+  const safeReply = reply.length > 0 ? reply : "I do not have anything useful to add there.";
 
   deps.messages.append(
     {
       channelId: inbound.channelId,
-      slackUserId: inbound.slackUserId,
+      // The bot authored this turn, not the human who prompted it.
+      slackUserId: ASSISTANT_AUTHOR,
       role: "assistant",
       content: safeReply,
     },

@@ -176,4 +176,18 @@ describe("createClaudeCliLlm.stream", () => {
     const final = await llm.stream!({ system: "sys", messages: [{ role: "user", content: "hi" }] }, () => {});
     expect(final).toBe("Hello world");
   });
+
+  test("maps a failed tool_result to status error", async () => {
+    const events = [
+      { type: "stream_event", event: { type: "content_block_start", index: 0, content_block: { type: "tool_use", id: "t9", name: "Bash" } } },
+      { type: "stream_event", event: { type: "content_block_stop", index: 0 } },
+      { type: "user", message: { content: [{ type: "tool_result", tool_use_id: "t9", is_error: true }] } },
+      { type: "result", subtype: "success", is_error: false, result: "done" },
+    ];
+    const llm = createClaudeCliLlm({ binPath: fakeStreamBin(events) });
+    const seen: LlmStreamEvent[] = [];
+    await llm.stream!({ system: "s", messages: [{ role: "user", content: "hi" }] }, (e) => seen.push(e));
+    const errored = seen.find((e) => e.type === "tool" && e.status === "error");
+    expect(errored).toBeDefined();
+  });
 });

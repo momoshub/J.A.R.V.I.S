@@ -25,6 +25,8 @@ export type SlackAppConfig = {
   botName: string;
   /** Live label for the "thinking" step (read per message so edits apply). */
   thinkingLabel: () => string;
+  /** Live label the thinking step flips to once content arrives. */
+  thinkingDoneLabel: () => string;
 };
 
 type Deps = RespondDeps & {
@@ -32,8 +34,27 @@ type Deps = RespondDeps & {
   log?: (msg: string) => void;
 };
 
+/** The slice of the Slack WebClient the handler needs (kept minimal for testing). */
+export type SlackClient = {
+  users: { info: (a: { user: string }) => Promise<unknown> };
+  chatStream: (args: Record<string, unknown>) => Streamer;
+};
+
+/** A raw Slack message payload, enough to decide whether to handle it. */
+export type RawMessage = {
+  channel_type?: string;
+  user?: string;
+  text?: string;
+  subtype?: string;
+  bot_id?: string;
+};
+
+/** Only plain human DMs: reject bot echoes, edits/joins (subtypes) and non-DM channels. */
+export const shouldHandleDm = (m: RawMessage): boolean =>
+  !m.subtype && !m.bot_id && !!m.user && !!m.text && m.channel_type === "im";
+
 /** Best-effort display name lookup; never throws, worst case returns undefined. */
-const fetchDisplayName = async (client: WebClient, userId: string): Promise<string | undefined> => {
+const fetchDisplayName = async (client: SlackClient, userId: string): Promise<string | undefined> => {
   try {
     const res = (await client.users.info({ user: userId })) as {
       user?: { profile?: { display_name?: string; real_name?: string }; real_name?: string };
@@ -45,22 +66,24 @@ const fetchDisplayName = async (client: WebClient, userId: string): Promise<stri
   }
 };
 
-type Incoming = {
+export type Incoming = {
   channelId: string;
   userId: string;
   teamId?: string;
   text: string;
   /** Thread to reply in. Streaming requires one, so we always anchor to a ts. */
   threadTs: string;
-  client: WebClient;
+  client: SlackClient;
   say: (msg: { text: string; thread_ts?: string }) => Promise<unknown>;
 };
 
-export const createSlackApp = (config: SlackAppConfig, deps: Deps) => {
-  const log = deps.log ?? ((m: string) => console.log(`[slack] ${m}`));
-  const app = new App({ token: config.botToken, appToken: config.appToken, socketMode: true });
-
-  const handle = async (msg: Incoming) => {
+/**
+ * Build the transport-agnostic message handler. Exported so it can be tested
+ * with fake clients/streamers without standing up a real Slack connection.
+ */
+export const createHandler =
+  (config: SlackAppConfig, deps: Deps, log: (msg: string) => void) =>
+  async (msg: Incoming): Promise<void> => {
     const displayName = await fetchDisplayName(msg.client, msg.userId);
 
     const stream = config.streamUpdates
@@ -74,6 +97,7 @@ export const createSlackApp = (config: SlackAppConfig, deps: Deps) => {
               task_display_mode: "timeline",
             }) as Streamer,
           log,
+          config.thinkingDoneLabel(),
         )
       : undefined;
 
@@ -102,10 +126,17 @@ export const createSlackApp = (config: SlackAppConfig, deps: Deps) => {
       log(`respond failed: ${err instanceof Error ? err.message : String(err)}`);
       if (stream?.started) await stream.finish().catch(() => undefined);
       await msg
-        .say({ text: "Something in my circuits misfired handling that. Try again in a moment.", thread_ts: msg.threadTs })
+        .say({ text: "Sorry, I hit an error handling that. Please try again in a moment.", thread_ts: msg.threadTs })
         .catch(() => undefined);
     }
   };
+
+export const createSlackApp = (config: SlackAppConfig, deps: Deps) => {
+  const log = deps.log ?? ((m: string) => console.log(`[slack] ${m}`));
+  const app = new App({ token: config.botToken, appToken: config.appToken, socketMode: true });
+  const handle = createHandler(config, deps, log);
+  // The real WebClient is a superset of the minimal SlackClient seam.
+  const asClient = (client: WebClient) => client as unknown as SlackClient;
 
   // @-mentions in channels -> reply in the same thread.
   app.event("app_mention", async ({ event, client, say, context }) => {
@@ -117,31 +148,22 @@ export const createSlackApp = (config: SlackAppConfig, deps: Deps) => {
       teamId: context.teamId,
       text: e.text,
       threadTs: e.thread_ts ?? e.ts,
-      client,
+      client: asClient(client),
       say: say as Incoming["say"],
     });
   });
 
   // Direct messages -> reply inline. Ignore bot echoes and non-DM channels.
   app.message(async ({ message, client, say, context }) => {
-    const m = message as {
-      channel: string;
-      channel_type?: string;
-      user?: string;
-      text?: string;
-      ts: string;
-      subtype?: string;
-      bot_id?: string;
-    };
-    if (m.subtype || m.bot_id || !m.user || !m.text) return;
-    if (m.channel_type !== "im") return;
+    const m = message as RawMessage & { channel: string; ts: string };
+    if (!shouldHandleDm(m)) return;
     await handle({
       channelId: m.channel,
-      userId: m.user,
+      userId: m.user!,
       teamId: context.teamId,
-      text: m.text,
+      text: m.text!,
       threadTs: m.ts,
-      client,
+      client: asClient(client),
       say: say as Incoming["say"],
     });
   });

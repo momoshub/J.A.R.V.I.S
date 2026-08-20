@@ -133,6 +133,20 @@ describe("handleMessage", () => {
     expect(seenSystem).toContain("<@U2OTHER>");
   });
 
+  test("streaming path that returns empty still yields a safe reply", async () => {
+    const emptyStream: LlmPort = {
+      complete: async () => "unused",
+      stream: async () => "   ",
+    };
+    const deps = build(emptyStream);
+    const res = await handleMessage(deps, { channelId: "C1", slackUserId: OWNER, text: "hi" }, () => {});
+    expect(res.kind).toBe("reply");
+    if (res.kind === "reply") expect(res.text.length).toBeGreaterThan(0);
+    // the safe reply is persisted under the bot author, not the human
+    const history = deps.messages.recentForChannel("C1", 10);
+    expect(history[1]?.slackUserId).toBe("assistant");
+  });
+
   test("falls back to complete when a sink is given but llm cannot stream", async () => {
     const deps = build(fakeLlm("Completed"));
     const res = await handleMessage(
