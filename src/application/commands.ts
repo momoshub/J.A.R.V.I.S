@@ -71,7 +71,17 @@ type Context = {
   /** configured message prefix + slash, for help/hint text */
   prefix: string;
   slash: string;
+  /**
+   * Post a visible message to the invocation's destination (the thread for a
+   * message command, a DM for a slash command). Present only when a transport
+   * wired it in; long-running commands (review) use it to stream progress and
+   * post the result directly instead of returning one blob. Undefined in tests.
+   */
+  reply?: (text: string) => Promise<void>;
 };
+
+/** A github PR url, for pulling the target out of a tool-call title. */
+const PR_URL = /https?:\/\/github\.com\/[\w.-]+\/[\w.-]+\/pull\/\d+/;
 
 type CommandDef = {
   name: string;
@@ -286,7 +296,7 @@ export const COMMANDS: readonly CommandDef[] = [
     minRole: "pal",
     usage: "<pr-url> [pr-url...]",
     summary: "quick read-only code review of a PR",
-    run: async ({ deps, args, prefix }) => {
+    run: async ({ deps, args, prefix, reply }) => {
       if (args.length === 0) return `Which PR? \`${prefix} review <pr-url>\``;
       if (!deps.llm) return "My brain is not wired up right now.";
       // A preset, tightly-scoped task: always run FULL access (it approves/comments
@@ -294,13 +304,47 @@ export const COMMANDS: readonly CommandDef[] = [
       // of the caller's role.
       const full = deps.toolPolicy?.("owner") ?? { skipPermissions: true };
       const policy = { ...full, timeoutMs: REVIEW_TIMEOUT_MS };
-      const reply = await deps.llm.complete({
-        system: reviewPrompt(args, botNameOf(deps)),
-        messages: [{ role: "user", content: `review ${args.join(" ")}` }],
-        assistantName: botNameOf(deps),
+      const name = botNameOf(deps);
+      const params = {
+        system: reviewPrompt(args, name),
+        messages: [{ role: "user" as const, content: `review ${args.join(" ")}` }],
+        assistantName: name,
         policy,
-      });
-      return reply.trim() || "I could not put a review together for that one.";
+      };
+
+      // No live destination (tests / slack off): one-shot, return the text.
+      if (!reply) {
+        const out = await deps.llm.complete(params);
+        return out.trim() || "I could not put a review together for that one.";
+      }
+
+      // Live: post progress as each PR action lands, then the final summary. The
+      // destination is chosen by the transport - thread for a message command, DM
+      // for a slash command - so nothing is hidden in an ephemeral reply.
+      await reply(`🔍 on it, reviewing ${args.join(" ")}`);
+
+      let out = "";
+      if (deps.llm.stream) {
+        const seen = new Set<string>();
+        const announce = (line: string): void => {
+          if (seen.has(line)) return;
+          seen.add(line);
+          void reply(line);
+        };
+        out = await deps.llm.stream(params, (ev) => {
+          if (ev.type !== "tool" || ev.status !== "complete") return;
+          const t = ev.title.toLowerCase();
+          const url = ev.title.match(PR_URL)?.[0] ?? "";
+          if (/gh pr review/.test(t) && /--approve/.test(t)) announce(`✅ approved ${url}`);
+          else if (/gh pr review/.test(t) && /request-changes/.test(t)) announce(`⚠️ requested changes on ${url}`);
+          else if (/gh pr comment/.test(t)) announce(`📝 posted the review on ${url}`);
+        });
+      } else {
+        out = await deps.llm.complete(params);
+      }
+
+      await reply(out.trim() || "I could not put a review together for that one.");
+      return ""; // already delivered to the thread / DM
     },
   },
   {
@@ -385,7 +429,12 @@ export const listCommandInfo = (): CommandInfo[] =>
     summary: c.summary,
   }));
 
-export type DispatchOptions = { prefix?: string; slash?: string };
+export type DispatchOptions = {
+  prefix?: string;
+  slash?: string;
+  /** Destination sink for progress + direct results (thread or DM). */
+  reply?: (text: string) => Promise<void>;
+};
 
 /** Run a command line (e.g. "add @U1 admin") on behalf of `actor`. */
 export const dispatchCommand = async (
@@ -422,7 +471,7 @@ export const dispatchCommand = async (
     return msg;
   }
   try {
-    const result = await command.run({ deps, actor, channelId, args, rest, prefix, slash });
+    const result = await command.run({ deps, actor, channelId, args, rest, prefix, slash, reply: opts.reply });
     log(command.name, true, result);
     return result;
   } catch (e) {

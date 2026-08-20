@@ -140,14 +140,16 @@ export const createHandler =
     try {
       const result = await respond(
         deps,
-        { channelId: msg.channelId, slackUserId: msg.userId, text, displayName },
+        { channelId: msg.channelId, slackUserId: msg.userId, text, displayName, threadTs: msg.threadTs, viaSlash: false },
         stream?.sink,
       );
       if (result.kind === "ignored") return;
 
       // If the reply streamed successfully, Slack already has it; otherwise post.
+      // An empty reply means the command already delivered itself into the thread
+      // (e.g. review posts progress + result directly), so post nothing more.
       const streamed = stream?.started ? await stream.finish() : false;
-      if (!streamed) await msg.say({ text: result.text, thread_ts: msg.threadTs });
+      if (!streamed && result.text.trim()) await msg.say({ text: result.text, thread_ts: msg.threadTs });
     } catch (err) {
       log(`respond failed: ${err instanceof Error ? err.message : String(err)}`);
       if (stream?.started) await stream.finish().catch(() => undefined);
@@ -208,8 +210,14 @@ export const createSlackApp = (config: SlackAppConfig, deps: Deps) => {
         slackUserId: command.user_id,
         text: `${config.commandPrefix} ${line}`,
         displayName: command.user_name,
+        viaSlash: true,
       });
-      const text = result.kind === "ignored" ? "Nothing to do." : result.text;
+      // An empty reply means the command delivered itself to the user's DM
+      // (progress + result), so the slash just acknowledges quietly.
+      const text =
+        result.kind === "ignored"
+          ? "Nothing to do."
+          : result.text.trim() || "on it — I'll reply in your DM 📩";
       await reply({ response_type: "ephemeral", text });
     };
   app.command(config.slashCommand, runSlash(""));

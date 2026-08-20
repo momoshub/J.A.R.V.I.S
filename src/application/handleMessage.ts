@@ -60,6 +60,10 @@ export type InboundMessage = {
   text: string;
   /** best-effort display name from Slack, used to keep the allowlist fresh */
   displayName?: string;
+  /** thread to reply into (message commands); absent for a top-level DM */
+  threadTs?: string;
+  /** true when the command came in via a Slack slash command, not a message */
+  viaSlash?: boolean;
 };
 
 export type HandleResult =

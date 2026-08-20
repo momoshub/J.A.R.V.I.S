@@ -34,9 +34,20 @@ export const respond = async (
   }
 
   const actor = deps.users.get(decision.user.slackId) ?? decision.user;
+
+  // Destination for progress + direct results: a DM when invoked via slash (there
+  // is no thread to reply in), otherwise the thread the message came from. Long
+  // commands (review) post through this; simple ones just return their text.
+  const reply = deps.slack
+    ? inbound.viaSlash
+      ? (text: string) => deps.slack!.postDm(inbound.slackUserId, text)
+      : (text: string) => deps.slack!.post(inbound.channelId, text, inbound.threadTs)
+    : undefined;
+
   const text = await dispatchCommand(deps, actor, inbound.channelId, line, {
     prefix: deps.commandPrefix,
     slash: deps.slashCommand,
+    reply,
   });
   return { kind: "reply", text };
 };
