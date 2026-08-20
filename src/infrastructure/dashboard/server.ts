@@ -186,8 +186,9 @@ export const createDashboard = (config: DashboardConfig, deps: DashboardDeps) =>
           return slackGuard(() => deps.slack!.listConversations());
         case "/api/slack/history": {
           const channel = url.searchParams.get("channel") ?? "";
-          const limit = Math.min(50, Math.max(1, Number(url.searchParams.get("limit")) || 30));
-          return slackGuard(() => deps.slack!.history(channel, limit));
+          const limit = Math.min(100, Math.max(1, Number(url.searchParams.get("limit")) || 30));
+          const cursor = url.searchParams.get("cursor") || undefined;
+          return slackGuard(() => deps.slack!.history(channel, limit, cursor));
         }
         case "/api/slack/thread": {
           const channel = url.searchParams.get("channel") ?? "";
@@ -293,7 +294,7 @@ export const createDashboard = (config: DashboardConfig, deps: DashboardDeps) =>
             const threadTs = body.threadTs ? String(body.threadTs) : undefined;
             const thread = threadTs
               ? await deps.slack!.replies(channel, threadTs)
-              : await deps.slack!.history(channel, 15);
+              : (await deps.slack!.history(channel, 15)).messages;
             return { draft: await deps.draft(thread) };
           });
       }

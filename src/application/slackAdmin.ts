@@ -27,11 +27,21 @@ export type SlackMessage = {
   mentionsBot: boolean;
 };
 
+/** A page of history plus the cursor to fetch the next (older) page. */
+export type HistoryPage = {
+  messages: SlackMessage[];
+  /** Slack cursor for the next older page, or undefined when at the beginning. */
+  nextCursor?: string;
+};
+
 export type SlackAdminPort = {
   /** Conversations the bot is a member of (joined channels, DMs, groups), recent first. */
   listConversations: () => Promise<SlackConversation[]>;
-  /** Recent messages in a conversation, newest last. */
-  history: (channel: string, limit: number) => Promise<SlackMessage[]>;
+  /**
+   * A page of messages, oldest-last. Pass the previous page's `nextCursor` to
+   * fetch the next (older) page - Slack paginates backward in time.
+   */
+  history: (channel: string, limit: number, cursor?: string) => Promise<HistoryPage>;
   /** Full thread for a root message, oldest first. */
   replies: (channel: string, threadTs: string) => Promise<SlackMessage[]>;
   /** Edit one of the bot's own messages. */

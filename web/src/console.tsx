@@ -21,6 +21,7 @@ export function ConsolePage() {
   const [channel, setChannel] = useState("");
   const [convoFilter, setConvoFilter] = useState("");
   const [messages, setMessages] = useState<SlackMessage[]>([]);
+  const [cursor, setCursor] = useState<string | undefined>();
   const [limit, setLimit] = useState(30);
   const [filter, setFilter] = useState("");
   const [mode, setMode] = useState<Mode>("all");
@@ -59,10 +60,24 @@ export function ConsolePage() {
     (ch: string, lim: number) =>
       run(async () => {
         setThread(null);
-        setMessages(await get<SlackMessage[]>(`slack/history?channel=${encodeURIComponent(ch)}&limit=${lim}`));
+        const page = await get<{ messages: SlackMessage[]; nextCursor?: string }>(
+          `slack/history?channel=${encodeURIComponent(ch)}&limit=${lim}`,
+        );
+        setMessages(page.messages);
+        setCursor(page.nextCursor);
       }),
     [run],
   );
+
+  const loadOlder = () =>
+    run(async () => {
+      const page = await get<{ messages: SlackMessage[]; nextCursor?: string }>(
+        `slack/history?channel=${encodeURIComponent(channel)}&limit=${limit}&cursor=${encodeURIComponent(cursor ?? "")}`,
+      );
+      // older page is chronologically before what we have - prepend it
+      setMessages((cur) => [...page.messages, ...cur]);
+      setCursor(page.nextCursor);
+    }, "loading older...");
 
   useEffect(() => {
     if (channel) loadHistory(channel, limit);
@@ -206,6 +221,13 @@ export function ConsolePage() {
 
       {channel && !thread && (
         <div className="card msgs">
+          <div className="load-older">
+            {cursor ? (
+              <button className="ghost" onClick={loadOlder} disabled={busy}>↑ load older messages</button>
+            ) : (
+              messages.length > 0 && <span className="muted">beginning of conversation</span>
+            )}
+          </div>
           {shown.length === 0 && <p className="muted" style={{ padding: 16 }}>No messages.</p>}
           {shown.map((m) => Row(m))}
         </div>

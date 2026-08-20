@@ -22,6 +22,19 @@ type RawMessage = {
 
 const MENTION = (botId: string) => new RegExp(`<@${botId}(?:\\|[^>]+)?>`);
 
+/** Recency is enriched via one history call per conversation; keep it bounded. */
+const RECENCY_CAP = 15;
+const RECENCY_CONCURRENCY = 4;
+
+/** Run `fn` over `items` in sequential batches of `n` to avoid API bursts. */
+const mapPool = async <T, R>(items: T[], n: number, fn: (item: T) => Promise<R>): Promise<R[]> => {
+  const out: R[] = [];
+  for (let i = 0; i < items.length; i += n) {
+    out.push(...(await Promise.all(items.slice(i, i + n).map(fn))));
+  }
+  return out;
+};
+
 export const createSlackAdmin = (client: WebClient): SlackAdminPort => {
   const nameCache = new Map<string, string>();
   let botUserId: string | undefined;
@@ -105,22 +118,28 @@ export const createSlackAdmin = (client: WebClient): SlackAdminPort => {
         exclude_archived: true,
         limit: 200,
       })) as { channels?: RawConversation[] };
-      const raw = (res.channels ?? []).filter((c) => c.id).slice(0, 60);
-      const list = await Promise.all(
-        raw.map(async (c) => {
-          const base = await conversationName(c);
-          return { ...base, lastActive: await latestActivity(c.id!) };
-        }),
-      );
-      return list.sort((a, b) => b.lastActive - a.lastActive);
+      const raw = (res.channels ?? []).filter((c) => c.id);
+      // Enrich only the first N with a recency probe (bounded concurrency, fail-fast
+      // so a throttled probe never blocks the list); the rest keep lastActive 0.
+      const enriched = await mapPool(raw.slice(0, RECENCY_CAP), RECENCY_CONCURRENCY, async (c) => ({
+        ...(await conversationName(c)),
+        lastActive: await latestActivity(c.id!),
+      }));
+      const rest = await Promise.all(raw.slice(RECENCY_CAP).map(conversationName));
+      return [...enriched, ...rest].sort((a, b) => b.lastActive - a.lastActive);
     },
 
-    history: async (channel, limit) => {
+    history: async (channel, limit, cursor) => {
       const botId = await getBotUserId();
-      const res = (await client.conversations.history({ channel, limit })) as { messages?: RawMessage[] };
+      const res = (await client.conversations.history({
+        channel,
+        limit,
+        ...(cursor ? { cursor } : {}),
+      })) as { messages?: RawMessage[]; response_metadata?: { next_cursor?: string } };
       const msgs = (res.messages ?? []).filter((m) => m.ts && (m.text || m.bot_id));
       const mapped = await Promise.all(msgs.map((m) => toMessage(m, botId)));
-      return mapped.reverse(); // API returns newest-first; show oldest-first
+      // API returns newest-first; show oldest-first. Cursor pages go further back.
+      return { messages: mapped.reverse(), nextCursor: res.response_metadata?.next_cursor || undefined };
     },
 
     replies: async (channel, threadTs) => {

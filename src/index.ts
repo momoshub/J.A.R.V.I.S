@@ -108,7 +108,9 @@ const main = async () => {
       clock,
       profile,
       // Console: manage the bot's live Slack messages, with AI-drafted replies.
-      slack: createSlackAdmin(new WebClient(config.slackBotToken)),
+      // retries: 0 so a rate-limited recency probe fails fast instead of hanging
+      // the dashboard on Slack's 10s retry-after.
+      slack: createSlackAdmin(new WebClient(config.slackBotToken, { retryConfig: { retries: 0 } })),
       draft: createDraftReply({ llm, promptContext: deps.promptContext! }),
     },
   );
