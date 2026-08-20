@@ -1,0 +1,51 @@
+# CLAUDE.md
+
+Guidance for working on this repo. Keep it accurate - update it when behavior, structure, or conventions change.
+
+## What this is
+
+A configurable Slack agent bot (Bun + TypeScript). Its "brain" is the local **Claude Code CLI** (default) or the Anthropic API. It has SQLite memory, an allowlist with roles, live streaming replies, a command registry, and a React admin dashboard. The code is **generic** - the running instance's identity (name, persona, prefixes, etc.) lives in the DB / env, never hardcoded. This checkout's instance is "Evie".
+
+## Commands
+
+```bash
+bun test              # full test suite (bun:test)
+bun run typecheck     # tsc --noEmit  (root)
+bun run build:web     # build the React dashboard (web/ -> web/dist)
+bun start             # run the bot + dashboard
+bun run setup         # install + build:web
+```
+
+Always run `bun run typecheck` AND `bun test` before considering a change done. The `web/` app has its own `tsconfig`/deps - typecheck it with `cd web && bunx tsc --noEmit` after touching it, and rebuild (`bun run build:web`) since the bot serves `web/dist`.
+
+## Architecture (clean, layered - dependencies point inward)
+
+- `src/domain` - pure logic, no I/O: `types`, `access` (roles), `conversation`, `mentions`, `personality`, `toolPolicy`, `reviewPrompt`, `emoji`, `slackLinks`
+- `src/application` - use cases + ports: `ports` (`LlmPort`), `handleMessage`, `respond`, `commands` (registry), `botProfile`, `slackAdmin`, `draftReply`
+- `src/infrastructure` - adapters: `db/*` (bun:sqlite repos + schema/migration), `llm/claudeCli` + `llm/anthropic`, `slack/app` + `slack/adminClient` + `slack/stream`, `dashboard/server`
+- `src/config/env.ts` - zod-validated env, fails fast
+- `src/index.ts` - the only composition root; wires everything
+- `web/` - React 19 + Vite + React Router 7 dashboard (JSON API under `/api`)
+- Full docs: `README.md`, `ARCHITECTURE.md`
+
+## Conventions
+
+- **TypeScript, functional style. No classes** - repos/adapters are factory functions returning a bag of functions. Do not introduce OOP.
+- **Never use `any`.** Use precise types; `unknown` + narrowing at boundaries.
+- Local imports use explicit `.ts` extensions (Bun style).
+- Use `bun:sqlite`; SQL is parameterized (named/positional binds), never string-concatenated.
+- Depend on ports (`LlmPort`, `SlackAdminPort`, injected clocks/deps), not concrete adapters, so use cases stay testable with fakes + `:memory:` sqlite.
+- Keep changes small and focused; add/adjust tests with any behavior change (TDD).
+
+## Key facts (non-obvious)
+
+- **Identity is data, not code.** Bot name/persona/labels live in the DB `settings` table (seeded, editable from the dashboard). Command triggers (`COMMAND_PREFIX`, `SLASH_COMMAND`), model, cwd, owner id, etc. come from env. Do NOT hardcode instance-specific strings ("Evie", `//ev`, `data/ev.db`) in `src/` - defaults are neutral (`Assistant`, `//bot`, `data/bot.db`).
+- **The DB is committed** (`data/ev.db` here) and carries the allowlist + identity. Conversation `messages` are cleared before committing; WAL sidecars are gitignored. After schema changes, migrations run via `PRAGMA user_version` in `db/schema.ts`.
+- **Roles** (`src/domain/access.ts`, `toolPolicy.ts`): `pal` < `executer` < `admin` < `owner`. owner/admin run the CLI full-access; pal/executer are sandboxed (`--allowedTools` allow-list, no `--dangerously-skip-permissions`, fixed cwd). `review` is a preset that always runs full-access and writes to the PR.
+- **Commands** are a single registry in `src/application/commands.ts`, invoked as `<COMMAND_PREFIX> <cmd>`, the `<SLASH_COMMAND> <cmd>` slash, or legacy `!<cmd>`. Add a command = one entry; it gets role-gating, logging, and dashboard listing for free.
+- **The bot's runtime ignores this CLAUDE.md** - EV runs the CLI in a temp cwd with an identity-lock that ignores CLAUDE.md/memory. This file is for developer / Claude Code sessions editing the repo.
+
+## Running instance / ops
+
+- The bot is run in the background and **restarted manually** after changes (no `--watch`): kill the process on the dashboard port, then `bun start`.
+- Commit or push only when asked. Do not commit secrets (`.env` is gitignored).
