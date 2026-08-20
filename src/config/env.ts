@@ -19,6 +19,11 @@ const schema = z
     // Stream replies live via chat.startStream (tool calls shown as a timeline).
     SLACK_STREAM_UPDATES: boolFromString(true),
 
+    // Bot identity defaults. These only bootstrap a fresh database; once set, the
+    // dashboard-managed DB settings take precedence, so the code stays generic.
+    BOT_NAME: z.string().default("Assistant"),
+    BOT_THINKING_LABEL: z.string().default("working on it..."),
+
     // Which brain powers E.V.: the local Claude Code CLI (default) or the API.
     LLM_PROVIDER: z.enum(["claude-cli", "anthropic"]).default("claude-cli"),
 
@@ -53,6 +58,8 @@ export type AppConfig = {
   slackBotToken: string;
   slackAppToken: string;
   slackStreamUpdates: boolean;
+  botName: string;
+  botThinkingLabel: string;
   llmProvider: LlmProvider;
   claudeBin: string;
   claudeModel: string;
@@ -86,6 +93,8 @@ export const loadConfig = (source: Record<string, string | undefined> = process.
     slackBotToken: env.SLACK_BOT_TOKEN,
     slackAppToken: env.SLACK_APP_TOKEN,
     slackStreamUpdates: env.SLACK_STREAM_UPDATES,
+    botName: env.BOT_NAME,
+    botThinkingLabel: env.BOT_THINKING_LABEL,
     llmProvider: env.LLM_PROVIDER,
     claudeBin: env.CLAUDE_BIN,
     claudeModel: env.CLAUDE_MODEL,

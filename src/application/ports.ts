@@ -24,6 +24,8 @@ export type LlmStreamSink = (event: LlmStreamEvent) => void;
 export type LlmCompleteParams = {
   readonly system: string;
   readonly messages: readonly PromptMessage[];
+  /** Label for the bot's own turns in a rendered transcript. */
+  readonly assistantName?: string;
 };
 
 /** Anything that can turn a system prompt + history into a reply. */

@@ -17,17 +17,28 @@ describe("renderPrompt", () => {
     expect(out).toContain("(from <@U1>)");
   });
 
-  test("multi-turn attributes speakers by tag plus the latest message", () => {
+  test("multi-turn attributes speakers by tag and labels the bot's turns", () => {
     const msgs: PromptMessage[] = [
       { role: "user", content: "hi", speakerId: "U1" },
       { role: "assistant", content: "hey" },
       { role: "user", content: "how are you", speakerId: "U2" },
     ];
-    const out = renderPrompt(msgs);
+    const out = renderPrompt(msgs, "Evie");
     expect(out).toContain("<@U1>: hi");
     expect(out).toContain("Evie: hey");
     expect(out).toContain("Respond to this newest message (from <@U2>):");
     expect(out.trim().endsWith("how are you")).toBe(true);
+  });
+
+  test("defaults the assistant label when no name is given", () => {
+    const out = renderPrompt(
+      [
+        { role: "user", content: "hi", speakerId: "U1" },
+        { role: "assistant", content: "hey" },
+        { role: "user", content: "yo", speakerId: "U1" },
+      ],
+    );
+    expect(out).toContain("Assistant: hey");
   });
 
   test("falls back to User when a speaker id is missing", () => {

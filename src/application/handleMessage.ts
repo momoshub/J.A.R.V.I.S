@@ -70,13 +70,18 @@ export const handleMessage = async (
   const history = deps.messages.recentForChannel(inbound.channelId, window);
   const ctx = deps.promptContext?.() ?? { learnings: [] };
   const system = buildSystemPrompt({
+    botName: ctx.botName,
     base: ctx.base,
     learnings: ctx.learnings,
     addresseeName: inbound.displayName ?? decision.user.displayName,
     participants: collectParticipants(deps, history, inbound),
   });
 
-  const params = { system, messages: buildContextWindow(history, window) };
+  const params = {
+    system,
+    messages: buildContextWindow(history, window),
+    assistantName: ctx.botName,
+  };
   const reply = (
     sink && deps.llm.stream
       ? await deps.llm.stream(params, sink)

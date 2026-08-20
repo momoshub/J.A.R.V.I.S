@@ -4,9 +4,11 @@
  */
 import type { DbClient } from "./client.ts";
 
-/** Known setting keys. */
+/** Known setting keys. All bot-identity configuration lives here in the DB. */
 export const SETTING_KEYS = {
+  botName: "bot_name",
   systemPrompt: "system_prompt",
+  thinkingLabel: "thinking_label",
 } as const;
 
 export type SettingsRepo = {

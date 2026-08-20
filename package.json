@@ -1,7 +1,7 @@
 {
-  "name": "ev-slack-bot",
+  "name": "slack-agent-bot",
   "version": "0.1.0",
-  "description": "E.V. - a Slack bot with a Tony Stark streak, powered by Claude, with SQLite memory and an admin dashboard",
+  "description": "A configurable Slack agent bot powered by the Claude CLI, with SQLite memory, live streaming replies, and an admin dashboard",
   "type": "module",
   "private": true,
   "module": "src/index.ts",

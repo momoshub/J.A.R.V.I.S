@@ -15,6 +15,7 @@ import { createUserRepo } from "./infrastructure/db/userRepo.ts";
 import { createMessageRepo } from "./infrastructure/db/messageRepo.ts";
 import { createLearningsRepo } from "./infrastructure/db/learningsRepo.ts";
 import { createSettingsRepo, SETTING_KEYS } from "./infrastructure/db/settingsRepo.ts";
+import { loadBotProfile } from "./application/botProfile.ts";
 import { seedOwner } from "./infrastructure/db/seed.ts";
 import { createAnthropicLlm } from "./infrastructure/llm/anthropic.ts";
 import { createClaudeCliLlm } from "./infrastructure/llm/claudeCli.ts";
@@ -62,8 +63,12 @@ const main = async () => {
 
   seedOwner(users, config.ownerSlackId, clock);
 
+  // The bot's identity lives in the DB; env values only bootstrap a fresh clone.
+  const profile = () =>
+    loadBotProfile(settings, { name: config.botName, thinkingLabel: config.botThinkingLabel });
+
   const llm = buildLlm(config);
-  console.log(`[llm] E.V.'s brain: ${modelLabel(config)}`);
+  console.log(`[llm] ${profile().name}'s brain: ${modelLabel(config)}`);
 
   const deps: RespondDeps = {
     users,
@@ -71,8 +76,9 @@ const main = async () => {
     llm,
     clock,
     ownerSlackId: config.ownerSlackId,
-    // Live personality + learnings, editable from the dashboard.
+    // Live identity + learnings, editable from the dashboard.
     promptContext: () => ({
+      botName: profile().name,
       base: settings.get(SETTING_KEYS.systemPrompt),
       learnings: learnings.list().map((l) => l.content),
     }),
@@ -86,7 +92,7 @@ const main = async () => {
       model: modelLabel(config),
       allowedOrigins: config.dashboardAllowedOrigins,
     },
-    { users, messages, learnings, settings, clock },
+    { users, messages, learnings, settings, clock, profile },
   );
   dashboard.start();
 
@@ -95,13 +101,15 @@ const main = async () => {
       botToken: config.slackBotToken,
       appToken: config.slackAppToken,
       streamUpdates: config.slackStreamUpdates,
+      botName: profile().name,
+      thinkingLabel: () => profile().thinkingLabel,
     },
     deps,
   );
   await slack.start();
 
   const shutdown = async () => {
-    console.log("\nShutting down E.V. ...");
+    console.log("\nShutting down ...");
     dashboard.stop();
     await slack.stop();
     db.close();

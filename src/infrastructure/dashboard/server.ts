@@ -10,6 +10,7 @@
 import { timingSafeEqual as cryptoTimingSafeEqual } from "node:crypto";
 import type { UserRole } from "../../domain/types.ts";
 import { DEFAULT_PERSONALITY } from "../../domain/personality.ts";
+import type { BotProfile } from "../../application/botProfile.ts";
 import type { Clock } from "../../application/ports.ts";
 import type { MessageRepo } from "../db/messageRepo.ts";
 import type { UserRepo } from "../db/userRepo.ts";
@@ -19,9 +20,9 @@ import {
   layout,
   renderConversation,
   renderConversations,
+  renderIdentity,
   renderLearnings,
   renderOverview,
-  renderPrompt,
   renderUsers,
 } from "./views.ts";
 
@@ -40,6 +41,8 @@ export type DashboardDeps = {
   learnings: LearningsRepo;
   settings: SettingsRepo;
   clock: Clock;
+  /** Current bot identity, for titles and the identity editor. */
+  profile: () => BotProfile;
 };
 
 const SLACK_ID = /^[UW][A-Z0-9]+$/;
@@ -102,8 +105,12 @@ export const createDashboard = (config: DashboardConfig, deps: DashboardDeps) =>
       headers: { Location: `${path}?token=${encodeURIComponent(config.token)}` },
     });
 
-  const page = (active: Parameters<typeof layout>[0]["active"], title: string, body: string) =>
-    html(layout({ title: `E.V. - ${title}`, active, subtitle, body, token: config.token }));
+  const page = (active: Parameters<typeof layout>[0]["active"], title: string, body: string) => {
+    const botName = deps.profile().name;
+    return html(
+      layout({ title: `${botName} - ${title}`, botName, active, subtitle, body, token: config.token }),
+    );
+  };
 
   const route = async (req: Request, url: URL): Promise<Response> => {
     if (url.pathname === "/health") return Response.json({ ok: true });
@@ -145,11 +152,17 @@ export const createDashboard = (config: DashboardConfig, deps: DashboardDeps) =>
           return page("learnings", "Learnings", renderLearnings(deps.learnings.list(), config.token));
         case "/prompt": {
           const override = deps.settings.get(SETTING_KEYS.systemPrompt);
+          const profile = deps.profile();
           return page(
             "prompt",
-            "Prompt",
-            renderPrompt(
-              { current: override ?? DEFAULT_PERSONALITY, usingDefault: override === undefined },
+            "Identity",
+            renderIdentity(
+              {
+                name: profile.name,
+                thinkingLabel: profile.thinkingLabel,
+                persona: override ?? DEFAULT_PERSONALITY,
+                usingDefault: override === undefined,
+              },
               config.token,
             ),
           );
@@ -221,10 +234,17 @@ export const createDashboard = (config: DashboardConfig, deps: DashboardDeps) =>
           return redirect("/learnings");
         }
 
-        case "/api/prompt": {
+        case "/api/identity": {
+          const name = String(form.get("name") ?? "").trim();
+          if (!name) return new Response("Bot name is required", { status: 400 });
+          deps.settings.set(SETTING_KEYS.botName, name);
+
+          const thinkingLabel = String(form.get("thinkingLabel") ?? "").trim();
+          if (thinkingLabel) deps.settings.set(SETTING_KEYS.thinkingLabel, thinkingLabel);
+          else deps.settings.remove(SETTING_KEYS.thinkingLabel);
+
           const prompt = String(form.get("prompt") ?? "").trim();
-          if (!prompt) return new Response("Empty prompt", { status: 400 });
-          deps.settings.set(SETTING_KEYS.systemPrompt, prompt);
+          if (prompt) deps.settings.set(SETTING_KEYS.systemPrompt, prompt);
           return redirect("/prompt");
         }
 

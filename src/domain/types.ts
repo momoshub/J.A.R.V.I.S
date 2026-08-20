@@ -56,8 +56,10 @@ export type Learning = {
   readonly createdAt: number;
 };
 
-/** Editable pieces that shape E.V.'s system prompt. */
+/** Editable pieces that shape the bot's system prompt. */
 export type PromptContext = {
+  /** The bot's name; falls back to the built-in default. */
+  readonly botName?: string;
   /** Overridden base personality/rules; falls back to the built-in default. */
   readonly base?: string;
   readonly learnings: readonly string[];

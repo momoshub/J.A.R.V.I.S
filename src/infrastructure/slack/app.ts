@@ -15,13 +15,16 @@ import { createSlackStream, type Streamer } from "./stream.ts";
 
 /** Messages longer than this get a "thinking" step before content streams. */
 const LONG_MESSAGE_CHARS = 40;
-const THINKING_LABEL = "☄️ burning acme token..";
 
 export type SlackAppConfig = {
   botToken: string;
   appToken: string;
   /** Stream replies live via chat.startStream. Falls back to a single post. */
   streamUpdates: boolean;
+  /** Bot display name, for log lines. */
+  botName: string;
+  /** Live label for the "thinking" step (read per message so edits apply). */
+  thinkingLabel: () => string;
 };
 
 type Deps = RespondDeps & {
@@ -81,7 +84,7 @@ export const createSlackApp = (config: SlackAppConfig, deps: Deps) => {
       parseCommand(msg.text) === undefined &&
       msg.text.trim().length > LONG_MESSAGE_CHARS
     ) {
-      stream.showThinking(THINKING_LABEL);
+      stream.showThinking(config.thinkingLabel());
     }
 
     try {
@@ -146,7 +149,7 @@ export const createSlackApp = (config: SlackAppConfig, deps: Deps) => {
   return {
     start: async () => {
       await app.start();
-      log(`E.V. is online via Socket Mode.${config.streamUpdates ? " streaming on." : ""}`);
+      log(`${config.botName} is online via Socket Mode.${config.streamUpdates ? " streaming on." : ""}`);
     },
     stop: async () => {
       await app.stop();

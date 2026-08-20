@@ -4,6 +4,7 @@ import { createUserRepo } from "../../src/infrastructure/db/userRepo.ts";
 import { createMessageRepo } from "../../src/infrastructure/db/messageRepo.ts";
 import { createLearningsRepo } from "../../src/infrastructure/db/learningsRepo.ts";
 import { createSettingsRepo, SETTING_KEYS } from "../../src/infrastructure/db/settingsRepo.ts";
+import { loadBotProfile } from "../../src/application/botProfile.ts";
 import { createDashboard } from "../../src/infrastructure/dashboard/server.ts";
 
 const OWNER = "U0OWNER0001";
@@ -16,9 +17,10 @@ const build = () => {
   const learnings = createLearningsRepo(db);
   const settings = createSettingsRepo(db);
   users.upsert({ slackId: OWNER, role: "owner", displayName: "Kai", addedBy: "system", createdAt: 1 });
+  const profile = () => loadBotProfile(settings, { name: "TestBot", thinkingLabel: "thinking..." });
   const dash = createDashboard(
     { port: 0, token: TOKEN, ownerSlackId: OWNER, model: "claude-opus-4-8" },
-    { users, messages, learnings, settings, clock: () => 99 },
+    { users, messages, learnings, settings, clock: () => 99, profile },
   );
   return { dash, users, messages, learnings, settings };
 };
@@ -175,31 +177,51 @@ describe("dashboard learnings", () => {
 });
 
 describe("dashboard prompt editor", () => {
-  test("shows the default prompt when no override", async () => {
+  test("shows the default persona when no override", async () => {
     const { dash } = build();
     const res = await dash.handle(req(`/prompt?token=${TOKEN}`));
     const body = await res.text();
-    expect(body).toContain("built-in default");
-    expect(body).toContain("warm, gentle and calm");
+    expect(body).toContain("built-in default persona");
+    expect(body).toContain("friendly, calm and helpful");
   });
 
-  test("saves and then reflects a custom prompt", async () => {
+  test("saves identity (name, thinking label, persona) and reflects it", async () => {
     const { dash, settings } = build();
     await dash.handle(
-      req(`/api/prompt?token=${TOKEN}`, { method: "POST", body: form({ prompt: "You are terse." }) }),
+      req(`/api/identity?token=${TOKEN}`, {
+        method: "POST",
+        body: form({ name: "Evie", thinkingLabel: "☄️ burning", prompt: "You are terse." }),
+      }),
     );
+    expect(settings.get(SETTING_KEYS.botName)).toBe("Evie");
+    expect(settings.get(SETTING_KEYS.thinkingLabel)).toBe("☄️ burning");
     expect(settings.get(SETTING_KEYS.systemPrompt)).toBe("You are terse.");
-    const res = await dash.handle(req(`/prompt?token=${TOKEN}`));
-    const body = await res.text();
-    expect(body).toContain("custom override");
+    const body = await (await dash.handle(req(`/prompt?token=${TOKEN}`))).text();
+    expect(body).toContain("custom persona");
     expect(body).toContain("You are terse.");
+    expect(body).toContain("Evie");
   });
 
-  test("reset clears the override", async () => {
+  test("identity save requires a name", async () => {
+    const { dash } = build();
+    const res = await dash.handle(
+      req(`/api/identity?token=${TOKEN}`, { method: "POST", body: form({ name: "  " }) }),
+    );
+    expect(res.status).toBe(400);
+  });
+
+  test("reset clears the persona override", async () => {
     const { dash, settings } = build();
     settings.set(SETTING_KEYS.systemPrompt, "custom");
     await dash.handle(req(`/api/prompt/reset?token=${TOKEN}`, { method: "POST", body: form({}) }));
     expect(settings.get(SETTING_KEYS.systemPrompt)).toBeUndefined();
+  });
+
+  test("bot name from settings appears in the page title/header", async () => {
+    const { dash, settings } = build();
+    settings.set(SETTING_KEYS.botName, "Evie");
+    const body = await (await dash.handle(req(`/?token=${TOKEN}`))).text();
+    expect(body).toContain("Evie");
   });
 });
 

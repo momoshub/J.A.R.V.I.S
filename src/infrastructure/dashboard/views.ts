@@ -34,7 +34,7 @@ const NAV: readonly { key: Nav; label: string; href: string }[] = [
   { key: "overview", label: "Overview", href: "/" },
   { key: "users", label: "Users", href: "/users" },
   { key: "learnings", label: "Learnings", href: "/learnings" },
-  { key: "prompt", label: "Prompt", href: "/prompt" },
+  { key: "prompt", label: "Identity", href: "/prompt" },
   { key: "conversations", label: "Conversations", href: "/conversations" },
 ];
 
@@ -86,6 +86,7 @@ const STYLES = `
 
 export const layout = (opts: {
   title: string;
+  botName: string;
   active: Nav;
   subtitle: string;
   body: string;
@@ -105,7 +106,7 @@ export const layout = (opts: {
 </head>
 <body>
   <header>
-    <h1><span>E.V.</span> control deck</h1>
+    <h1><span>${escapeHtml(opts.botName)}</span> control deck</h1>
     <div class="sub">${opts.subtitle}</div>
   </header>
   <nav>${nav}</nav>
@@ -203,23 +204,32 @@ export const renderLearnings = (learnings: readonly Learning[], token: string): 
     </table>`;
 };
 
-export const renderPrompt = (
-  data: { current: string; usingDefault: boolean },
+export const renderIdentity = (
+  data: { name: string; thinkingLabel: string; persona: string; usingDefault: boolean },
   token: string,
 ): string => `
-  <h2>System prompt - personality &amp; rules</h2>
-  <p class="muted">
-    ${data.usingDefault ? "Currently using the built-in default." : "Currently using a custom override."}
-    This text is E.V.'s base personality; learnings and the addressee are appended automatically.
-  </p>
-  <form method="POST" action="/api/prompt?${q(token)}">
-    <textarea name="prompt" spellcheck="false">${escapeHtml(data.current)}</textarea>
-    <div class="row">
+  <h2>Identity</h2>
+  <form class="row" method="POST" action="/api/identity?${q(token)}">
+    <label>
+      <div class="muted">bot name</div>
+      <input name="name" value="${escapeHtml(data.name)}" required />
+    </label>
+    <label style="flex:1; min-width:280px;">
+      <div class="muted">"thinking" label (shown on long messages)</div>
+      <input name="thinkingLabel" value="${escapeHtml(data.thinkingLabel)}" style="width:100%;" />
+    </label>
+    <h2>System prompt - personality &amp; rules</h2>
+    <p class="muted" style="width:100%;">
+      ${data.usingDefault ? "Currently using the built-in default persona." : "Currently using a custom persona."}
+      This is the base personality; identity, learnings, participants and the addressee are appended automatically.
+    </p>
+    <textarea name="prompt" spellcheck="false">${escapeHtml(data.persona)}</textarea>
+    <div class="row" style="width:100%;">
       <button type="submit">save</button>
     </div>
   </form>
   <form class="inline" method="POST" action="/api/prompt/reset?${q(token)}">
-    <button class="ghost" type="submit">reset to default</button>
+    <button class="ghost" type="submit">reset persona to default</button>
   </form>`;
 
 export const renderConversations = (

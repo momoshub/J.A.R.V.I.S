@@ -6,12 +6,21 @@ describe("buildSystemPrompt", () => {
     expect(buildSystemPrompt()).toContain(DEFAULT_PERSONALITY);
   });
 
-  test("default persona is warm, bilingual, and self-refers affectionately", () => {
+  test("default persona is generic (no hardcoded bot identity)", () => {
     const out = buildSystemPrompt();
-    expect(out).toContain("Evie");
-    for (const term of ["em", "Gấu", "mị", "em gái"]) expect(out).toContain(term);
-    expect(out).toContain("Vietnamese");
-    expect(out).toContain("calm");
+    expect(out).toContain("friendly, calm and helpful");
+    expect(out).not.toContain("Evie");
+    expect(out).not.toContain("JARVIS");
+  });
+
+  test("uses the provided bot name in the identity lock", () => {
+    const out = buildSystemPrompt({ botName: "Evie", learnings: [] });
+    expect(out).toContain("You are Evie, and only Evie");
+    expect(out).toContain("you are Evie, a helpful assistant");
+  });
+
+  test("defaults the bot name when none is given", () => {
+    expect(buildSystemPrompt()).toContain("You are Assistant, and only Assistant");
   });
 
   test("uses a custom base when provided", () => {
@@ -52,11 +61,11 @@ describe("buildSystemPrompt", () => {
     expect(buildSystemPrompt()).toContain("<@THEIR_USER_ID>");
   });
 
-  test("locks identity to Evie and forbids leaking source/other personas", () => {
-    const out = buildSystemPrompt({ base: "You are terse.", learnings: [] });
-    expect(out).toContain("You are Evie, and only Evie");
-    expect(out).toContain("source code and how E.V. is built are not your topic");
-    expect(out).toContain("JARVIS");
+  test("locks identity and forbids leaking source/other personas", () => {
+    const out = buildSystemPrompt({ botName: "Bob", base: "You are terse.", learnings: [] });
+    expect(out).toContain("You are Bob, and only Bob");
+    expect(out).toContain("Your own source code and how you are built are not your topic");
+    expect(out).toContain("operator persona");
   });
 
   test("tells E.V. she has a disposable scratch workspace for fetching/cloning", () => {

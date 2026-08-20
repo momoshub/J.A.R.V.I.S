@@ -13,7 +13,7 @@
  * - `stream` uses `--output-format stream-json --include-partial-messages` and
  *   forwards text deltas and tool-call progress to a sink as they arrive.
  */
-import type { LlmPort, LlmStreamSink } from "../../application/ports.ts";
+import type { LlmCompleteParams, LlmPort, LlmStreamSink } from "../../application/ports.ts";
 import type { PromptMessage } from "../../domain/types.ts";
 
 export type ClaudeCliConfig = {
@@ -29,8 +29,8 @@ export type ClaudeCliConfig = {
   timeoutMs?: number;
 };
 
-const speakerLabel = (m: PromptMessage): string =>
-  m.role === "assistant" ? "Evie" : m.speakerId ? `<@${m.speakerId}>` : "User";
+const speakerLabel = (m: PromptMessage, assistantName: string): string =>
+  m.role === "assistant" ? assistantName : m.speakerId ? `<@${m.speakerId}>` : "User";
 
 /**
  * Render the conversation window into a single print-mode prompt.
@@ -39,7 +39,10 @@ const speakerLabel = (m: PromptMessage): string =>
  * labelled transcript (speakers tagged by Slack id) so Claude Code has full
  * continuity and knows exactly who to address and tag.
  */
-export const renderPrompt = (messages: readonly PromptMessage[]): string => {
+export const renderPrompt = (
+  messages: readonly PromptMessage[],
+  assistantName = "Assistant",
+): string => {
   if (messages.length === 0) return "";
 
   const history = messages.slice(0, -1);
@@ -50,7 +53,7 @@ export const renderPrompt = (messages: readonly PromptMessage[]): string => {
     return `Respond to this message${from}:\n${latest.content}`;
   }
 
-  const transcript = history.map((m) => `${speakerLabel(m)}: ${m.content}`).join("\n");
+  const transcript = history.map((m) => `${speakerLabel(m, assistantName)}: ${m.content}`).join("\n");
   return [
     "Recent conversation for context:",
     transcript,
@@ -105,8 +108,8 @@ const spawnClaude = (config: ClaudeCliConfig, args: string[], prompt: string) =>
   });
 
 export const createClaudeCliLlm = (config: ClaudeCliConfig = {}): LlmPort => {
-  const complete = async ({ system, messages }: { system: string; messages: readonly PromptMessage[] }) => {
-    const proc = spawnClaude(config, [...buildArgs(config, false), "--append-system-prompt", system], renderPrompt(messages));
+  const complete = async ({ system, messages, assistantName }: LlmCompleteParams) => {
+    const proc = spawnClaude(config, [...buildArgs(config, false), "--append-system-prompt", system], renderPrompt(messages, assistantName));
     const [stdout, stderr, exitCode] = await Promise.all([
       new Response(proc.stdout).text(),
       new Response(proc.stderr).text(),
@@ -127,11 +130,8 @@ export const createClaudeCliLlm = (config: ClaudeCliConfig = {}): LlmPort => {
     return (parsed.result ?? "").trim();
   };
 
-  const stream = async (
-    { system, messages }: { system: string; messages: readonly PromptMessage[] },
-    sink: LlmStreamSink,
-  ) => {
-    const proc = spawnClaude(config, [...buildArgs(config, true), "--append-system-prompt", system], renderPrompt(messages));
+  const stream = async ({ system, messages, assistantName }: LlmCompleteParams, sink: LlmStreamSink) => {
+    const proc = spawnClaude(config, [...buildArgs(config, true), "--append-system-prompt", system], renderPrompt(messages, assistantName));
     const stderrPromise = new Response(proc.stderr).text();
 
     // index -> in-flight tool_use block; id -> resolved card title.
