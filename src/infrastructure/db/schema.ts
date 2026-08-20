@@ -31,7 +31,9 @@ export const migrate = (db: Database): void => {
       content       TEXT NOT NULL,
       created_at    INTEGER NOT NULL,
       -- Slack ts of the source message, when there is one (see migration v3).
-      slack_ts      TEXT NOT NULL DEFAULT ''
+      slack_ts      TEXT NOT NULL DEFAULT '',
+      -- Thread the turn belongs to; memory is scoped to it (see migration v4).
+      thread_ts     TEXT NOT NULL DEFAULT ''
     );
   `);
 
@@ -73,6 +75,27 @@ export const migrate = (db: Database): void => {
 
   migrateRoles(db);
   migrateSlackTs(db);
+  migrateThreadTs(db);
+};
+
+/**
+ * Migration v4: remember which thread a turn belongs to.
+ *
+ * Memory used to be keyed by channel alone, so every thread in a channel (and
+ * every separate DM exchange, since the bot always replies in a thread) shared
+ * one window and bled into the others. Rows written before this have an empty
+ * thread and simply fall out of scope.
+ */
+const migrateThreadTs = (db: Database): void => {
+  const columns = db.query<{ name: string }, []>("PRAGMA table_info(messages)").all();
+  if (!columns.some((c) => c.name === "thread_ts")) {
+    db.exec("ALTER TABLE messages ADD COLUMN thread_ts TEXT NOT NULL DEFAULT '';");
+  }
+  db.exec(`
+    CREATE INDEX IF NOT EXISTS idx_messages_thread_time
+      ON messages (channel_id, thread_ts, id);
+  `);
+  db.exec("PRAGMA user_version = 4;");
 };
 
 /**

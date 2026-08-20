@@ -37,6 +37,8 @@ export type StoredMessage = {
   readonly createdAt: number;
   /** Slack ts of the source message, when it came from one. Addressable: reactions. */
   readonly slackTs?: string;
+  /** Thread the turn belongs to; the brain's memory window is scoped to it. */
+  readonly threadTs?: string;
 };
 
 /** A turn to be persisted (no id/timestamp yet). */

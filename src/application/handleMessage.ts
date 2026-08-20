@@ -101,12 +101,15 @@ export const handleMessage = async (
       role: "user",
       content: text,
       ...(inbound.messageTs ? { slackTs: inbound.messageTs } : {}),
+      threadTs: inbound.threadTs ?? "",
     },
     now,
   );
 
   const window = deps.contextWindow ?? DEFAULT_CONTEXT_WINDOW;
-  const history = deps.messages.recentForChannel(inbound.channelId, window);
+  // Scoped to this thread, never the whole channel: one channel holds many
+  // unrelated conversations, and they used to bleed into each other.
+  const history = deps.messages.recentForThread(inbound.channelId, inbound.threadTs ?? "", window);
   const ctx = deps.promptContext?.() ?? { learnings: [] };
   const system = buildSystemPrompt({
     botName: ctx.botName,
@@ -143,6 +146,7 @@ export const handleMessage = async (
       slackUserId: ASSISTANT_AUTHOR,
       role: "assistant",
       content: safeReply,
+      threadTs: inbound.threadTs ?? "",
     },
     deps.clock(),
   );

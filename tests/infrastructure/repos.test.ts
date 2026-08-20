@@ -146,3 +146,32 @@ describe("learningsRepo", () => {
     expect(repo.list()).toHaveLength(0);
   });
 });
+
+describe("messageRepo thread scoping", () => {
+  test("recentForThread returns only that thread; recentForChannel still sees all", () => {
+    const db = openDatabase(":memory:");
+    const messages = createMessageRepo(db);
+    const turn = (threadTs: string, content: string, at: number) =>
+      messages.append({ channelId: "D1", slackUserId: "U1", role: "user", content, threadTs }, at);
+
+    turn("100.1", "about Robin", 1);
+    turn("200.2", "who is Mai", 2);
+    turn("100.1", "more about Robin", 3);
+
+    expect(messages.recentForThread("D1", "100.1", 10).map((m) => m.content)).toEqual([
+      "about Robin",
+      "more about Robin",
+    ]);
+    expect(messages.recentForThread("D1", "200.2", 10).map((m) => m.content)).toEqual(["who is Mai"]);
+    expect(messages.recentForChannel("D1", 10)).toHaveLength(3);
+  });
+
+  test("turns stored before threads existed are out of every thread's scope", () => {
+    const db = openDatabase(":memory:");
+    const messages = createMessageRepo(db);
+    messages.append({ channelId: "D1", slackUserId: "U1", role: "user", content: "legacy" }, 1);
+    expect(messages.recentForThread("D1", "100.1", 10)).toHaveLength(0);
+    expect(messages.recentForChannel("D1", 10)).toHaveLength(1);
+  });
+});
+

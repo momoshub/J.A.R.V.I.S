@@ -16,6 +16,7 @@ type Row = {
   content: string;
   created_at: number;
   slack_ts: string;
+  thread_ts: string;
 };
 
 const toMessage = (row: Row): StoredMessage => ({
@@ -26,6 +27,7 @@ const toMessage = (row: Row): StoredMessage => ({
   content: row.content,
   createdAt: row.created_at,
   ...(row.slack_ts ? { slackTs: row.slack_ts } : {}),
+  ...(row.thread_ts ? { threadTs: row.thread_ts } : {}),
 });
 
 /** A channel summary for the dashboard's conversation browser. */
@@ -37,8 +39,13 @@ export type ChannelSummary = {
 
 export type MessageRepo = {
   append: (message: NewMessage, createdAt: number) => StoredMessage;
-  /** Recent turns for a channel, returned oldest-first. */
+  /** Recent turns for a channel, returned oldest-first. Every thread in it. */
   recentForChannel: (channelId: string, limit: number) => StoredMessage[];
+  /**
+   * Recent turns for one thread, oldest-first - the window the brain actually
+   * gets, so a conversation cannot bleed into an unrelated one next door.
+   */
+  recentForThread: (channelId: string, threadTs: string, limit: number) => StoredMessage[];
   clearChannel: (channelId: string) => number;
   count: () => number;
   /** Distinct channels with a turn count, most-recently-active first. */
@@ -47,13 +54,18 @@ export type MessageRepo = {
 
 export const createMessageRepo = (db: DbClient): MessageRepo => {
   const insertStmt = db.query(
-    `INSERT INTO messages (channel_id, slack_user_id, role, content, created_at, slack_ts)
-     VALUES ($channelId, $slackUserId, $role, $content, $createdAt, $slackTs)
+    `INSERT INTO messages (channel_id, slack_user_id, role, content, created_at, slack_ts, thread_ts)
+     VALUES ($channelId, $slackUserId, $role, $content, $createdAt, $slackTs, $threadTs)
      RETURNING *`,
   );
   const recentStmt = db.query<Row, [string, number]>(
     `SELECT * FROM (
        SELECT * FROM messages WHERE channel_id = ? ORDER BY id DESC LIMIT ?
+     ) ORDER BY id ASC`,
+  );
+  const recentThreadStmt = db.query<Row, [string, string, number]>(
+    `SELECT * FROM (
+       SELECT * FROM messages WHERE channel_id = ? AND thread_ts = ? ORDER BY id DESC LIMIT ?
      ) ORDER BY id ASC`,
   );
   const clearStmt = db.query("DELETE FROM messages WHERE channel_id = $channelId");
@@ -74,11 +86,14 @@ export const createMessageRepo = (db: DbClient): MessageRepo => {
         $content: message.content,
         $createdAt: createdAt,
         $slackTs: message.slackTs ?? "",
+        $threadTs: message.threadTs ?? "",
       }) as Row;
       return toMessage(row);
     },
     recentForChannel: (channelId, limit) =>
       recentStmt.all(channelId, Math.max(0, limit)).map(toMessage),
+    recentForThread: (channelId, threadTs, limit) =>
+      recentThreadStmt.all(channelId, threadTs, Math.max(0, limit)).map(toMessage),
     clearChannel: (channelId) => {
       const res = clearStmt.run({ $channelId: channelId });
       return Number(res.changes);
