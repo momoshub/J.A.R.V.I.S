@@ -54,9 +54,22 @@ const authorized = (req: Request, url: URL, token: string): boolean => {
   return tokensMatch(provided, token);
 };
 
+const LOOPBACK_HOSTS = new Set(["localhost", "127.0.0.1", "0.0.0.0", "::1", "[::1]"]);
+
+/**
+ * CSRF guard for a loopback-bound tool. A cross-site attacker's Origin is its own
+ * domain, never a loopback host, so we allow requests with no Origin, an Origin
+ * that matches exactly, or any loopback Origin. The last case tolerates the
+ * benign localhost vs 127.0.0.1 mismatch that otherwise 403s the dashboard.
+ */
 const sameOrigin = (req: Request, url: URL): boolean => {
   const origin = req.headers.get("origin");
-  return origin === null || origin === url.origin;
+  if (origin === null || origin === url.origin) return true;
+  try {
+    return LOOPBACK_HOSTS.has(new URL(origin).hostname);
+  } catch {
+    return false;
+  }
 };
 
 const asRole = (v: string | null): UserRole => (v === "admin" ? "admin" : "member");

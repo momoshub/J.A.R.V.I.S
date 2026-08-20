@@ -107,6 +107,20 @@ describe("dashboard mutations", () => {
     expect(users.get("U777")).toBeUndefined();
   });
 
+  test("allows a loopback Origin that differs from the request host", async () => {
+    // page served from localhost, Bun sees request host as 127.0.0.1 (or vice versa)
+    const { dash, users } = build();
+    const res = await dash.handle(
+      new Request("http://127.0.0.1/api/users?token=" + TOKEN, {
+        method: "POST",
+        body: form({ slackId: "U444", role: "member" }),
+        headers: { origin: "http://localhost:2001" },
+      }),
+    );
+    expect(res.status).toBe(303);
+    expect(users.get("U444")?.role).toBe("member");
+  });
+
   test("sets security headers on responses", async () => {
     const { dash } = build();
     const res = await dash.handle(req(`/?token=${TOKEN}`));
