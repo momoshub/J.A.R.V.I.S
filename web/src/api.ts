@@ -5,8 +5,8 @@
  * not attach cross-origin, which doubles as CSRF protection).
  */
 const urlToken = new URLSearchParams(location.search).get("token");
-if (urlToken) sessionStorage.setItem("ev_token", urlToken);
-export const token = urlToken ?? sessionStorage.getItem("ev_token") ?? "";
+if (urlToken) sessionStorage.setItem("dashboard_token", urlToken);
+export const token = urlToken ?? sessionStorage.getItem("dashboard_token") ?? "";
 
 const headers = (): HeadersInit => ({
   "X-Dashboard-Token": token,
@@ -30,7 +30,13 @@ export const post = async <T = { ok: true }>(path: string, body: unknown): Promi
   return json as T;
 };
 
-export type Bootstrap = { botName: string; ownerSlackId: string; model: string };
+export type Bootstrap = {
+  botName: string;
+  ownerSlackId: string;
+  model: string;
+  commandPrefix: string;
+  slashCommand: string;
+};
 export type Overview = { users: number; conversations: number; messages: number; learnings: number };
 export type UserRole = "owner" | "admin" | "executer" | "pal";
 export type AllowedUser = {

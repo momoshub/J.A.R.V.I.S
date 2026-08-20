@@ -29,6 +29,8 @@ export type DashboardConfig = {
   token: string;
   ownerSlackId: string;
   model: string;
+  commandPrefix: string;
+  slashCommand: string;
   /** Directory of the built React app (index.html + assets). */
   distDir: string;
   /** Extra browser origins allowed to POST (for proxy/tunnel access). */
@@ -157,6 +159,8 @@ export const createDashboard = (config: DashboardConfig, deps: DashboardDeps) =>
             botName: deps.profile().name,
             ownerSlackId: config.ownerSlackId,
             model: config.model,
+            commandPrefix: config.commandPrefix,
+            slashCommand: config.slashCommand,
           });
         case "/api/overview":
           return Response.json({

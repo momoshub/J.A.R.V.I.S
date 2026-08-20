@@ -1,7 +1,8 @@
 /**
  * Top-level responder that Slack (or any transport) calls with one inbound
- * message. It routes command lines (`//ev ...`, `!...`) to the command registry
- * and everything else to the chat use case, so the transport adapter stays dumb.
+ * message. It routes command lines (the configured prefix, or legacy `!`) to the
+ * command registry and everything else to the chat use case, so the transport
+ * adapter stays dumb.
  */
 import { decideAccess } from "../domain/access.ts";
 import { commandLineOf, dispatchCommand } from "./commands.ts";
@@ -15,7 +16,7 @@ export const respond = async (
   inbound: InboundMessage,
   sink?: LlmStreamSink,
 ): Promise<HandleResult> => {
-  const line = commandLineOf(inbound.text);
+  const line = commandLineOf(inbound.text, deps.commandPrefix);
   if (line === undefined) return handleMessage(deps, inbound, sink);
 
   const decision = decideAccess(inbound.slackUserId, deps.ownerSlackId, deps.users.get);
@@ -33,6 +34,9 @@ export const respond = async (
   }
 
   const actor = deps.users.get(decision.user.slackId) ?? decision.user;
-  const text = await dispatchCommand(deps, actor, inbound.channelId, line);
+  const text = await dispatchCommand(deps, actor, inbound.channelId, line, {
+    prefix: deps.commandPrefix,
+    slash: deps.slashCommand,
+  });
   return { kind: "reply", text };
 };

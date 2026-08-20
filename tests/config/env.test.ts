@@ -14,7 +14,9 @@ describe("loadConfig", () => {
     const c = loadConfig(base);
     expect(c.dashboardPort).toBe(2001);
     expect(c.anthropicModel).toBe("claude-opus-4-8");
-    expect(c.databasePath).toBe("data/ev.db");
+    expect(c.databasePath).toBe("data/bot.db");
+    expect(c.commandPrefix).toBe("//bot");
+    expect(c.slashCommand).toBe("/bot");
   });
 
   test("throws a readable error when required vars are missing", () => {

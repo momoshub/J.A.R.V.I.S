@@ -68,6 +68,8 @@ const build = (opts: {
     botName: "Evie",
     thinkingLabel: () => "thinking..",
     thinkingDoneLabel: () => "done",
+    commandPrefix: "//bot",
+    slashCommand: "/bot",
   };
   const said: { text: string }[] = [];
   const rec = opts.rec ?? { appends: [], stops: 0, stopThrows: false, appendThrows: false };

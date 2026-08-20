@@ -25,6 +25,11 @@ const schema = z
     BOT_THINKING_LABEL: z.string().default("working on it..."),
     BOT_THINKING_DONE_LABEL: z.string().default("✅"),
 
+    // Command interfaces. COMMAND_PREFIX is the message trigger (e.g. "//bot" or
+    // "X/ev"); SLASH_COMMAND is the Slack slash command registered in the app.
+    COMMAND_PREFIX: z.string().default("//bot"),
+    SLASH_COMMAND: z.string().default("/bot"),
+
     // Which brain powers the bot: the local Claude Code CLI (default) or the API.
     LLM_PROVIDER: z.enum(["claude-cli", "anthropic"]).default("claude-cli"),
 
@@ -46,7 +51,7 @@ const schema = z
     // for when you reach it through a proxy/tunnel/port-forward. Loopback origins
     // are always allowed.
     DASHBOARD_ALLOWED_ORIGINS: z.string().optional(),
-    DATABASE_PATH: z.string().default("data/ev.db"),
+    DATABASE_PATH: z.string().default("data/bot.db"),
   })
   .refine((env) => env.LLM_PROVIDER !== "anthropic" || !!env.ANTHROPIC_API_KEY, {
     message: "ANTHROPIC_API_KEY is required when LLM_PROVIDER=anthropic",
@@ -62,6 +67,8 @@ export type AppConfig = {
   botName: string;
   botThinkingLabel: string;
   botThinkingDoneLabel: string;
+  commandPrefix: string;
+  slashCommand: string;
   llmProvider: LlmProvider;
   claudeBin: string;
   claudeModel: string;
@@ -98,6 +105,8 @@ export const loadConfig = (source: Record<string, string | undefined> = process.
     botName: env.BOT_NAME,
     botThinkingLabel: env.BOT_THINKING_LABEL,
     botThinkingDoneLabel: env.BOT_THINKING_DONE_LABEL,
+    commandPrefix: env.COMMAND_PREFIX,
+    slashCommand: env.SLASH_COMMAND,
     llmProvider: env.LLM_PROVIDER,
     claudeBin: env.CLAUDE_BIN,
     claudeModel: env.CLAUDE_MODEL,

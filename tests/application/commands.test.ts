@@ -11,18 +11,22 @@ import type { SlackAdminPort, SlackMessage } from "../../src/application/slackAd
 const OWNER = "U0OWNER0001";
 
 describe("commandLineOf", () => {
+  const P = "X/ev";
   test("plain chat is not a command", () => {
-    expect(commandLineOf("hey what's up")).toBeUndefined();
+    expect(commandLineOf("hey what's up", P)).toBeUndefined();
   });
-  test("//ev prefix", () => {
-    expect(commandLineOf("//ev add @u1 admin")).toBe("add @u1 admin");
-    expect(commandLineOf("//ev")).toBe("");
+  test("configured prefix", () => {
+    expect(commandLineOf("X/ev add @u1 admin", P)).toBe("add @u1 admin");
+    expect(commandLineOf("X/ev", P)).toBe("");
   });
-  test("legacy ! prefix", () => {
-    expect(commandLineOf("!whoami")).toBe("whoami");
+  test("legacy ! prefix always works", () => {
+    expect(commandLineOf("!whoami", P)).toBe("whoami");
   });
   test("tolerates a leading mention", () => {
-    expect(commandLineOf("<@UBOT> //ev help")).toBe("help");
+    expect(commandLineOf("<@UBOT> X/ev help", P)).toBe("help");
+  });
+  test("default prefix when none configured", () => {
+    expect(commandLineOf("//bot help")).toBe("help");
   });
 });
 

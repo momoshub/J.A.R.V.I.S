@@ -46,6 +46,9 @@ export type HandleMessageDeps = {
   draft?: DraftReply;
   /** Per-role CLI tool policy (sandbox/allow-list) applied to the chat brain. */
   toolPolicy?: (role: UserRole) => ToolPolicy;
+  /** Configured message command prefix + slash name, for the command layer. */
+  commandPrefix?: string;
+  slashCommand?: string;
 };
 
 /** Author id recorded for the bot's own turns (never a real Slack id). */

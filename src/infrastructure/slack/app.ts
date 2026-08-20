@@ -28,6 +28,9 @@ export type SlackAppConfig = {
   thinkingLabel: () => string;
   /** Live label the thinking step flips to once content arrives. */
   thinkingDoneLabel: () => string;
+  /** Message command prefix (e.g. "X/ev") and the Slack slash command name. */
+  commandPrefix: string;
+  slashCommand: string;
 };
 
 type Deps = RespondDeps & {
@@ -128,7 +131,7 @@ export const createHandler =
     if (
       stream &&
       deps.llm.stream &&
-      commandLineOf(text) === undefined &&
+      commandLineOf(text, config.commandPrefix) === undefined &&
       text.trim().length > LONG_MESSAGE_CHARS
     ) {
       stream.showThinking(config.thinkingLabel());
@@ -192,27 +195,27 @@ export const createSlackApp = (config: SlackAppConfig, deps: Deps) => {
     });
   });
 
-  // Slash commands, all routed through the same command registry as `//ev ...`.
-  // Register each in the Slack app config; `/ev` is the general dispatcher, the
-  // others (/rv, /br, /jrp) are shortcuts to those commands.
+  // Slash commands, all routed through the same command registry as the message
+  // prefix. Register each in the Slack app config. The configured slash command is
+  // the general dispatcher; /rv, /br, /jrp are shortcuts to those commands.
   const runSlash =
-    (prefix: string) =>
+    (sub: string) =>
     async ({ command, ack, respond: reply }: SlashArgs) => {
       await ack();
-      const sub = `${prefix} ${command.text ?? ""}`.trim();
+      const line = `${sub} ${command.text ?? ""}`.trim();
       const result = await respond(deps, {
         channelId: command.channel_id,
         slackUserId: command.user_id,
-        text: `//ev ${sub}`,
+        text: `${config.commandPrefix} ${line}`,
         displayName: command.user_name,
       });
       const text = result.kind === "ignored" ? "Nothing to do." : result.text;
       await reply({ response_type: "ephemeral", text });
     };
-  app.command("/ev", runSlash(""));
-  app.command("/rv", runSlash("rv"));
-  app.command("/br", runSlash("br"));
-  app.command("/jrp", runSlash("jrp"));
+  app.command(config.slashCommand, runSlash(""));
+  app.command("/rv", runSlash("review"));
+  app.command("/br", runSlash("bomb"));
+  app.command("/jrp", runSlash("reply"));
 
   return {
     start: async () => {

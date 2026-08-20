@@ -1,6 +1,6 @@
 /**
- * Review-mode system prompt (the `/rv` command), adapted for EV from the Jarvis
- * spec. Read-only: the bot gathers PR context with `gh` and posts a short,
+ * Review-mode system prompt (the `review` command). Read-only: the bot gathers
+ * PR context with `gh` and posts a short,
  * conversational review back to Slack. It never writes, comments, or approves.
  */
 export const reviewPrompt = (prUrls: readonly string[], botName: string): string => {

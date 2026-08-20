@@ -86,8 +86,8 @@ const main = async () => {
 
   // Full-access cwd (owner/admin) is neutral (outside EV's source); sandboxed
   // roles (pal/executer) run in a separate fixed scratch dir.
-  const fullCwd = ensureDir(config.claudeCwd ?? join(tmpdir(), "ev-agent-workspace"));
-  const sandboxCwd = ensureDir(join(tmpdir(), "ev-sandbox-workspace"));
+  const fullCwd = ensureDir(config.claudeCwd ?? join(tmpdir(), "bot-agent-workspace"));
+  const sandboxCwd = ensureDir(join(tmpdir(), "bot-sandbox-workspace"));
   const toolPolicy = (role: Parameters<typeof toolPolicyFor>[0]) =>
     toolPolicyFor(role, {
       fullCwd,
@@ -127,6 +127,8 @@ const main = async () => {
     slack: slackAdmin,
     draft,
     toolPolicy,
+    commandPrefix: config.commandPrefix,
+    slashCommand: config.slashCommand,
   };
 
   const dashboard = createDashboard(
@@ -135,6 +137,8 @@ const main = async () => {
       token: config.dashboardToken,
       ownerSlackId: config.ownerSlackId,
       model: modelLabel(config),
+      commandPrefix: config.commandPrefix,
+      slashCommand: config.slashCommand,
       distDir: join(import.meta.dir, "..", "web", "dist"),
       allowedOrigins: config.dashboardAllowedOrigins,
     },
@@ -161,6 +165,8 @@ const main = async () => {
       botName: profile().name,
       thinkingLabel: () => profile().thinkingLabel,
       thinkingDoneLabel: () => profile().thinkingDoneLabel,
+      commandPrefix: config.commandPrefix,
+      slashCommand: config.slashCommand,
     },
     deps,
   );

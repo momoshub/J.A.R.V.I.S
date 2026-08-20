@@ -20,7 +20,7 @@ const build = () => {
   const profile = () =>
     loadBotProfile(settings, { name: "TestBot", thinkingLabel: "thinking...", thinkingDoneLabel: "✅" });
   const dash = createDashboard(
-    { port: 0, token: TOKEN, ownerSlackId: OWNER, model: "claude-opus-4-8", distDir: "/nonexistent" },
+    { port: 0, token: TOKEN, ownerSlackId: OWNER, model: "claude-opus-4-8", distDir: "/nonexistent", commandPrefix: "//bot", slashCommand: "/bot" },
     { users, messages, learnings, settings, clock: () => 99, profile },
   );
   return { dash, users, messages, learnings, settings };

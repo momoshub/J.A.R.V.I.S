@@ -1,5 +1,5 @@
-import { Form, useLoaderData } from "react-router-dom";
-import { fmtTime, type CommandInfo, type CommandLogEntry } from "./api.ts";
+import { Form, useLoaderData, useRouteLoaderData } from "react-router-dom";
+import { fmtTime, type Bootstrap, type CommandInfo, type CommandLogEntry } from "./api.ts";
 
 type Data = { commands: CommandInfo[]; disabled: string[]; log: CommandLogEntry[] };
 
@@ -8,14 +8,15 @@ type Data = { commands: CommandInfo[]; disabled: string[]; log: CommandLogEntry[
  */
 export function CommandsPage() {
   const { commands, disabled, log } = useLoaderData() as Data;
+  const boot = useRouteLoaderData("root") as Bootstrap;
   const off = new Set(disabled);
 
   return (
     <>
       <h1>Commands</h1>
       <p className="muted">
-        Every command runs two ways: <code>/ev &lt;name&gt;</code> (slash) or <code>//ev &lt;name&gt;</code> (message).
-        Disable one to turn it off for everyone (except <code>help</code>).
+        Every command runs two ways: <code>{boot?.slashCommand} &lt;name&gt;</code> (slash) or{" "}
+        <code>{boot?.commandPrefix} &lt;name&gt;</code> (message). Disable one to turn it off for everyone (except <code>help</code>).
       </p>
 
       <div className="card table">

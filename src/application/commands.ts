@@ -2,18 +2,16 @@
  * Command layer.
  *
  * A single registry of predefined commands, each invokable two ways:
- *   - Slack slash command:  `/ev <name> <args...>`  (one registration, sub-routed)
- *   - Template message:      `//ev <name> <args...>` (or the legacy `!<name>`)
+ *   - Slack slash command:  `<slash> <name> <args...>`   (one registration, sub-routed)
+ *   - Template message:      `<prefix> <name> <args...>`  (or the legacy `!<name>`)
  *
- * Both interfaces resolve to the same line via `commandLineOf` and run through
- * `dispatchCommand`, which enforces per-command role gates before touching repos
- * or the brain. Everything is data-driven so adding a command is one entry.
+ * Both the message prefix and the slash name are configured at the edge (env);
+ * nothing here hardcodes them beyond neutral fallbacks. Both interfaces resolve
+ * to the same line via `commandLineOf` and run through `dispatchCommand`, which
+ * enforces per-command role gates before touching repos or the brain.
  */
-import { buildSystemPrompt } from "../domain/personality.ts";
-import {
-  validateRemoval,
-  validateRoleChange,
-} from "../domain/access.ts";
+import { buildSystemPrompt, DEFAULT_BOT_NAME } from "../domain/personality.ts";
+import { validateRemoval, validateRoleChange } from "../domain/access.ts";
 import { reviewPrompt } from "../domain/reviewPrompt.ts";
 import { EMOJI_CATEGORY_NAMES, pickBomb } from "../domain/emoji.ts";
 import { parseMessageLink } from "../domain/slackLinks.ts";
@@ -27,6 +25,10 @@ import type { UserRepo } from "../infrastructure/db/userRepo.ts";
 import type { LearningsRepo } from "../infrastructure/db/learningsRepo.ts";
 import type { CommandLogRepo } from "../infrastructure/db/commandLogRepo.ts";
 
+/** Neutral fallbacks; the real prefix/slash come from config (see index.ts). */
+export const DEFAULT_COMMAND_PREFIX = "//bot";
+export const DEFAULT_SLASH_COMMAND = "/bot";
+
 export type CommandDeps = {
   users: UserRepo;
   messages: MessageRepo;
@@ -37,9 +39,9 @@ export type CommandDeps = {
   commandLog?: CommandLogRepo;
   /** Names of disabled commands (managed from the dashboard). */
   disabledCommands?: () => ReadonlySet<string>;
-  /** Slack Web API operations, for the power tools (br, jrp). */
+  /** Slack Web API operations, for the power tools (bomb, reply). */
   slack?: SlackAdminPort;
-  /** AI reply drafting, for jrp. */
+  /** AI reply drafting, for reply. */
   draft?: DraftReply;
   /** Per-role CLI tool policy (sandbox/allow-list), for ask + review. */
   toolPolicy?: (role: UserRole) => ToolPolicy;
@@ -64,6 +66,9 @@ type Context = {
   channelId: string;
   args: string[];
   rest: string;
+  /** configured message prefix + slash, for help/hint text */
+  prefix: string;
+  slash: string;
 };
 
 type CommandDef = {
@@ -90,17 +95,12 @@ const roleOf = (token?: string): UserRole | undefined =>
   token === "owner" || token === "admin" || token === "executer" || token === "pal" ? token : undefined;
 
 const botNameOf = (deps: CommandDeps): string =>
-  deps.botInfo?.().botName ?? deps.promptContext?.().botName ?? "Evie";
+  deps.botInfo?.().botName ?? deps.promptContext?.().botName ?? DEFAULT_BOT_NAME;
 
 const changeRole = (ctx: Context, slackId: string, next: UserRole, requireExisting: boolean): string => {
   const target = ctx.deps.users.get(slackId);
   if (requireExisting && !target) return "I do not know that user - add them first.";
-  const err = validateRoleChange(
-    ctx.actor.role,
-    target?.role ?? "pal",
-    next,
-    slackId === ctx.deps.ownerSlackId,
-  );
+  const err = validateRoleChange(ctx.actor.role, target?.role ?? "pal", next, slackId === ctx.deps.ownerSlackId);
   if (err) return err;
   if (target) ctx.deps.users.setRole(slackId, next);
   else
@@ -121,7 +121,7 @@ export const COMMANDS: readonly CommandDef[] = [
     minRole: "pal",
     usage: "",
     summary: "list the commands you can run",
-    run: ({ actor }) => renderHelp(actor.role),
+    run: ({ actor, prefix, slash }) => renderHelp(actor.role, prefix, slash),
   },
   {
     name: "ping",
@@ -153,9 +153,9 @@ export const COMMANDS: readonly CommandDef[] = [
     minRole: "pal",
     usage: "<question>",
     summary: "ask me something in one shot",
-    run: async ({ deps, actor, rest }) => {
+    run: async ({ deps, actor, rest, prefix }) => {
       const question = rest.trim();
-      if (!question) return "Ask me something: `//ev ask <question>`";
+      if (!question) return `Ask me something: \`${prefix} ask <question>\``;
       if (!deps.llm) return "My brain is not wired up right now.";
       const ctx = deps.promptContext?.() ?? { learnings: [] };
       const system = buildSystemPrompt({ botName: ctx.botName, base: ctx.base, learnings: ctx.learnings });
@@ -199,7 +199,7 @@ export const COMMANDS: readonly CommandDef[] = [
     summary: "grant access (admin role is owner-only)",
     run: (ctx) => {
       const slackId = slackIdOf(ctx.args[0]);
-      if (!slackId) return "Who? `//ev add @user [pal|executer|admin]`";
+      if (!slackId) return `Who? \`${ctx.prefix} add @user [pal|executer|admin]\``;
       return changeRole(ctx, slackId, roleOf(ctx.args[1]?.toLowerCase()) ?? "pal", false);
     },
   },
@@ -211,7 +211,7 @@ export const COMMANDS: readonly CommandDef[] = [
     summary: "revoke access",
     run: (ctx) => {
       const slackId = slackIdOf(ctx.args[0]);
-      if (!slackId) return "Who? `//ev remove @user`";
+      if (!slackId) return `Who? \`${ctx.prefix} remove @user\``;
       const target = ctx.deps.users.get(slackId);
       if (!target) return "They are not on the list to begin with.";
       const err = validateRemoval(ctx.actor.role, target.role, slackId === ctx.deps.ownerSlackId);
@@ -227,7 +227,7 @@ export const COMMANDS: readonly CommandDef[] = [
     summary: "make someone an admin",
     run: (ctx) => {
       const slackId = slackIdOf(ctx.args[0]);
-      return slackId ? changeRole(ctx, slackId, "admin", true) : "Who? `//ev promote @user`";
+      return slackId ? changeRole(ctx, slackId, "admin", true) : `Who? \`${ctx.prefix} promote @user\``;
     },
   },
   {
@@ -237,7 +237,7 @@ export const COMMANDS: readonly CommandDef[] = [
     summary: "drop someone to pal",
     run: (ctx) => {
       const slackId = slackIdOf(ctx.args[0]);
-      return slackId ? changeRole(ctx, slackId, "pal", true) : "Who? `//ev demote @user`";
+      return slackId ? changeRole(ctx, slackId, "pal", true) : `Who? \`${ctx.prefix} demote @user\``;
     },
   },
   {
@@ -245,10 +245,10 @@ export const COMMANDS: readonly CommandDef[] = [
     minRole: "admin",
     usage: "<fact>",
     summary: "teach me a durable fact",
-    run: ({ deps, actor, rest }) => {
+    run: ({ deps, actor, rest, prefix }) => {
       if (!deps.learnings) return "Learnings are not available.";
       const fact = rest.trim();
-      if (!fact) return "Teach me something: `//ev learn <fact>`";
+      if (!fact) return `Teach me something: \`${prefix} learn <fact>\``;
       const l = deps.learnings.add(fact, actor.slackId, deps.clock());
       return `Learned it (#${l.id}). I will keep that in mind.`;
     },
@@ -270,10 +270,10 @@ export const COMMANDS: readonly CommandDef[] = [
     minRole: "admin",
     usage: "<id>",
     summary: "make me forget a learning",
-    run: ({ deps, args }) => {
+    run: ({ deps, args, prefix }) => {
       if (!deps.learnings) return "Learnings are not available.";
       const id = Number(args[0]);
-      if (!Number.isInteger(id)) return "Which one? `//ev unlearn <id>` (see `//ev learnings`)";
+      if (!Number.isInteger(id)) return `Which one? \`${prefix} unlearn <id>\` (see \`${prefix} learnings\`)`;
       deps.learnings.remove(id);
       return `Forgotten learning #${id}.`;
     },
@@ -284,8 +284,8 @@ export const COMMANDS: readonly CommandDef[] = [
     minRole: "pal",
     usage: "<pr-url> [pr-url...]",
     summary: "quick read-only code review of a PR",
-    run: async ({ deps, actor, args }) => {
-      if (args.length === 0) return "Which PR? `//ev review <pr-url>`";
+    run: async ({ deps, actor, args, prefix }) => {
+      if (args.length === 0) return `Which PR? \`${prefix} review <pr-url>\``;
       if (!deps.llm) return "My brain is not wired up right now.";
       const system = reviewPrompt(args, botNameOf(deps));
       const reply = await deps.llm.complete({
@@ -303,17 +303,19 @@ export const COMMANDS: readonly CommandDef[] = [
     minRole: "admin",
     usage: "[category] <message-link>",
     summary: `reaction-bomb a message (${EMOJI_CATEGORY_NAMES.slice(0, 6).join(", ")}, ...)`,
-    run: async ({ deps, args }) => {
+    run: async ({ deps, args, prefix }) => {
       if (!deps.slack) return "Slack tools are not available.";
       // last arg is the link; an optional leading token is the category
       const link = args[args.length - 1] ?? "";
       const ref = parseMessageLink(link.replace(/^<|>$/g, ""));
-      if (!ref) return "Paste a Slack message link: `//ev br [category] <message-link>`";
+      if (!ref) return `Paste a Slack message link: \`${prefix} bomb [category] <message-link>\``;
       const category = args.length > 1 ? (args[0] ?? "positive").toLowerCase() : "positive";
       const emojis = pickBomb(category, REACTION_BOMB_SIZE);
       if (emojis.length === 0) return `Unknown category. Try: ${EMOJI_CATEGORY_NAMES.join(", ")}`;
       const landed = await deps.slack.addReactions(ref.channel, ref.ts, emojis);
-      return landed > 0 ? `💥 dropped ${landed} *${category}* reactions` : "Could not add any reactions (already bombed, or I am not in that channel).";
+      return landed > 0
+        ? `💥 dropped ${landed} *${category}* reactions`
+        : "Could not add any reactions (already bombed, or I am not in that channel).";
     },
   },
   {
@@ -322,16 +324,16 @@ export const COMMANDS: readonly CommandDef[] = [
     minRole: "admin",
     usage: "<message-link>",
     summary: "draft and post an AI reply to a message",
-    run: async ({ deps, args }) => {
+    run: async ({ deps, args, prefix }) => {
       if (!deps.slack || !deps.draft) return "Slack tools are not available.";
       const ref = parseMessageLink((args[0] ?? "").replace(/^<|>$/g, ""));
-      if (!ref) return "Paste a Slack message link: `//ev jrp <message-link>`";
+      if (!ref) return `Paste a Slack message link: \`${prefix} reply <message-link>\``;
       const thread = await deps.slack.replies(ref.channel, ref.ts);
       if (thread.length === 0) return "I could not read that message (am I in the channel?).";
       const draft = await deps.draft(thread);
       if (!draft.trim()) return "I could not draft a reply for that one.";
       await deps.slack.post(ref.channel, draft, ref.ts);
-      return `posted a reply in that thread 🙈`;
+      return "posted a reply in that thread 🙈";
     },
   },
 ];
@@ -342,13 +344,13 @@ for (const c of COMMANDS) {
   for (const a of c.aliases ?? []) byName.set(a, c);
 }
 
-const renderHelp = (role: UserRole): string => {
+const renderHelp = (role: UserRole, prefix: string, slash: string): string => {
   const lines = COMMANDS.filter((c) => RANK[role] >= RANK[c.minRole]).map(
     (c) => `- \`${c.name}${c.usage ? ` ${c.usage}` : ""}\` - ${c.summary}`,
   );
   return [
     "Commands - run either way:",
-    "  slash: `/ev <command> <args>`   message: `//ev <command> <args>`",
+    `  slash: \`${slash} <command> <args>\`   message: \`${prefix} <command> <args>\``,
     "",
     ...lines,
   ].join("\n");
@@ -356,11 +358,13 @@ const renderHelp = (role: UserRole): string => {
 
 /**
  * Extract the command line from an inbound message, or undefined for plain chat.
- * Accepts `//ev ...`, the legacy `!...`, and tolerates a leading @-mention.
+ * Accepts the configured `prefix`, the legacy `!`, and tolerates a leading mention.
  */
-export const commandLineOf = (text: string): string | undefined => {
+export const commandLineOf = (text: string, prefix: string = DEFAULT_COMMAND_PREFIX): string | undefined => {
   const t = text.trim().replace(LEADING_MENTION, "").trim();
-  if (t === "//ev" || t.toLowerCase().startsWith("//ev ")) return t.slice(4).trim();
+  const p = prefix.trim();
+  const lower = t.toLowerCase();
+  if (t === p || lower.startsWith(`${p.toLowerCase()} `)) return t.slice(p.length).trim();
   if (t.startsWith("!")) return t.slice(1).trim();
   return undefined;
 };
@@ -375,13 +379,18 @@ export const listCommandInfo = (): CommandInfo[] =>
     summary: c.summary,
   }));
 
+export type DispatchOptions = { prefix?: string; slash?: string };
+
 /** Run a command line (e.g. "add @U1 admin") on behalf of `actor`. */
 export const dispatchCommand = async (
   deps: CommandDeps,
   actor: AllowedUser,
   channelId: string,
   line: string,
+  opts: DispatchOptions = {},
 ): Promise<string> => {
+  const prefix = opts.prefix ?? DEFAULT_COMMAND_PREFIX;
+  const slash = opts.slash ?? DEFAULT_SLASH_COMMAND;
   const trimmed = line.trim();
   const name = (trimmed.split(/\s+/)[0] || "help").toLowerCase();
   const rest = trimmed.slice(name.length).trim();
@@ -392,7 +401,7 @@ export const dispatchCommand = async (
 
   const command = byName.get(name);
   if (!command) {
-    const msg = `I do not recognise \`${name}\`. Try \`//ev help\`.`;
+    const msg = `I do not recognise \`${name}\`. Try \`${prefix} help\`.`;
     log(name, false, msg);
     return msg;
   }
@@ -407,7 +416,7 @@ export const dispatchCommand = async (
     return msg;
   }
   try {
-    const result = await command.run({ deps, actor, channelId, args, rest });
+    const result = await command.run({ deps, actor, channelId, args, rest, prefix, slash });
     log(command.name, true, result);
     return result;
   } catch (e) {
