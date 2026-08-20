@@ -64,6 +64,21 @@ describe("reviewPrompt", () => {
     expect(p).toContain("from your own account -");
   });
 
+  test("house style: no dashes, no trailing full stop, lowercase sentence starts", () => {
+    const p = reviewPrompt(["https://github.com/o/r/pull/1"], "Evie");
+    expect(p).toContain("no em dashes and no en dashes anywhere in the text");
+    expect(p).toContain("do not put a full stop at the end of a paragraph");
+    expect(p).toContain("do not capitalise the first word of a sentence");
+    expect(p).toMatch(/unless the word is "I"/);
+    expect(p).toContain("lowercase start, no trailing full stop"); // list items too
+  });
+
+  test("the prompt does not itself use the punctuation it bans", () => {
+    const p = reviewPrompt(["https://github.com/o/r/pull/1"], "Evie", { login: "kai", name: "Kai" });
+    expect(p).not.toInclude("—"); // em dash
+    expect(p).not.toInclude("–"); // en dash
+  });
+
   test("mentions use GitHub tagging, never Slack tags", () => {
     const p = reviewPrompt(["https://github.com/o/r/pull/1"], "Evie");
     expect(p).toContain("use GitHub tagging syntax - @login");
