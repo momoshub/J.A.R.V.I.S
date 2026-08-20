@@ -166,7 +166,7 @@ describe("dashboard prompt editor", () => {
     const res = await dash.handle(req(`/prompt?token=${TOKEN}`));
     const body = await res.text();
     expect(body).toContain("built-in default");
-    expect(body).toContain("temperament of Tony Stark");
+    expect(body).toContain("warm, gentle and calm");
   });
 
   test("saves and then reflects a custom prompt", async () => {

@@ -6,6 +6,14 @@ describe("buildSystemPrompt", () => {
     expect(buildSystemPrompt()).toContain(DEFAULT_PERSONALITY);
   });
 
+  test("default persona is warm, bilingual, and self-refers affectionately", () => {
+    const out = buildSystemPrompt();
+    expect(out).toContain("Evie");
+    for (const term of ["em", "Gấu", "mị", "em gái"]) expect(out).toContain(term);
+    expect(out).toContain("Vietnamese");
+    expect(out).toContain("calm");
+  });
+
   test("uses a custom base when provided", () => {
     const out = buildSystemPrompt({ base: "You are terse.", learnings: [] });
     expect(out).toContain("You are terse.");
