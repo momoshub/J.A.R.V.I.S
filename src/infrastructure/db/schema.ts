@@ -76,6 +76,37 @@ export const migrate = (db: Database): void => {
   migrateRoles(db);
   migrateSlackTs(db);
   migrateThreadTs(db);
+  migrateWorkflows(db);
+};
+
+/**
+ * Migration v5: long-running workflow sessions.
+ *
+ * One row per thread that is driving a durable CLI session. `session_id` is the
+ * id the CLI was started with, so the session survives a bot restart: the next
+ * message in that thread resumes it.
+ */
+const migrateWorkflows = (db: Database): void => {
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS workflows (
+      id          INTEGER PRIMARY KEY AUTOINCREMENT,
+      channel_id  TEXT NOT NULL,
+      thread_ts   TEXT NOT NULL,
+      session_id  TEXT NOT NULL,
+      task        TEXT NOT NULL,
+      started_by  TEXT NOT NULL,
+      status      TEXT NOT NULL DEFAULT 'active',
+      turns       INTEGER NOT NULL DEFAULT 0,
+      created_at  INTEGER NOT NULL,
+      updated_at  INTEGER NOT NULL
+    );
+  `);
+  // At most one live workflow per thread; stopped ones stay for the record.
+  db.exec(`
+    CREATE UNIQUE INDEX IF NOT EXISTS idx_workflows_active
+      ON workflows (channel_id, thread_ts) WHERE status = 'active';
+  `);
+  db.exec("PRAGMA user_version = 5;");
 };
 
 /**

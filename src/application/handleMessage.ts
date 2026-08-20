@@ -21,6 +21,7 @@ import type { MessageRepo } from "../infrastructure/db/messageRepo.ts";
 import type { UserRepo } from "../infrastructure/db/userRepo.ts";
 import type { LearningsRepo } from "../infrastructure/db/learningsRepo.ts";
 import type { CommandLogRepo } from "../infrastructure/db/commandLogRepo.ts";
+import type { WorkflowRepo } from "../infrastructure/db/workflowRepo.ts";
 import type { SlackAdminPort, SlackMessage } from "./slackAdmin.ts";
 import type { GitHubPort } from "./github.ts";
 import type { DraftReply } from "./draftReply.ts";
@@ -50,6 +51,10 @@ export type HandleMessageDeps = {
   draft?: DraftReply;
   /** Per-role CLI tool policy (sandbox/allow-list) applied to the chat brain. */
   toolPolicy?: (role: UserRole) => ToolPolicy;
+  /** Long-running workflow sessions bound to a thread. */
+  workflows?: WorkflowRepo;
+  /** Fresh CLI session id for a new workflow; injected for deterministic tests. */
+  newSessionId?: () => string;
   /** Local endpoint the bot can POST a learning to, if the listener may teach. */
   learnUrl?: string;
   /** Configured message command prefix + slash name, for the command layer. */

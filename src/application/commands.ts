@@ -16,6 +16,7 @@ import { reviewPrompt } from "../domain/reviewPrompt.ts";
 import { EMOJI_CATEGORY_NAMES, pickBomb } from "../domain/emoji.ts";
 import { parseMessageLink } from "../domain/slackLinks.ts";
 import { postedBody } from "../domain/ghCommand.ts";
+import { runWorkflowTurn, WORKFLOW_MIN_ROLE, type WorkflowDeps } from "./workflow.ts";
 import type { AllowedUser, PromptContext, UserRole } from "../domain/types.ts";
 import type { ToolPolicy } from "../domain/toolPolicy.ts";
 import type { Clock, LlmPort } from "./ports.ts";
@@ -26,6 +27,7 @@ import type { MessageRepo } from "../infrastructure/db/messageRepo.ts";
 import type { UserRepo } from "../infrastructure/db/userRepo.ts";
 import type { LearningsRepo } from "../infrastructure/db/learningsRepo.ts";
 import type { CommandLogRepo } from "../infrastructure/db/commandLogRepo.ts";
+import type { WorkflowRepo } from "../infrastructure/db/workflowRepo.ts";
 
 /** Neutral fallbacks; the real prefix/slash come from config (see index.ts). */
 export const DEFAULT_COMMAND_PREFIX = "//bot";
@@ -45,6 +47,10 @@ export type CommandDeps = {
   slack?: SlackAdminPort;
   /** GitHub actions the bot takes itself - the up-front approve in `review`. */
   github?: GitHubPort;
+  /** Long-running workflow sessions bound to a thread. */
+  workflows?: WorkflowRepo;
+  /** Fresh CLI session id for a new workflow; injected for deterministic tests. */
+  newSessionId?: () => string;
   /** AI reply drafting, for reply. */
   draft?: DraftReply;
   /** Per-role CLI tool policy (sandbox/allow-list), for ask + review. */
@@ -74,6 +80,8 @@ type Context = {
   deps: CommandDeps;
   actor: AllowedUser;
   channelId: string;
+  /** Thread the command was typed in; absent when invoked by slash command. */
+  threadTs?: string;
   args: string[];
   rest: string;
   /** configured message prefix + slash, for help/hint text */
@@ -416,6 +424,56 @@ export const COMMANDS: readonly CommandDef[] = [
     },
   },
   {
+    name: "workflow",
+    aliases: ["wf"],
+    minRole: WORKFLOW_MIN_ROLE,
+    usage: "<task> | stop | status",
+    summary: "start a long task in this thread and keep talking to it",
+    run: async (ctx) => {
+      const { deps, actor, channelId, threadTs, rest, prefix, reply } = ctx;
+      if (!deps.workflows) return "Workflows are not available.";
+      if (!threadTs) {
+        return `Workflows live in a thread - use \`${prefix} workflow <task>\` in a channel or DM rather than the slash command.`;
+      }
+      const live = deps.workflows.activeFor(channelId, threadTs);
+      const sub = rest.trim();
+
+      if (/^stop$/i.test(sub)) {
+        if (!live) return "No workflow running in this thread.";
+        deps.workflows.stop(live.id, deps.clock());
+        return `🛑 workflow stopped after ${live.turns} turn${live.turns === 1 ? "" : "s"}. The thread goes back to normal chat.`;
+      }
+      if (/^status$/i.test(sub)) {
+        if (!live) return "No workflow running in this thread.";
+        return `⚙️ workflow running - started by <@${live.startedBy}>, ${live.turns} turn${live.turns === 1 ? "" : "s"} so far.\n> ${live.task}`;
+      }
+      if (live) {
+        return `A workflow is already running in this thread (${live.turns} turns). Just talk to it, or \`${prefix} workflow stop\` to end it.`;
+      }
+      if (!sub) return `What should I work on? \`${prefix} workflow <task>\``;
+      if (!deps.llm) return "My brain is not wired up right now.";
+
+      const workflow = deps.workflows.start(
+        {
+          channelId,
+          threadTs,
+          sessionId: (deps.newSessionId ?? (() => crypto.randomUUID()))(),
+          task: sub,
+          startedBy: actor.slackId,
+        },
+        deps.clock(),
+      );
+
+      // No live destination (tests / slack off): run the turn and return it.
+      if (!reply) return runWorkflowTurn(deps as WorkflowDeps, workflow, actor, sub, true);
+
+      await reply(`⚙️ workflow started - I will keep this session open. Talk to me here; \`${prefix} workflow stop\` ends it.`);
+      const out = await runWorkflowTurn(deps as WorkflowDeps, workflow, actor, sub, true);
+      await reply(out);
+      return ""; // already delivered to the thread
+    },
+  },
+  {
     name: "rm-msg",
     aliases: ["rmmsg", "unsend"],
     minRole: "admin",
@@ -503,6 +561,8 @@ export const listCommandInfo = (): CommandInfo[] =>
 export type DispatchOptions = {
   prefix?: string;
   slash?: string;
+  /** Thread the command came from; workflows are bound to one. */
+  threadTs?: string;
   /** Destination sink for progress + direct results (thread or DM). */
   reply?: (text: string) => Promise<void>;
 };
@@ -542,7 +602,17 @@ export const dispatchCommand = async (
     return msg;
   }
   try {
-    const result = await command.run({ deps, actor, channelId, args, rest, prefix, slash, reply: opts.reply });
+    const result = await command.run({
+      deps,
+      actor,
+      channelId,
+      threadTs: opts.threadTs,
+      args,
+      rest,
+      prefix,
+      slash,
+      reply: opts.reply,
+    });
     log(command.name, true, result);
     return result;
   } catch (e) {

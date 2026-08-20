@@ -100,11 +100,37 @@ Every command has two interfaces - use whichever you like. Both triggers are con
 | `bomb [category] <message-link>` (alias `br`) | admins | reaction-bomb a message with a burst of emoji |
 | `reply <message-link>` (alias `jrp`) | admins | draft and post an AI reply to a message |
 | `rm-msg <message-link>` (aliases `rmmsg`, `unsend`) | admins | delete a message the bot posted (a bot token cannot delete anyone else's) |
+| `workflow <task>` / `workflow stop` / `workflow status` (alias `wf`) | executers+ | start a long task in this thread and keep talking to it (see [Workflows](#workflows)) |
 | `promote @user` / `demote @user` | owner | change role |
 
 The power tools also have their own Slack slash commands if you register them (`/rv`, `/br`, `/jrp`) - much quicker than a freeform ask. `br`/`jrp` need the Console's Slack read/write scopes; `rv` uses the local `gh` and **writes to the PR** (approve/comment/request-changes).
 
 Examples (with the default prefix): `/bot add @kai admin`, `//bot learn our staging URL is staging.example.com`, `//bot ask summarise the last thread`.
+
+## Workflows
+
+A `workflow` turns a thread into a long-running job you can talk to.
+
+```
+X/jv workflow migrate the webhook handler to the new signature check
+```
+
+The bot claims a Claude CLI session id, runs the first turn, and keeps that
+session for the thread. Every later message in the thread resumes it, so the
+model keeps its own context and its files between turns - it is still mid-task,
+not re-reading a transcript. Answer its questions, change direction, ask where
+it got to; `workflow stop` ends it and the thread goes back to normal chat.
+
+- one live workflow per thread, `workflow status` shows it
+- `executer`, `admin` and `owner` may drive one; anyone lower still chats
+  normally in the thread without steering the task
+- tools are whatever the driver's role allows - a sandboxed `executer` gets a
+  sandboxed workflow
+- the session id is in the database, so a bot restart does not lose the session
+- turns may run up to 15 minutes each
+
+Because it lives in a thread, start it with the message form (`X/jv workflow ...`)
+rather than the slash command - a slash command has no thread to bind to.
 
 ## Roles & tool access
 

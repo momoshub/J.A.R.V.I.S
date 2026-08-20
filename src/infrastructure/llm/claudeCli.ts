@@ -13,7 +13,7 @@
  * - `stream` uses `--output-format stream-json --include-partial-messages` and
  *   forwards text deltas and tool-call progress to a sink as they arrive.
  */
-import type { LlmCompleteParams, LlmPort, LlmStreamSink } from "../../application/ports.ts";
+import type { LlmCompleteParams, LlmPort, LlmSession, LlmStreamSink } from "../../application/ports.ts";
 import type { PromptMessage } from "../../domain/types.ts";
 import type { ToolPolicy } from "../../domain/toolPolicy.ts";
 
@@ -99,11 +99,19 @@ export const summarizeTool = (
 
 type CliResult = { subtype?: string; is_error?: boolean; result?: string };
 
-const buildArgs = (config: ClaudeCliConfig, stream: boolean, policy?: ToolPolicy): string[] => {
+const buildArgs = (
+  config: ClaudeCliConfig,
+  stream: boolean,
+  policy?: ToolPolicy,
+  session?: LlmSession,
+): string[] => {
   const args = stream
     ? ["-p", "--output-format", "stream-json", "--verbose", "--include-partial-messages"]
     : ["-p", "--output-format", "json"];
   if (config.model) args.push("--model", config.model);
+  // A workflow keeps one CLI session alive across turns: claim the id on the
+  // first call, resume it on every later one, and the model keeps its context.
+  if (session) args.push(session.resume ? "--resume" : "--session-id", session.id);
 
   // A per-call policy overrides the adapter default. skipPermissions -> full
   // access; otherwise sandbox with an explicit allow/deny tool list.
@@ -135,8 +143,8 @@ const spawnClaude = (config: ClaudeCliConfig, args: string[], prompt: string, po
   });
 
 export const createClaudeCliLlm = (config: ClaudeCliConfig = {}): LlmPort => {
-  const complete = async ({ system, messages, assistantName, policy }: LlmCompleteParams) => {
-    const proc = spawnClaude(config, [...buildArgs(config, false, policy), "--append-system-prompt", system], renderPrompt(messages, assistantName), policy);
+  const complete = async ({ system, messages, assistantName, policy, session }: LlmCompleteParams) => {
+    const proc = spawnClaude(config, [...buildArgs(config, false, policy, session), "--append-system-prompt", system], renderPrompt(messages, assistantName), policy);
     const [stdout, stderr, exitCode] = await Promise.all([
       new Response(proc.stdout).text(),
       new Response(proc.stderr).text(),
@@ -157,8 +165,8 @@ export const createClaudeCliLlm = (config: ClaudeCliConfig = {}): LlmPort => {
     return (parsed.result ?? "").trim();
   };
 
-  const stream = async ({ system, messages, assistantName, policy }: LlmCompleteParams, sink: LlmStreamSink) => {
-    const proc = spawnClaude(config, [...buildArgs(config, true, policy), "--append-system-prompt", system], renderPrompt(messages, assistantName), policy);
+  const stream = async ({ system, messages, assistantName, policy, session }: LlmCompleteParams, sink: LlmStreamSink) => {
+    const proc = spawnClaude(config, [...buildArgs(config, true, policy, session), "--append-system-prompt", system], renderPrompt(messages, assistantName), policy);
     const stderrPromise = new Response(proc.stderr).text();
 
     // index -> in-flight tool_use block; id -> resolved card, replayed on the result.

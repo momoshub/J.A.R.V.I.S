@@ -95,3 +95,19 @@ export type Reviewer = {
   /** Profile name, when the account has one set. */
   readonly name?: string;
 };
+
+/** A long-running CLI session bound to one Slack thread. */
+export type Workflow = {
+  readonly id: number;
+  readonly channelId: string;
+  readonly threadTs: string;
+  /** CLI session id; resumed on every turn after the first. */
+  readonly sessionId: string;
+  readonly task: string;
+  readonly startedBy: string;
+  readonly status: "active" | "stopped";
+  readonly turns: number;
+  readonly createdAt: number;
+  readonly updatedAt: number;
+};
+

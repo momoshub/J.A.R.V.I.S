@@ -15,6 +15,7 @@ import { createUserRepo } from "./infrastructure/db/userRepo.ts";
 import { createMessageRepo } from "./infrastructure/db/messageRepo.ts";
 import { createLearningsRepo } from "./infrastructure/db/learningsRepo.ts";
 import { createCommandLogRepo } from "./infrastructure/db/commandLogRepo.ts";
+import { createWorkflowRepo } from "./infrastructure/db/workflowRepo.ts";
 import { createSettingsRepo, SETTING_KEYS } from "./infrastructure/db/settingsRepo.ts";
 import { loadBotProfile } from "./application/botProfile.ts";
 import { seedOwner } from "./infrastructure/db/seed.ts";
@@ -69,6 +70,7 @@ const main = async () => {
   // Activity log to the logs/ folder: every command (and message) is recorded,
   // failed commands additionally land in errors.log.
   const activity = createActivityLog(config.logDir);
+  const workflows = createWorkflowRepo(db);
   const baseCommandLog = createCommandLogRepo(db);
   const commandLog: CommandLogRepo = {
     ...baseCommandLog,
@@ -148,6 +150,8 @@ const main = async () => {
     slack: slackAdmin,
     // `review` approves through this directly, before the brain starts.
     github: createGhCli(),
+    // Long tasks driven from a thread, each holding its own CLI session.
+    workflows,
     draft,
     toolPolicy,
     // The dashboard API is loopback-only, so the brain can save a learning the

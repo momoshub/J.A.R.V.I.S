@@ -28,6 +28,17 @@ export type LlmStreamEvent =
 /** Consumer of streaming events (e.g. the Slack streaming renderer). */
 export type LlmStreamSink = (event: LlmStreamEvent) => void;
 
+/**
+ * A durable CLI session. The first turn creates it, later turns resume it, so
+ * the model keeps its own context (and its files) between messages instead of
+ * being replayed a transcript each time.
+ */
+export type LlmSession = {
+  readonly id: string;
+  /** false on the turn that creates the session, true for every one after. */
+  readonly resume: boolean;
+};
+
 export type LlmCompleteParams = {
   readonly system: string;
   readonly messages: readonly PromptMessage[];
@@ -35,6 +46,8 @@ export type LlmCompleteParams = {
   readonly assistantName?: string;
   /** Per-call tool/sandbox policy (CLI adapter only); overrides adapter defaults. */
   readonly policy?: ToolPolicy;
+  /** Continue a durable session instead of a one-shot call (CLI adapter only). */
+  readonly session?: LlmSession;
 };
 
 /** Anything that can turn a system prompt + history into a reply. */
