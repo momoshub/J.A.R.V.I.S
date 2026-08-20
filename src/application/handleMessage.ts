@@ -15,13 +15,13 @@ import {
 import { buildSystemPrompt } from "../domain/personality.ts";
 import { hasContent } from "../domain/mentions.ts";
 import type { Clock, LlmPort, LlmStreamSink } from "./ports.ts";
-import type { PromptContext, UserRole } from "../domain/types.ts";
+import type { PromptContext, StoredMessage, UserRole } from "../domain/types.ts";
 import type { ToolPolicy } from "../domain/toolPolicy.ts";
 import type { MessageRepo } from "../infrastructure/db/messageRepo.ts";
 import type { UserRepo } from "../infrastructure/db/userRepo.ts";
 import type { LearningsRepo } from "../infrastructure/db/learningsRepo.ts";
 import type { CommandLogRepo } from "../infrastructure/db/commandLogRepo.ts";
-import type { SlackAdminPort } from "./slackAdmin.ts";
+import type { SlackAdminPort, SlackMessage } from "./slackAdmin.ts";
 import type { GitHubPort } from "./github.ts";
 import type { DraftReply } from "./draftReply.ts";
 
@@ -107,9 +107,13 @@ export const handleMessage = async (
   );
 
   const window = deps.contextWindow ?? DEFAULT_CONTEXT_WINDOW;
-  // Scoped to this thread, never the whole channel: one channel holds many
-  // unrelated conversations, and they used to bleed into each other.
-  const history = deps.messages.recentForThread(inbound.channelId, inbound.threadTs ?? "", window);
+  // The thread itself is the context, read from Slack: the whole of this thread
+  // and nothing from the ones beside it. Stored memory is only the fallback -
+  // it holds just the turns the bot handled, so anything said while it was not
+  // listening (or before it joined) is missing from it.
+  const history =
+    (await loadThread(deps, inbound)) ??
+    deps.messages.recentForThread(inbound.channelId, inbound.threadTs ?? "", window);
   const ctx = deps.promptContext?.() ?? { learnings: [] };
   const system = buildSystemPrompt({
     botName: ctx.botName,
@@ -152,6 +156,57 @@ export const handleMessage = async (
   );
 
   return { kind: "reply", text: safeReply };
+};
+
+/**
+ * Read this thread out of Slack, shaped like stored turns so everything
+ * downstream is unchanged.
+ *
+ * Only this thread: `conversations.replies` is scoped to one root, so the
+ * neighbouring conversations in the same channel never come along. Returns
+ * undefined when there is nothing to read or the call fails (missing scope, a
+ * rate limit), and the caller falls back to stored memory.
+ */
+const loadThread = async (
+  deps: HandleMessageDeps,
+  inbound: InboundMessage,
+): Promise<StoredMessage[] | undefined> => {
+  if (!deps.slack || !inbound.threadTs) return undefined;
+  let thread: readonly SlackMessage[];
+  try {
+    thread = await deps.slack.replies(inbound.channelId, inbound.threadTs);
+  } catch {
+    return undefined; // no scope / API trouble - stored memory still works
+  }
+  if (thread.length === 0) return undefined;
+
+  const turns = thread
+    .filter((m) => m.text.trim().length > 0)
+    .map((m, i) => ({
+      id: i,
+      channelId: inbound.channelId,
+      slackUserId: m.own ? ASSISTANT_AUTHOR : m.userId,
+      role: (m.own ? "assistant" : "user") as StoredMessage["role"],
+      content: m.text.trim(),
+      createdAt: Math.round(Number(m.ts) * 1000) || 0,
+      slackTs: m.ts,
+      threadTs: inbound.threadTs,
+    }));
+
+  // Slack can lag a beat on the message that triggered us; it has to be last.
+  if (!turns.some((t) => t.slackTs === inbound.messageTs)) {
+    turns.push({
+      id: turns.length,
+      channelId: inbound.channelId,
+      slackUserId: inbound.slackUserId,
+      role: "user",
+      content: cleanInboundText(inbound.text),
+      createdAt: deps.clock(),
+      slackTs: inbound.messageTs ?? "",
+      threadTs: inbound.threadTs,
+    });
+  }
+  return turns;
 };
 
 /** Roles allowed to teach the bot - the same gate the `learn` command applies. */

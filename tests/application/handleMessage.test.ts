@@ -5,6 +5,28 @@ import { createMessageRepo } from "../../src/infrastructure/db/messageRepo.ts";
 import { handleMessage, type HandleMessageDeps } from "../../src/application/handleMessage.ts";
 import type { LlmPort } from "../../src/application/ports.ts";
 import type { PromptMessage } from "../../src/domain/types.ts";
+import type { SlackAdminPort, SlackMessage } from "../../src/application/slackAdmin.ts";
+
+const slackMsg = (over: Partial<SlackMessage> & { ts: string; userId: string; text: string }): SlackMessage => ({
+  userName: "",
+  replyCount: 0,
+  own: false,
+  mentionsBot: false,
+  ...over,
+});
+
+/** Every port method a no-op; individual tests override just `replies`. */
+const noopSlack: SlackAdminPort = {
+  listConversations: async () => [],
+  history: async () => ({ messages: [] }),
+  replies: async () => [],
+  update: async () => {},
+  remove: async () => {},
+  post: async () => {},
+  postDm: async () => {},
+  addReactions: async () => 0,
+  resolveNames: async () => ({}),
+};
 
 const OWNER = "U0OWNER0001";
 
@@ -259,5 +281,71 @@ describe("handleMessage", () => {
     });
     expect(system).toContain("ts 200.2");
     expect(system).not.toContain("ts 100.1");
+  });
+
+  test("context is the whole Slack thread, including turns the bot never stored", async () => {
+    let seen: readonly PromptMessage[] = [];
+    const deps = build(fakeLlm("ok", (m) => (seen = m)));
+    const asked: { channel: string; ts: string }[] = [];
+    deps.slack = {
+      ...noopSlack,
+      replies: async (channel: string, ts: string) => {
+        asked.push({ channel, ts });
+        return [
+          slackMsg({ ts: "100.1", userId: OWNER, text: "who is Mai" }),
+          slackMsg({ ts: "100.2", userId: "UBOT", text: "she works in ops", own: true }),
+          // said in the thread while the bot was not addressed - never stored
+          slackMsg({ ts: "100.3", userId: "U2", text: "she joined in March" }),
+          slackMsg({ ts: "200.9", userId: OWNER, text: "and her role?" }),
+        ];
+      },
+    };
+
+    await handleMessage(deps, {
+      channelId: "D1",
+      slackUserId: OWNER,
+      text: "and her role?",
+      threadTs: "100.1",
+      messageTs: "200.9",
+    });
+
+    expect(asked).toEqual([{ channel: "D1", ts: "100.1" }]); // this thread only
+    expect(seen.map((m) => m.content)).toEqual([
+      "who is Mai",
+      "she works in ops",
+      "she joined in March",
+      "and her role?",
+    ]);
+    expect(seen.map((m) => m.role)).toEqual(["user", "assistant", "user", "user"]);
+  });
+
+  test("the triggering message is appended if Slack has not caught up yet", async () => {
+    let seen: readonly PromptMessage[] = [];
+    const deps = build(fakeLlm("ok", (m) => (seen = m)));
+    deps.slack = {
+      ...noopSlack,
+      replies: async () => [slackMsg({ ts: "100.1", userId: OWNER, text: "first" })],
+    };
+    await handleMessage(deps, {
+      channelId: "D1",
+      slackUserId: OWNER,
+      text: "the new one",
+      threadTs: "100.1",
+      messageTs: "100.2",
+    });
+    expect(seen.map((m) => m.content)).toEqual(["first", "the new one"]);
+  });
+
+  test("falls back to stored memory when the thread cannot be read", async () => {
+    let seen: readonly PromptMessage[] = [];
+    const deps = build(fakeLlm("ok", (m) => (seen = m)));
+    deps.slack = {
+      ...noopSlack,
+      replies: async () => {
+        throw new Error("missing_scope");
+      },
+    };
+    await handleMessage(deps, { channelId: "D1", slackUserId: OWNER, text: "hello", threadTs: "100.1" });
+    expect(seen.map((m) => m.content)).toEqual(["hello"]);
   });
 });
