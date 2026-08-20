@@ -4,7 +4,7 @@ Guidance for working on this repo. Keep it accurate - update it when behavior, s
 
 ## What this is
 
-A configurable Slack agent bot (Bun + TypeScript). Its "brain" is the local **Claude Code CLI** (default) or the Anthropic API. It has SQLite memory, an allowlist with roles, live streaming replies, a command registry, and a React admin dashboard. The code is **generic** - the running instance's identity (name, persona, prefixes, etc.) lives in the DB / env, never hardcoded. This checkout's instance is "Evie".
+A configurable Slack agent bot (Bun + TypeScript). Its "brain" is the local **Claude Code CLI** (default) or the Anthropic API. It has SQLite memory, an allowlist with roles, live streaming replies, a command registry, and a React admin dashboard. The code is **generic** - the running instance's identity (name, persona, prefixes, etc.) lives in the DB / env, never hardcoded.
 
 ## Commands
 
@@ -39,11 +39,11 @@ Always run `bun run typecheck` AND `bun test` before considering a change done. 
 
 ## Key facts (non-obvious)
 
-- **Identity is data, not code.** Bot name/persona/labels live in the DB `settings` table (seeded, editable from the dashboard). Command triggers (`COMMAND_PREFIX`, `SLASH_COMMAND`), model, cwd, owner id, etc. come from env. Do NOT hardcode instance-specific strings ("Evie", `//ev`, `data/ev.db`) in `src/` - defaults are neutral (`Assistant`, `//bot`, `data/bot.db`).
-- **The DB is committed** (`data/ev.db` here) and carries the allowlist + identity. Conversation `messages` are cleared before committing; WAL sidecars are gitignored. After schema changes, migrations run via `PRAGMA user_version` in `db/schema.ts`.
+- **Identity is data, not code.** Bot name/persona/labels live in the DB `settings` table (seeded, editable from the dashboard). Command triggers (`COMMAND_PREFIX`, `SLASH_COMMAND`), model, cwd, owner id, etc. come from env. Do NOT hardcode instance-specific strings (bot name, command prefix, db filename) in `src/` - the code defaults are neutral (`Assistant`, `//bot`, `data/bot.db`) and each instance overrides via env + DB.
+- **The DB is committed** (path from `DATABASE_PATH`) and carries the allowlist + identity. Conversation `messages` are cleared before committing; WAL sidecars are gitignored. After schema changes, migrations run via `PRAGMA user_version` in `db/schema.ts`.
 - **Roles** (`src/domain/access.ts`, `toolPolicy.ts`): `pal` < `executer` < `admin` < `owner`. owner/admin run the CLI full-access; pal/executer are sandboxed (`--allowedTools` allow-list, no `--dangerously-skip-permissions`, fixed cwd). `review` is a preset that always runs full-access and writes to the PR.
 - **Commands** are a single registry in `src/application/commands.ts`, invoked as `<COMMAND_PREFIX> <cmd>`, the `<SLASH_COMMAND> <cmd>` slash, or legacy `!<cmd>`. Add a command = one entry; it gets role-gating, logging, and dashboard listing for free.
-- **The bot's runtime ignores this CLAUDE.md** - EV runs the CLI in a temp cwd with an identity-lock that ignores CLAUDE.md/memory. This file is for developer / Claude Code sessions editing the repo.
+- **The bot's runtime ignores this CLAUDE.md** - the bot runs the CLI in a temp cwd with an identity-lock that ignores CLAUDE.md/memory. This file is for developer / Claude Code sessions editing the repo.
 
 ## Running instance / ops
 
