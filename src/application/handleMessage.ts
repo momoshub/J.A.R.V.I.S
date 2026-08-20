@@ -73,6 +73,7 @@ export const handleMessage = async (
     base: ctx.base,
     learnings: ctx.learnings,
     addresseeName: inbound.displayName ?? decision.user.displayName,
+    participants: collectParticipants(deps, history, inbound),
   });
 
   const params = { system, messages: buildContextWindow(history, window) };
@@ -95,6 +96,24 @@ export const handleMessage = async (
   );
 
   return { kind: "reply", text: safeReply };
+};
+
+/** Distinct people who have spoken in this channel, resolved to names we know. */
+const collectParticipants = (
+  deps: HandleMessageDeps,
+  history: readonly { role: "user" | "assistant"; slackUserId: string }[],
+  inbound: InboundMessage,
+) => {
+  const ids = new Set<string>();
+  for (const m of history) if (m.role === "user") ids.add(m.slackUserId);
+  ids.add(inbound.slackUserId);
+  return [...ids].map((id) => {
+    const name =
+      deps.users.get(id)?.displayName ||
+      (id === inbound.slackUserId ? inbound.displayName : undefined) ||
+      undefined;
+    return { id, name };
+  });
 };
 
 const ensureUserRecord = (

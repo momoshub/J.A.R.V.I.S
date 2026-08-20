@@ -23,7 +23,7 @@ export const buildContextWindow = (
   const size = Math.max(0, Math.floor(windowSize));
   return history
     .slice(-size)
-    .map(({ role, content }) => ({ role, content }));
+    .map(({ role, content, slackUserId }) => ({ role, content, speakerId: slackUserId }));
 };
 
 /** Strip Slack mention tokens like <@U123> or <@U123|name> and collapse whitespace. */

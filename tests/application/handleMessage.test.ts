@@ -114,6 +114,25 @@ describe("handleMessage", () => {
     expect(history[1]?.content).toBe("Streamed");
   });
 
+  test("puts channel participants (with tags) into the system prompt", async () => {
+    let seenSystem = "";
+    const deps = build(fakeLlm("ok", (_m, system) => (seenSystem = system)));
+    // another user has spoken in this channel earlier
+    deps.messages.append(
+      { channelId: "C1", slackUserId: "U2OTHER", role: "user", content: "hi all" },
+      500,
+    );
+    await handleMessage(deps, {
+      channelId: "C1",
+      slackUserId: OWNER,
+      text: "who is here?",
+      displayName: "Kai",
+    });
+    expect(seenSystem).toContain("People in this conversation");
+    expect(seenSystem).toContain(`<@${OWNER}>`);
+    expect(seenSystem).toContain("<@U2OTHER>");
+  });
+
   test("falls back to complete when a sink is given but llm cannot stream", async () => {
     const deps = build(fakeLlm("Completed"));
     const res = await handleMessage(

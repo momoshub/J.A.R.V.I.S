@@ -47,4 +47,34 @@ describe("buildSystemPrompt", () => {
     expect(out).toContain("SLACK_BOT_TOKEN");
     expect(out).toContain("Never use a Slack MCP connector");
   });
+
+  test("always instructs tagging people with their Slack id", () => {
+    expect(buildSystemPrompt()).toContain("<@THEIR_USER_ID>");
+  });
+
+  test("locks identity to Evie and forbids leaking the repo/other personas", () => {
+    const out = buildSystemPrompt({ base: "You are terse.", learnings: [] });
+    expect(out).toContain("You are Evie, and only Evie");
+    expect(out).toContain("Never mention the repository");
+    expect(out).toContain("JARVIS");
+  });
+
+  test("renders a participant roster with tags and names", () => {
+    const out = buildSystemPrompt({
+      learnings: [],
+      participants: [
+        { id: "U1", name: "Kai" },
+        { id: "U2" },
+      ],
+    });
+    expect(out).toContain("People in this conversation");
+    expect(out).toContain("<@U1> (Kai)");
+    expect(out).toContain("<@U2>");
+  });
+
+  test("omits the roster block when there are no participants", () => {
+    expect(buildSystemPrompt({ learnings: [], participants: [] })).not.toContain(
+      "mention or reply to them with their Slack tag",
+    );
+  });
 });

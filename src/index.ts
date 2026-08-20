@@ -6,6 +6,9 @@
  * the Slack listener and the dashboard. Everything below this file is decoupled
  * and independently testable.
  */
+import { mkdirSync } from "node:fs";
+import { join } from "node:path";
+import { tmpdir } from "node:os";
 import { loadConfig, modelLabel, type AppConfig } from "./config/env.ts";
 import { openDatabase } from "./infrastructure/db/client.ts";
 import { createUserRepo } from "./infrastructure/db/userRepo.ts";
@@ -20,6 +23,17 @@ import { createDashboard } from "./infrastructure/dashboard/server.ts";
 import type { LlmPort } from "./application/ports.ts";
 import type { RespondDeps } from "./application/respond.ts";
 
+/**
+ * Where the CLI runs. Default to a neutral dir outside E.V.'s own source so she
+ * never picks up this repo's git status / CLAUDE.md as "her job" and cannot edit
+ * her own code by accident. Override with CLAUDE_CWD to point her at a project.
+ */
+const resolveClaudeCwd = (config: AppConfig): string => {
+  const cwd = config.claudeCwd ?? join(tmpdir(), "ev-agent-workspace");
+  mkdirSync(cwd, { recursive: true });
+  return cwd;
+};
+
 /** Pick the brain based on config: the local Claude Code CLI or the API. */
 const buildLlm = (config: AppConfig): LlmPort =>
   config.llmProvider === "claude-cli"
@@ -27,7 +41,7 @@ const buildLlm = (config: AppConfig): LlmPort =>
         binPath: config.claudeBin,
         model: config.claudeModel,
         skipPermissions: config.claudeSkipPermissions,
-        cwd: config.claudeCwd,
+        cwd: resolveClaudeCwd(config),
         timeoutMs: config.claudeTimeoutMs,
       })
     : createAnthropicLlm({

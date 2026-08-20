@@ -16,9 +16,9 @@ const msg = (id: number, content: string): StoredMessage => ({
 });
 
 describe("buildContextWindow", () => {
-  test("keeps only role and content", () => {
+  test("keeps role, content and the speaker id", () => {
     const out = buildContextWindow([msg(1, "hi")]);
-    expect(out).toEqual([{ role: "user", content: "hi" }]);
+    expect(out).toEqual([{ role: "user", content: "hi", speakerId: "U1" }]);
   });
 
   test("keeps the most recent turns when over the window", () => {

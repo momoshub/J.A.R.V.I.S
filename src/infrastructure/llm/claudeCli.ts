@@ -29,27 +29,33 @@ export type ClaudeCliConfig = {
   timeoutMs?: number;
 };
 
-const roleLabel = (role: PromptMessage["role"]): string =>
-  role === "assistant" ? "E.V." : "User";
+const speakerLabel = (m: PromptMessage): string =>
+  m.role === "assistant" ? "Evie" : m.speakerId ? `<@${m.speakerId}>` : "User";
 
 /**
  * Render the conversation window into a single print-mode prompt.
  *
- * The window ends with the user's newest turn; earlier turns are supplied as
- * labelled context so Claude Code answers with full continuity.
+ * The window ends with the user's newest turn; earlier turns are supplied as a
+ * labelled transcript (speakers tagged by Slack id) so Claude Code has full
+ * continuity and knows exactly who to address and tag.
  */
 export const renderPrompt = (messages: readonly PromptMessage[]): string => {
   if (messages.length === 0) return "";
-  if (messages.length === 1) return messages[0]!.content;
 
   const history = messages.slice(0, -1);
   const latest = messages[messages.length - 1]!;
-  const transcript = history.map((m) => `${roleLabel(m.role)}: ${m.content}`).join("\n");
+  const from = latest.speakerId ? ` (from <@${latest.speakerId}>)` : "";
+
+  if (history.length === 0) {
+    return `Respond to this message${from}:\n${latest.content}`;
+  }
+
+  const transcript = history.map((m) => `${speakerLabel(m)}: ${m.content}`).join("\n");
   return [
     "Recent conversation for context:",
     transcript,
     "",
-    "Respond to this newest message:",
+    `Respond to this newest message${from}:`,
     latest.content,
   ].join("\n");
 };

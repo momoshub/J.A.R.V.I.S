@@ -11,21 +11,31 @@ describe("renderPrompt", () => {
     expect(renderPrompt([])).toBe("");
   });
 
-  test("single message is passed through verbatim", () => {
-    expect(renderPrompt([{ role: "user", content: "hello" }])).toBe("hello");
+  test("single message asks for a reply and carries the sender tag", () => {
+    const out = renderPrompt([{ role: "user", content: "hello", speakerId: "U1" }]);
+    expect(out).toContain("hello");
+    expect(out).toContain("(from <@U1>)");
   });
 
-  test("multi-turn renders labelled context plus the latest message", () => {
+  test("multi-turn attributes speakers by tag plus the latest message", () => {
     const msgs: PromptMessage[] = [
-      { role: "user", content: "hi" },
+      { role: "user", content: "hi", speakerId: "U1" },
       { role: "assistant", content: "hey" },
-      { role: "user", content: "how are you" },
+      { role: "user", content: "how are you", speakerId: "U2" },
     ];
     const out = renderPrompt(msgs);
-    expect(out).toContain("User: hi");
-    expect(out).toContain("E.V.: hey");
-    expect(out).toContain("Respond to this newest message:");
+    expect(out).toContain("<@U1>: hi");
+    expect(out).toContain("Evie: hey");
+    expect(out).toContain("Respond to this newest message (from <@U2>):");
     expect(out.trim().endsWith("how are you")).toBe(true);
+  });
+
+  test("falls back to User when a speaker id is missing", () => {
+    const out = renderPrompt([
+      { role: "user", content: "a" },
+      { role: "user", content: "b" },
+    ]);
+    expect(out).toContain("User: a");
   });
 });
 

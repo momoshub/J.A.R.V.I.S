@@ -38,6 +38,14 @@ export type NewMessage = Omit<StoredMessage, "id" | "createdAt">;
 export type PromptMessage = {
   readonly role: MessageRole;
   readonly content: string;
+  /** Slack id of who sent a user turn, so transcripts can attribute + tag them. */
+  readonly speakerId?: string;
+};
+
+/** A person present in the conversation that E.V. may mention with a Slack tag. */
+export type Participant = {
+  readonly id: string;
+  readonly name?: string;
 };
 
 /** A durable fact E.V. has learned, shown and edited from the dashboard. */
