@@ -10,7 +10,12 @@
 import { App } from "@slack/bolt";
 import type { WebClient } from "@slack/web-api";
 import { respond, type RespondDeps } from "../../application/respond.ts";
+import { parseCommand } from "../../application/commands.ts";
 import { createSlackStream, type Streamer } from "./stream.ts";
+
+/** Messages longer than this get a "thinking" step before content streams. */
+const LONG_MESSAGE_CHARS = 40;
+const THINKING_LABEL = "☄️ burning acme token..";
 
 export type SlackAppConfig = {
   botToken: string;
@@ -68,6 +73,16 @@ export const createSlackApp = (config: SlackAppConfig, deps: Deps) => {
           log,
         )
       : undefined;
+
+    // For long, streamable, non-command messages, show a thinking step first.
+    if (
+      stream &&
+      deps.llm.stream &&
+      parseCommand(msg.text) === undefined &&
+      msg.text.trim().length > LONG_MESSAGE_CHARS
+    ) {
+      stream.showThinking(THINKING_LABEL);
+    }
 
     try {
       const result = await respond(

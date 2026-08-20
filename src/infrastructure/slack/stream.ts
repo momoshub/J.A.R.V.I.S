@@ -7,6 +7,9 @@
  * stream is started lazily on the first event, so non-streaming replies (e.g.
  * `!commands`) never open one. Appends are serialised on a promise chain so they
  * never overlap; if any step fails the caller falls back to a plain post.
+ *
+ * For longer messages the caller can show a "thinking" step first
+ * (`showThinking`), which auto-completes as soon as real content arrives.
  */
 import type { TaskUpdateChunk } from "@slack/types";
 import type { LlmStreamEvent, LlmStreamSink } from "../../application/ports.ts";
@@ -19,11 +22,16 @@ export type Streamer = {
 
 export type SlackStream = {
   sink: LlmStreamSink;
+  /** Show a leading "thinking" task card (id is reserved, auto-completes). */
+  showThinking: (title: string) => void;
   /** True once the underlying stream has been opened. */
   readonly started: boolean;
-  /** Await pending appends and close the stream. Returns false if it broke. */
+  /** Await pending appends and close the stream. False if it broke or showed no content. */
   finish: () => Promise<boolean>;
 };
+
+const THINKING_ID = "__thinking__";
+const THINKING_DONE_TITLE = "🐦‍🔥";
 
 const errMsg = (e: unknown): string => (e instanceof Error ? e.message : String(e));
 
@@ -34,6 +42,9 @@ export const createSlackStream = (
   let streamer: Streamer | undefined;
   let chain: Promise<unknown> = Promise.resolve();
   let broke = false;
+  let thinkingShown = false;
+  let thinkingDone = false;
+  let contentShown = false;
 
   const enqueue = (fn: () => Promise<unknown>): void => {
     chain = chain.then(fn).catch((e) => {
@@ -47,28 +58,51 @@ export const createSlackStream = (
     return streamer;
   };
 
-  const sink: LlmStreamSink = (event: LlmStreamEvent) => {
+  const task = (chunk: TaskUpdateChunk) => {
     const s = ensure();
+    enqueue(() => s.append({ chunks: [chunk] }));
+  };
+
+  const completeThinking = () => {
+    if (!thinkingShown || thinkingDone) return;
+    thinkingDone = true;
+    task({ type: "task_update", id: THINKING_ID, title: THINKING_DONE_TITLE, status: "complete" });
+  };
+
+  const showThinking = (title: string) => {
+    if (thinkingShown) return;
+    thinkingShown = true;
+    task({ type: "task_update", id: THINKING_ID, title, status: "in_progress" });
+  };
+
+  const sink: LlmStreamSink = (event: LlmStreamEvent) => {
+    completeThinking(); // first real content ends the thinking step
     if (event.type === "text") {
-      if (event.delta) enqueue(() => s.append({ markdown_text: event.delta }));
+      if (event.delta) {
+        contentShown = true;
+        const s = ensure();
+        enqueue(() => s.append({ markdown_text: event.delta }));
+      }
       return;
     }
-    const chunk: TaskUpdateChunk = {
+    contentShown = true;
+    task({
       type: "task_update",
       id: event.id,
       title: event.title,
       status: event.status,
       ...(event.details ? { details: event.details } : {}),
-    };
-    enqueue(() => s.append({ chunks: [chunk] }));
+    });
   };
 
   return {
     sink,
+    showThinking,
     get started() {
       return streamer !== undefined;
     },
     finish: async () => {
+      completeThinking();
       try {
         await chain;
       } catch {
@@ -81,7 +115,7 @@ export const createSlackStream = (
         log(`stream stop failed: ${errMsg(e)}`);
         return false;
       }
-      return !broke;
+      return contentShown && !broke;
     },
   };
 };

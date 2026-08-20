@@ -5,8 +5,8 @@ node_modules/
 .env
 .env.local
 
-# runtime sqlite database (schema + seed are committed; live data is not)
-data/*.db
+# sqlite database is committed to git (per request). its transient WAL sidecars
+# are not - they are flushed into the .db on a clean shutdown.
 data/*.db-shm
 data/*.db-wal
 

@@ -83,4 +83,33 @@ describe("createSlackStream", () => {
     const s = createSlackStream(f.make);
     expect(await s.finish()).toBe(false);
   });
+
+  test("shows a thinking step first and completes it on the first content", async () => {
+    const f = fakeStreamer();
+    const s = createSlackStream(f.make);
+    s.showThinking("☄️ burning acme token..");
+    s.sink({ type: "text", delta: "Hi" });
+    const ok = await s.finish();
+    expect(ok).toBe(true);
+
+    const chunks = f.appends
+      .filter((c) => "chunks" in c)
+      .map((c) => (c as { chunks: Array<Record<string, unknown>> }).chunks[0]!);
+    // thinking in_progress, then thinking complete, before the text append
+    expect(chunks[0]).toMatchObject({ id: "__thinking__", status: "in_progress" });
+    expect(chunks[0]!.title).toContain("burning acme token");
+    expect(chunks[1]).toMatchObject({ id: "__thinking__", status: "complete" });
+    const textIdx = f.appends.findIndex((c) => "markdown_text" in c);
+    const thinkingDoneIdx = f.appends.findIndex(
+      (c) => "chunks" in c && (c as { chunks: Array<{ status: string }> }).chunks[0]!.status === "complete",
+    );
+    expect(thinkingDoneIdx).toBeLessThan(textIdx);
+  });
+
+  test("showThinking without any content finishes as not-shown", async () => {
+    const f = fakeStreamer();
+    const s = createSlackStream(f.make);
+    s.showThinking("☄️ burning acme token..");
+    expect(await s.finish()).toBe(false);
+  });
 });
