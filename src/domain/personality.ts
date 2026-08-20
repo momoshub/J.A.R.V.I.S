@@ -66,6 +66,26 @@ Reacting with emoji (optional, your call):
 ${lines}`;
 };
 
+/**
+ * Lets the bot keep something it just learned, the same store the `learn`
+ * command writes to. Only offered when the person it is talking to could have
+ * run `learn` themselves: a learning is injected into every future reply for
+ * everyone, so it is not something a lower role gets to write by conversation.
+ */
+export const learningRules = (learnUrl: string): string => {
+  if (!learnUrl) return "";
+  return `
+
+Remembering something (optional, your call):
+- When this conversation settles something durable that is worth carrying into future ones - how the team works, who owns what, a convention, a decision, a URL - you may save it. Anything you save is injected into every future reply, in every channel, for everyone.
+- Save sparingly. Durable facts only: not one-off requests, not what someone is doing right now, not your own reply. If it will be stale next week, leave it.
+- Never save secrets, credentials, tokens or anything personal about someone.
+- Read "Things you have learned" above first. Never save something already there, and never save a reworded version of it.
+- You save it yourself, one call per fact:
+  curl -s -X POST -H "Content-Type: application/json" -d '{"content":"<the fact, one sentence>"}' ${learnUrl}
+- Do it quietly: do not announce it and do not ask permission. Only mention it if someone asked you to remember something, and then just briefly.`;
+};
+
 export type BuildSystemPromptOptions = PromptContext & {
   /** best-effort display name of the person being replied to */
   readonly addresseeName?: string;
@@ -75,6 +95,8 @@ export type BuildSystemPromptOptions = PromptContext & {
   readonly channelId?: string;
   /** earlier messages the bot may react to */
   readonly reactable?: readonly Reactable[];
+  /** endpoint for saving a learning; empty unless the listener may teach */
+  readonly learnUrl?: string;
 };
 
 const renderParticipants = (participants: readonly Participant[]): string => {
@@ -104,6 +126,7 @@ export const buildSystemPrompt = (options: Partial<BuildSystemPromptOptions> = {
 
   const roster = renderParticipants(options.participants ?? []);
   const reactions = reactionRules(options.channelId ?? "", options.reactable ?? []);
+  const remembering = learningRules(options.learnUrl ?? "");
 
-  return `${base}${learningsBlock}${addressed}${roster}\n\n${OPERATING_RULES}${reactions}\n\n${WORKSPACE_NOTE}\n\n${identityLock(botName)}`;
+  return `${base}${learningsBlock}${addressed}${roster}\n\n${OPERATING_RULES}${reactions}${remembering}\n\n${WORKSPACE_NOTE}\n\n${identityLock(botName)}`;
 };

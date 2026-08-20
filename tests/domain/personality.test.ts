@@ -116,6 +116,20 @@ describe("buildSystemPrompt", () => {
     expect(buildSystemPrompt({})).not.toContain("Reacting with emoji");
   });
 
+  test("offers to remember a durable fact, quietly and sparingly", () => {
+    const p = buildSystemPrompt({ learnUrl: "http://127.0.0.1:2002/api/learnings" });
+    expect(p).toContain("Remembering something (optional, your call)");
+    expect(p).toContain("http://127.0.0.1:2002/api/learnings");
+    expect(p).toContain("Save sparingly");
+    expect(p).toContain("Never save secrets, credentials, tokens");
+    expect(p).toContain("do not announce it and do not ask permission");
+  });
+
+  test("no remembering block without an endpoint - the listener may not teach", () => {
+    expect(buildSystemPrompt({})).not.toContain("Remembering something");
+    expect(buildSystemPrompt({ learnUrl: "" })).not.toContain("Remembering something");
+  });
+
   test("omits the roster block when there are no participants", () => {
     expect(buildSystemPrompt({ learnings: [], participants: [] })).not.toContain(
       "mention or reply to them with their Slack tag",

@@ -150,6 +150,9 @@ const main = async () => {
     github: createGhCli(),
     draft,
     toolPolicy,
+    // The dashboard API is loopback-only, so the brain can save a learning the
+    // same way the dashboard does - offered to admins/owner conversations only.
+    learnUrl: `http://127.0.0.1:${config.dashboardPort}/api/learnings`,
     commandPrefix: config.commandPrefix,
     slashCommand: config.slashCommand,
   };

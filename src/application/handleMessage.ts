@@ -50,6 +50,8 @@ export type HandleMessageDeps = {
   draft?: DraftReply;
   /** Per-role CLI tool policy (sandbox/allow-list) applied to the chat brain. */
   toolPolicy?: (role: UserRole) => ToolPolicy;
+  /** Local endpoint the bot can POST a learning to, if the listener may teach. */
+  learnUrl?: string;
   /** Configured message command prefix + slash name, for the command layer. */
   commandPrefix?: string;
   slashCommand?: string;
@@ -115,6 +117,9 @@ export const handleMessage = async (
     // Lets the bot react to earlier messages with its own token, if it wants to.
     channelId: inbound.channelId,
     reactable: reactableMessages(history),
+    // ... and keep a durable fact, but only when talking to someone who could
+    // have taught it one by hand. Learnings apply to everyone, everywhere.
+    learnUrl: canTeach(decision.user.role) ? deps.learnUrl : undefined,
   });
 
   const params = {
@@ -144,6 +149,9 @@ export const handleMessage = async (
 
   return { kind: "reply", text: safeReply };
 };
+
+/** Roles allowed to teach the bot - the same gate the `learn` command applies. */
+const canTeach = (role: UserRole): boolean => role === "admin" || role === "owner";
 
 /** Distinct people who have spoken in this channel, resolved to names we know. */
 const collectParticipants = (
