@@ -51,7 +51,16 @@ export type RawMessage = {
   text?: string;
   subtype?: string;
   bot_id?: string;
+  /** Set when the DM is a reply inside a thread; absent on a top-level message. */
+  thread_ts?: string;
 };
+
+/**
+ * The thread a message belongs to: its parent when it is a reply, otherwise
+ * itself. This is the key the bot's memory is scoped by, so getting it wrong
+ * either splits one conversation apart or merges two that are unrelated.
+ */
+export const threadKeyOf = (m: { ts: string; thread_ts?: string }): string => m.thread_ts ?? m.ts;
 
 /** Only plain human DMs: reject bot echoes, edits/joins (subtypes) and non-DM channels. */
 export const shouldHandleDm = (m: RawMessage): boolean =>
@@ -187,7 +196,7 @@ export const createSlackApp = (config: SlackAppConfig, deps: Deps) => {
       userId: e.user,
       teamId: context.teamId,
       text: e.text,
-      threadTs: e.thread_ts ?? e.ts,
+      threadTs: threadKeyOf(e),
       messageTs: e.ts,
       client: asClient(client),
       say: say as Incoming["say"],
@@ -203,7 +212,7 @@ export const createSlackApp = (config: SlackAppConfig, deps: Deps) => {
       userId: m.user!,
       teamId: context.teamId,
       text: m.text!,
-      threadTs: m.ts,
+      threadTs: threadKeyOf(m),
       messageTs: m.ts,
       client: asClient(client),
       say: say as Incoming["say"],

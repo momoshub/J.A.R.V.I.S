@@ -2,6 +2,7 @@ import { describe, expect, test } from "bun:test";
 import {
   createHandler,
   shouldHandleDm,
+  threadKeyOf,
   type Incoming,
   type SlackAppConfig,
   type SlackClient,
@@ -14,6 +15,15 @@ import type { LlmPort, LlmStreamEvent } from "../../src/application/ports.ts";
 import type { RespondDeps } from "../../src/application/respond.ts";
 
 const OWNER = "U0OWNER0001";
+
+describe("threadKeyOf", () => {
+  test("a top-level message is its own thread", () => {
+    expect(threadKeyOf({ ts: "100.1" })).toBe("100.1");
+  });
+  test("a reply belongs to its parent thread, not to itself", () => {
+    expect(threadKeyOf({ ts: "200.2", thread_ts: "100.1" })).toBe("100.1");
+  });
+});
 
 describe("shouldHandleDm", () => {
   const base = { channel_type: "im", user: "U1", text: "hi" };
