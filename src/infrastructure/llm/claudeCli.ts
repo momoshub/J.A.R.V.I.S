@@ -15,6 +15,7 @@
  */
 import type { LlmCompleteParams, LlmPort, LlmStreamSink } from "../../application/ports.ts";
 import type { PromptMessage } from "../../domain/types.ts";
+import type { ToolPolicy } from "../../domain/toolPolicy.ts";
 
 export type ClaudeCliConfig = {
   /** Path or name of the claude binary. Default "claude". */
@@ -85,22 +86,35 @@ export const summarizeTool = (name: string, jsonStr: string): { title: string; d
 
 type CliResult = { subtype?: string; is_error?: boolean; result?: string };
 
-const buildArgs = (config: ClaudeCliConfig, stream: boolean): string[] => {
+const buildArgs = (config: ClaudeCliConfig, stream: boolean, policy?: ToolPolicy): string[] => {
   const args = stream
     ? ["-p", "--output-format", "stream-json", "--verbose", "--include-partial-messages"]
     : ["-p", "--output-format", "json"];
   if (config.model) args.push("--model", config.model);
-  if (config.skipPermissions !== false) args.push("--dangerously-skip-permissions");
+
+  // A per-call policy overrides the adapter default. skipPermissions -> full
+  // access; otherwise sandbox with an explicit allow/deny tool list.
+  const skip = policy ? policy.skipPermissions : config.skipPermissions !== false;
+  if (skip) {
+    args.push("--dangerously-skip-permissions");
+  } else if (policy) {
+    if (policy.allowedTools && policy.allowedTools.length > 0) {
+      args.push("--allowedTools", ...policy.allowedTools);
+    }
+    if (policy.disallowedTools && policy.disallowedTools.length > 0) {
+      args.push("--disallowedTools", ...policy.disallowedTools);
+    }
+  }
   return args;
 };
 
-const spawnClaude = (config: ClaudeCliConfig, args: string[], prompt: string) =>
+const spawnClaude = (config: ClaudeCliConfig, args: string[], prompt: string, cwd?: string) =>
   Bun.spawn({
     cmd: [config.binPath ?? "claude", ...args],
     stdin: Buffer.from(prompt),
     stdout: "pipe",
     stderr: "pipe",
-    cwd: config.cwd,
+    cwd: cwd ?? config.cwd,
     timeout: config.timeoutMs ?? 120_000,
     // Non-interactive hint. process.env carries the bot's SLACK_BOT_TOKEN etc so the
     // CLI's Bash tool can call the Slack Web API with her own credentials.
@@ -108,8 +122,8 @@ const spawnClaude = (config: ClaudeCliConfig, args: string[], prompt: string) =>
   });
 
 export const createClaudeCliLlm = (config: ClaudeCliConfig = {}): LlmPort => {
-  const complete = async ({ system, messages, assistantName }: LlmCompleteParams) => {
-    const proc = spawnClaude(config, [...buildArgs(config, false), "--append-system-prompt", system], renderPrompt(messages, assistantName));
+  const complete = async ({ system, messages, assistantName, policy }: LlmCompleteParams) => {
+    const proc = spawnClaude(config, [...buildArgs(config, false, policy), "--append-system-prompt", system], renderPrompt(messages, assistantName), policy?.cwd);
     const [stdout, stderr, exitCode] = await Promise.all([
       new Response(proc.stdout).text(),
       new Response(proc.stderr).text(),
@@ -130,8 +144,8 @@ export const createClaudeCliLlm = (config: ClaudeCliConfig = {}): LlmPort => {
     return (parsed.result ?? "").trim();
   };
 
-  const stream = async ({ system, messages, assistantName }: LlmCompleteParams, sink: LlmStreamSink) => {
-    const proc = spawnClaude(config, [...buildArgs(config, true), "--append-system-prompt", system], renderPrompt(messages, assistantName));
+  const stream = async ({ system, messages, assistantName, policy }: LlmCompleteParams, sink: LlmStreamSink) => {
+    const proc = spawnClaude(config, [...buildArgs(config, true, policy), "--append-system-prompt", system], renderPrompt(messages, assistantName), policy?.cwd);
     const stderrPromise = new Response(proc.stderr).text();
 
     // index -> in-flight tool_use block; id -> resolved card title.

@@ -24,6 +24,7 @@ import { WebClient } from "@slack/web-api";
 import { createSlackApp } from "./infrastructure/slack/app.ts";
 import { createSlackAdmin } from "./infrastructure/slack/adminClient.ts";
 import { createDraftReply } from "./application/draftReply.ts";
+import { toolPolicyFor } from "./domain/toolPolicy.ts";
 import { createDashboard } from "./infrastructure/dashboard/server.ts";
 import type { LlmPort } from "./application/ports.ts";
 import type { RespondDeps } from "./application/respond.ts";
@@ -33,20 +34,19 @@ import type { RespondDeps } from "./application/respond.ts";
  * never picks up this repo's git status / CLAUDE.md as "her job" and cannot edit
  * her own code by accident. Override with CLAUDE_CWD to point her at a project.
  */
-const resolveClaudeCwd = (config: AppConfig): string => {
-  const cwd = config.claudeCwd ?? join(tmpdir(), "ev-agent-workspace");
-  mkdirSync(cwd, { recursive: true });
-  return cwd;
+const ensureDir = (path: string): string => {
+  mkdirSync(path, { recursive: true });
+  return path;
 };
 
 /** Pick the brain based on config: the local Claude Code CLI or the API. */
-const buildLlm = (config: AppConfig): LlmPort =>
+const buildLlm = (config: AppConfig, cwd: string): LlmPort =>
   config.llmProvider === "claude-cli"
     ? createClaudeCliLlm({
         binPath: config.claudeBin,
         model: config.claudeModel,
         skipPermissions: config.claudeSkipPermissions,
-        cwd: resolveClaudeCwd(config),
+        cwd,
         timeoutMs: config.claudeTimeoutMs,
       })
     : createAnthropicLlm({
@@ -84,7 +84,21 @@ const main = async () => {
       thinkingDoneLabel: config.botThinkingDoneLabel,
     });
 
-  const llm = buildLlm(config);
+  // Full-access cwd (owner/admin) is neutral (outside EV's source); sandboxed
+  // roles (pal/executer) run in a separate fixed scratch dir.
+  const fullCwd = ensureDir(config.claudeCwd ?? join(tmpdir(), "ev-agent-workspace"));
+  const sandboxCwd = ensureDir(join(tmpdir(), "ev-sandbox-workspace"));
+  const toolPolicy = (role: Parameters<typeof toolPolicyFor>[0]) =>
+    toolPolicyFor(role, {
+      fullCwd,
+      sandboxCwd,
+      executerTools: (settings.get(SETTING_KEYS.executerTools) ?? "")
+        .split(/[,\n]/)
+        .map((s) => s.trim())
+        .filter(Boolean),
+    });
+
+  const llm = buildLlm(config, fullCwd);
   console.log(`[llm] ${profile().name}'s brain: ${modelLabel(config)}`);
 
   // Slack Web API + AI drafting, shared by the console and the power-tool commands.
@@ -112,6 +126,7 @@ const main = async () => {
     disabledCommands,
     slack: slackAdmin,
     draft,
+    toolPolicy,
   };
 
   const dashboard = createDashboard(

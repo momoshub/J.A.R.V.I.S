@@ -47,6 +47,6 @@ describe("respond", () => {
   test("owner can add a member via command end to end", async () => {
     const deps = build(llm("x"));
     await respond(deps, { channelId: "C1", slackUserId: OWNER, text: "!add <@UNEW> member" });
-    expect(deps.users.get("UNEW")?.role).toBe("member");
+    expect(deps.users.get("UNEW")?.role).toBe("pal");
   });
 });

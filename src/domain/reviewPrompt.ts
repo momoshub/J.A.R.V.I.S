@@ -21,7 +21,7 @@ Know all of this before writing anything:
 
 Then drop the review the way you would tell a teammate in chat. Short conversational prose, one or two paragraphs, warm but clear. Go straight at the implementation and coding style, the concrete changes, real bugs, security, correctness, and design risks. Say clearly whether you would approve. Call out failing CI or an already merged/closed PR, respect approvals or change requests from OTHER reviewers, and do not repeat points already raised.
 
-Style: no headings, keep it tidy and short, light Slack mrkdwn emphasis is fine. Do not open with an overview or "here is my read", talk straight about the code. End the whole message with exactly this line: just a cozy little glance from em and my claude 🙈
+Style: no headings, keep it tidy and short, light Slack mrkdwn emphasis is fine. Do not open with an overview or "here is my read", talk straight about the code. End the whole message with exactly this line: just a cozy little glance from me and my claude ;))
 
-Stay under 250 words. Do NOT modify files, post comments, submit reviews, or run any write command - this is a read-only review.`;
+Stay under 500 words. Do NOT modify files, post comments, submit reviews, or run any write command - this is a read-only review.`;
 };

@@ -18,6 +18,7 @@ import { reviewPrompt } from "../domain/reviewPrompt.ts";
 import { EMOJI_CATEGORY_NAMES, pickBomb } from "../domain/emoji.ts";
 import { parseMessageLink } from "../domain/slackLinks.ts";
 import type { AllowedUser, PromptContext, UserRole } from "../domain/types.ts";
+import type { ToolPolicy } from "../domain/toolPolicy.ts";
 import type { Clock, LlmPort } from "./ports.ts";
 import type { SlackAdminPort } from "./slackAdmin.ts";
 import type { DraftReply } from "./draftReply.ts";
@@ -40,6 +41,8 @@ export type CommandDeps = {
   slack?: SlackAdminPort;
   /** AI reply drafting, for jrp. */
   draft?: DraftReply;
+  /** Per-role CLI tool policy (sandbox/allow-list), for ask + review. */
+  toolPolicy?: (role: UserRole) => ToolPolicy;
   clock: Clock;
   ownerSlackId: string;
 };
@@ -72,7 +75,7 @@ type CommandDef = {
   run: (ctx: Context) => string | Promise<string>;
 };
 
-const RANK: Record<UserRole, number> = { member: 0, admin: 1, owner: 2 };
+const RANK: Record<UserRole, number> = { pal: 0, executer: 1, admin: 2, owner: 3 };
 const MENTION = /<@([A-Z0-9]+)(?:\|[^>]+)?>/;
 const LEADING_MENTION = /^<@[A-Z0-9]+(?::[^>]+|\|[^>]+)?>\s*/;
 
@@ -84,7 +87,7 @@ const slackIdOf = (token?: string): string | undefined => {
 };
 
 const roleOf = (token?: string): UserRole | undefined =>
-  token === "owner" || token === "admin" || token === "member" ? token : undefined;
+  token === "owner" || token === "admin" || token === "executer" || token === "pal" ? token : undefined;
 
 const botNameOf = (deps: CommandDeps): string =>
   deps.botInfo?.().botName ?? deps.promptContext?.().botName ?? "Evie";
@@ -94,7 +97,7 @@ const changeRole = (ctx: Context, slackId: string, next: UserRole, requireExisti
   if (requireExisting && !target) return "I do not know that user - add them first.";
   const err = validateRoleChange(
     ctx.actor.role,
-    target?.role ?? "member",
+    target?.role ?? "pal",
     next,
     slackId === ctx.deps.ownerSlackId,
   );
@@ -115,21 +118,21 @@ export const COMMANDS: readonly CommandDef[] = [
   {
     name: "help",
     aliases: ["commands", "?"],
-    minRole: "member",
+    minRole: "pal",
     usage: "",
     summary: "list the commands you can run",
     run: ({ actor }) => renderHelp(actor.role),
   },
   {
     name: "ping",
-    minRole: "member",
+    minRole: "pal",
     usage: "",
     summary: "check I am awake",
     run: () => "pong 🏓 still here, at your service.",
   },
   {
     name: "whoami",
-    minRole: "member",
+    minRole: "pal",
     usage: "",
     summary: "show your access level",
     run: ({ actor }) => `You are <@${actor.slackId}>, role: *${actor.role}*.`,
@@ -137,7 +140,7 @@ export const COMMANDS: readonly CommandDef[] = [
   {
     name: "model",
     aliases: ["status"],
-    minRole: "member",
+    minRole: "pal",
     usage: "",
     summary: "show my brain and current model",
     run: ({ deps }) => {
@@ -147,10 +150,10 @@ export const COMMANDS: readonly CommandDef[] = [
   },
   {
     name: "ask",
-    minRole: "member",
+    minRole: "pal",
     usage: "<question>",
     summary: "ask me something in one shot",
-    run: async ({ deps, rest }) => {
+    run: async ({ deps, actor, rest }) => {
       const question = rest.trim();
       if (!question) return "Ask me something: `//ev ask <question>`";
       if (!deps.llm) return "My brain is not wired up right now.";
@@ -160,13 +163,14 @@ export const COMMANDS: readonly CommandDef[] = [
         system,
         messages: [{ role: "user", content: question }],
         assistantName: ctx.botName,
+        policy: deps.toolPolicy?.(actor.role),
       });
       return reply.trim() || "I do not have anything useful to add there.";
     },
   },
   {
     name: "forget",
-    minRole: "member",
+    minRole: "pal",
     usage: "",
     summary: "wipe my memory of this channel",
     run: ({ deps, channelId }) => {
@@ -191,12 +195,12 @@ export const COMMANDS: readonly CommandDef[] = [
   {
     name: "add",
     minRole: "admin",
-    usage: "@user [admin|member]",
+    usage: "@user [pal|executer|admin]",
     summary: "grant access (admin role is owner-only)",
     run: (ctx) => {
       const slackId = slackIdOf(ctx.args[0]);
-      if (!slackId) return "Who? `//ev add @user [admin|member]`";
-      return changeRole(ctx, slackId, roleOf(ctx.args[1]?.toLowerCase()) ?? "member", false);
+      if (!slackId) return "Who? `//ev add @user [pal|executer|admin]`";
+      return changeRole(ctx, slackId, roleOf(ctx.args[1]?.toLowerCase()) ?? "pal", false);
     },
   },
   {
@@ -230,10 +234,10 @@ export const COMMANDS: readonly CommandDef[] = [
     name: "demote",
     minRole: "owner",
     usage: "@user",
-    summary: "drop someone to member",
+    summary: "drop someone to pal",
     run: (ctx) => {
       const slackId = slackIdOf(ctx.args[0]);
-      return slackId ? changeRole(ctx, slackId, "member", true) : "Who? `//ev demote @user`";
+      return slackId ? changeRole(ctx, slackId, "pal", true) : "Who? `//ev demote @user`";
     },
   },
   {
@@ -277,17 +281,18 @@ export const COMMANDS: readonly CommandDef[] = [
   {
     name: "review",
     aliases: ["rv"],
-    minRole: "admin",
+    minRole: "pal",
     usage: "<pr-url> [pr-url...]",
     summary: "quick read-only code review of a PR",
-    run: async ({ deps, args }) => {
-      if (args.length === 0) return "Which PR? `//ev rv <pr-url>`";
+    run: async ({ deps, actor, args }) => {
+      if (args.length === 0) return "Which PR? `//ev review <pr-url>`";
       if (!deps.llm) return "My brain is not wired up right now.";
       const system = reviewPrompt(args, botNameOf(deps));
       const reply = await deps.llm.complete({
         system,
         messages: [{ role: "user", content: `review ${args.join(" ")}` }],
         assistantName: botNameOf(deps),
+        policy: deps.toolPolicy?.(actor.role),
       });
       return reply.trim() || "I could not put a review together for that one.";
     },

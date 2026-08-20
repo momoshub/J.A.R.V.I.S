@@ -11,6 +11,7 @@ export const SETTING_KEYS = {
   thinkingLabel: "thinking_label",
   thinkingDoneLabel: "thinking_done_label",
   disabledCommands: "disabled_commands",
+  executerTools: "executer_tools",
 } as const;
 
 export type SettingsRepo = {

@@ -32,8 +32,9 @@ export const post = async <T = { ok: true }>(path: string, body: unknown): Promi
 
 export type Bootstrap = { botName: string; ownerSlackId: string; model: string };
 export type Overview = { users: number; conversations: number; messages: number; learnings: number };
-export type UserRole = "owner" | "admin" | "member";
+export type UserRole = "owner" | "admin" | "executer" | "pal";
 export type AllowedUser = {
+  name?: string;
   slackId: string;
   role: UserRole;
   displayName: string;
@@ -79,7 +80,7 @@ export type SlackMessage = {
 export type CommandInfo = {
   name: string;
   aliases: string[];
-  minRole: "owner" | "admin" | "member";
+  minRole: "owner" | "admin" | "executer" | "pal";
   usage: string;
   summary: string;
 };

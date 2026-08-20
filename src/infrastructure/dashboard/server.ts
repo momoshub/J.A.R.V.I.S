@@ -16,6 +16,7 @@ import type { BotProfile } from "../../application/botProfile.ts";
 import type { SlackAdminPort } from "../../application/slackAdmin.ts";
 import type { DraftReply } from "../../application/draftReply.ts";
 import { listCommandInfo } from "../../application/commands.ts";
+import { PAL_TOOLS } from "../../domain/toolPolicy.ts";
 import type { Clock } from "../../application/ports.ts";
 import type { CommandLogRepo } from "../db/commandLogRepo.ts";
 import type { MessageRepo } from "../db/messageRepo.ts";
@@ -85,7 +86,7 @@ const originAllowed = (req: Request, url: URL, allowed: readonly string[]): bool
   }
 };
 
-const asRole = (v: unknown): UserRole => (v === "admin" ? "admin" : "member");
+const asRole = (v: unknown): UserRole => (v === "admin" ? "admin" : "pal");
 
 const CONTENT_TYPES: Record<string, string> = {
   ".html": "text/html; charset=utf-8",
@@ -164,8 +165,21 @@ export const createDashboard = (config: DashboardConfig, deps: DashboardDeps) =>
             messages: deps.messages.count(),
             learnings: deps.learnings.list().length,
           });
-        case "/api/users":
-          return Response.json(deps.users.list());
+        case "/api/users": {
+          const users = deps.users.list();
+          // Dual display: fill in a Slack-resolved name where we have no stored one.
+          const missing = users.filter((u) => !u.displayName).map((u) => u.slackId);
+          const resolved: Record<string, string> =
+            missing.length && deps.slack ? await deps.slack.resolveNames(missing).catch(() => ({})) : {};
+          return Response.json(
+            users.map((u) => ({ ...u, name: u.displayName || resolved[u.slackId] || "" })),
+          );
+        }
+        case "/api/roles":
+          return Response.json({
+            executerTools: deps.settings.get(SETTING_KEYS.executerTools) ?? "",
+            palTools: PAL_TOOLS,
+          });
         case "/api/learnings":
           return Response.json(deps.learnings.list());
         case "/api/identity": {
@@ -294,6 +308,12 @@ export const createDashboard = (config: DashboardConfig, deps: DashboardDeps) =>
         case "/api/command-log/clear":
           deps.commandLog?.clear();
           return Response.json({ ok: true });
+
+        case "/api/roles": {
+          // Assign the executer role's tool allow-list (comma/newline separated).
+          deps.settings.set(SETTING_KEYS.executerTools, String(body.executerTools ?? "").trim());
+          return Response.json({ ok: true });
+        }
 
         // --- Slack console mutations ---
         case "/api/slack/update":

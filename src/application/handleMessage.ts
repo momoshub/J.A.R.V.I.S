@@ -14,7 +14,8 @@ import {
 import { buildSystemPrompt } from "../domain/personality.ts";
 import { hasContent } from "../domain/mentions.ts";
 import type { Clock, LlmPort, LlmStreamSink } from "./ports.ts";
-import type { PromptContext } from "../domain/types.ts";
+import type { PromptContext, UserRole } from "../domain/types.ts";
+import type { ToolPolicy } from "../domain/toolPolicy.ts";
 import type { MessageRepo } from "../infrastructure/db/messageRepo.ts";
 import type { UserRepo } from "../infrastructure/db/userRepo.ts";
 import type { LearningsRepo } from "../infrastructure/db/learningsRepo.ts";
@@ -43,6 +44,8 @@ export type HandleMessageDeps = {
   slack?: SlackAdminPort;
   /** AI reply drafting, for jrp. */
   draft?: DraftReply;
+  /** Per-role CLI tool policy (sandbox/allow-list) applied to the chat brain. */
+  toolPolicy?: (role: UserRole) => ToolPolicy;
 };
 
 /** Author id recorded for the bot's own turns (never a real Slack id). */
@@ -101,6 +104,7 @@ export const handleMessage = async (
     system,
     messages: buildContextWindow(history, window),
     assistantName: ctx.botName,
+    policy: deps.toolPolicy?.(decision.user.role),
   };
   const reply = (
     sink && deps.llm.stream
@@ -145,7 +149,7 @@ const collectParticipants = (
 const ensureUserRecord = (
   deps: HandleMessageDeps,
   slackId: string,
-  role: "owner" | "admin" | "member",
+  role: UserRole,
   displayName?: string,
 ): void => {
   const existing = deps.users.get(slackId);

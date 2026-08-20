@@ -52,4 +52,6 @@ export type SlackAdminPort = {
   post: (channel: string, text: string, threadTs?: string) => Promise<void>;
   /** Add reactions to a message (tolerant of already-reacted / invalid names). Returns how many landed. */
   addReactions: (channel: string, ts: string, names: readonly string[]) => Promise<number>;
+  /** Resolve Slack display names for a set of user ids (cached, best-effort). */
+  resolveNames: (ids: readonly string[]) => Promise<Record<string, string>>;
 };

@@ -85,7 +85,8 @@ a { color: var(--accent-2); }
 .badge { padding: 3px 10px; border-radius: 999px; font-size: 12px; font-weight: 600; }
 .badge.owner { background: rgba(245, 166, 35, 0.15); color: var(--accent); }
 .badge.admin, .badge.user { background: rgba(108, 182, 255, 0.15); color: var(--accent-2); }
-.badge.member { background: rgba(255, 255, 255, 0.06); color: var(--muted); }
+.badge.member, .badge.pal { background: rgba(255, 255, 255, 0.06); color: var(--muted); }
+.badge.executer { background: rgba(70, 201, 139, 0.15); color: var(--ok); }
 .badge.assistant { background: rgba(245, 166, 35, 0.15); color: var(--accent); }
 .pill { display: inline-block; background: rgba(255, 255, 255, 0.06); color: var(--muted); border-radius: 999px; padding: 2px 10px; font-size: 12px; font-weight: 500; }
 

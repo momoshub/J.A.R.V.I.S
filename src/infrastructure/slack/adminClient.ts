@@ -172,5 +172,10 @@ export const createSlackAdmin = (client: WebClient): SlackAdminPort => {
       }
       return landed;
     },
+
+    resolveNames: async (ids) => {
+      const entries = await Promise.all(ids.map(async (id) => [id, await userName(id)] as const));
+      return Object.fromEntries(entries);
+    },
   };
 };

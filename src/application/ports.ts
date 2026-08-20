@@ -6,6 +6,7 @@
  * keeps them pure enough to test with fakes.
  */
 import type { PromptMessage } from "../domain/types.ts";
+import type { ToolPolicy } from "../domain/toolPolicy.ts";
 
 /** An incremental event produced while the model is generating a reply. */
 export type LlmStreamEvent =
@@ -26,6 +27,8 @@ export type LlmCompleteParams = {
   readonly messages: readonly PromptMessage[];
   /** Label for the bot's own turns in a rendered transcript. */
   readonly assistantName?: string;
+  /** Per-call tool/sandbox policy (CLI adapter only); overrides adapter defaults. */
+  readonly policy?: ToolPolicy;
 };
 
 /** Anything that can turn a system prompt + history into a reply. */

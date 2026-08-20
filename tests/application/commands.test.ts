@@ -53,6 +53,7 @@ const fakeSlack = (calls: SlackCalls, thread: SlackMessage[] = []): SlackAdminPo
     calls.reactions.push(...names);
     return names.length;
   },
+  resolveNames: async () => ({}),
 });
 
 let slackCalls: SlackCalls;
@@ -89,7 +90,7 @@ describe("dispatchCommand", () => {
     const deps = build();
     const owner = await dispatchCommand(deps, actor(), "C1", "help");
     expect(owner).toContain("promote");
-    const member = await dispatchCommand(deps, actor({ slackId: "U3", role: "member" }), "C1", "help");
+    const member = await dispatchCommand(deps, actor({ slackId: "U3", role: "pal" }), "C1", "help");
     expect(member).not.toContain("promote");
     expect(member).toContain("ask");
   });
@@ -100,7 +101,7 @@ describe("dispatchCommand", () => {
 
   test("role gate blocks under-privileged users", async () => {
     const deps = build();
-    const out = await dispatchCommand(deps, actor({ slackId: "U3", role: "member" }), "C1", "users");
+    const out = await dispatchCommand(deps, actor({ slackId: "U3", role: "pal" }), "C1", "users");
     expect(out).toContain("admin");
     expect(out).toContain("access");
   });
@@ -126,11 +127,11 @@ describe("dispatchCommand", () => {
 
   test("promote and demote (owner only)", async () => {
     const deps = build();
-    deps.users.upsert({ slackId: "U1", role: "member", displayName: "", addedBy: "x", createdAt: 1 });
+    deps.users.upsert({ slackId: "U1", role: "pal", displayName: "", addedBy: "x", createdAt: 1 });
     await dispatchCommand(deps, actor(), "C1", "promote <@U1>");
     expect(deps.users.get("U1")?.role).toBe("admin");
     await dispatchCommand(deps, actor(), "C1", "demote <@U1>");
-    expect(deps.users.get("U1")?.role).toBe("member");
+    expect(deps.users.get("U1")?.role).toBe("pal");
   });
 
   test("forget clears the channel", async () => {
@@ -193,9 +194,11 @@ describe("dispatchCommand", () => {
     expect(slackCalls.posts[0]).toMatchObject({ channel: "C0TEST00001", text: "an AI-drafted reply", threadTs: "1787122692.303399" });
   });
 
-  test("power tools are admin-gated", async () => {
-    const member = actor({ slackId: "U9", role: "member" });
-    expect(await dispatchCommand(build(), member, "C1", "rv x")).toContain("access");
-    expect(await dispatchCommand(build(), member, "C1", `br party ${LINK}`)).toContain("access");
+  test("pal can review but not bomb/reply", async () => {
+    const pal = actor({ slackId: "U9", role: "pal" });
+    // review is pal-accessible (runs the brain), bomb/reply are admin-gated
+    expect(await dispatchCommand(build(), pal, "C1", "rv https://github.com/o/r/pull/1")).toBe("drafted answer");
+    expect(await dispatchCommand(build(), pal, "C1", `br party ${LINK}`)).toContain("access");
+    expect(await dispatchCommand(build(), pal, "C1", `jrp ${LINK}`)).toContain("access");
   });
 });

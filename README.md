@@ -104,6 +104,19 @@ The power tools also have their own Slack slash commands if you register them (`
 
 Examples: `/ev add @kai admin`, `//ev learn our staging URL is staging.example.com`, `//ev ask summarise the last thread`.
 
+## Roles & tool access
+
+Each allowlisted user has a role that scopes what the brain may do when they talk to it:
+
+| role | tool access |
+| --- | --- |
+| `owner` | full control, cannot be removed |
+| `admin` | full tool access (real shell, writes), manages users |
+| `pal` | sandboxed read-only tools in a fixed scratch dir (gh/git/aws read-only, datadog/notion read, web search), and may use `review` |
+| `executer` | sandboxed, tools assigned from the dashboard (Users -> Executer tools) |
+
+Sandboxed roles run the Claude CLI without `--dangerously-skip-permissions`, with an explicit `--allowedTools` allow-list, so anything off the list is denied (verified: `pal` cannot write files). The `executer` allow-list is edited on the Users page.
+
 ## Dashboard
 
 A **React 19 + Vite + React Router 7** single-page app (in `web/`) served by the bot and backed by a JSON API under `/api`. Open `http://localhost:2001/?token=YOUR_DASHBOARD_TOKEN` (loopback only). The token is read once from the URL, kept in `sessionStorage`, and sent as the `X-Dashboard-Token` header on API calls. Tabs:

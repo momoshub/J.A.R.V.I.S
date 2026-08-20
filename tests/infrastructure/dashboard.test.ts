@@ -127,12 +127,12 @@ describe("dashboard mutations", () => {
     const res = await dash.handle(
       new Request(`http://127.0.0.1/api/users?token=${TOKEN}`, {
         method: "POST",
-        body: JSON.stringify({ slackId: "U444", role: "member" }),
+        body: JSON.stringify({ slackId: "U444", role: "pal" }),
         headers: { "content-type": "application/json", origin: "http://localhost:2001" },
       }),
     );
     expect(res.status).toBe(200);
-    expect(users.get("U444")?.role).toBe("member");
+    expect(users.get("U444")?.role).toBe("pal");
   });
 
   test("learnings add/remove", async () => {

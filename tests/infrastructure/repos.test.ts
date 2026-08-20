@@ -13,7 +13,7 @@ beforeEach(() => {
 
 const user = (over: Partial<AllowedUser> = {}): AllowedUser => ({
   slackId: "U1",
-  role: "member",
+  role: "pal",
   displayName: "Kai",
   addedBy: "system",
   createdAt: 100,

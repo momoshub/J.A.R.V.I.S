@@ -5,8 +5,14 @@
  * SQLite or Anthropic - the outer layers map to and from these.
  */
 
-/** Role of a person that the bot is allowed to talk to. */
-export type UserRole = "owner" | "admin" | "member";
+/**
+ * Role of a person the bot answers to, in increasing privilege:
+ * - pal: sandboxed, read-only tools in a fixed scratch dir, may use `review`
+ * - executer: sandboxed, tools assigned from the control deck
+ * - admin: full tool access, can manage users
+ * - owner: full control, cannot be removed
+ */
+export type UserRole = "pal" | "executer" | "admin" | "owner";
 
 /** A Slack user that is permitted to interact with the bot */
 export type AllowedUser = {

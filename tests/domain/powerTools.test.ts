@@ -37,6 +37,6 @@ describe("reviewPrompt", () => {
     expect(p).toContain("You are Evie");
     expect(p).toContain("https://github.com/o/r/pull/1");
     expect(p).toContain("read-only");
-    expect(p).toContain("just a cozy little glance from em and my claude 🙈");
+    expect(p).toContain("just a cozy little glance from me and my claude");
   });
 });
