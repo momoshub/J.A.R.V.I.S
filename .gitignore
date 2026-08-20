@@ -1,0 +1,20 @@
+# dependencies
+node_modules/
+
+# secrets
+.env
+.env.local
+
+# runtime sqlite database (schema + seed are committed; live data is not)
+data/*.db
+data/*.db-shm
+data/*.db-wal
+
+# bun
+.bun/
+
+# logs
+*.log
+
+# os
+.DS_Store
