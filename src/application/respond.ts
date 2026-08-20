@@ -6,15 +6,17 @@
 import { decideAccess } from "../domain/access.ts";
 import { executeCommand, parseCommand } from "./commands.ts";
 import { handleMessage, type HandleMessageDeps, type HandleResult, type InboundMessage } from "./handleMessage.ts";
+import type { LlmStreamSink } from "./ports.ts";
 
 export type RespondDeps = HandleMessageDeps;
 
 export const respond = async (
   deps: RespondDeps,
   inbound: InboundMessage,
+  sink?: LlmStreamSink,
 ): Promise<HandleResult> => {
   const command = parseCommand(inbound.text);
-  if (!command) return handleMessage(deps, inbound);
+  if (!command) return handleMessage(deps, inbound, sink);
 
   const decision = decideAccess(inbound.slackUserId, deps.ownerSlackId, deps.users.get);
   if (!decision.allowed) return { kind: "denied", text: decision.reason };

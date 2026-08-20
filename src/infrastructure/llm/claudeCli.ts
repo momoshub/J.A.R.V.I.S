@@ -7,8 +7,13 @@
  * with whatever permissions the CLI is launched with. E.V. remains the memory
  * owner - her SQLite window is rendered into each stateless invocation, so no
  * CLI session state is relied upon.
+ *
+ * Two modes:
+ * - `complete` uses `--output-format json` and returns the whole reply.
+ * - `stream` uses `--output-format stream-json --include-partial-messages` and
+ *   forwards text deltas and tool-call progress to a sink as they arrive.
  */
-import type { LlmPort } from "../../application/ports.ts";
+import type { LlmPort, LlmStreamSink } from "../../application/ports.ts";
 import type { PromptMessage } from "../../domain/types.ts";
 
 export type ClaudeCliConfig = {
@@ -49,61 +54,164 @@ export const renderPrompt = (messages: readonly PromptMessage[]): string => {
   ].join("\n");
 };
 
-type CliResult = {
-  subtype?: string;
-  is_error?: boolean;
-  result?: string;
+const truncate = (s: string, n: number): string => (s.length > n ? `${s.slice(0, n - 3)}...` : s);
+
+/** Turn a tool_use name + accumulated input JSON into a short card title/details. */
+export const summarizeTool = (name: string, jsonStr: string): { title: string; details?: string } => {
+  let input: Record<string, unknown> = {};
+  try {
+    input = jsonStr ? (JSON.parse(jsonStr) as Record<string, unknown>) : {};
+  } catch {
+    // partial/invalid json - fall back to the name only
+  }
+  if (name === "Bash" && typeof input.command === "string") {
+    return { title: truncate(`run: ${input.command}`, 200), details: truncate(input.command, 256) };
+  }
+  const firstString = Object.values(input).find((v) => typeof v === "string") as string | undefined;
+  return {
+    title: truncate(name, 200),
+    details: firstString ? truncate(firstString, 256) : undefined,
+  };
 };
 
+type CliResult = { subtype?: string; is_error?: boolean; result?: string };
+
+const buildArgs = (config: ClaudeCliConfig, stream: boolean): string[] => {
+  const args = stream
+    ? ["-p", "--output-format", "stream-json", "--verbose", "--include-partial-messages"]
+    : ["-p", "--output-format", "json"];
+  if (config.model) args.push("--model", config.model);
+  if (config.skipPermissions !== false) args.push("--dangerously-skip-permissions");
+  return args;
+};
+
+const spawnClaude = (config: ClaudeCliConfig, args: string[], prompt: string) =>
+  Bun.spawn({
+    cmd: [config.binPath ?? "claude", ...args],
+    stdin: Buffer.from(prompt),
+    stdout: "pipe",
+    stderr: "pipe",
+    cwd: config.cwd,
+    timeout: config.timeoutMs ?? 120_000,
+    // Non-interactive hint. process.env carries E.V.'s SLACK_BOT_TOKEN etc so the
+    // CLI's Bash tool can call the Slack Web API with her own credentials.
+    env: { ...process.env, IS_SANDBOX: "1" },
+  });
+
 export const createClaudeCliLlm = (config: ClaudeCliConfig = {}): LlmPort => {
-  const bin = config.binPath ?? "claude";
-  const timeout = config.timeoutMs ?? 120_000;
-
-  const buildArgs = (system: string): string[] => {
-    const args = ["-p", "--output-format", "json", "--append-system-prompt", system];
-    if (config.model) args.push("--model", config.model);
-    if (config.skipPermissions !== false) args.push("--dangerously-skip-permissions");
-    return args;
+  const complete = async ({ system, messages }: { system: string; messages: readonly PromptMessage[] }) => {
+    const proc = spawnClaude(config, [...buildArgs(config, false), "--append-system-prompt", system], renderPrompt(messages));
+    const [stdout, stderr, exitCode] = await Promise.all([
+      new Response(proc.stdout).text(),
+      new Response(proc.stderr).text(),
+      proc.exited,
+    ]);
+    if (exitCode !== 0) {
+      throw new Error(`claude CLI exited with code ${exitCode}: ${stderr.trim() || stdout.trim() || "no output"}`);
+    }
+    let parsed: CliResult;
+    try {
+      parsed = JSON.parse(stdout) as CliResult;
+    } catch {
+      throw new Error(`claude CLI returned non-JSON output: ${stdout.slice(0, 500)}`);
+    }
+    if (parsed.is_error || parsed.subtype !== "success") {
+      throw new Error(`claude CLI error (${parsed.subtype ?? "unknown"}): ${parsed.result ?? ""}`);
+    }
+    return (parsed.result ?? "").trim();
   };
 
-  return {
-    complete: async ({ system, messages }) => {
-      const prompt = renderPrompt(messages);
-      const proc = Bun.spawn({
-        cmd: [bin, ...buildArgs(system)],
-        stdin: Buffer.from(prompt),
-        stdout: "pipe",
-        stderr: "pipe",
-        cwd: config.cwd,
-        timeout,
-        // Non-interactive sandbox hint; do not inherit an interactive TTY.
-        env: { ...process.env, IS_SANDBOX: "1" },
-      });
+  const stream = async (
+    { system, messages }: { system: string; messages: readonly PromptMessage[] },
+    sink: LlmStreamSink,
+  ) => {
+    const proc = spawnClaude(config, [...buildArgs(config, true), "--append-system-prompt", system], renderPrompt(messages));
+    const stderrPromise = new Response(proc.stderr).text();
 
-      const [stdout, stderr, exitCode] = await Promise.all([
-        new Response(proc.stdout).text(),
-        new Response(proc.stderr).text(),
-        proc.exited,
-      ]);
+    // index -> in-flight tool_use block; id -> resolved card title.
+    const toolByIndex = new Map<number, { id: string; name: string; json: string }>();
+    const titleById = new Map<string, string>();
+    let finalText = "";
+    let streamedText = "";
 
-      if (exitCode !== 0) {
-        throw new Error(
-          `claude CLI exited with code ${exitCode}: ${stderr.trim() || stdout.trim() || "no output"}`,
-        );
+    const handleEvent = (e: Record<string, unknown>): void => {
+      if (e.type === "stream_event") {
+        const ev = (e.event ?? {}) as Record<string, unknown>;
+        const index = ev.index as number | undefined;
+        if (ev.type === "content_block_start") {
+          const block = (ev.content_block ?? {}) as Record<string, unknown>;
+          if (block.type === "tool_use" && typeof index === "number") {
+            toolByIndex.set(index, {
+              id: (block.id as string) ?? `t${index}`,
+              name: (block.name as string) ?? "tool",
+              json: "",
+            });
+          }
+        } else if (ev.type === "content_block_delta") {
+          const delta = (ev.delta ?? {}) as Record<string, unknown>;
+          if (delta.type === "text_delta" && typeof delta.text === "string") {
+            streamedText += delta.text;
+            sink({ type: "text", delta: delta.text });
+          } else if (delta.type === "input_json_delta" && typeof delta.partial_json === "string" && typeof index === "number") {
+            const tb = toolByIndex.get(index);
+            if (tb) tb.json += delta.partial_json;
+          }
+        } else if (ev.type === "content_block_stop" && typeof index === "number") {
+          const tb = toolByIndex.get(index);
+          if (tb) {
+            const { title, details } = summarizeTool(tb.name, tb.json);
+            titleById.set(tb.id, title);
+            sink({ type: "tool", id: tb.id, title, details, status: "in_progress" });
+          }
+        }
+      } else if (e.type === "user") {
+        const content = ((e.message as Record<string, unknown>)?.content ?? []) as Record<string, unknown>[];
+        for (const c of content) {
+          if (c.type === "tool_result" && typeof c.tool_use_id === "string") {
+            const title = titleById.get(c.tool_use_id) ?? "tool";
+            sink({ type: "tool", id: c.tool_use_id, title, status: c.is_error ? "error" : "complete" });
+          }
+        }
+      } else if (e.type === "result" && typeof e.result === "string") {
+        finalText = e.result;
       }
+    };
 
-      let parsed: CliResult;
-      try {
-        parsed = JSON.parse(stdout) as CliResult;
-      } catch {
-        throw new Error(`claude CLI returned non-JSON output: ${stdout.slice(0, 500)}`);
+    const reader = proc.stdout.getReader();
+    const decoder = new TextDecoder();
+    let buffer = "";
+    const consume = (chunk: string): void => {
+      buffer += chunk;
+      let nl = buffer.indexOf("\n");
+      while (nl !== -1) {
+        const line = buffer.slice(0, nl).trim();
+        buffer = buffer.slice(nl + 1);
+        if (line) {
+          try {
+            handleEvent(JSON.parse(line) as Record<string, unknown>);
+          } catch {
+            // ignore non-json lines
+          }
+        }
+        nl = buffer.indexOf("\n");
       }
+    };
 
-      if (parsed.is_error || parsed.subtype !== "success") {
-        throw new Error(`claude CLI error (${parsed.subtype ?? "unknown"}): ${parsed.result ?? ""}`);
-      }
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      consume(decoder.decode(value, { stream: true }));
+    }
+    if (buffer.trim()) consume("\n");
 
-      return (parsed.result ?? "").trim();
-    },
+    const exitCode = await proc.exited;
+    const finished = (finalText || streamedText).trim();
+    if (exitCode !== 0 && !finished) {
+      const stderr = await stderrPromise;
+      throw new Error(`claude CLI exited with code ${exitCode}: ${stderr.trim() || "no output"}`);
+    }
+    return finished;
   };
+
+  return { complete, stream };
 };

@@ -2,8 +2,9 @@ import { describe, expect, test } from "bun:test";
 import { mkdtempSync, writeFileSync, chmodSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { createClaudeCliLlm, renderPrompt } from "../../src/infrastructure/llm/claudeCli.ts";
+import { createClaudeCliLlm, renderPrompt, summarizeTool } from "../../src/infrastructure/llm/claudeCli.ts";
 import type { PromptMessage } from "../../src/domain/types.ts";
+import type { LlmStreamEvent } from "../../src/application/ports.ts";
 
 describe("renderPrompt", () => {
   test("empty window renders nothing", () => {
@@ -73,6 +74,17 @@ describe("createClaudeCliLlm", () => {
     ).rejects.toThrow(/non-JSON/);
   });
 
+  test("summarizeTool renders a Bash command", () => {
+    const out = summarizeTool("Bash", '{"command":"ls -la","description":"list"}');
+    expect(out.title).toContain("ls -la");
+    expect(out.details).toBe("ls -la");
+  });
+
+  test("summarizeTool falls back to the tool name", () => {
+    expect(summarizeTool("Read", '{"file_path":"/x"}').title).toBe("Read");
+    expect(summarizeTool("Weird", "not json").title).toBe("Weird");
+  });
+
   test("passes the rendered prompt to the binary on stdin", async () => {
     // The fake echoes back stdin inside the result so we can assert on it.
     const bin = fakeBin(
@@ -81,5 +93,66 @@ describe("createClaudeCliLlm", () => {
     const llm = createClaudeCliLlm({ binPath: bin });
     const out = await llm.complete({ system: "sys", messages: [{ role: "user", content: "marker-xyz" }] });
     expect(out).toBe("seen");
+  });
+});
+
+// A fake `claude` that emits stream-json NDJSON events (built via JSON.stringify
+// so there is no shell-escaping to get wrong).
+const fakeStreamBin = (events: unknown[]): string => {
+  const dir = mkdtempSync(join(tmpdir(), "ev-claude-stream-"));
+  const dataPath = join(dir, "events.ndjson");
+  writeFileSync(dataPath, events.map((e) => JSON.stringify(e)).join("\n") + "\n");
+  const path = join(dir, "claude");
+  writeFileSync(path, `#!/usr/bin/env bash\ncat > /dev/null\ncat ${dataPath}\n`);
+  chmodSync(path, 0o755);
+  return path;
+};
+
+const STREAM_EVENTS = [
+  { type: "system", subtype: "init" },
+  {
+    type: "stream_event",
+    event: { type: "content_block_start", index: 0, content_block: { type: "tool_use", id: "toolu_1", name: "Bash" } },
+  },
+  {
+    type: "stream_event",
+    event: { type: "content_block_delta", index: 0, delta: { type: "input_json_delta", partial_json: '{"command":"ls"}' } },
+  },
+  { type: "stream_event", event: { type: "content_block_stop", index: 0 } },
+  { type: "user", message: { content: [{ type: "tool_result", tool_use_id: "toolu_1", is_error: false }] } },
+  { type: "stream_event", event: { type: "content_block_start", index: 0, content_block: { type: "text" } } },
+  { type: "stream_event", event: { type: "content_block_delta", index: 0, delta: { type: "text_delta", text: "Hello " } } },
+  { type: "stream_event", event: { type: "content_block_delta", index: 0, delta: { type: "text_delta", text: "world" } } },
+  { type: "result", subtype: "success", is_error: false, result: "Hello world" },
+];
+
+describe("createClaudeCliLlm.stream", () => {
+  test("forwards text deltas and tool events and returns the final text", async () => {
+    const llm = createClaudeCliLlm({ binPath: fakeStreamBin(STREAM_EVENTS) });
+    const events: LlmStreamEvent[] = [];
+    const final = await llm.stream!(
+      { system: "sys", messages: [{ role: "user", content: "hi" }] },
+      (e) => events.push(e),
+    );
+
+    expect(final).toBe("Hello world");
+
+    const texts = events.filter((e) => e.type === "text").map((e) => (e as { delta: string }).delta);
+    expect(texts).toEqual(["Hello ", "world"]);
+
+    const tools = events.filter((e) => e.type === "tool") as Array<
+      Extract<LlmStreamEvent, { type: "tool" }>
+    >;
+    expect(tools).toHaveLength(2);
+    expect(tools[0]).toMatchObject({ id: "toolu_1", status: "in_progress" });
+    expect(tools[0]!.title).toContain("ls");
+    expect(tools[1]).toMatchObject({ id: "toolu_1", status: "complete" });
+  });
+
+  test("falls back to streamed text if no result event arrives", async () => {
+    const partial = STREAM_EVENTS.filter((e) => (e as { type: string }).type !== "result");
+    const llm = createClaudeCliLlm({ binPath: fakeStreamBin(partial) });
+    const final = await llm.stream!({ system: "sys", messages: [{ role: "user", content: "hi" }] }, () => {});
+    expect(final).toBe("Hello world");
   });
 });

@@ -12,7 +12,7 @@ import {
   DEFAULT_CONTEXT_WINDOW,
 } from "../domain/conversation.ts";
 import { buildSystemPrompt } from "../domain/personality.ts";
-import type { Clock, LlmPort } from "./ports.ts";
+import type { Clock, LlmPort, LlmStreamSink } from "./ports.ts";
 import type { PromptContext } from "../domain/types.ts";
 import type { MessageRepo } from "../infrastructure/db/messageRepo.ts";
 import type { UserRepo } from "../infrastructure/db/userRepo.ts";
@@ -44,6 +44,7 @@ export type HandleResult =
 export const handleMessage = async (
   deps: HandleMessageDeps,
   inbound: InboundMessage,
+  sink?: LlmStreamSink,
 ): Promise<HandleResult> => {
   const text = cleanInboundText(inbound.text);
   if (text.length === 0) return { kind: "ignored" };
@@ -74,10 +75,12 @@ export const handleMessage = async (
     addresseeName: inbound.displayName ?? decision.user.displayName,
   });
 
-  const reply = (await deps.llm.complete({
-    system,
-    messages: buildContextWindow(history, window),
-  })).trim();
+  const params = { system, messages: buildContextWindow(history, window) };
+  const reply = (
+    sink && deps.llm.stream
+      ? await deps.llm.stream(params, sink)
+      : await deps.llm.complete(params)
+  ).trim();
 
   const safeReply = reply.length > 0 ? reply : "I have got nothing useful to add there.";
 

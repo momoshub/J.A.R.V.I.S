@@ -46,9 +46,10 @@ Tested with an in-memory SQLite database and a fake `LlmPort`.
 Concrete implementations of the seams and the transports.
 
 - `db/` - `bun:sqlite` client, schema/migration, repos (`userRepo`, `messageRepo`), owner seed
-- `llm/claudeCli.ts` - the default `LlmPort`, wraps the local `claude` CLI (`-p --output-format json`) for full tool access
-- `llm/anthropic.ts` - alternative `LlmPort` backed by the Anthropic API
+- `llm/claudeCli.ts` - the default `LlmPort`, wraps the local `claude` CLI for full tool access. `complete` uses `--output-format json`; `stream` uses `--output-format stream-json --include-partial-messages` and forwards text deltas + tool events to a sink
+- `llm/anthropic.ts` - alternative `LlmPort` backed by the Anthropic API (no streaming; callers fall back to `complete`)
 - `slack/app.ts` - Socket Mode listener mapping Slack events to `respond`
+- `slack/stream.ts` - bridges the `LlmStreamSink` onto Slack's `chatStream` (text + `task_update` tool cards); Slack owns the message, appends are serialised, and a failed stream falls back to a single post
 - `dashboard/` - `Bun.serve` admin UI and JSON API (pure `views.ts` renderer)
 
 ### `src/config`

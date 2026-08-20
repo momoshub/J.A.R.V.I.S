@@ -16,6 +16,8 @@ const schema = z
   .object({
     SLACK_BOT_TOKEN: z.string().min(1, "SLACK_BOT_TOKEN is required"),
     SLACK_APP_TOKEN: z.string().min(1, "SLACK_APP_TOKEN is required"),
+    // Stream replies live via chat.startStream (tool calls shown as a timeline).
+    SLACK_STREAM_UPDATES: boolFromString(true),
 
     // Which brain powers E.V.: the local Claude Code CLI (default) or the API.
     LLM_PROVIDER: z.enum(["claude-cli", "anthropic"]).default("claude-cli"),
@@ -46,6 +48,7 @@ export type LlmProvider = "claude-cli" | "anthropic";
 export type AppConfig = {
   slackBotToken: string;
   slackAppToken: string;
+  slackStreamUpdates: boolean;
   llmProvider: LlmProvider;
   claudeBin: string;
   claudeModel: string;
@@ -77,6 +80,7 @@ export const loadConfig = (source: Record<string, string | undefined> = process.
   return {
     slackBotToken: env.SLACK_BOT_TOKEN,
     slackAppToken: env.SLACK_APP_TOKEN,
+    slackStreamUpdates: env.SLACK_STREAM_UPDATES,
     llmProvider: env.LLM_PROVIDER,
     claudeBin: env.CLAUDE_BIN,
     claudeModel: env.CLAUDE_MODEL,

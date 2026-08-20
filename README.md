@@ -25,6 +25,7 @@ Required env (see `.env.example`):
 | --- | --- |
 | `SLACK_BOT_TOKEN` | Bot User OAuth token (`xoxb-...`) |
 | `SLACK_APP_TOKEN` | App-level token with `connections:write` (`xapp-...`) |
+| `SLACK_STREAM_UPDATES` | `true` (default) streams replies live; `false` posts once |
 | `LLM_PROVIDER` | `claude-cli` (default) or `anthropic` |
 | `CLAUDE_BIN` | claude binary, default `claude` (claude-cli) |
 | `CLAUDE_MODEL` | model alias/id, default `opus` (claude-cli) |
@@ -62,8 +63,10 @@ The Slack app needs Socket Mode on, plus the `app_mention` and `message.im` even
 ## Talking to E.V.
 
 - DM her, or @-mention her in a channel she is in
-- She replies in-thread on mentions, inline in DMs
+- She replies in-thread, streaming the answer live as it is generated
+- Tool calls (shell, file reads, Slack API, etc.) show as a task timeline while she works
 - She only answers allowlisted users; the owner is always allowed
+- For questions about the Slack workspace she uses her own bot token and the Slack Web API, never a third-party connector
 
 ### Commands (prefix with `!`)
 

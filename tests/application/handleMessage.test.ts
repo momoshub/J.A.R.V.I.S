@@ -90,4 +90,37 @@ describe("handleMessage", () => {
     expect(res.kind).toBe("reply");
     if (res.kind === "reply") expect(res.text.length).toBeGreaterThan(0);
   });
+
+  test("uses stream when a sink is provided and stores the final text", async () => {
+    const streamingLlm: LlmPort = {
+      complete: async () => "should not be called",
+      stream: async (_params, sink) => {
+        sink({ type: "text", delta: "Str" });
+        sink({ type: "tool", id: "t1", title: "run: ls", status: "in_progress" });
+        sink({ type: "text", delta: "eamed" });
+        return "Streamed";
+      },
+    };
+    const deps = build(streamingLlm);
+    const events: string[] = [];
+    const res = await handleMessage(
+      deps,
+      { channelId: "C1", slackUserId: OWNER, text: "go" },
+      (e) => events.push(e.type),
+    );
+    expect(res).toEqual({ kind: "reply", text: "Streamed" });
+    expect(events).toEqual(["text", "tool", "text"]);
+    const history = deps.messages.recentForChannel("C1", 10);
+    expect(history[1]?.content).toBe("Streamed");
+  });
+
+  test("falls back to complete when a sink is given but llm cannot stream", async () => {
+    const deps = build(fakeLlm("Completed"));
+    const res = await handleMessage(
+      deps,
+      { channelId: "C1", slackUserId: OWNER, text: "go" },
+      () => {},
+    );
+    expect(res).toEqual({ kind: "reply", text: "Completed" });
+  });
 });

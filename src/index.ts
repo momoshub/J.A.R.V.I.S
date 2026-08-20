@@ -76,7 +76,11 @@ const main = async () => {
   dashboard.start();
 
   const slack = createSlackApp(
-    { botToken: config.slackBotToken, appToken: config.slackAppToken },
+    {
+      botToken: config.slackBotToken,
+      appToken: config.slackAppToken,
+      streamUpdates: config.slackStreamUpdates,
+    },
     deps,
   );
   await slack.start();
