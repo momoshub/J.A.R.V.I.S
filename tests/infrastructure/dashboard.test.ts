@@ -72,6 +72,39 @@ describe("dashboard mutations", () => {
     expect(users.get(OWNER)).toBeDefined();
   });
 
+  test("refuses to modify the owner via add (no downgrade)", async () => {
+    const { dash, users } = build();
+    const form = new FormData();
+    form.set("slackId", OWNER);
+    form.set("role", "admin");
+    const res = await dash.handle(req(`/api/users?token=${TOKEN}`, { method: "POST", body: form }));
+    expect(res.status).toBe(400);
+    expect(users.get(OWNER)?.role).toBe("owner");
+  });
+
+  test("rejects a cross-origin POST", async () => {
+    const { dash, users } = build();
+    const form = new FormData();
+    form.set("slackId", "U777");
+    const res = await dash.handle(
+      req(`/api/users?token=${TOKEN}`, {
+        method: "POST",
+        body: form,
+        headers: { origin: "http://evil.example" },
+      }),
+    );
+    expect(res.status).toBe(403);
+    expect(users.get("U777")).toBeUndefined();
+  });
+
+  test("sets security headers on responses", async () => {
+    const { dash } = build();
+    const res = await dash.handle(req(`/?token=${TOKEN}`));
+    expect(res.headers.get("referrer-policy")).toBe("no-referrer");
+    expect(res.headers.get("content-security-policy")).toContain("default-src 'none'");
+    expect(res.headers.get("x-frame-options")).toBe("DENY");
+  });
+
   test("removes a non-owner user", async () => {
     const { dash, users } = build();
     users.upsert({ slackId: "U5", role: "member", displayName: "", addedBy: "x", createdAt: 1 });

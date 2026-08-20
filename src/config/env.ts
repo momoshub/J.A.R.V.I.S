@@ -13,7 +13,7 @@ const schema = z.object({
   ANTHROPIC_MODEL: z.string().default("claude-opus-4-8"),
   OWNER_SLACK_ID: z.string().min(1, "OWNER_SLACK_ID is required"),
   DASHBOARD_PORT: z.coerce.number().int().positive().default(2001),
-  DASHBOARD_TOKEN: z.string().min(1, "DASHBOARD_TOKEN is required"),
+  DASHBOARD_TOKEN: z.string().min(24, "DASHBOARD_TOKEN must be at least 24 characters"),
   DATABASE_PATH: z.string().default("data/ev.db"),
 });
 

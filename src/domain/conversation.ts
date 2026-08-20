@@ -26,9 +26,9 @@ export const buildContextWindow = (
     .map(({ role, content }) => ({ role, content }));
 };
 
-/** Strip Slack mention tokens like <@U123> and collapse whitespace. */
+/** Strip Slack mention tokens like <@U123> or <@U123|name> and collapse whitespace. */
 export const cleanInboundText = (raw: string): string =>
   raw
-    .replace(/<@[A-Z0-9]+>/g, "")
+    .replace(/<@[A-Z0-9]+(?:\|[^>]+)?>/g, "")
     .replace(/\s+/g, " ")
     .trim();

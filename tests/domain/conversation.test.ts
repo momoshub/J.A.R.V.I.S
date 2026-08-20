@@ -47,4 +47,8 @@ describe("cleanInboundText", () => {
   test("collapses whitespace", () => {
     expect(cleanInboundText("a   b\n\nc")).toBe("a b c");
   });
+
+  test("strips piped mentions too", () => {
+    expect(cleanInboundText("<@U123|kai> ping <@U999|bob>")).toBe("ping");
+  });
 });

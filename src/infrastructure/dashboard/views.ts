@@ -28,7 +28,7 @@ const userRow = (u: AllowedUser, ownerSlackId: string, token: string): string =>
   const isOwner = u.slackId === ownerSlackId;
   const remove = isOwner
     ? "<span class=\"muted\">protected</span>"
-    : `<form method="POST" action="/api/users/remove?token=${encodeURIComponent(token)}" onsubmit="return confirm('Revoke ${escapeHtml(u.slackId)}?')">
+    : `<form method="POST" action="/api/users/remove?token=${encodeURIComponent(token)}">
          <input type="hidden" name="slackId" value="${escapeHtml(u.slackId)}" />
          <button class="danger" type="submit">revoke</button>
        </form>`;

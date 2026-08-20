@@ -51,9 +51,17 @@ export const createSlackApp = (config: SlackAppConfig, deps: Deps) => {
     threadTs?: string,
   ) => {
     const displayName = await fetchDisplayName(client, userId);
-    const result = await respond(deps, { channelId, slackUserId: userId, text, displayName });
-    if (result.kind === "ignored") return;
-    await say({ text: result.text, thread_ts: threadTs });
+    try {
+      const result = await respond(deps, { channelId, slackUserId: userId, text, displayName });
+      if (result.kind === "ignored") return;
+      await say({ text: result.text, thread_ts: threadTs });
+    } catch (err) {
+      log(`respond failed: ${err instanceof Error ? err.message : String(err)}`);
+      await say({
+        text: "Something in my circuits misfired handling that. Try again in a moment.",
+        thread_ts: threadTs,
+      }).catch(() => undefined);
+    }
   };
 
   // @-mentions in channels -> reply in the same thread.
