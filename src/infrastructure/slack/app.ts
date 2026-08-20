@@ -84,6 +84,8 @@ export type Incoming = {
   text: string;
   /** Thread to reply in. Streaming requires one, so we always anchor to a ts. */
   threadTs: string;
+  /** ts of this message itself, so the bot can react to it later. */
+  messageTs: string;
   client: SlackClient;
   say: (msg: { text: string; thread_ts?: string }) => Promise<unknown>;
 };
@@ -140,7 +142,15 @@ export const createHandler =
     try {
       const result = await respond(
         deps,
-        { channelId: msg.channelId, slackUserId: msg.userId, text, displayName, threadTs: msg.threadTs, viaSlash: false },
+        {
+          channelId: msg.channelId,
+          slackUserId: msg.userId,
+          text,
+          displayName,
+          threadTs: msg.threadTs,
+          messageTs: msg.messageTs,
+          viaSlash: false,
+        },
         stream?.sink,
       );
       log(`handled user=${msg.userId} channel=${msg.channelId} kind=${result.kind}`);
@@ -178,6 +188,7 @@ export const createSlackApp = (config: SlackAppConfig, deps: Deps) => {
       teamId: context.teamId,
       text: e.text,
       threadTs: e.thread_ts ?? e.ts,
+      messageTs: e.ts,
       client: asClient(client),
       say: say as Incoming["say"],
     });
@@ -193,6 +204,7 @@ export const createSlackApp = (config: SlackAppConfig, deps: Deps) => {
       teamId: context.teamId,
       text: m.text!,
       threadTs: m.ts,
+      messageTs: m.ts,
       client: asClient(client),
       say: say as Incoming["say"],
     });

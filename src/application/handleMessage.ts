@@ -10,6 +10,7 @@ import {
   buildContextWindow,
   cleanInboundText,
   DEFAULT_CONTEXT_WINDOW,
+  reactableMessages,
 } from "../domain/conversation.ts";
 import { buildSystemPrompt } from "../domain/personality.ts";
 import { hasContent } from "../domain/mentions.ts";
@@ -65,6 +66,8 @@ export type InboundMessage = {
   displayName?: string;
   /** thread to reply into (message commands); absent for a top-level DM */
   threadTs?: string;
+  /** Slack ts of this very message, so it can later be reacted to */
+  messageTs?: string;
   /** true when the command came in via a Slack slash command, not a message */
   viaSlash?: boolean;
 };
@@ -95,6 +98,7 @@ export const handleMessage = async (
       slackUserId: inbound.slackUserId,
       role: "user",
       content: text,
+      ...(inbound.messageTs ? { slackTs: inbound.messageTs } : {}),
     },
     now,
   );
@@ -108,6 +112,9 @@ export const handleMessage = async (
     learnings: ctx.learnings,
     addresseeName: inbound.displayName ?? decision.user.displayName,
     participants: collectParticipants(deps, history, inbound),
+    // Lets the bot react to earlier messages with its own token, if it wants to.
+    channelId: inbound.channelId,
+    reactable: reactableMessages(history),
   });
 
   const params = {

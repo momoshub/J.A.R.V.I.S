@@ -35,6 +35,8 @@ export type StoredMessage = {
   readonly role: MessageRole;
   readonly content: string;
   readonly createdAt: number;
+  /** Slack ts of the source message, when it came from one. Addressable: reactions. */
+  readonly slackTs?: string;
 };
 
 /** A turn to be persisted (no id/timestamp yet). */
@@ -46,6 +48,15 @@ export type PromptMessage = {
   readonly content: string;
   /** Slack id of who sent a user turn, so transcripts can attribute + tag them. */
   readonly speakerId?: string;
+};
+
+/** An earlier message the bot can act on, e.g. react to. */
+export type Reactable = {
+  readonly ts: string;
+  /** Slack id of whoever sent it. */
+  readonly speakerId: string;
+  /** Short excerpt, so the model can tell the messages apart. */
+  readonly excerpt: string;
 };
 
 /** A person present in the conversation that the bot may mention with a Slack tag. */

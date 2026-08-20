@@ -15,6 +15,7 @@ type Row = {
   role: MessageRole;
   content: string;
   created_at: number;
+  slack_ts: string;
 };
 
 const toMessage = (row: Row): StoredMessage => ({
@@ -24,6 +25,7 @@ const toMessage = (row: Row): StoredMessage => ({
   role: row.role,
   content: row.content,
   createdAt: row.created_at,
+  ...(row.slack_ts ? { slackTs: row.slack_ts } : {}),
 });
 
 /** A channel summary for the dashboard's conversation browser. */
@@ -45,8 +47,8 @@ export type MessageRepo = {
 
 export const createMessageRepo = (db: DbClient): MessageRepo => {
   const insertStmt = db.query(
-    `INSERT INTO messages (channel_id, slack_user_id, role, content, created_at)
-     VALUES ($channelId, $slackUserId, $role, $content, $createdAt)
+    `INSERT INTO messages (channel_id, slack_user_id, role, content, created_at, slack_ts)
+     VALUES ($channelId, $slackUserId, $role, $content, $createdAt, $slackTs)
      RETURNING *`,
   );
   const recentStmt = db.query<Row, [string, number]>(
@@ -71,6 +73,7 @@ export const createMessageRepo = (db: DbClient): MessageRepo => {
         $role: message.role,
         $content: message.content,
         $createdAt: createdAt,
+        $slackTs: message.slackTs ?? "",
       }) as Row;
       return toMessage(row);
     },

@@ -156,4 +156,38 @@ describe("handleMessage", () => {
     );
     expect(res).toEqual({ kind: "reply", text: "Completed" });
   });
+
+  test("remembers the Slack ts and offers earlier messages as reaction targets", async () => {
+    let system = "";
+    const deps = build(fakeLlm("sure thing", (_m, s) => (system = s)));
+
+    await handleMessage(deps, {
+      channelId: "C1",
+      slackUserId: OWNER,
+      text: "deploy is out",
+      messageTs: "1787241529.047069",
+    });
+    await handleMessage(deps, {
+      channelId: "C1",
+      slackUserId: OWNER,
+      text: "and the migration ran",
+      messageTs: "1787241600.111222",
+    });
+
+    const stored = deps.messages.recentForChannel("C1", 10).filter((m) => m.role === "user");
+    expect(stored.map((m) => m.slackTs)).toEqual(["1787241529.047069", "1787241600.111222"]);
+
+    // the second turn's prompt can point at both, in this channel
+    expect(system).toContain("Reacting with emoji (optional, your call)");
+    expect(system).toContain("channel=C1&timestamp=<ts>&name=<emoji>");
+    expect(system).toContain("ts 1787241529.047069");
+    expect(system).toContain("ts 1787241600.111222");
+  });
+
+  test("no reaction block when the transport gave us no timestamps", async () => {
+    let system = "";
+    const deps = build(fakeLlm("ok", (_m, s) => (system = s)));
+    await handleMessage(deps, { channelId: "C1", slackUserId: OWNER, text: "hi" });
+    expect(system).not.toContain("Reacting with emoji");
+  });
 });

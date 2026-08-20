@@ -83,6 +83,7 @@ const build = (opts: {
     userId: OWNER,
     text,
     threadTs: "111.1",
+    messageTs: "111.1",
     client,
     say: async (m) => said.push({ text: m.text }),
   });

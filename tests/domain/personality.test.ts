@@ -87,6 +87,35 @@ describe("buildSystemPrompt", () => {
     expect(out).toContain("<@U2>");
   });
 
+  test("offers reactions with the channel and the messages that can take them", () => {
+    const p = buildSystemPrompt({
+      channelId: "C1",
+      reactable: [
+        { ts: "1.1", speakerId: "U1", excerpt: "shipped it" },
+        { ts: "2.2", speakerId: "U2", excerpt: "nice one" },
+      ],
+    });
+    expect(p).toContain("Reacting with emoji (optional, your call)");
+    expect(p).toContain("channel=C1&timestamp=<ts>&name=<emoji>");
+    expect(p).toContain('- ts 1.1 - from <@U1>: "shipped it"');
+    expect(p).toContain('- ts 2.2 - from <@U2>: "nice one"');
+    expect(p).toContain("Several emoji on one message are fine");
+  });
+
+  test("reactions stay optional and silent", () => {
+    const p = buildSystemPrompt({ channelId: "C1", reactable: [{ ts: "1.1", speakerId: "U1", excerpt: "hi" }] });
+    expect(p).toContain("It is entirely optional and most replies need none");
+    expect(p).toContain("never announce, describe or list the reactions you added");
+  });
+
+  test("no reaction block without a channel or without anything to react to", () => {
+    expect(buildSystemPrompt({ channelId: "C1", reactable: [] })).not.toContain("Reacting with emoji");
+    expect(buildSystemPrompt({ reactable: [{ ts: "1.1", speakerId: "U1", excerpt: "hi" }] })).not.toContain(
+      "Reacting with emoji",
+    );
+    expect(buildSystemPrompt({})).not.toContain("Reacting with emoji");
+  });
+
   test("omits the roster block when there are no participants", () => {
     expect(buildSystemPrompt({ learnings: [], participants: [] })).not.toContain(
       "mention or reply to them with their Slack tag",

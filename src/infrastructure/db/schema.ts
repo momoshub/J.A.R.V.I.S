@@ -29,7 +29,9 @@ export const migrate = (db: Database): void => {
       slack_user_id TEXT NOT NULL,
       role          TEXT NOT NULL CHECK (role IN ('user', 'assistant')),
       content       TEXT NOT NULL,
-      created_at    INTEGER NOT NULL
+      created_at    INTEGER NOT NULL,
+      -- Slack ts of the source message, when there is one (see migration v3).
+      slack_ts      TEXT NOT NULL DEFAULT ''
     );
   `);
 
@@ -70,6 +72,22 @@ export const migrate = (db: Database): void => {
   db.exec("CREATE INDEX IF NOT EXISTS idx_command_log_time ON command_log (id DESC);");
 
   migrateRoles(db);
+  migrateSlackTs(db);
+};
+
+/**
+ * Migration v3: remember which Slack message a stored turn came from, so the bot
+ * can point at earlier messages in the conversation (reacting to them, say).
+ * Rows written before this have an empty ts and are simply not addressable.
+ */
+const migrateSlackTs = (db: Database): void => {
+  // Keyed off the column itself, not user_version: a fresh database already gets
+  // it from CREATE TABLE, an existing one needs the ALTER.
+  const columns = db.query<{ name: string }, []>("PRAGMA table_info(messages)").all();
+  if (!columns.some((c) => c.name === "slack_ts")) {
+    db.exec("ALTER TABLE messages ADD COLUMN slack_ts TEXT NOT NULL DEFAULT '';");
+  }
+  db.exec("PRAGMA user_version = 3;");
 };
 
 /**
