@@ -95,7 +95,12 @@ Every command has two interfaces - use whichever you like:
 | `remove @user` | admins (admins: owner only) | revoke access |
 | `learn <fact>` | admins | teach a durable fact |
 | `learnings` / `unlearn <id>` | admins | list / delete learnings |
+| `rv <pr-url>` | admins | quick read-only code review of a PR |
+| `br [category] <message-link>` | admins | reaction-bomb a message with a burst of emoji |
+| `jrp <message-link>` | admins | draft and post an AI reply to a message |
 | `promote @user` / `demote @user` | owner | change role |
+
+The power tools also have their own Slack slash commands if you register them (`/rv`, `/br`, `/jrp`) - much quicker than a freeform ask. `br`/`jrp` need the Console's Slack read/write scopes; `rv` uses the local `gh` (read-only).
 
 Examples: `/ev add @kai admin`, `//ev learn our staging URL is staging.example.com`, `//ev ask summarise the last thread`.
 

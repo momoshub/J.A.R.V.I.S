@@ -159,5 +159,18 @@ export const createSlackAdmin = (client: WebClient): SlackAdminPort => {
     post: async (channel, text, threadTs) => {
       await client.chat.postMessage({ channel, text, ...(threadTs ? { thread_ts: threadTs } : {}) });
     },
+
+    addReactions: async (channel, ts, names) => {
+      let landed = 0;
+      for (const name of names) {
+        try {
+          await client.reactions.add({ channel, timestamp: ts, name });
+          landed += 1;
+        } catch {
+          // already reacted, unknown emoji, or too many reactions - skip and continue
+        }
+      }
+      return landed;
+    },
   };
 };

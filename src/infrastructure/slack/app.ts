@@ -67,6 +67,13 @@ const fetchDisplayName = async (client: SlackClient, userId: string): Promise<st
   }
 };
 
+/** The slice of Bolt's slash-command listener args we use. */
+type SlashArgs = {
+  command: { channel_id: string; user_id: string; user_name?: string; text?: string };
+  ack: () => Promise<unknown>;
+  respond: (msg: { response_type?: "ephemeral" | "in_channel"; text: string }) => Promise<unknown>;
+};
+
 export type Incoming = {
   channelId: string;
   userId: string;
@@ -185,19 +192,27 @@ export const createSlackApp = (config: SlackAppConfig, deps: Deps) => {
     });
   });
 
-  // Slash command: /ev <command> <args...> - same registry as `//ev ...` messages.
-  // Register a single "/ev" command in the Slack app config; it sub-routes here.
-  app.command("/ev", async ({ command, ack, respond: reply }) => {
-    await ack();
-    const result = await respond(deps, {
-      channelId: command.channel_id,
-      slackUserId: command.user_id,
-      text: `//ev ${command.text ?? ""}`,
-      displayName: command.user_name,
-    });
-    const text = result.kind === "ignored" ? "Nothing to do." : result.text;
-    await reply({ response_type: "ephemeral", text });
-  });
+  // Slash commands, all routed through the same command registry as `//ev ...`.
+  // Register each in the Slack app config; `/ev` is the general dispatcher, the
+  // others (/rv, /br, /jrp) are shortcuts to those commands.
+  const runSlash =
+    (prefix: string) =>
+    async ({ command, ack, respond: reply }: SlashArgs) => {
+      await ack();
+      const sub = `${prefix} ${command.text ?? ""}`.trim();
+      const result = await respond(deps, {
+        channelId: command.channel_id,
+        slackUserId: command.user_id,
+        text: `//ev ${sub}`,
+        displayName: command.user_name,
+      });
+      const text = result.kind === "ignored" ? "Nothing to do." : result.text;
+      await reply({ response_type: "ephemeral", text });
+    };
+  app.command("/ev", runSlash(""));
+  app.command("/rv", runSlash("rv"));
+  app.command("/br", runSlash("br"));
+  app.command("/jrp", runSlash("jrp"));
 
   return {
     start: async () => {

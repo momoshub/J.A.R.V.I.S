@@ -87,6 +87,16 @@ const main = async () => {
   const llm = buildLlm(config);
   console.log(`[llm] ${profile().name}'s brain: ${modelLabel(config)}`);
 
+  // Slack Web API + AI drafting, shared by the console and the power-tool commands.
+  // retries: 0 so a rate-limited call fails fast instead of hanging.
+  const slackAdmin = createSlackAdmin(new WebClient(config.slackBotToken, { retryConfig: { retries: 0 } }));
+  const promptContext = () => ({
+    botName: profile().name,
+    base: settings.get(SETTING_KEYS.systemPrompt),
+    learnings: learnings.list().map((l) => l.content),
+  });
+  const draft = createDraftReply({ llm, promptContext });
+
   const deps: RespondDeps = {
     users,
     messages,
@@ -94,16 +104,14 @@ const main = async () => {
     clock,
     ownerSlackId: config.ownerSlackId,
     // Live identity + learnings, editable from the dashboard.
-    promptContext: () => ({
-      botName: profile().name,
-      base: settings.get(SETTING_KEYS.systemPrompt),
-      learnings: learnings.list().map((l) => l.content),
-    }),
-    // For the command registry (learn/learnings, model/status, log + disable).
+    promptContext,
+    // For the command registry (learn/learnings, model/status, log + disable, rv/br/jrp).
     learnings,
     botInfo: () => ({ botName: profile().name, model: modelLabel(config) }),
     commandLog,
     disabledCommands,
+    slack: slackAdmin,
+    draft,
   };
 
   const dashboard = createDashboard(
@@ -123,10 +131,8 @@ const main = async () => {
       clock,
       profile,
       // Console: manage the bot's live Slack messages, with AI-drafted replies.
-      // retries: 0 so a rate-limited recency probe fails fast instead of hanging
-      // the dashboard on Slack's 10s retry-after.
-      slack: createSlackAdmin(new WebClient(config.slackBotToken, { retryConfig: { retries: 0 } })),
-      draft: createDraftReply({ llm, promptContext: deps.promptContext! }),
+      slack: slackAdmin,
+      draft,
       commandLog,
     },
   );

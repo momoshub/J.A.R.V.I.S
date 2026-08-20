@@ -19,6 +19,8 @@ import type { MessageRepo } from "../infrastructure/db/messageRepo.ts";
 import type { UserRepo } from "../infrastructure/db/userRepo.ts";
 import type { LearningsRepo } from "../infrastructure/db/learningsRepo.ts";
 import type { CommandLogRepo } from "../infrastructure/db/commandLogRepo.ts";
+import type { SlackAdminPort } from "./slackAdmin.ts";
+import type { DraftReply } from "./draftReply.ts";
 
 export type HandleMessageDeps = {
   users: UserRepo;
@@ -37,6 +39,10 @@ export type HandleMessageDeps = {
   commandLog?: CommandLogRepo;
   /** Set of disabled command names (managed from the dashboard). */
   disabledCommands?: () => ReadonlySet<string>;
+  /** Slack Web API operations, for the power-tool commands (br, jrp). */
+  slack?: SlackAdminPort;
+  /** AI reply drafting, for jrp. */
+  draft?: DraftReply;
 };
 
 /** Author id recorded for the bot's own turns (never a real Slack id). */

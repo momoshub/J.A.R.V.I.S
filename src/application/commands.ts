@@ -14,8 +14,13 @@ import {
   validateRemoval,
   validateRoleChange,
 } from "../domain/access.ts";
+import { reviewPrompt } from "../domain/reviewPrompt.ts";
+import { EMOJI_CATEGORY_NAMES, pickBomb } from "../domain/emoji.ts";
+import { parseMessageLink } from "../domain/slackLinks.ts";
 import type { AllowedUser, PromptContext, UserRole } from "../domain/types.ts";
 import type { Clock, LlmPort } from "./ports.ts";
+import type { SlackAdminPort } from "./slackAdmin.ts";
+import type { DraftReply } from "./draftReply.ts";
 import type { MessageRepo } from "../infrastructure/db/messageRepo.ts";
 import type { UserRepo } from "../infrastructure/db/userRepo.ts";
 import type { LearningsRepo } from "../infrastructure/db/learningsRepo.ts";
@@ -31,9 +36,15 @@ export type CommandDeps = {
   commandLog?: CommandLogRepo;
   /** Names of disabled commands (managed from the dashboard). */
   disabledCommands?: () => ReadonlySet<string>;
+  /** Slack Web API operations, for the power tools (br, jrp). */
+  slack?: SlackAdminPort;
+  /** AI reply drafting, for jrp. */
+  draft?: DraftReply;
   clock: Clock;
   ownerSlackId: string;
 };
+
+const REACTION_BOMB_SIZE = 18;
 
 /** Public metadata for one command, for the dashboard. */
 export type CommandInfo = {
@@ -74,6 +85,9 @@ const slackIdOf = (token?: string): string | undefined => {
 
 const roleOf = (token?: string): UserRole | undefined =>
   token === "owner" || token === "admin" || token === "member" ? token : undefined;
+
+const botNameOf = (deps: CommandDeps): string =>
+  deps.botInfo?.().botName ?? deps.promptContext?.().botName ?? "Evie";
 
 const changeRole = (ctx: Context, slackId: string, next: UserRole, requireExisting: boolean): string => {
   const target = ctx.deps.users.get(slackId);
@@ -258,6 +272,61 @@ export const COMMANDS: readonly CommandDef[] = [
       if (!Number.isInteger(id)) return "Which one? `//ev unlearn <id>` (see `//ev learnings`)";
       deps.learnings.remove(id);
       return `Forgotten learning #${id}.`;
+    },
+  },
+  {
+    name: "rv",
+    aliases: ["review"],
+    minRole: "admin",
+    usage: "<pr-url> [pr-url...]",
+    summary: "quick read-only code review of a PR",
+    run: async ({ deps, args }) => {
+      if (args.length === 0) return "Which PR? `//ev rv <pr-url>`";
+      if (!deps.llm) return "My brain is not wired up right now.";
+      const system = reviewPrompt(args, botNameOf(deps));
+      const reply = await deps.llm.complete({
+        system,
+        messages: [{ role: "user", content: `review ${args.join(" ")}` }],
+        assistantName: botNameOf(deps),
+      });
+      return reply.trim() || "I could not put a review together for that one.";
+    },
+  },
+  {
+    name: "br",
+    aliases: ["bomb"],
+    minRole: "admin",
+    usage: "[category] <message-link>",
+    summary: `reaction-bomb a message (${EMOJI_CATEGORY_NAMES.slice(0, 6).join(", ")}, ...)`,
+    run: async ({ deps, args }) => {
+      if (!deps.slack) return "Slack tools are not available.";
+      // last arg is the link; an optional leading token is the category
+      const link = args[args.length - 1] ?? "";
+      const ref = parseMessageLink(link.replace(/^<|>$/g, ""));
+      if (!ref) return "Paste a Slack message link: `//ev br [category] <message-link>`";
+      const category = args.length > 1 ? (args[0] ?? "positive").toLowerCase() : "positive";
+      const emojis = pickBomb(category, REACTION_BOMB_SIZE);
+      if (emojis.length === 0) return `Unknown category. Try: ${EMOJI_CATEGORY_NAMES.join(", ")}`;
+      const landed = await deps.slack.addReactions(ref.channel, ref.ts, emojis);
+      return landed > 0 ? `💥 dropped ${landed} *${category}* reactions` : "Could not add any reactions (already bombed, or I am not in that channel).";
+    },
+  },
+  {
+    name: "jrp",
+    aliases: ["reply"],
+    minRole: "admin",
+    usage: "<message-link>",
+    summary: "draft and post an AI reply to a message",
+    run: async ({ deps, args }) => {
+      if (!deps.slack || !deps.draft) return "Slack tools are not available.";
+      const ref = parseMessageLink((args[0] ?? "").replace(/^<|>$/g, ""));
+      if (!ref) return "Paste a Slack message link: `//ev jrp <message-link>`";
+      const thread = await deps.slack.replies(ref.channel, ref.ts);
+      if (thread.length === 0) return "I could not read that message (am I in the channel?).";
+      const draft = await deps.draft(thread);
+      if (!draft.trim()) return "I could not draft a reply for that one.";
+      await deps.slack.post(ref.channel, draft, ref.ts);
+      return `posted a reply in that thread 🙈`;
     },
   },
 ];

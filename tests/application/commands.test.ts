@@ -6,6 +6,7 @@ import { createLearningsRepo } from "../../src/infrastructure/db/learningsRepo.t
 import { commandLineOf, dispatchCommand, type CommandDeps } from "../../src/application/commands.ts";
 import type { AllowedUser } from "../../src/domain/types.ts";
 import type { LlmPort } from "../../src/application/ports.ts";
+import type { SlackAdminPort, SlackMessage } from "../../src/application/slackAdmin.ts";
 
 const OWNER = "U0OWNER0001";
 
@@ -37,8 +38,38 @@ const actor = (over: Partial<AllowedUser> = {}): AllowedUser => ({
 
 const llm: LlmPort = { complete: async () => "drafted answer" };
 
-const build = (): CommandDeps => {
+type SlackCalls = { posts: { channel: string; text: string; threadTs?: string }[]; reactions: string[] };
+
+const fakeSlack = (calls: SlackCalls, thread: SlackMessage[] = []): SlackAdminPort => ({
+  listConversations: async () => [],
+  history: async () => ({ messages: [] }),
+  replies: async () => thread,
+  update: async () => {},
+  remove: async () => {},
+  post: async (channel, text, threadTs) => {
+    calls.posts.push({ channel, text, threadTs });
+  },
+  addReactions: async (_c, _ts, names) => {
+    calls.reactions.push(...names);
+    return names.length;
+  },
+});
+
+let slackCalls: SlackCalls;
+
+const threadMsg = (text: string): SlackMessage => ({
+  ts: "1.1",
+  userId: "U1",
+  userName: "Kai",
+  text,
+  replyCount: 0,
+  own: false,
+  mentionsBot: false,
+});
+
+const build = (thread: SlackMessage[] = [threadMsg("hi there")]): CommandDeps => {
   db = openDatabase(":memory:");
+  slackCalls = { posts: [], reactions: [] };
   return {
     users: createUserRepo(db),
     messages: createMessageRepo(db),
@@ -48,6 +79,8 @@ const build = (): CommandDeps => {
     botInfo: () => ({ botName: "Evie", model: "claude-cli (opus)" }),
     clock: () => 42,
     ownerSlackId: OWNER,
+    slack: fakeSlack(slackCalls, thread),
+    draft: async () => "an AI-drafted reply",
   };
 };
 
@@ -124,5 +157,45 @@ describe("dispatchCommand", () => {
 
   test("model reports the brain", async () => {
     expect(await dispatchCommand(build(), actor(), "C1", "model")).toContain("claude-cli (opus)");
+  });
+
+  const LINK = "https://team.slack.com/archives/C0TEST00001/p1787122692303399";
+
+  test("rv reviews a PR via the brain", async () => {
+    const out = await dispatchCommand(build(), actor(), "C1", "rv https://github.com/o/r/pull/1");
+    expect(out).toBe("drafted answer");
+  });
+
+  test("rv needs a PR url", async () => {
+    expect(await dispatchCommand(build(), actor(), "C1", "rv")).toContain("Which PR");
+  });
+
+  test("br bombs a linked message with reactions", async () => {
+    const deps = build();
+    const out = await dispatchCommand(deps, actor(), "C1", `br party ${LINK}`);
+    expect(out).toContain("party");
+    expect(slackCalls.reactions.length).toBeGreaterThan(0);
+  });
+
+  test("br rejects an unknown category", async () => {
+    expect(await dispatchCommand(build(), actor(), "C1", `br notacategory ${LINK}`)).toContain("Unknown category");
+  });
+
+  test("br needs a link", async () => {
+    expect(await dispatchCommand(build(), actor(), "C1", "br party")).toContain("message link");
+  });
+
+  test("jrp drafts and posts a reply to the linked thread", async () => {
+    const deps = build();
+    const out = await dispatchCommand(deps, actor(), "C1", `jrp ${LINK}`);
+    expect(out).toContain("posted");
+    expect(slackCalls.posts).toHaveLength(1);
+    expect(slackCalls.posts[0]).toMatchObject({ channel: "C0TEST00001", text: "an AI-drafted reply", threadTs: "1787122692.303399" });
+  });
+
+  test("power tools are admin-gated", async () => {
+    const member = actor({ slackId: "U9", role: "member" });
+    expect(await dispatchCommand(build(), member, "C1", "rv x")).toContain("access");
+    expect(await dispatchCommand(build(), member, "C1", `br party ${LINK}`)).toContain("access");
   });
 });

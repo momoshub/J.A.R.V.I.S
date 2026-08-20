@@ -50,4 +50,6 @@ export type SlackAdminPort = {
   remove: (channel: string, ts: string) => Promise<void>;
   /** Post a message, optionally into a thread. */
   post: (channel: string, text: string, threadTs?: string) => Promise<void>;
+  /** Add reactions to a message (tolerant of already-reacted / invalid names). Returns how many landed. */
+  addReactions: (channel: string, ts: string, names: readonly string[]) => Promise<number>;
 };
