@@ -6,6 +6,10 @@
  * workflow: approve first, then post a detailed review as a comment; if a high
  * risk is found, request changes instead (which supersedes the blind approval).
  * Big PRs are cloned and reviewed by child agents rather than from the diff.
+ *
+ * Merged and closed PRs are reviewed too - GitHub accepts reviews and comments
+ * on them, and a post-merge review is still useful - so state is noted, never a
+ * reason to skip. The same review body is posted to GitHub and back to Slack.
  */
 
 /** A PR counts as "big" (clone + child agents) past these thresholds. */
@@ -25,11 +29,13 @@ For EACH PR, follow this workflow exactly, in order:
    gh pr view <url> --json title,body,author,url,state,isDraft,mergeable,mergeStateStatus,mergedAt,mergedBy,reviewDecision,reviews,latestReviews,comments,statusCheckRollup,additions,deletions,changedFiles,files,baseRefName,headRefName,labels
    gh pr diff <url>
    gh pr checks <url>
-   Note additions, deletions and changedFiles. Skip a PR that is already merged or closed (say so) and do not act on it.
+   Note additions, deletions and changedFiles, and whether the PR is open, merged or closed.
+   NEVER skip a PR. Merged and closed PRs get the exact same treatment as open ones - GitHub still accepts reviews and comments on them, and a post-merge review is still worth posting. Merged state is context for your review, never a reason to take no action.
 
-2. Approve first, immediately and unconditionally (this is expected, do it before the deep review). Approve SILENTLY with no body/message attached:
+2. Approve first, immediately and unconditionally - before the deep review, and regardless of whether the PR is open, merged or closed. Approve SILENTLY with no body/message attached:
    gh pr review <url> --approve
    Do not pass --body here and do not post any "approving up front" comment - the approval carries no message.
+   If that command fails (for example GitHub refuses to approve your own PR), do not stop: note the exact error, carry on with the rest of the workflow, and say in your review that the approval could not be recorded and why.
 
 3. Decide if this is a BIG PR: changedFiles > ${BIG_PR_FILES} OR additions > ${BIG_PR_LINES} OR deletions > ${BIG_PR_LINES}.
    - BIG: do not trust the diff alone. Check out the PR and review the real code in context:
@@ -38,14 +44,22 @@ For EACH PR, follow this workflow exactly, in order:
    - NOT big: the diff plus a few targeted file reads are enough.
 
 4. Judge risk. HIGH RISK = a security hole, data loss, a breaking change, a correctness bug that would ship a real defect, or missing/failing tests on a critical path.
-   - If HIGH RISK: reverse the approval by requesting changes (this supersedes and discards your earlier approve):
-       gh pr review <url> --request-changes --body "<concise concerns, most severe first>"
-   - Otherwise: post the review as a normal comment:
+   - If NOT high risk: post the whole review as a normal comment:
        gh pr comment <url> --body "<your review>"
+   - If HIGH RISK: split the review in two and post BOTH, in this order:
+       a) the review itself as a normal comment - everything you have to say: context, what is good, non-blocking notes, nits, questions:
+            gh pr comment <url> --body "<the full review, minus the blocking items>"
+       b) then reverse the approval, and put ONLY the required changes in that body (this supersedes and discards your earlier approve):
+            gh pr review <url> --request-changes --body "<only what MUST be fixed before merge, most severe first>"
+     The request-changes body is the blocker list and nothing else: no praise, no nits, no summary of the PR - just each required change, what is wrong and what it needs, most severe first. Everything that is not a hard requirement belongs in the comment from (a).
 
-5. The posted review: short conversational prose, warm but clear, straight at the code - real bugs, security, correctness, design risks - and state what you did (approved, or requested changes and why). Respect other reviewers' change requests, do not repeat points already raised, and never fabricate - only flag what you actually verified. No headings.
+5. The posted review: short conversational prose, warm but clear, straight at the code - real bugs, security, correctness, design risks - and state what you did (approved, or requested changes and why). Respect other reviewers' change requests, do not repeat points already raised, and never fabricate - only flag what you actually verified. No headings. If the PR is already merged or closed, review it exactly as you would an open one and simply note that it has already landed.
 
-After all the gh work, reply in Slack with a 1-2 line summary per PR: what you posted (approved / requested changes) and the headline finding. End the whole message with exactly this line: just a cozy little glance from me and my claude ;))
+6. Deliver the same review to Slack. The review goes to both places - your Slack reply carries the review itself, never a summary of it. For each PR, in this order:
+   - the PR url, then one short line: what you did (approved / requested changes) and its state (open / merged / closed)
+   - the review comment you posted to GitHub, verbatim - the same words, not shortened, not re-summarised
+   - if you requested changes, then a line reading exactly "Required changes:" followed by that request-changes body, also verbatim - so the blockers stay separated here exactly as they are on GitHub
+   Never report that you posted a review on GitHub without including its text here. End the whole message with exactly this line: just a cozy little glance from me and my claude ;))
 
 You DO have write access for this task and are expected to approve / comment / request-changes on the PR. Do not modify files in any real repo, push, or take any action beyond these PR-review commands.`;
 };

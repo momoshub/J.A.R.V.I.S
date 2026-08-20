@@ -41,4 +41,26 @@ describe("reviewPrompt", () => {
     expect(p).toContain("Task tool"); // child agents for big PRs
     expect(p).toContain("just a cozy little glance from me and my claude");
   });
+
+  test("never skips a merged or closed PR - it is approved and reviewed like any other", () => {
+    const p = reviewPrompt(["https://github.com/o/r/pull/1"], "Evie");
+    expect(p).toContain("NEVER skip a PR");
+    expect(p).toMatch(/regardless of whether the PR is open, merged or closed/);
+    // the old behavior - bail out on a merged PR - must be gone
+    expect(p).not.toMatch(/skip a pr that is already merged/i);
+  });
+
+  test("splits a high-risk review: full review as a comment, blockers only in request-changes", () => {
+    const p = reviewPrompt(["https://github.com/o/r/pull/1"], "Evie");
+    expect(p).toContain("split the review in two and post BOTH");
+    expect(p).toMatch(/request-changes body is the blocker list and nothing else/);
+    expect(p).toContain("only what MUST be fixed before merge");
+    expect(p).toContain("Required changes:"); // kept separate in Slack too
+  });
+
+  test("requires the review body in Slack too, verbatim, not a summary", () => {
+    const p = reviewPrompt(["https://github.com/o/r/pull/1"], "Evie");
+    expect(p).toContain("verbatim");
+    expect(p).toMatch(/never a summary of it/i);
+  });
 });
