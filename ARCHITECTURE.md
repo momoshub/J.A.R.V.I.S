@@ -51,7 +51,8 @@ Concrete implementations of the seams and the transports.
 - `llm/anthropic.ts` - alternative `LlmPort` backed by the Anthropic API (no streaming; callers fall back to `complete`)
 - `slack/app.ts` - Socket Mode listener mapping Slack events to `respond`
 - `slack/stream.ts` - bridges the `LlmStreamSink` onto Slack's `chatStream` (text + `task_update` tool cards); Slack owns the message, appends are serialised, and a failed stream falls back to a single post
-- `dashboard/` - `Bun.serve` admin UI and JSON API (pure `views.ts` renderer)
+- `dashboard/server.ts` - `Bun.serve` JSON API under `/api` plus static hosting of the React SPA built to `web/dist`
+- `web/` - the dashboard front end: React 19 + Vite + React Router 7 (data-router with loaders/actions), talking to the JSON API
 
 ### `src/config`
 

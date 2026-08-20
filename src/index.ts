@@ -94,6 +94,7 @@ const main = async () => {
       token: config.dashboardToken,
       ownerSlackId: config.ownerSlackId,
       model: modelLabel(config),
+      distDir: join(import.meta.dir, "..", "web", "dist"),
       allowedOrigins: config.dashboardAllowedOrigins,
     },
     { users, messages, learnings, settings, clock, profile },

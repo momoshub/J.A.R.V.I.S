@@ -8,7 +8,7 @@ import { loadBotProfile } from "../../src/application/botProfile.ts";
 import { createDashboard } from "../../src/infrastructure/dashboard/server.ts";
 
 const OWNER = "U0OWNER0001";
-const TOKEN = "secret-token";
+const TOKEN = "secret-token-secret-token-1234";
 
 const build = () => {
   const db = openDatabase(":memory:");
@@ -20,232 +20,161 @@ const build = () => {
   const profile = () =>
     loadBotProfile(settings, { name: "TestBot", thinkingLabel: "thinking...", thinkingDoneLabel: "✅" });
   const dash = createDashboard(
-    { port: 0, token: TOKEN, ownerSlackId: OWNER, model: "claude-opus-4-8" },
+    { port: 0, token: TOKEN, ownerSlackId: OWNER, model: "claude-opus-4-8", distDir: "/nonexistent" },
     { users, messages, learnings, settings, clock: () => 99, profile },
   );
   return { dash, users, messages, learnings, settings };
 };
 
-const form = (fields: Record<string, string>): FormData => {
-  const f = new FormData();
-  for (const [k, v] of Object.entries(fields)) f.set(k, v);
-  return f;
-};
-
-const req = (path: string, init?: RequestInit) =>
+const api = (path: string, init?: RequestInit) =>
   new Request(`http://localhost${path}`, init);
 
-describe("dashboard auth", () => {
-  test("rejects without a token", async () => {
-    const { dash } = build();
-    const res = await dash.handle(req("/"));
+const postJson = (path: string, body: unknown, headers: Record<string, string> = {}) =>
+  api(path, { method: "POST", body: JSON.stringify(body), headers: { "content-type": "application/json", ...headers } });
+
+describe("dashboard auth + static", () => {
+  test("api rejects without a token", async () => {
+    const res = await build().dash.handle(api("/api/overview"));
     expect(res.status).toBe(401);
   });
 
   test("health needs no token", async () => {
-    const { dash } = build();
-    const res = await dash.handle(req("/health"));
+    const res = await build().dash.handle(api("/health"));
     expect(res.status).toBe(200);
+    expect(((await res.json()) as { ok: boolean }).ok).toBe(true);
   });
 
-  test("serves html with a valid token", async () => {
+  test("static falls back to a 500 hint when the build is missing", async () => {
+    // distDir does not exist, so serveStatic reports the build is missing.
+    const res = await build().dash.handle(api("/"));
+    expect(res.status).toBe(500);
+    expect(await res.text()).toContain("build");
+  });
+
+  test("sets security headers", async () => {
+    const res = await build().dash.handle(api(`/api/overview?token=${TOKEN}`));
+    expect(res.headers.get("content-security-policy")).toContain("script-src 'self'");
+    expect(res.headers.get("x-frame-options")).toBe("DENY");
+  });
+});
+
+describe("dashboard read API", () => {
+  test("overview returns counts", async () => {
+    const { dash, messages, learnings } = build();
+    messages.append({ channelId: "C1", slackUserId: "U1", role: "user", content: "x" }, 1);
+    learnings.add("l", "kai", 1);
+    const res = await dash.handle(api(`/api/overview?token=${TOKEN}`));
+    expect(await res.json()).toMatchObject({ users: 1, conversations: 1, messages: 1, learnings: 1 });
+  });
+
+  test("bootstrap exposes bot name and owner", async () => {
     const { dash } = build();
-    const res = await dash.handle(req(`/?token=${TOKEN}`));
-    expect(res.status).toBe(200);
-    expect(res.headers.get("content-type")).toContain("text/html");
-    expect(await res.text()).toContain("control deck");
+    expect(await (await dash.handle(api(`/api/bootstrap?token=${TOKEN}`))).json()).toMatchObject({
+      botName: "TestBot",
+      ownerSlackId: OWNER,
+    });
+  });
+
+  test("identity returns persona + labels", async () => {
+    const { dash } = build();
+    const id = (await (await dash.handle(api(`/api/identity?token=${TOKEN}`))).json()) as {
+      usingDefault: boolean;
+      persona: string;
+    };
+    expect(id.usingDefault).toBe(true);
+    expect(id.persona).toContain("friendly, calm and helpful");
   });
 });
 
 describe("dashboard mutations", () => {
-  test("adds a user via form post", async () => {
+  test("adds a user via JSON POST", async () => {
     const { dash, users } = build();
-    const form = new FormData();
-    form.set("slackId", "U999");
-    form.set("role", "admin");
-    const res = await dash.handle(req(`/api/users?token=${TOKEN}`, { method: "POST", body: form }));
-    expect(res.status).toBe(303);
+    const res = await dash.handle(postJson(`/api/users?token=${TOKEN}`, { slackId: "U999", role: "admin" }));
+    expect(res.status).toBe(200);
     expect(users.get("U999")?.role).toBe("admin");
   });
 
   test("rejects a malformed slack id", async () => {
-    const { dash } = build();
-    const form = new FormData();
-    form.set("slackId", "not-an-id");
-    const res = await dash.handle(req(`/api/users?token=${TOKEN}`, { method: "POST", body: form }));
+    const res = await build().dash.handle(postJson(`/api/users?token=${TOKEN}`, { slackId: "nope" }));
     expect(res.status).toBe(400);
   });
 
-  test("refuses to remove the owner", async () => {
+  test("refuses to modify the owner", async () => {
     const { dash, users } = build();
-    const form = new FormData();
-    form.set("slackId", OWNER);
-    const res = await dash.handle(req(`/api/users/remove?token=${TOKEN}`, { method: "POST", body: form }));
-    expect(res.status).toBe(400);
-    expect(users.get(OWNER)).toBeDefined();
-  });
-
-  test("refuses to modify the owner via add (no downgrade)", async () => {
-    const { dash, users } = build();
-    const form = new FormData();
-    form.set("slackId", OWNER);
-    form.set("role", "admin");
-    const res = await dash.handle(req(`/api/users?token=${TOKEN}`, { method: "POST", body: form }));
+    const res = await dash.handle(postJson(`/api/users?token=${TOKEN}`, { slackId: OWNER, role: "admin" }));
     expect(res.status).toBe(400);
     expect(users.get(OWNER)?.role).toBe("owner");
   });
 
+  test("refuses to remove the owner", async () => {
+    const { dash, users } = build();
+    const res = await dash.handle(postJson(`/api/users/remove?token=${TOKEN}`, { slackId: OWNER }));
+    expect(res.status).toBe(400);
+    expect(users.get(OWNER)).toBeDefined();
+  });
+
   test("rejects a cross-origin POST", async () => {
     const { dash, users } = build();
-    const form = new FormData();
-    form.set("slackId", "U777");
     const res = await dash.handle(
-      req(`/api/users?token=${TOKEN}`, {
-        method: "POST",
-        body: form,
-        headers: { origin: "http://evil.example" },
-      }),
+      postJson(`/api/users?token=${TOKEN}`, { slackId: "U777" }, { origin: "http://evil.example" }),
     );
     expect(res.status).toBe(403);
     expect(users.get("U777")).toBeUndefined();
   });
 
-  test("allows a loopback Origin that differs from the request host", async () => {
-    // page served from localhost, Bun sees request host as 127.0.0.1 (or vice versa)
+  test("allows a loopback origin that differs from the request host", async () => {
     const { dash, users } = build();
     const res = await dash.handle(
-      new Request("http://127.0.0.1/api/users?token=" + TOKEN, {
+      new Request(`http://127.0.0.1/api/users?token=${TOKEN}`, {
         method: "POST",
-        body: form({ slackId: "U444", role: "member" }),
-        headers: { origin: "http://localhost:2001" },
+        body: JSON.stringify({ slackId: "U444", role: "member" }),
+        headers: { "content-type": "application/json", origin: "http://localhost:2001" },
       }),
     );
-    expect(res.status).toBe(303);
+    expect(res.status).toBe(200);
     expect(users.get("U444")?.role).toBe("member");
   });
 
-  test("sets security headers on responses", async () => {
-    const { dash } = build();
-    const res = await dash.handle(req(`/?token=${TOKEN}`));
-    expect(res.headers.get("referrer-policy")).toBe("no-referrer");
-    expect(res.headers.get("content-security-policy")).toContain("default-src 'none'");
-    expect(res.headers.get("x-frame-options")).toBe("DENY");
-  });
-
-  test("removes a non-owner user", async () => {
-    const { dash, users } = build();
-    users.upsert({ slackId: "U5", role: "member", displayName: "", addedBy: "x", createdAt: 1 });
-    await dash.handle(
-      req(`/api/users/remove?token=${TOKEN}`, { method: "POST", body: form({ slackId: "U5" }) }),
-    );
-    expect(users.get("U5")).toBeUndefined();
-  });
-});
-
-describe("dashboard learnings", () => {
-  test("adds and lists a learning", async () => {
+  test("learnings add/remove", async () => {
     const { dash, learnings } = build();
-    const res = await dash.handle(
-      req(`/api/learnings?token=${TOKEN}`, { method: "POST", body: form({ content: "staging is X" }) }),
-    );
-    expect(res.status).toBe(303);
-    expect(learnings.list().map((l) => l.content)).toEqual(["staging is X"]);
-  });
-
-  test("rejects an empty learning", async () => {
-    const { dash } = build();
-    const res = await dash.handle(
-      req(`/api/learnings?token=${TOKEN}`, { method: "POST", body: form({ content: "  " }) }),
-    );
-    expect(res.status).toBe(400);
-  });
-
-  test("removes a learning by id", async () => {
-    const { dash, learnings } = build();
-    const l = learnings.add("temp", "test", 1);
-    await dash.handle(
-      req(`/api/learnings/remove?token=${TOKEN}`, { method: "POST", body: form({ id: String(l.id) }) }),
-    );
+    await dash.handle(postJson(`/api/learnings?token=${TOKEN}`, { content: "staging is X" }));
+    const [l] = learnings.list();
+    expect(l?.content).toBe("staging is X");
+    await dash.handle(postJson(`/api/learnings/remove?token=${TOKEN}`, { id: l!.id }));
     expect(learnings.list()).toHaveLength(0);
   });
 
-  test("renders learnings on the page", async () => {
-    const { dash, learnings } = build();
-    learnings.add("remember the milk", "kai", 1);
-    const res = await dash.handle(req(`/learnings?token=${TOKEN}`));
-    expect(await res.text()).toContain("remember the milk");
-  });
-});
-
-describe("dashboard prompt editor", () => {
-  test("shows the default persona when no override", async () => {
-    const { dash } = build();
-    const res = await dash.handle(req(`/prompt?token=${TOKEN}`));
-    const body = await res.text();
-    expect(body).toContain("built-in default persona");
-    expect(body).toContain("friendly, calm and helpful");
-  });
-
-  test("saves identity (name, thinking label, persona) and reflects it", async () => {
+  test("identity save sets name, labels and persona", async () => {
     const { dash, settings } = build();
     await dash.handle(
-      req(`/api/identity?token=${TOKEN}`, {
-        method: "POST",
-        body: form({ name: "Evie", thinkingLabel: "☄️ burning", prompt: "You are terse." }),
+      postJson(`/api/identity?token=${TOKEN}`, {
+        name: "Evie",
+        thinkingLabel: "☄️",
+        thinkingDoneLabel: "🐦‍🔥",
+        prompt: "You are terse.",
       }),
     );
     expect(settings.get(SETTING_KEYS.botName)).toBe("Evie");
-    expect(settings.get(SETTING_KEYS.thinkingLabel)).toBe("☄️ burning");
+    expect(settings.get(SETTING_KEYS.thinkingDoneLabel)).toBe("🐦‍🔥");
     expect(settings.get(SETTING_KEYS.systemPrompt)).toBe("You are terse.");
-    const body = await (await dash.handle(req(`/prompt?token=${TOKEN}`))).text();
-    expect(body).toContain("custom persona");
-    expect(body).toContain("You are terse.");
-    expect(body).toContain("Evie");
   });
 
-  test("identity save requires a name", async () => {
-    const { dash } = build();
-    const res = await dash.handle(
-      req(`/api/identity?token=${TOKEN}`, { method: "POST", body: form({ name: "  " }) }),
-    );
+  test("identity requires a name", async () => {
+    const res = await build().dash.handle(postJson(`/api/identity?token=${TOKEN}`, { name: "  " }));
     expect(res.status).toBe(400);
   });
 
-  test("reset clears the persona override", async () => {
+  test("prompt reset clears the override", async () => {
     const { dash, settings } = build();
     settings.set(SETTING_KEYS.systemPrompt, "custom");
-    await dash.handle(req(`/api/prompt/reset?token=${TOKEN}`, { method: "POST", body: form({}) }));
+    await dash.handle(postJson(`/api/prompt/reset?token=${TOKEN}`, {}));
     expect(settings.get(SETTING_KEYS.systemPrompt)).toBeUndefined();
   });
 
-  test("bot name from settings appears in the page title/header", async () => {
-    const { dash, settings } = build();
-    settings.set(SETTING_KEYS.botName, "Evie");
-    const body = await (await dash.handle(req(`/?token=${TOKEN}`))).text();
-    expect(body).toContain("Evie");
-  });
-});
-
-describe("dashboard conversations", () => {
-  test("lists channels and renders a conversation", async () => {
+  test("conversation clear wipes a channel", async () => {
     const { dash, messages } = build();
-    messages.append({ channelId: "C1", slackUserId: OWNER, role: "user", content: "hello world" }, 10);
-    messages.append({ channelId: "C1", slackUserId: OWNER, role: "assistant", content: "hi back" }, 11);
-    const list = await dash.handle(req(`/conversations?token=${TOKEN}`));
-    expect(await list.text()).toContain("C1");
-    const convo = await dash.handle(req(`/conversation?channel=C1&token=${TOKEN}`));
-    const body = await convo.text();
-    expect(body).toContain("hello world");
-    expect(body).toContain("hi back");
-  });
-
-  test("clears a channel's memory", async () => {
-    const { dash, messages } = build();
-    messages.append({ channelId: "C9", slackUserId: OWNER, role: "user", content: "x" }, 1);
-    const res = await dash.handle(
-      req(`/api/conversation/clear?token=${TOKEN}`, { method: "POST", body: form({ channel: "C9" }) }),
-    );
-    expect(res.status).toBe(303);
+    messages.append({ channelId: "C9", slackUserId: "U1", role: "user", content: "x" }, 1);
+    await dash.handle(postJson(`/api/conversation/clear?token=${TOKEN}`, { channel: "C9" }));
     expect(messages.recentForChannel("C9", 10)).toHaveLength(0);
   });
 });

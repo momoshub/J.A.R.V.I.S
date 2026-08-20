@@ -29,9 +29,11 @@ Before deploying beyond a trusted, sandboxed machine:
 ## Setup
 
 ```bash
-bun install
+bun run setup          # installs deps and builds the React dashboard
 cp .env.example .env   # fill in the values
 ```
+
+`setup` runs `bun install` and `bun run build:web` (the dashboard is a Vite + React 19 app in `web/`, built to `web/dist` and served by the bot). During dashboard development, `bun run web:dev` runs Vite with the API proxied to `:2001`.
 
 Required / notable env (see `.env.example`):
 
@@ -85,7 +87,7 @@ The Slack app needs Socket Mode plus the `app_mention` and `message.im` event su
 
 ## Dashboard
 
-Open `http://localhost:2001/?token=YOUR_DASHBOARD_TOKEN` (loopback only). Tabs:
+A **React 19 + Vite + React Router 7** single-page app (in `web/`) served by the bot and backed by a JSON API under `/api`. Open `http://localhost:2001/?token=YOUR_DASHBOARD_TOKEN` (loopback only). The token is read once from the URL, kept in `sessionStorage`, and sent as the `X-Dashboard-Token` header on API calls. Tabs:
 
 - **Overview** - counts for users, conversations, stored turns, learnings
 - **Users** - manage the allowlist and roles (the owner is protected)

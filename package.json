@@ -10,7 +10,11 @@
     "dev": "bun --watch run src/index.ts",
     "typecheck": "tsc --noEmit",
     "test": "bun test",
-    "db:seed": "bun run src/infrastructure/db/seed.ts"
+    "db:seed": "bun run src/infrastructure/db/seed.ts",
+    "web:install": "cd web && bun install",
+    "web:dev": "cd web && bun run dev",
+    "build:web": "cd web && bun install && bun run build",
+    "setup": "bun install && bun run build:web"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.71.0",

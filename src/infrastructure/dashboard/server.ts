@@ -1,13 +1,15 @@
 /**
- * Admin dashboard served with Bun.serve.
+ * Admin dashboard server (Bun.serve), bound to loopback.
  *
- * Token-gated (query `?token=` or `X-Dashboard-Token` header) and bound to
- * loopback only. The owner can browse conversations, curate learnings, edit
- * the bot's system prompt, and manage the allowlist. All storage goes through the
- * repos so the rules stay in one place; the dashboard token represents
+ * Serves a React single-page app (built to `distDir`) plus a JSON API under
+ * `/api`. The SPA shell and its assets are public (they hold no data); every
+ * `/api` route requires the dashboard token (query `?token=` on first load, then
+ * the `X-Dashboard-Token` header from the app). Mutations additionally require a
+ * same-origin/allow-listed Origin (CSRF) and return JSON. The token represents
  * owner-level authority, so mutations still refuse to touch the owner record.
  */
 import { timingSafeEqual as cryptoTimingSafeEqual } from "node:crypto";
+import { join, normalize } from "node:path";
 import type { UserRole } from "../../domain/types.ts";
 import { DEFAULT_PERSONALITY } from "../../domain/personality.ts";
 import type { BotProfile } from "../../application/botProfile.ts";
@@ -16,22 +18,14 @@ import type { MessageRepo } from "../db/messageRepo.ts";
 import type { UserRepo } from "../db/userRepo.ts";
 import type { LearningsRepo } from "../db/learningsRepo.ts";
 import { SETTING_KEYS, type SettingsRepo } from "../db/settingsRepo.ts";
-import {
-  escapeHtml,
-  layout,
-  renderConversation,
-  renderConversations,
-  renderIdentity,
-  renderLearnings,
-  renderOverview,
-  renderUsers,
-} from "./views.ts";
 
 export type DashboardConfig = {
   port: number;
   token: string;
   ownerSlackId: string;
   model: string;
+  /** Directory of the built React app (index.html + assets). */
+  distDir: string;
   /** Extra browser origins allowed to POST (for proxy/tunnel access). */
   allowedOrigins?: readonly string[];
 };
@@ -42,7 +36,7 @@ export type DashboardDeps = {
   learnings: LearningsRepo;
   settings: SettingsRepo;
   clock: Clock;
-  /** Current bot identity, for titles and the identity editor. */
+  /** Current bot identity, for the header and identity editor. */
   profile: () => BotProfile;
 };
 
@@ -62,15 +56,10 @@ const authorized = (req: Request, url: URL, token: string): boolean => {
 
 const LOOPBACK_HOSTS = new Set(["localhost", "127.0.0.1", "::1", "[::1]"]);
 
-const forbidden = (msg: string): Response =>
-  new Response(msg, { status: 403, headers: { "content-type": "text/plain; charset=utf-8" } });
-
 /**
  * CSRF guard for a token-gated, loopback-bound tool. A cross-site attacker's
- * Origin is its own domain and it does not have the token anyway, so we allow
- * requests with no Origin, an exact match, a loopback Origin, or a configured
- * allowed Origin. Loopback tolerance covers the benign localhost vs 127.0.0.1
- * mismatch; the allow-list covers proxy/tunnel/port-forward access.
+ * Origin is its own domain and it lacks the token, so we allow no Origin, an
+ * exact match, a loopback Origin, or a configured allowed Origin.
  */
 const originAllowed = (req: Request, url: URL, allowed: readonly string[]): boolean => {
   const origin = req.headers.get("origin");
@@ -83,14 +72,32 @@ const originAllowed = (req: Request, url: URL, allowed: readonly string[]): bool
   }
 };
 
-const asRole = (v: string | null): UserRole => (v === "admin" ? "admin" : "member");
+const asRole = (v: unknown): UserRole => (v === "admin" ? "admin" : "member");
 
+const CONTENT_TYPES: Record<string, string> = {
+  ".html": "text/html; charset=utf-8",
+  ".js": "text/javascript; charset=utf-8",
+  ".css": "text/css; charset=utf-8",
+  ".json": "application/json; charset=utf-8",
+  ".svg": "image/svg+xml",
+  ".png": "image/png",
+  ".ico": "image/x-icon",
+  ".woff2": "font/woff2",
+};
+
+const contentTypeFor = (path: string): string => {
+  const dot = path.lastIndexOf(".");
+  return (dot >= 0 && CONTENT_TYPES[path.slice(dot)]) || "application/octet-stream";
+};
+
+// SPA needs its own bundle + inline module preloads; keep everything same-origin.
 const SECURITY_HEADERS: Record<string, string> = {
   "Referrer-Policy": "no-referrer",
   "X-Content-Type-Options": "nosniff",
   "X-Frame-Options": "DENY",
   "Content-Security-Policy":
-    "default-src 'none'; style-src 'unsafe-inline'; form-action 'self'; frame-ancestors 'none'; base-uri 'none'",
+    "default-src 'none'; script-src 'self'; style-src 'self' 'unsafe-inline'; " +
+    "img-src 'self' data:; font-src 'self'; connect-src 'self'; base-uri 'none'; frame-ancestors 'none'",
 };
 
 const withHeaders = (res: Response): Response => {
@@ -98,183 +105,149 @@ const withHeaders = (res: Response): Response => {
   return res;
 };
 
-const html = (body: string): Response =>
-  new Response(body, { headers: { "content-type": "text/html; charset=utf-8" } });
-
 export const createDashboard = (config: DashboardConfig, deps: DashboardDeps) => {
-  const subtitle = `model: ${escapeHtml(config.model)} - owner: <code>${escapeHtml(config.ownerSlackId)}</code>`;
-  const redirect = (path: string): Response =>
-    new Response(null, {
-      status: 303,
-      headers: { Location: `${path}?token=${encodeURIComponent(config.token)}` },
-    });
+  const jsonError = (message: string, status = 400) => Response.json({ error: message }, { status });
 
-  const page = (active: Parameters<typeof layout>[0]["active"], title: string, body: string) => {
-    const botName = deps.profile().name;
-    return html(
-      layout({ title: `${botName} - ${title}`, botName, active, subtitle, body, token: config.token }),
-    );
+  /** Serve a static file from distDir, falling back to index.html (SPA routing). */
+  const serveStatic = async (pathname: string): Promise<Response> => {
+    const rel = normalize(pathname).replace(/^(\.\.[/\\])+/, "").replace(/^\/+/, "");
+    const candidate = rel === "" ? "index.html" : rel;
+    const file = Bun.file(join(config.distDir, candidate));
+    if (await file.exists()) {
+      return new Response(file, { headers: { "content-type": contentTypeFor(candidate) } });
+    }
+    const index = Bun.file(join(config.distDir, "index.html"));
+    if (await index.exists()) {
+      return new Response(index, { headers: { "content-type": "text/html; charset=utf-8" } });
+    }
+    return new Response("Dashboard build missing. Run `bun run build:web`.", { status: 500 });
   };
 
-  const route = async (req: Request, url: URL): Promise<Response> => {
-    if (url.pathname === "/health") return Response.json({ ok: true });
+  const api = async (req: Request, url: URL): Promise<Response> => {
+    if (!authorized(req, url, config.token)) return jsonError("Unauthorized", 401);
 
-    if (!authorized(req, url, config.token)) {
-      return new Response("Unauthorized. Append ?token=...", { status: 401 });
-    }
-
-    // --- read JSON API ---
-    if (url.pathname === "/api/users" && req.method === "GET") {
-      return Response.json(deps.users.list());
-    }
-    if (url.pathname === "/api/stats" && req.method === "GET") {
-      return Response.json({
-        users: deps.users.list().length,
-        messages: deps.messages.count(),
-        learnings: deps.learnings.list().length,
-        channels: deps.messages.channels().length,
-      });
-    }
-
-    // --- pages ---
     if (req.method === "GET") {
       switch (url.pathname) {
-        case "/":
-          return page(
-            "overview",
-            "Overview",
-            renderOverview({
-              botName: deps.profile().name,
-              userCount: deps.users.list().length,
-              messageCount: deps.messages.count(),
-              learningCount: deps.learnings.list().length,
-              channelCount: deps.messages.channels().length,
-            }),
-          );
-        case "/users":
-          return page("users", "Users", renderUsers(deps.users.list(), config.ownerSlackId, config.token));
-        case "/learnings":
-          return page(
-            "learnings",
-            "Learnings",
-            renderLearnings(deps.learnings.list(), config.token, deps.profile().name),
-          );
-        case "/prompt": {
+        case "/api/bootstrap":
+          return Response.json({
+            botName: deps.profile().name,
+            ownerSlackId: config.ownerSlackId,
+            model: config.model,
+          });
+        case "/api/overview":
+          return Response.json({
+            users: deps.users.list().length,
+            conversations: deps.messages.channels().length,
+            messages: deps.messages.count(),
+            learnings: deps.learnings.list().length,
+          });
+        case "/api/users":
+          return Response.json(deps.users.list());
+        case "/api/learnings":
+          return Response.json(deps.learnings.list());
+        case "/api/identity": {
           const override = deps.settings.get(SETTING_KEYS.systemPrompt);
-          const profile = deps.profile();
-          return page(
-            "prompt",
-            "Identity",
-            renderIdentity(
-              {
-                name: profile.name,
-                thinkingLabel: profile.thinkingLabel,
-                persona: override ?? DEFAULT_PERSONALITY,
-                usingDefault: override === undefined,
-              },
-              config.token,
-            ),
-          );
+          const p = deps.profile();
+          return Response.json({
+            name: p.name,
+            thinkingLabel: p.thinkingLabel,
+            thinkingDoneLabel: p.thinkingDoneLabel,
+            persona: override ?? DEFAULT_PERSONALITY,
+            usingDefault: override === undefined,
+            defaultPersona: DEFAULT_PERSONALITY,
+          });
         }
-        case "/conversations":
-          return page("conversations", "Conversations", renderConversations(deps.messages.channels(), config.token));
-        case "/conversation": {
+        case "/api/conversations":
+          return Response.json(deps.messages.channels());
+        case "/api/conversation": {
           const channel = url.searchParams.get("channel") ?? "";
-          const messages = channel ? deps.messages.recentForChannel(channel, CONVERSATION_LIMIT) : [];
-          return page(
-            "conversations",
-            "Conversation",
-            renderConversation({ channelId: channel, messages }, config.token, deps.profile().name),
+          return Response.json(
+            channel ? deps.messages.recentForChannel(channel, CONVERSATION_LIMIT) : [],
           );
         }
       }
+      return jsonError("Not found", 404);
     }
 
-    // --- mutations (same-origin only) ---
     if (req.method === "POST") {
       if (!originAllowed(req, url, config.allowedOrigins ?? [])) {
         const origin = req.headers.get("origin") ?? "(none)";
-        // Log the offending origin server-side; keep the client body generic and
-        // plain-text so a reflected Origin can never become markup.
         console.warn(
           `[dashboard] blocked cross-origin POST from ${origin} (expected ${url.origin}). ` +
             `If this is your dashboard, add its origin to DASHBOARD_ALLOWED_ORIGINS.`,
         );
-        return forbidden(
-          "Forbidden: cross-origin request rejected. If this is your dashboard behind a proxy, " +
-            "add its origin to DASHBOARD_ALLOWED_ORIGINS (see the server log for the exact value).",
-        );
+        return jsonError("Cross-origin request rejected (see server log; set DASHBOARD_ALLOWED_ORIGINS).", 403);
       }
-      const form = await req.formData();
+      const body = (await req.json().catch(() => ({}))) as Record<string, unknown>;
 
       switch (url.pathname) {
         case "/api/users": {
-          const slackId = String(form.get("slackId") ?? "").trim();
-          if (!SLACK_ID.test(slackId)) return new Response("Invalid Slack id", { status: 400 });
-          if (slackId === config.ownerSlackId) {
-            return new Response("The owner record cannot be modified", { status: 400 });
-          }
+          const slackId = String(body.slackId ?? "").trim();
+          if (!SLACK_ID.test(slackId)) return jsonError("Invalid Slack id");
+          if (slackId === config.ownerSlackId) return jsonError("The owner record cannot be modified");
           const existing = deps.users.get(slackId);
           deps.users.upsert({
             slackId,
-            role: asRole(form.get("role") as string | null),
+            role: asRole(body.role),
             displayName: existing?.displayName ?? "",
             addedBy: "dashboard",
             createdAt: existing?.createdAt ?? deps.clock(),
           });
-          return redirect("/users");
+          return Response.json({ ok: true });
         }
-
         case "/api/users/remove": {
-          const slackId = String(form.get("slackId") ?? "").trim();
-          if (slackId === config.ownerSlackId) {
-            return new Response("The owner cannot be removed", { status: 400 });
-          }
+          const slackId = String(body.slackId ?? "").trim();
+          if (slackId === config.ownerSlackId) return jsonError("The owner cannot be removed");
           deps.users.remove(slackId);
-          return redirect("/users");
+          return Response.json({ ok: true });
         }
-
         case "/api/learnings": {
-          const content = String(form.get("content") ?? "").trim();
-          if (!content) return new Response("Empty learning", { status: 400 });
+          const content = String(body.content ?? "").trim();
+          if (!content) return jsonError("Empty learning");
           deps.learnings.add(content, "dashboard", deps.clock());
-          return redirect("/learnings");
+          return Response.json({ ok: true });
         }
-
         case "/api/learnings/remove": {
-          const id = Number(form.get("id"));
-          if (!Number.isInteger(id)) return new Response("Invalid id", { status: 400 });
+          const id = Number(body.id);
+          if (!Number.isInteger(id)) return jsonError("Invalid id");
           deps.learnings.remove(id);
-          return redirect("/learnings");
+          return Response.json({ ok: true });
         }
-
         case "/api/identity": {
-          const name = String(form.get("name") ?? "").trim();
-          if (!name) return new Response("Bot name is required", { status: 400 });
+          const name = String(body.name ?? "").trim();
+          if (!name) return jsonError("Bot name is required");
           deps.settings.set(SETTING_KEYS.botName, name);
-
-          const thinkingLabel = String(form.get("thinkingLabel") ?? "").trim();
-          if (thinkingLabel) deps.settings.set(SETTING_KEYS.thinkingLabel, thinkingLabel);
-          else deps.settings.remove(SETTING_KEYS.thinkingLabel);
-
-          const prompt = String(form.get("prompt") ?? "").trim();
+          const setOrClear = (key: string, value: unknown) => {
+            const v = String(value ?? "").trim();
+            if (v) deps.settings.set(key, v);
+            else deps.settings.remove(key);
+          };
+          setOrClear(SETTING_KEYS.thinkingLabel, body.thinkingLabel);
+          setOrClear(SETTING_KEYS.thinkingDoneLabel, body.thinkingDoneLabel);
+          const prompt = String(body.prompt ?? "").trim();
           if (prompt) deps.settings.set(SETTING_KEYS.systemPrompt, prompt);
-          return redirect("/prompt");
+          return Response.json({ ok: true });
         }
-
         case "/api/prompt/reset": {
           deps.settings.remove(SETTING_KEYS.systemPrompt);
-          return redirect("/prompt");
+          return Response.json({ ok: true });
         }
-
         case "/api/conversation/clear": {
-          const channel = String(form.get("channel") ?? "").trim();
+          const channel = String(body.channel ?? "").trim();
           if (channel) deps.messages.clearChannel(channel);
-          return redirect("/conversations");
+          return Response.json({ ok: true });
         }
       }
+      return jsonError("Not found", 404);
     }
 
+    return jsonError("Method not allowed", 405);
+  };
+
+  const route = async (req: Request, url: URL): Promise<Response> => {
+    if (url.pathname === "/health") return Response.json({ ok: true });
+    if (url.pathname === "/api" || url.pathname.startsWith("/api/")) return api(req, url);
+    if (req.method === "GET") return serveStatic(url.pathname);
     return new Response("Not found", { status: 404 });
   };
 

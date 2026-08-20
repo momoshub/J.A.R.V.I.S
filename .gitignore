@@ -1,5 +1,9 @@
 # dependencies
 node_modules/
+web/node_modules/
+
+# web build output (run `bun run build:web`)
+web/dist/
 
 # secrets
 .env
