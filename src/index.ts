@@ -26,6 +26,8 @@ import { createSlackAdmin } from "./infrastructure/slack/adminClient.ts";
 import { createDraftReply } from "./application/draftReply.ts";
 import { toolPolicyFor } from "./domain/toolPolicy.ts";
 import { createDashboard } from "./infrastructure/dashboard/server.ts";
+import { createActivityLog } from "./infrastructure/logger.ts";
+import type { CommandLogRepo } from "./infrastructure/db/commandLogRepo.ts";
 import type { LlmPort } from "./application/ports.ts";
 import type { RespondDeps } from "./application/respond.ts";
 
@@ -63,7 +65,25 @@ const main = async () => {
   const messages = createMessageRepo(db);
   const learnings = createLearningsRepo(db);
   const settings = createSettingsRepo(db);
-  const commandLog = createCommandLogRepo(db);
+  // Activity log to the logs/ folder: every command (and message) is recorded,
+  // failed commands additionally land in errors.log.
+  const activity = createActivityLog(config.logDir);
+  const baseCommandLog = createCommandLogRepo(db);
+  const commandLog: CommandLogRepo = {
+    ...baseCommandLog,
+    add: (entry, createdAt) => {
+      baseCommandLog.add(entry, createdAt);
+      const rec = {
+        user: entry.slackUserId,
+        command: entry.command,
+        args: entry.args,
+        channel: entry.channelId,
+        result: entry.result.slice(0, 300),
+      };
+      if (entry.ok) activity.event("command", rec);
+      else activity.error("command_failed", rec);
+    },
+  };
   const clock = () => Date.now();
 
   const disabledCommands = (): ReadonlySet<string> =>
@@ -168,7 +188,7 @@ const main = async () => {
       commandPrefix: config.commandPrefix,
       slashCommand: config.slashCommand,
     },
-    deps,
+    { ...deps, log: activity.line },
   );
   await slack.start();
 

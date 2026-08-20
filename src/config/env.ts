@@ -52,6 +52,8 @@ const schema = z
     // are always allowed.
     DASHBOARD_ALLOWED_ORIGINS: z.string().optional(),
     DATABASE_PATH: z.string().default("data/bot.db"),
+    // Folder for the activity/error logs (one JSON line per event).
+    LOG_DIR: z.string().default("logs"),
   })
   .refine((env) => env.LLM_PROVIDER !== "anthropic" || !!env.ANTHROPIC_API_KEY, {
     message: "ANTHROPIC_API_KEY is required when LLM_PROVIDER=anthropic",
@@ -82,6 +84,7 @@ export type AppConfig = {
   dashboardToken: string;
   dashboardAllowedOrigins: string[];
   databasePath: string;
+  logDir: string;
 };
 
 /** A short human label for the active model, shown on the dashboard. */
@@ -123,5 +126,6 @@ export const loadConfig = (source: Record<string, string | undefined> = process.
       .map((o) => o.trim())
       .filter(Boolean),
     databasePath: env.DATABASE_PATH,
+    logDir: env.LOG_DIR,
   };
 };

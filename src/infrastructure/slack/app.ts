@@ -143,6 +143,7 @@ export const createHandler =
         { channelId: msg.channelId, slackUserId: msg.userId, text, displayName, threadTs: msg.threadTs, viaSlash: false },
         stream?.sink,
       );
+      log(`handled user=${msg.userId} channel=${msg.channelId} kind=${result.kind}`);
       if (result.kind === "ignored") return;
 
       // If the reply streamed successfully, Slack already has it; otherwise post.

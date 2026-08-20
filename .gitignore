@@ -13,6 +13,8 @@ web/dist/
 # are not - they are flushed into the .db on a clean shutdown.
 data/*.db-shm
 data/*.db-wal
+# this checkout runs as a separate instance (Jarvis) - keep its runtime DB out of git
+data/jarvis.db
 
 # bun
 .bun/
