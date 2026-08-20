@@ -40,15 +40,12 @@ describe("buildContextWindow", () => {
 });
 
 describe("cleanInboundText", () => {
-  test("strips mentions and trims", () => {
-    expect(cleanInboundText("<@U123> hello there")).toBe("hello there");
-  });
-
-  test("collapses whitespace", () => {
+  test("collapses whitespace and trims", () => {
     expect(cleanInboundText("a   b\n\nc")).toBe("a b c");
+    expect(cleanInboundText("  hi  ")).toBe("hi");
   });
 
-  test("strips piped mentions too", () => {
-    expect(cleanInboundText("<@U123|kai> ping <@U999|bob>")).toBe("ping");
+  test("keeps mentions (annotated upstream) so the model sees who is referenced", () => {
+    expect(cleanInboundText("<@U123:Kai> hello there")).toBe("<@U123:Kai> hello there");
   });
 });

@@ -12,11 +12,13 @@ import {
   DEFAULT_CONTEXT_WINDOW,
 } from "../domain/conversation.ts";
 import { buildSystemPrompt } from "../domain/personality.ts";
+import { hasContent } from "../domain/mentions.ts";
 import type { Clock, LlmPort, LlmStreamSink } from "./ports.ts";
 import type { PromptContext } from "../domain/types.ts";
 import type { MessageRepo } from "../infrastructure/db/messageRepo.ts";
 import type { UserRepo } from "../infrastructure/db/userRepo.ts";
 import type { LearningsRepo } from "../infrastructure/db/learningsRepo.ts";
+import type { CommandLogRepo } from "../infrastructure/db/commandLogRepo.ts";
 
 export type HandleMessageDeps = {
   users: UserRepo;
@@ -31,6 +33,10 @@ export type HandleMessageDeps = {
   learnings?: LearningsRepo;
   /** Bot name + model, for the `model`/`status` command. */
   botInfo?: () => { botName: string; model: string };
+  /** Audit log for command executions. */
+  commandLog?: CommandLogRepo;
+  /** Set of disabled command names (managed from the dashboard). */
+  disabledCommands?: () => ReadonlySet<string>;
 };
 
 /** Author id recorded for the bot's own turns (never a real Slack id). */
@@ -55,7 +61,7 @@ export const handleMessage = async (
   sink?: LlmStreamSink,
 ): Promise<HandleResult> => {
   const text = cleanInboundText(inbound.text);
-  if (text.length === 0) return { kind: "ignored" };
+  if (!hasContent(text)) return { kind: "ignored" };
 
   const decision = decideAccess(inbound.slackUserId, deps.ownerSlackId, deps.users.get);
   if (!decision.allowed) return { kind: "denied", text: decision.reason };

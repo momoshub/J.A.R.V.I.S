@@ -30,6 +30,7 @@ import {
   type Overview,
 } from "./api.ts";
 import { ConsolePage } from "./console.tsx";
+import { CommandsPage } from "./commands.tsx";
 import "./styles.css";
 
 /** Wrap an action so thrown API errors surface as `{ error }` instead of crashing. */
@@ -50,6 +51,7 @@ const NAV = [
   { to: "/identity", label: "Identity" },
   { to: "/conversations", label: "Conversations" },
   { to: "/console", label: "Console" },
+  { to: "/commands", label: "Commands" },
 ];
 
 function Layout() {
@@ -394,6 +396,23 @@ const router = createBrowserRouter([
       {
         path: "console",
         element: <ConsolePage />,
+      },
+      {
+        path: "commands",
+        loader: async () => {
+          const [c, log] = await Promise.all([
+            get<{ commands: unknown[]; disabled: string[] }>("commands"),
+            get<unknown[]>("command-log"),
+          ]);
+          return { commands: c.commands, disabled: c.disabled, log };
+        },
+        action: guard(async ({ request }) => {
+          const fd = await request.formData();
+          if (fd.get("intent") === "clear") await post("command-log/clear", {});
+          else await post("commands/toggle", { name: fd.get("name"), enabled: fd.get("enabled") === "true" });
+          return { ok: true };
+        }),
+        element: <CommandsPage />,
       },
       {
         path: "conversations/:channel",

@@ -15,7 +15,9 @@ import { DEFAULT_PERSONALITY } from "../../domain/personality.ts";
 import type { BotProfile } from "../../application/botProfile.ts";
 import type { SlackAdminPort } from "../../application/slackAdmin.ts";
 import type { DraftReply } from "../../application/draftReply.ts";
+import { listCommandInfo } from "../../application/commands.ts";
 import type { Clock } from "../../application/ports.ts";
+import type { CommandLogRepo } from "../db/commandLogRepo.ts";
 import type { MessageRepo } from "../db/messageRepo.ts";
 import type { UserRepo } from "../db/userRepo.ts";
 import type { LearningsRepo } from "../db/learningsRepo.ts";
@@ -44,7 +46,12 @@ export type DashboardDeps = {
   slack?: SlackAdminPort;
   /** Generate an AI reply draft from a thread. */
   draft?: DraftReply;
+  /** Command execution audit log. */
+  commandLog?: CommandLogRepo;
 };
+
+const parseCsv = (v: string | undefined): Set<string> =>
+  new Set((v ?? "").split(",").map((s) => s.trim()).filter(Boolean));
 
 const SLACK_ID = /^[UW][A-Z0-9]+$/;
 const CONVERSATION_LIMIT = 200;
@@ -173,6 +180,13 @@ export const createDashboard = (config: DashboardConfig, deps: DashboardDeps) =>
             defaultPersona: DEFAULT_PERSONALITY,
           });
         }
+        case "/api/commands":
+          return Response.json({
+            commands: listCommandInfo(),
+            disabled: [...parseCsv(deps.settings.get(SETTING_KEYS.disabledCommands))],
+          });
+        case "/api/command-log":
+          return Response.json(deps.commandLog?.recent(200) ?? []);
         case "/api/conversations":
           return Response.json(deps.messages.channels());
         case "/api/conversation": {
@@ -267,6 +281,19 @@ export const createDashboard = (config: DashboardConfig, deps: DashboardDeps) =>
           if (channel) deps.messages.clearChannel(channel);
           return Response.json({ ok: true });
         }
+
+        case "/api/commands/toggle": {
+          const name = String(body.name ?? "").trim();
+          if (!name) return jsonError("Command name required");
+          const disabled = parseCsv(deps.settings.get(SETTING_KEYS.disabledCommands));
+          if (body.enabled === false) disabled.add(name);
+          else disabled.delete(name);
+          deps.settings.set(SETTING_KEYS.disabledCommands, [...disabled].join(","));
+          return Response.json({ ok: true });
+        }
+        case "/api/command-log/clear":
+          deps.commandLog?.clear();
+          return Response.json({ ok: true });
 
         // --- Slack console mutations ---
         case "/api/slack/update":

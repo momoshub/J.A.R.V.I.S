@@ -19,6 +19,7 @@ import type { Clock, LlmPort } from "./ports.ts";
 import type { MessageRepo } from "../infrastructure/db/messageRepo.ts";
 import type { UserRepo } from "../infrastructure/db/userRepo.ts";
 import type { LearningsRepo } from "../infrastructure/db/learningsRepo.ts";
+import type { CommandLogRepo } from "../infrastructure/db/commandLogRepo.ts";
 
 export type CommandDeps = {
   users: UserRepo;
@@ -27,8 +28,20 @@ export type CommandDeps = {
   llm?: LlmPort;
   promptContext?: () => PromptContext;
   botInfo?: () => { botName: string; model: string };
+  commandLog?: CommandLogRepo;
+  /** Names of disabled commands (managed from the dashboard). */
+  disabledCommands?: () => ReadonlySet<string>;
   clock: Clock;
   ownerSlackId: string;
+};
+
+/** Public metadata for one command, for the dashboard. */
+export type CommandInfo = {
+  name: string;
+  aliases: string[];
+  minRole: UserRole;
+  usage: string;
+  summary: string;
 };
 
 type Context = {
@@ -50,7 +63,7 @@ type CommandDef = {
 
 const RANK: Record<UserRole, number> = { member: 0, admin: 1, owner: 2 };
 const MENTION = /<@([A-Z0-9]+)(?:\|[^>]+)?>/;
-const LEADING_MENTION = /^<@[A-Z0-9]+(?:\|[^>]+)?>\s*/;
+const LEADING_MENTION = /^<@[A-Z0-9]+(?::[^>]+|\|[^>]+)?>\s*/;
 
 const slackIdOf = (token?: string): string | undefined => {
   if (!token) return undefined;
@@ -278,6 +291,16 @@ export const commandLineOf = (text: string): string | undefined => {
   return undefined;
 };
 
+/** Metadata for every command, ordered as declared - for the dashboard. */
+export const listCommandInfo = (): CommandInfo[] =>
+  COMMANDS.map((c) => ({
+    name: c.name,
+    aliases: [...(c.aliases ?? [])],
+    minRole: c.minRole,
+    usage: c.usage,
+    summary: c.summary,
+  }));
+
 /** Run a command line (e.g. "add @U1 admin") on behalf of `actor`. */
 export const dispatchCommand = async (
   deps: CommandDeps,
@@ -290,10 +313,32 @@ export const dispatchCommand = async (
   const rest = trimmed.slice(name.length).trim();
   const args = rest.length ? rest.split(/\s+/) : [];
 
+  const log = (command: string, ok: boolean, result: string) =>
+    deps.commandLog?.add({ slackUserId: actor.slackId, command, args: rest, channelId, ok, result }, deps.clock());
+
   const command = byName.get(name);
-  if (!command) return `I do not recognise \`${name}\`. Try \`//ev help\`.`;
-  if (RANK[actor.role] < RANK[command.minRole]) {
-    return `That command needs *${command.minRole}* access. You are *${actor.role}*.`;
+  if (!command) {
+    const msg = `I do not recognise \`${name}\`. Try \`//ev help\`.`;
+    log(name, false, msg);
+    return msg;
   }
-  return command.run({ deps, actor, channelId, args, rest });
+  if (RANK[actor.role] < RANK[command.minRole]) {
+    const msg = `That command needs *${command.minRole}* access. You are *${actor.role}*.`;
+    log(command.name, false, msg);
+    return msg;
+  }
+  if (command.name !== "help" && deps.disabledCommands?.().has(command.name)) {
+    const msg = `\`${command.name}\` is currently disabled.`;
+    log(command.name, false, msg);
+    return msg;
+  }
+  try {
+    const result = await command.run({ deps, actor, channelId, args, rest });
+    log(command.name, true, result);
+    return result;
+  } catch (e) {
+    const msg = `That command failed: ${e instanceof Error ? e.message : String(e)}`;
+    log(command.name, false, msg);
+    return msg;
+  }
 };

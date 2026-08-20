@@ -11,6 +11,7 @@ import { App } from "@slack/bolt";
 import type { WebClient } from "@slack/web-api";
 import { respond, type RespondDeps } from "../../application/respond.ts";
 import { commandLineOf } from "../../application/commands.ts";
+import { annotateMentions, extractMentionIds } from "../../domain/mentions.ts";
 import { createSlackStream, type Streamer } from "./stream.ts";
 
 /** Messages longer than this get a "thinking" step before content streams. */
@@ -82,9 +83,24 @@ export type Incoming = {
  * with fake clients/streamers without standing up a real Slack connection.
  */
 export const createHandler =
-  (config: SlackAppConfig, deps: Deps, log: (msg: string) => void) =>
-  async (msg: Incoming): Promise<void> => {
-    const displayName = await fetchDisplayName(msg.client, msg.userId);
+  (config: SlackAppConfig, deps: Deps, log: (msg: string) => void) => {
+  // Cache resolved display names across messages for this connection.
+  const nameCache = new Map<string, string | undefined>();
+  const resolveName = async (client: SlackClient, id: string): Promise<string | undefined> => {
+    if (nameCache.has(id)) return nameCache.get(id);
+    const name = await fetchDisplayName(client, id);
+    nameCache.set(id, name);
+    return name;
+  };
+  // Annotate every `<@ID>` in the text with the resolved name for the model.
+  const annotate = async (client: SlackClient, text: string): Promise<string> => {
+    await Promise.all(extractMentionIds(text).map((id) => resolveName(client, id)));
+    return annotateMentions(text, (id) => nameCache.get(id));
+  };
+
+  return async (msg: Incoming): Promise<void> => {
+    const displayName = await resolveName(msg.client, msg.userId);
+    const text = await annotate(msg.client, msg.text);
 
     const stream = config.streamUpdates
       ? createSlackStream(
@@ -105,8 +121,8 @@ export const createHandler =
     if (
       stream &&
       deps.llm.stream &&
-      commandLineOf(msg.text) === undefined &&
-      msg.text.trim().length > LONG_MESSAGE_CHARS
+      commandLineOf(text) === undefined &&
+      text.trim().length > LONG_MESSAGE_CHARS
     ) {
       stream.showThinking(config.thinkingLabel());
     }
@@ -114,7 +130,7 @@ export const createHandler =
     try {
       const result = await respond(
         deps,
-        { channelId: msg.channelId, slackUserId: msg.userId, text: msg.text, displayName },
+        { channelId: msg.channelId, slackUserId: msg.userId, text, displayName },
         stream?.sink,
       );
       if (result.kind === "ignored") return;
@@ -130,6 +146,7 @@ export const createHandler =
         .catch(() => undefined);
     }
   };
+};
 
 export const createSlackApp = (config: SlackAppConfig, deps: Deps) => {
   const log = deps.log ?? ((m: string) => console.log(`[slack] ${m}`));

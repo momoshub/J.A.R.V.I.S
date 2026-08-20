@@ -26,9 +26,9 @@ export const buildContextWindow = (
     .map(({ role, content, slackUserId }) => ({ role, content, speakerId: slackUserId }));
 };
 
-/** Strip Slack mention tokens like <@U123> or <@U123|name> and collapse whitespace. */
-export const cleanInboundText = (raw: string): string =>
-  raw
-    .replace(/<@[A-Z0-9]+(?:\|[^>]+)?>/g, "")
-    .replace(/\s+/g, " ")
-    .trim();
+/**
+ * Normalise inbound text for the prompt: collapse whitespace and trim. Mentions
+ * are kept (they are annotated with names upstream so the model knows who is
+ * referenced); use `hasContent` to decide whether a message is mention-only.
+ */
+export const cleanInboundText = (raw: string): string => raw.replace(/\s+/g, " ").trim();

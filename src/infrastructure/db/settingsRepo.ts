@@ -10,6 +10,7 @@ export const SETTING_KEYS = {
   systemPrompt: "system_prompt",
   thinkingLabel: "thinking_label",
   thinkingDoneLabel: "thinking_done_label",
+  disabledCommands: "disabled_commands",
 } as const;
 
 export type SettingsRepo = {

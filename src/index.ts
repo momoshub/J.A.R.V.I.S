@@ -14,6 +14,7 @@ import { openDatabase } from "./infrastructure/db/client.ts";
 import { createUserRepo } from "./infrastructure/db/userRepo.ts";
 import { createMessageRepo } from "./infrastructure/db/messageRepo.ts";
 import { createLearningsRepo } from "./infrastructure/db/learningsRepo.ts";
+import { createCommandLogRepo } from "./infrastructure/db/commandLogRepo.ts";
 import { createSettingsRepo, SETTING_KEYS } from "./infrastructure/db/settingsRepo.ts";
 import { loadBotProfile } from "./application/botProfile.ts";
 import { seedOwner } from "./infrastructure/db/seed.ts";
@@ -62,7 +63,16 @@ const main = async () => {
   const messages = createMessageRepo(db);
   const learnings = createLearningsRepo(db);
   const settings = createSettingsRepo(db);
+  const commandLog = createCommandLogRepo(db);
   const clock = () => Date.now();
+
+  const disabledCommands = (): ReadonlySet<string> =>
+    new Set(
+      (settings.get(SETTING_KEYS.disabledCommands) ?? "")
+        .split(",")
+        .map((s) => s.trim())
+        .filter(Boolean),
+    );
 
   seedOwner(users, config.ownerSlackId, clock);
 
@@ -89,9 +99,11 @@ const main = async () => {
       base: settings.get(SETTING_KEYS.systemPrompt),
       learnings: learnings.list().map((l) => l.content),
     }),
-    // For the command registry (learn/learnings, model/status).
+    // For the command registry (learn/learnings, model/status, log + disable).
     learnings,
     botInfo: () => ({ botName: profile().name, model: modelLabel(config) }),
+    commandLog,
+    disabledCommands,
   };
 
   const dashboard = createDashboard(
@@ -115,6 +127,7 @@ const main = async () => {
       // the dashboard on Slack's 10s retry-after.
       slack: createSlackAdmin(new WebClient(config.slackBotToken, { retryConfig: { retries: 0 } })),
       draft: createDraftReply({ llm, promptContext: deps.promptContext! }),
+      commandLog,
     },
   );
   dashboard.start();

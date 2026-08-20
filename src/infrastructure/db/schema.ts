@@ -52,4 +52,19 @@ export const migrate = (db: Database): void => {
       created_at INTEGER NOT NULL
     );
   `);
+
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS command_log (
+      id            INTEGER PRIMARY KEY AUTOINCREMENT,
+      slack_user_id TEXT NOT NULL,
+      command       TEXT NOT NULL,
+      args          TEXT NOT NULL DEFAULT '',
+      channel_id    TEXT NOT NULL DEFAULT '',
+      ok            INTEGER NOT NULL DEFAULT 1,
+      result        TEXT NOT NULL DEFAULT '',
+      created_at    INTEGER NOT NULL
+    );
+  `);
+
+  db.exec("CREATE INDEX IF NOT EXISTS idx_command_log_time ON command_log (id DESC);");
 };

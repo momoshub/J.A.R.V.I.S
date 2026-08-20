@@ -76,6 +76,24 @@ export type SlackMessage = {
   mentionsBot: boolean;
 };
 
+export type CommandInfo = {
+  name: string;
+  aliases: string[];
+  minRole: "owner" | "admin" | "member";
+  usage: string;
+  summary: string;
+};
+export type CommandLogEntry = {
+  id: number;
+  slackUserId: string;
+  command: string;
+  args: string;
+  channelId: string;
+  ok: boolean;
+  result: string;
+  createdAt: number;
+};
+
 export const fmtTime = (ms: number): string =>
   ms ? new Date(ms).toISOString().replace("T", " ").slice(0, 16) : "-";
 
