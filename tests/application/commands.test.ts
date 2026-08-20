@@ -251,7 +251,8 @@ describe("dispatchCommand", () => {
     const PR = "https://github.com/o/r/pull/1";
     // What the CLI really emits: a short approve, then one shell call that writes
     // the body with a heredoc and only then runs gh - past the card's 200 chars.
-    const heredoc = `cat > /tmp/r.md <<'EOF'\n${"blocker prose ".repeat(30)}\nEOF\ngh pr review ${PR} --request-changes --body-file /tmp/r.md`;
+    const body = "the review prose ".repeat(30).trim();
+    const heredoc = `cat > /tmp/r.md <<'EOF'\n${body}\nEOF\ngh pr comment ${PR} --body-file /tmp/r.md`;
     const streamed: LlmPort = {
       complete: async () => "unused",
       stream: async (_p, sink) => {
@@ -261,7 +262,7 @@ describe("dispatchCommand", () => {
           sink({ type: "tool", id, title, command, status: "complete" });
         };
         emit("t1", `gh pr review ${PR} --approve 2>&1`);
-        emit("t2", `gh pr comment ${PR} --body "the review"`);
+        emit("t2", `gh pr review ${PR} --request-changes --body "requested changes"`);
         emit("t3", heredoc);
         return "final review text";
       },
@@ -278,12 +279,10 @@ describe("dispatchCommand", () => {
     expect(lines[0]).toContain("reviewing");
     expect(lines).toContain(`✅ approved ${PR}`);
     expect(lines[lines.length - 1]).toBe("final review text");
-    // each action carries the body that went to GitHub, heredoc included
-    const comment = lines.find((l) => l.startsWith("📝"));
-    expect(comment).toBe(`📝 posted the review on ${PR}\n\nthe review`);
-    const changes = lines.find((l) => l.startsWith("⚠️"));
-    expect(changes).toContain(`⚠️ requested changes on ${PR}`);
-    expect(changes).toContain("blocker prose");
+    // the comment carries the body that went to GitHub, recovered from the heredoc
+    expect(lines.find((l) => l.startsWith("📝"))).toBe(`📝 posted the review on ${PR}\n\n${body}`);
+    // the change request is a state flip - its static marker is not echoed back
+    expect(lines.find((l) => l.startsWith("⚠️"))).toBe(`⚠️ requested changes on ${PR}`);
   });
 
   test("rv does not announce actions that only appear as prose in a body", async () => {

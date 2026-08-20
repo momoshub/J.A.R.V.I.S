@@ -14,6 +14,13 @@
 
 import type { Reviewer } from "./types.ts";
 
+/**
+ * Body for the request-changes review. Fixed on purpose: it exists to flip the
+ * PR's state, not to carry content - everything the review has to say lives in
+ * the one comment, so nothing is said twice.
+ */
+export const REQUEST_CHANGES_BODY = "requested changes";
+
 /** A PR counts as "big" (clone + child agents) past these thresholds. */
 export const BIG_PR_FILES = 5;
 export const BIG_PR_LINES = 200;
@@ -57,13 +64,13 @@ For EACH PR, follow this workflow exactly, in order:
        gh pr comment <url> --body "<your review>"
 
    FLOW B - high risk found. Two actions, in exactly this order, then this PR is done:
-       a) reverse the standing approval, blocker list only (this supersedes and discards the approve that was submitted before you started):
-            gh pr review <url> --request-changes --body "<only what MUST be fixed before merge, most severe first>"
-       b) then the review comment, written about those requested changes - what you found, why each one blocks, plus anything non-blocking worth saying:
+       a) reverse the standing approval (this supersedes and discards the approve that was submitted before you started). The body is a fixed marker, exactly this and nothing else - no findings, no list, no explanation:
+            gh pr review <url> --request-changes --body "${REQUEST_CHANGES_BODY}"
+       b) then the review comment, which carries everything - lead with what is blocking and why, then the rest of the review:
             gh pr comment <url> --body "<your review>"
-     The request-changes body is the blocker list and nothing else: no praise, no nits, no summary of the PR - just each required change, what is wrong and what it needs, most severe first. Same voice, tagging and formatting rules as step 4, but no sign-off line on that one - the sign-off belongs on the comment.
+     The change request is a state flip, not a place to write. Say each thing exactly once, in the comment - never state a blocker in (a) and again in (b).
 
-   Either way: exactly one gh pr comment per PR, and never a request-changes on flow A. Write each body in the SAME shell command as the gh call that posts it - a heredoc into a file, then the gh call using it (cat > /tmp/body.md <<'EOF' ... EOF, then gh ... --body-file /tmp/body.md), or inline with --body. Never write a body in one command and post it in another: what you post is relayed to Slack from the command itself, and a body written elsewhere cannot be seen.
+   Either way: exactly one gh pr comment per PR, it is the only place the review is written, and never a request-changes on flow A. Write the comment body in the SAME shell command as the gh call that posts it - a heredoc into a file, then the gh call using it (cat > /tmp/body.md <<'EOF' ... EOF, then gh ... --body-file /tmp/body.md), or inline with --body. Never write a body in one command and post it in another: what you post is relayed to Slack from the command itself, and a body written elsewhere cannot be seen.
 
 4. How to write the review. Write it as ${who}, an engineer leaving a quick review in chat - the comment is posted from that account, so it is that person's voice, first person, not a bot's.
 
@@ -75,7 +82,7 @@ For EACH PR, follow this workflow exactly, in order:
 
    When you mention a person, use GitHub tagging syntax - @login, taken from the PR data you gathered (author.login, the review and comment authors), never a display name and never a Slack <@ID> tag. Do not tag anyone you have no login for, and do not tag your own account.
 
-   Length: under 250 words for a normal PR. A BIG PR (step 2) may run longer - as far as the findings genuinely need, still tight, no padding. The cap never applies to the required-changes list from step 3b: blockers are always stated in full.
+   Length: under 250 words for a normal PR. A BIG PR (step 2) may run longer - as far as the findings genuinely need, still tight, no padding. On flow B the cap never squeezes the blockers: whatever must be fixed before merge is stated in full, and the trimming happens everywhere else.
 
    The same text lands on GitHub and in Slack, which render differently, so keep to plain prose and \`backticks\` for code and identifiers - avoid * emphasis, it means different things in each.
 

@@ -15,7 +15,7 @@ import { validateRemoval, validateRoleChange } from "../domain/access.ts";
 import { reviewPrompt } from "../domain/reviewPrompt.ts";
 import { EMOJI_CATEGORY_NAMES, pickBomb } from "../domain/emoji.ts";
 import { parseMessageLink } from "../domain/slackLinks.ts";
-import { postedBody, type GhAction } from "../domain/ghCommand.ts";
+import { postedBody } from "../domain/ghCommand.ts";
 import type { AllowedUser, PromptContext, UserRole } from "../domain/types.ts";
 import type { ToolPolicy } from "../domain/toolPolicy.ts";
 import type { Clock, LlmPort } from "./ports.ts";
@@ -376,16 +376,15 @@ export const COMMANDS: readonly CommandDef[] = [
           // Independent, not else-if: one shell call can approve and then reverse.
           // `[^\n]*` keeps a match on the gh line itself, so prose inside a heredoc
           // body ("flipping back to request-changes") cannot trigger a false line.
-          // Each action carries the body that went to GitHub, recovered from the
-          // command itself, so the thread gets the real text as it lands.
-          const withBody = (head: string, action: GhAction): string => {
-            const body = postedBody(ran, action);
-            return body ? `${head}\n\n${clip(body)}` : head;
-          };
           if (/gh pr review[^\n]*--approve/.test(t)) announce(`✅ approved${at}`);
-          if (/gh pr review[^\n]*--request-changes/.test(t))
-            announce(withBody(`⚠️ requested changes${on}`, "request-changes"));
-          if (/gh pr comment\b/.test(t)) announce(withBody(`📝 posted the review${on}`, "comment"));
+          // The change request carries a fixed marker, so there is nothing to
+          // relay; the comment is where the review is written, and it comes with
+          // the body that went to GitHub, recovered from the command itself.
+          if (/gh pr review[^\n]*--request-changes/.test(t)) announce(`⚠️ requested changes${on}`);
+          if (/gh pr comment\b/.test(t)) {
+            const body = postedBody(ran, "comment");
+            announce(`📝 posted the review${on}${body ? `\n\n${clip(body)}` : ""}`);
+          }
         });
       } else {
         out = await deps.llm.complete(params);

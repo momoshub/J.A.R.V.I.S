@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { parseMessageLink } from "../../src/domain/slackLinks.ts";
 import { EMOJI_CATEGORY_NAMES, pickBomb } from "../../src/domain/emoji.ts";
-import { reviewPrompt } from "../../src/domain/reviewPrompt.ts";
+import { REQUEST_CHANGES_BODY, reviewPrompt } from "../../src/domain/reviewPrompt.ts";
 
 describe("parseMessageLink", () => {
   test("parses channel + ts from a permalink", () => {
@@ -71,11 +71,11 @@ describe("reviewPrompt", () => {
     expect(p).toContain("do not tag your own account");
   });
 
-  test("the word cap is scoped to normal PRs and never to the blocker list", () => {
+  test("the word cap is scoped to normal PRs and never squeezes blockers", () => {
     const p = reviewPrompt(["https://github.com/o/r/pull/1"], "Evie");
     expect(p).toContain("under 250 words for a normal PR");
     expect(p).toContain("A BIG PR (step 2) may run longer");
-    expect(p).toContain("The cap never applies to the required-changes list");
+    expect(p).toContain("On flow B the cap never squeezes the blockers");
   });
 
   test("the approve is the caller's job, not the model's", () => {
@@ -88,22 +88,23 @@ describe("reviewPrompt", () => {
     const p = reviewPrompt(["https://github.com/o/r/pull/1"], "Evie");
     expect(p).toContain("EXACTLY ONE of the two flows");
     expect(p).toContain("Never both, never a mix");
-    expect(p).toContain("exactly one gh pr comment per PR, and never a request-changes on flow A");
+    expect(p).toContain("exactly one gh pr comment per PR, it is the only place the review is written");
   });
 
-  test("on the risky flow the blockers go up first, then a comment about them", () => {
+  test("on the risky flow the change request is a static marker, then the comment", () => {
     const p = reviewPrompt(["https://github.com/o/r/pull/1"], "Evie");
-    const requestChanges = p.indexOf("--request-changes");
-    const commentAfter = p.indexOf("then the review comment, written about those requested changes");
+    const requestChanges = p.indexOf(`--request-changes --body "${REQUEST_CHANGES_BODY}"`);
+    const commentAfter = p.indexOf("then the review comment, which carries everything");
     expect(requestChanges).toBeGreaterThan(-1);
     expect(commentAfter).toBeGreaterThan(requestChanges); // order is load-bearing
-    expect(p).toMatch(/request-changes body is the blocker list and nothing else/);
-    expect(p).toContain("only what MUST be fixed before merge");
+    expect(p).toContain("The change request is a state flip, not a place to write");
+    expect(p).toContain("never state a blocker in (a) and again in (b)");
+    expect(p).toContain("lead with what is blocking and why");
   });
 
-  test("bodies must be written in the same command that posts them, so they can be relayed", () => {
+  test("the comment body must be written in the same command that posts it, so it can be relayed", () => {
     const p = reviewPrompt(["https://github.com/o/r/pull/1"], "Evie");
-    expect(p).toContain("Write each body in the SAME shell command");
+    expect(p).toContain("Write the comment body in the SAME shell command");
     expect(p).toContain("Never write a body in one command and post it in another");
   });
 
