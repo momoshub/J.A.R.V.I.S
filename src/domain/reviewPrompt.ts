@@ -12,12 +12,22 @@
  * reason to skip. The same review body is posted to GitHub and back to Slack.
  */
 
+import type { Reviewer } from "./types.ts";
+
 /** A PR counts as "big" (clone + child agents) past these thresholds. */
 export const BIG_PR_FILES = 5;
 export const BIG_PR_LINES = 200;
 
-export const reviewPrompt = (prUrls: readonly string[], botName: string): string => {
+export const reviewPrompt = (
+  prUrls: readonly string[],
+  botName: string,
+  reviewer?: Reviewer,
+): string => {
   const many = prUrls.length > 1;
+  // The comment is posted by the gh account, so it is written in that person's
+  // voice - the bot's own name stays on the Slack side of the job.
+  const who = reviewer?.name?.trim() || reviewer?.login || botName;
+  const account = reviewer?.login ? ` from your own account (${reviewer.login})` : " from your own account";
   return `You are ${botName}, doing a real code review on ${many ? "these GitHub pull requests" : "this GitHub pull request"} and acting on it:
 ${prUrls.join("\n")}
 
@@ -48,15 +58,26 @@ For EACH PR, follow this workflow exactly, in order:
             gh pr comment <url> --body "<the full review, minus the blocking items>"
        b) then reverse the standing approval, and put ONLY the required changes in that body (this supersedes and discards the approve that was submitted before you started):
             gh pr review <url> --request-changes --body "<only what MUST be fixed before merge, most severe first>"
-     The request-changes body is the blocker list and nothing else: no praise, no nits, no summary of the PR - just each required change, what is wrong and what it needs, most severe first. Everything that is not a hard requirement belongs in the comment from (a).
+     Write each body in the SAME shell command as the gh call that posts it - a heredoc into a file, then the gh call using it (cat > /tmp/body.md <<'EOF' ... EOF, then gh ... --body-file /tmp/body.md), or inline with --body. Never write a body in one command and post it in another: what you post is relayed to Slack from the command itself, and a body written elsewhere cannot be seen.
+     The request-changes body is the blocker list and nothing else: no praise, no nits, no summary of the PR - just each required change, what is wrong and what it needs, most severe first. Everything that is not a hard requirement belongs in the comment from (a). Same voice, tagging and formatting rules as step 4, but no sign-off line on this one.
 
-4. The posted review: short conversational prose, warm but clear, straight at the code - real bugs, security, correctness, design risks - and state what you did (approved, or requested changes and why). Respect other reviewers' change requests, do not repeat points already raised, and never fabricate - only flag what you actually verified. No headings. If the PR is already merged or closed, review it exactly as you would an open one and simply note that it has already landed.
+4. How to write the review. Write it as ${who}, an engineer leaving a quick review in chat - the comment is posted from that account, so it is that person's voice, first person, not a bot's.
 
-5. Deliver the same review to Slack. The review goes to both places - your Slack reply carries the review itself, never a summary of it. For each PR, in this order:
-   - the PR url, then one short line: what you did (approved / requested changes) and its state (open / merged / closed)
-   - the review comment you posted to GitHub, verbatim - the same words, not shortened, not re-summarised
-   - if you requested changes, then a line reading exactly "Required changes:" followed by that request-changes body, also verbatim - so the blockers stay separated here exactly as they are on GitHub
-   Never report that you posted a review on GitHub without including its text here. End the whole message with exactly this line: just a cozy little glance from me and my claude ;))
+   The PR already carries an approving review${account} - you submitted it a second ago, before you started reading. Ignore it completely: never mention it, never call it "an existing approval", never treat it as anyone else's sign-off. Approvals and change requests from OTHER reviewers DO count - respect them, and do not repeat points they have already raised.
+
+   Short conversational prose, one or two paragraphs, assertive, straight at the implementation: the concrete changes, the coding style, real bugs, security, correctness, design risk. Say where you land - good to merge, or what is blocking. Call out failing CI. If the PR is already merged or closed, review it exactly as you would an open one and note plainly that it has already landed. Never fabricate: only flag what you actually verified.
+
+   Do not open with an overview or a line like "here is my read" - talk straight about the code. No headings.
+
+   When you mention a person, use GitHub tagging syntax - @login, taken from the PR data you gathered (author.login, the review and comment authors), never a display name and never a Slack <@ID> tag. Do not tag anyone you have no login for, and do not tag your own account.
+
+   Length: under 250 words for a normal PR. A BIG PR (step 2) may run longer - as far as the findings genuinely need, still tight, no padding. The cap never applies to the required-changes list from step 3b: blockers are always stated in full.
+
+   The same text lands on GitHub and in Slack, which render differently, so keep to plain prose and \`backticks\` for code and identifiers - avoid * emphasis, it means different things in each.
+
+   End the comment with exactly this line: just a quick glance from my side and my claude ;)))
+
+5. Close out in Slack. Every body you post is relayed into the thread as it lands, in full, so it is already there - do not paste it again. Your final reply is a short wrap-up only: one line per PR with the url, what you did (approved / requested changes), whether it is open, merged or closed, and the single headline finding. End the whole message with exactly this line: just a cozy little glance from me and my claude ;))
 
 You DO have write access for this task and are expected to comment / request-changes on the PR (the approve is already in). Do not modify files in any real repo, push, or take any action beyond these PR-review commands.`;
 };

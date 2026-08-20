@@ -75,3 +75,10 @@ export type PromptContext = {
 export type AccessDecision =
   | { readonly allowed: true; readonly user: AllowedUser }
   | { readonly allowed: false; readonly reason: string };
+
+/** The GitHub account the bot reviews as - the comment is posted in this name. */
+export type Reviewer = {
+  readonly login: string;
+  /** Profile name, when the account has one set. */
+  readonly name?: string;
+};

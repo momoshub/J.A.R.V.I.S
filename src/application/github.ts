@@ -7,13 +7,19 @@
  * minute reading the PR. The concrete implementation shells out to `gh`.
  */
 
+import type { Reviewer } from "../domain/types.ts";
+
 export type ApproveResult =
   /** The approval was submitted. */
   | { ok: true }
   /** GitHub (or `gh`) refused - e.g. approving your own PR. `error` is reportable. */
   | { ok: false; error: string };
 
+export type { Reviewer } from "../domain/types.ts";
+
 export type GitHubPort = {
   /** Submit a bodyless approving review on a PR url. Never throws. */
   approve: (prUrl: string) => Promise<ApproveResult>;
+  /** The authenticated account, or undefined if it cannot be resolved. Never throws. */
+  whoami: () => Promise<Reviewer | undefined>;
 };

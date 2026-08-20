@@ -50,6 +50,34 @@ describe("reviewPrompt", () => {
     expect(p).not.toMatch(/skip a pr that is already merged/i);
   });
 
+  test("writes as the gh account and disowns the standing approval", () => {
+    const p = reviewPrompt(["https://github.com/o/r/pull/1"], "Evie", { login: "kai-at-acme", name: "Kai" });
+    expect(p).toContain("Write it as Kai, an engineer");
+    expect(p).toContain("(kai-at-acme)");
+    expect(p).toContain("never mention it");
+    expect(p).toContain("Approvals and change requests from OTHER reviewers DO count");
+  });
+
+  test("falls back to the bot's own name when the account is unknown", () => {
+    const p = reviewPrompt(["https://github.com/o/r/pull/1"], "Evie");
+    expect(p).toContain("Write it as Evie, an engineer");
+    expect(p).toContain("from your own account -");
+  });
+
+  test("mentions use GitHub tagging, never Slack tags", () => {
+    const p = reviewPrompt(["https://github.com/o/r/pull/1"], "Evie");
+    expect(p).toContain("use GitHub tagging syntax - @login");
+    expect(p).toMatch(/never a Slack <@ID> tag/);
+    expect(p).toContain("do not tag your own account");
+  });
+
+  test("the word cap is scoped to normal PRs and never to the blocker list", () => {
+    const p = reviewPrompt(["https://github.com/o/r/pull/1"], "Evie");
+    expect(p).toContain("under 250 words for a normal PR");
+    expect(p).toContain("A BIG PR (step 2) may run longer");
+    expect(p).toContain("The cap never applies to the required-changes list");
+  });
+
   test("the approve is the caller's job, not the model's", () => {
     const p = reviewPrompt(["https://github.com/o/r/pull/1"], "Evie");
     expect(p).toContain("ALREADY DONE, before you started");
@@ -61,12 +89,18 @@ describe("reviewPrompt", () => {
     expect(p).toContain("split the review in two and post BOTH");
     expect(p).toMatch(/request-changes body is the blocker list and nothing else/);
     expect(p).toContain("only what MUST be fixed before merge");
-    expect(p).toContain("Required changes:"); // kept separate in Slack too
   });
 
-  test("requires the review body in Slack too, verbatim, not a summary", () => {
+  test("bodies must be written in the same command that posts them, so they can be relayed", () => {
     const p = reviewPrompt(["https://github.com/o/r/pull/1"], "Evie");
-    expect(p).toContain("verbatim");
-    expect(p).toMatch(/never a summary of it/i);
+    expect(p).toContain("Write each body in the SAME shell command");
+    expect(p).toContain("Never write a body in one command and post it in another");
+  });
+
+  test("the Slack close-out is a wrap-up, since the bodies are relayed already", () => {
+    const p = reviewPrompt(["https://github.com/o/r/pull/1"], "Evie");
+    expect(p).toContain("relayed into the thread as it lands");
+    expect(p).toContain("do not paste it again");
+    expect(p).toContain("just a cozy little glance from me and my claude");
   });
 });

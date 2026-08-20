@@ -179,14 +179,17 @@ describe("dispatchCommand", () => {
     const PR = "https://github.com/o/r/pull/1";
     const order: string[] = [];
     const github: GitHubPort = {
+      whoami: async () => ({ login: "kai-at-acme", name: "Kai" }),
       approve: async (url) => {
         order.push(`approve:${url}`);
         return { ok: true };
       },
     };
+    let system = "";
     const slow: LlmPort = {
-      complete: async () => {
+      complete: async (p) => {
         order.push("brain");
+        system = p.system;
         return "the review";
       },
     };
@@ -202,11 +205,17 @@ describe("dispatchCommand", () => {
     expect(lines[0]).toBe(`✅ approved ${PR}`);
     expect(lines[1]).toBe(`🔍 reviewing ${PR}`);
     expect(lines[lines.length - 1]).toBe("the review");
+    // the resolved account reaches the prompt, so the brain need not look it up
+    expect(system).toContain("Write it as Kai, an engineer");
+    expect(system).toContain("kai-at-acme");
   });
 
   test("rv reports a refused approval and reviews anyway", async () => {
     const PR = "https://github.com/o/r/pull/1";
-    const github: GitHubPort = { approve: async () => ({ ok: false, error: "can not approve your own PR" }) };
+    const github: GitHubPort = {
+      whoami: async () => undefined,
+      approve: async () => ({ ok: false, error: "can not approve your own PR" }),
+    };
     const lines: string[] = [];
     await dispatchCommand({ ...build(), github }, actor(), "C1", `rv ${PR}`, {
       reply: async (t: string) => {
@@ -220,7 +229,7 @@ describe("dispatchCommand", () => {
 
   test("rv does not repeat the approve line if the brain approves too", async () => {
     const PR = "https://github.com/o/r/pull/1";
-    const github: GitHubPort = { approve: async () => ({ ok: true }) };
+    const github: GitHubPort = { whoami: async () => undefined, approve: async () => ({ ok: true }) };
     const streamed: LlmPort = {
       complete: async () => "unused",
       stream: async (_p, sink) => {
@@ -268,9 +277,13 @@ describe("dispatchCommand", () => {
     expect(out).toBe(""); // delivered to the thread, not returned
     expect(lines[0]).toContain("reviewing");
     expect(lines).toContain(`✅ approved ${PR}`);
-    expect(lines).toContain(`📝 posted the review on ${PR}`);
-    expect(lines).toContain(`⚠️ requested changes on ${PR}`);
     expect(lines[lines.length - 1]).toBe("final review text");
+    // each action carries the body that went to GitHub, heredoc included
+    const comment = lines.find((l) => l.startsWith("📝"));
+    expect(comment).toBe(`📝 posted the review on ${PR}\n\nthe review`);
+    const changes = lines.find((l) => l.startsWith("⚠️"));
+    expect(changes).toContain(`⚠️ requested changes on ${PR}`);
+    expect(changes).toContain("blocker prose");
   });
 
   test("rv does not announce actions that only appear as prose in a body", async () => {
@@ -289,9 +302,10 @@ describe("dispatchCommand", () => {
         lines.push(text);
       },
     });
-    expect(lines).toContain(`📝 posted the review on ${PR}`);
-    expect(lines.some((l) => l.includes("requested changes"))).toBe(false);
-    expect(lines.some((l) => l.includes("approved"))).toBe(false);
+    expect(lines.some((l) => l.startsWith(`📝 posted the review on ${PR}`))).toBe(true);
+    // the prose lives in the relayed body, but must not have fired its own line
+    expect(lines.some((l) => l.startsWith("⚠️"))).toBe(false);
+    expect(lines.some((l) => l.startsWith("✅"))).toBe(false);
   });
 
   test("rv needs a PR url", async () => {

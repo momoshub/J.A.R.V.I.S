@@ -6,7 +6,7 @@
  * Failures are returned, never thrown: a refused approval is something to report
  * in the thread, not a reason to abandon the review.
  */
-import type { ApproveResult, GitHubPort } from "../../application/github.ts";
+import type { ApproveResult, GitHubPort, Reviewer } from "../../application/github.ts";
 
 export type GhCliConfig = {
   /** Path or name of the gh binary. Default "gh". */
@@ -34,7 +34,26 @@ export const createGhCli = (config: GhCliConfig = {}): GitHubPort => {
     return { code, out, err };
   };
 
+  // Resolved once per process: the account cannot change under us, and the review
+  // command needs it on the hot path (it goes into the prompt).
+  let account: Promise<Reviewer | undefined> | undefined;
+  const resolveAccount = async (): Promise<Reviewer | undefined> => {
+    try {
+      const { code, out } = await run(["api", "user"]);
+      if (code !== 0) return undefined;
+      const parsed: unknown = JSON.parse(out);
+      if (typeof parsed !== "object" || parsed === null) return undefined;
+      const { login, name } = parsed as { login?: unknown; name?: unknown };
+      if (typeof login !== "string" || !login) return undefined;
+      return { login, name: typeof name === "string" && name ? name : undefined };
+    } catch {
+      return undefined;
+    }
+  };
+
   return {
+    whoami: () => (account ??= resolveAccount()),
+
     approve: async (prUrl: string): Promise<ApproveResult> => {
       try {
         const { code, out, err } = await run(["pr", "review", prUrl, "--approve"]);

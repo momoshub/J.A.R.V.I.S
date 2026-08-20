@@ -15,6 +15,7 @@ import { validateRemoval, validateRoleChange } from "../domain/access.ts";
 import { reviewPrompt } from "../domain/reviewPrompt.ts";
 import { EMOJI_CATEGORY_NAMES, pickBomb } from "../domain/emoji.ts";
 import { parseMessageLink } from "../domain/slackLinks.ts";
+import { postedBody, type GhAction } from "../domain/ghCommand.ts";
 import type { AllowedUser, PromptContext, UserRole } from "../domain/types.ts";
 import type { ToolPolicy } from "../domain/toolPolicy.ts";
 import type { Clock, LlmPort } from "./ports.ts";
@@ -53,6 +54,10 @@ export type CommandDeps = {
 };
 
 const REACTION_BOMB_SIZE = 23;
+/** Ceiling for a relayed GitHub body in one Slack message. */
+const RELAYED_BODY_CHARS = 3000;
+const clip = (s: string): string =>
+  s.length > RELAYED_BODY_CHARS ? `${s.slice(0, RELAYED_BODY_CHARS)}…\n(truncated - full text is on the PR)` : s;
 /** review clones + spawns child agents, so allow much longer than a chat reply. */
 const REVIEW_TIMEOUT_MS = 600_000;
 
@@ -311,12 +316,10 @@ export const COMMANDS: readonly CommandDef[] = [
       const full = deps.toolPolicy?.("owner") ?? { skipPermissions: true };
       const policy = { ...full, timeoutMs: REVIEW_TIMEOUT_MS };
       const name = botNameOf(deps);
-      const params = {
-        system: reviewPrompt(targets, name),
-        messages: [{ role: "user" as const, content: `review ${targets.join(" ")}` }],
-        assistantName: name,
-        policy,
-      };
+
+      // Who the comment is written as. In flight while we approve - the brain
+      // needs it in its prompt, and it would otherwise spend a tool call on it.
+      const account = deps.github?.whoami();
 
       // Approve FIRST, in code, before the brain is even spawned. It is a fixed
       // step, not a judgement call, so it must not wait ~30s for the model to read
@@ -330,6 +333,13 @@ export const COMMANDS: readonly CommandDef[] = [
         if (res.ok) seen.add(line);
         approved.push(line);
       }
+
+      const params = {
+        system: reviewPrompt(targets, name, await account),
+        messages: [{ role: "user" as const, content: `review ${targets.join(" ")}` }],
+        assistantName: name,
+        policy,
+      };
 
       // No live destination (tests / slack off): one-shot, return the text.
       if (!reply) {
@@ -366,9 +376,16 @@ export const COMMANDS: readonly CommandDef[] = [
           // Independent, not else-if: one shell call can approve and then reverse.
           // `[^\n]*` keeps a match on the gh line itself, so prose inside a heredoc
           // body ("flipping back to request-changes") cannot trigger a false line.
+          // Each action carries the body that went to GitHub, recovered from the
+          // command itself, so the thread gets the real text as it lands.
+          const withBody = (head: string, action: GhAction): string => {
+            const body = postedBody(ran, action);
+            return body ? `${head}\n\n${clip(body)}` : head;
+          };
           if (/gh pr review[^\n]*--approve/.test(t)) announce(`✅ approved${at}`);
-          if (/gh pr review[^\n]*--request-changes/.test(t)) announce(`⚠️ requested changes${on}`);
-          if (/gh pr comment\b/.test(t)) announce(`📝 posted the review${on}`);
+          if (/gh pr review[^\n]*--request-changes/.test(t))
+            announce(withBody(`⚠️ requested changes${on}`, "request-changes"));
+          if (/gh pr comment\b/.test(t)) announce(withBody(`📝 posted the review${on}`, "comment"));
         });
       } else {
         out = await deps.llm.complete(params);
