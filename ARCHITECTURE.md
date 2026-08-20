@@ -46,7 +46,8 @@ Tested with an in-memory SQLite database and a fake `LlmPort`.
 Concrete implementations of the seams and the transports.
 
 - `db/` - `bun:sqlite` client, schema/migration, repos (`userRepo`, `messageRepo`), owner seed
-- `llm/anthropic.ts` - the `LlmPort` backed by Claude
+- `llm/claudeCli.ts` - the default `LlmPort`, wraps the local `claude` CLI (`-p --output-format json`) for full tool access
+- `llm/anthropic.ts` - alternative `LlmPort` backed by the Anthropic API
 - `slack/app.ts` - Socket Mode listener mapping Slack events to `respond`
 - `dashboard/` - `Bun.serve` admin UI and JSON API (pure `views.ts` renderer)
 

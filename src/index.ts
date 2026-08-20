@@ -6,15 +6,33 @@
  * the Slack listener and the dashboard. Everything below this file is decoupled
  * and independently testable.
  */
-import { loadConfig } from "./config/env.ts";
+import { loadConfig, modelLabel, type AppConfig } from "./config/env.ts";
 import { openDatabase } from "./infrastructure/db/client.ts";
 import { createUserRepo } from "./infrastructure/db/userRepo.ts";
 import { createMessageRepo } from "./infrastructure/db/messageRepo.ts";
 import { seedOwner } from "./infrastructure/db/seed.ts";
 import { createAnthropicLlm } from "./infrastructure/llm/anthropic.ts";
+import { createClaudeCliLlm } from "./infrastructure/llm/claudeCli.ts";
 import { createSlackApp } from "./infrastructure/slack/app.ts";
 import { createDashboard } from "./infrastructure/dashboard/server.ts";
+import type { LlmPort } from "./application/ports.ts";
 import type { RespondDeps } from "./application/respond.ts";
+
+/** Pick the brain based on config: the local Claude Code CLI or the API. */
+const buildLlm = (config: AppConfig): LlmPort =>
+  config.llmProvider === "claude-cli"
+    ? createClaudeCliLlm({
+        binPath: config.claudeBin,
+        model: config.claudeModel,
+        skipPermissions: config.claudeSkipPermissions,
+        cwd: config.claudeCwd,
+        timeoutMs: config.claudeTimeoutMs,
+      })
+    : createAnthropicLlm({
+        // guaranteed present for this provider by config validation
+        apiKey: config.anthropicApiKey as string,
+        model: config.anthropicModel,
+      });
 
 const main = async () => {
   const config = loadConfig();
@@ -26,10 +44,8 @@ const main = async () => {
 
   seedOwner(users, config.ownerSlackId, clock);
 
-  const llm = createAnthropicLlm({
-    apiKey: config.anthropicApiKey,
-    model: config.anthropicModel,
-  });
+  const llm = buildLlm(config);
+  console.log(`[llm] E.V.'s brain: ${modelLabel(config)}`);
 
   const deps: RespondDeps = {
     users,
@@ -44,7 +60,7 @@ const main = async () => {
       port: config.dashboardPort,
       token: config.dashboardToken,
       ownerSlackId: config.ownerSlackId,
-      model: config.anthropicModel,
+      model: modelLabel(config),
     },
     { users, messages, clock },
   );

@@ -8,7 +8,7 @@ E.V. talks only to an allowlist of Slack users, remembers each channel's convers
 
 - **Bun** + **TypeScript**, functional style (no classes)
 - **@slack/bolt** in Socket Mode (no public URL needed)
-- **@anthropic-ai/sdk** for the brain
+- **brain**: your local **Claude Code CLI** (default, full tool access) or the **@anthropic-ai/sdk** API
 - **bun:sqlite** for memory
 - **bun test** for TDD
 
@@ -25,12 +25,30 @@ Required env (see `.env.example`):
 | --- | --- |
 | `SLACK_BOT_TOKEN` | Bot User OAuth token (`xoxb-...`) |
 | `SLACK_APP_TOKEN` | App-level token with `connections:write` (`xapp-...`) |
-| `ANTHROPIC_API_KEY` | powers E.V.'s replies |
-| `ANTHROPIC_MODEL` | defaults to `claude-opus-4-8` |
+| `LLM_PROVIDER` | `claude-cli` (default) or `anthropic` |
+| `CLAUDE_BIN` | claude binary, default `claude` (claude-cli) |
+| `CLAUDE_MODEL` | model alias/id, default `opus` (claude-cli) |
+| `CLAUDE_SKIP_PERMISSIONS` | `true` gives full tool permissions (claude-cli) |
+| `CLAUDE_CWD` | working dir the CLI runs in, scopes tool access (claude-cli) |
+| `CLAUDE_TIMEOUT_MS` | per-reply timeout, default `120000` (claude-cli) |
+| `ANTHROPIC_API_KEY` | required only when `LLM_PROVIDER=anthropic` |
+| `ANTHROPIC_MODEL` | defaults to `claude-opus-4-8` (anthropic) |
 | `OWNER_SLACK_ID` | the owner, cannot be removed (default `U0OWNER0001`) |
 | `DASHBOARD_PORT` | dashboard port (default `2001`) |
-| `DASHBOARD_TOKEN` | token to reach the dashboard |
+| `DASHBOARD_TOKEN` | token to reach the dashboard (min 24 chars) |
 | `DATABASE_PATH` | sqlite file (default `data/ev.db`) |
+
+### Brain: Claude Code CLI (default)
+
+With `LLM_PROVIDER=claude-cli`, E.V. shells out to your local `claude` binary in
+print mode (`claude -p --output-format json`) for every reply, so she answers
+with Claude Code's full tool access (files, shell, MCP) under whatever
+permissions the CLI runs with. E.V. stays the memory owner: her per-channel
+SQLite window is rendered into each stateless invocation, so no CLI session state
+is relied upon. Requires `claude` installed and authenticated on the host.
+
+`CLAUDE_SKIP_PERMISSIONS=true` passes `--dangerously-skip-permissions` - full
+permissions, matching the original brief. Scope tool access with `CLAUDE_CWD`.
 
 ## Run
 
