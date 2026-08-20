@@ -21,6 +21,7 @@ import type { UserRepo } from "../infrastructure/db/userRepo.ts";
 import type { LearningsRepo } from "../infrastructure/db/learningsRepo.ts";
 import type { CommandLogRepo } from "../infrastructure/db/commandLogRepo.ts";
 import type { SlackAdminPort } from "./slackAdmin.ts";
+import type { GitHubPort } from "./github.ts";
 import type { DraftReply } from "./draftReply.ts";
 
 export type HandleMessageDeps = {
@@ -42,6 +43,8 @@ export type HandleMessageDeps = {
   disabledCommands?: () => ReadonlySet<string>;
   /** Slack Web API operations, for the power-tool commands (br, jrp). */
   slack?: SlackAdminPort;
+  /** GitHub actions the bot takes itself - the up-front approve in `review`. */
+  github?: GitHubPort;
   /** AI reply drafting, for jrp. */
   draft?: DraftReply;
   /** Per-role CLI tool policy (sandbox/allow-list) applied to the chat brain. */

@@ -19,6 +19,7 @@ import type { AllowedUser, PromptContext, UserRole } from "../domain/types.ts";
 import type { ToolPolicy } from "../domain/toolPolicy.ts";
 import type { Clock, LlmPort } from "./ports.ts";
 import type { SlackAdminPort } from "./slackAdmin.ts";
+import type { GitHubPort } from "./github.ts";
 import type { DraftReply } from "./draftReply.ts";
 import type { MessageRepo } from "../infrastructure/db/messageRepo.ts";
 import type { UserRepo } from "../infrastructure/db/userRepo.ts";
@@ -41,6 +42,8 @@ export type CommandDeps = {
   disabledCommands?: () => ReadonlySet<string>;
   /** Slack Web API operations, for the power tools (bomb, reply). */
   slack?: SlackAdminPort;
+  /** GitHub actions the bot takes itself - the up-front approve in `review`. */
+  github?: GitHubPort;
   /** AI reply drafting, for reply. */
   draft?: DraftReply;
   /** Per-role CLI tool policy (sandbox/allow-list), for ask + review. */
@@ -299,18 +302,34 @@ export const COMMANDS: readonly CommandDef[] = [
     run: async ({ deps, args, prefix, reply }) => {
       if (args.length === 0) return `Which PR? \`${prefix} review <pr-url>\``;
       if (!deps.llm) return "My brain is not wired up right now.";
-      // A preset, tightly-scoped task: always run FULL access (it approves/comments
-      // on GitHub, clones, and spawns child agents) with a long timeout, regardless
-      // of the caller's role.
+      // Slack wraps links as <url|label>; hand the brain the bare urls.
+      const urls = [...new Set(args.flatMap((a) => a.match(PR_URL) ?? []))];
+      const targets = urls.length > 0 ? urls : args;
+      // A preset, tightly-scoped task: always run FULL access (it comments and
+      // requests changes on GitHub, clones, and spawns child agents) with a long
+      // timeout, regardless of the caller's role.
       const full = deps.toolPolicy?.("owner") ?? { skipPermissions: true };
       const policy = { ...full, timeoutMs: REVIEW_TIMEOUT_MS };
       const name = botNameOf(deps);
       const params = {
-        system: reviewPrompt(args, name),
-        messages: [{ role: "user" as const, content: `review ${args.join(" ")}` }],
+        system: reviewPrompt(targets, name),
+        messages: [{ role: "user" as const, content: `review ${targets.join(" ")}` }],
         assistantName: name,
         policy,
       };
+
+      // Approve FIRST, in code, before the brain is even spawned. It is a fixed
+      // step, not a judgement call, so it must not wait ~30s for the model to read
+      // the PR. `seen` carries the lines forward so the brain cannot repeat them.
+      const seen = new Set<string>();
+      const approved: string[] = [];
+      for (const url of urls) {
+        const res = await deps.github?.approve(url);
+        if (!res) break; // no gh wired up - leave it to the brain
+        const line = res.ok ? `✅ approved ${url}` : `⚠️ could not approve ${url} - ${res.error}`;
+        if (res.ok) seen.add(line);
+        approved.push(line);
+      }
 
       // No live destination (tests / slack off): one-shot, return the text.
       if (!reply) {
@@ -318,14 +337,14 @@ export const COMMANDS: readonly CommandDef[] = [
         return out.trim() || "I could not put a review together for that one.";
       }
 
-      // Live: post progress as each PR action lands, then the final summary. The
+      // Live: post progress as each PR action lands, then the review itself. The
       // destination is chosen by the transport - thread for a message command, DM
       // for a slash command - so nothing is hidden in an ephemeral reply.
-      await reply(`🔍 on it, reviewing ${args.join(" ")}`);
+      for (const line of approved) await reply(line);
+      await reply(`🔍 reviewing ${targets.join(" ")}`);
 
       let out = "";
       if (deps.llm.stream) {
-        const seen = new Set<string>();
         const announce = (line: string): void => {
           if (seen.has(line)) return;
           seen.add(line);
@@ -333,7 +352,7 @@ export const COMMANDS: readonly CommandDef[] = [
         };
         // The only PR url we can attribute an action to when the command itself
         // carries none (e.g. `gh pr review 2149 --repo ...`).
-        const soleUrl = args.length === 1 ? (args[0]?.match(PR_URL)?.[0] ?? "") : "";
+        const soleUrl = targets.length === 1 ? (targets[0]?.match(PR_URL)?.[0] ?? "") : "";
         out = await deps.llm.stream(params, (ev) => {
           if (ev.type !== "tool" || ev.status !== "complete") return;
           // Match the command in full, never the card title: the title is clipped

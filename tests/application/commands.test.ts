@@ -7,6 +7,7 @@ import { commandLineOf, dispatchCommand, type CommandDeps } from "../../src/appl
 import type { AllowedUser } from "../../src/domain/types.ts";
 import type { LlmPort } from "../../src/application/ports.ts";
 import type { SlackAdminPort, SlackMessage } from "../../src/application/slackAdmin.ts";
+import type { GitHubPort } from "../../src/application/github.ts";
 
 const OWNER = "U0OWNER0001";
 
@@ -174,6 +175,69 @@ describe("dispatchCommand", () => {
     expect(out).toBe("drafted answer");
   });
 
+  test("rv approves in code before the brain runs, and says so first", async () => {
+    const PR = "https://github.com/o/r/pull/1";
+    const order: string[] = [];
+    const github: GitHubPort = {
+      approve: async (url) => {
+        order.push(`approve:${url}`);
+        return { ok: true };
+      },
+    };
+    const slow: LlmPort = {
+      complete: async () => {
+        order.push("brain");
+        return "the review";
+      },
+    };
+    const lines: string[] = [];
+    // Slack-wrapped link: the bare url must be what gets approved and prompted.
+    await dispatchCommand({ ...build(), github, llm: slow }, actor(), "C1", `rv <${PR}|o/r#1>`, {
+      reply: async (t: string) => {
+        lines.push(t);
+      },
+    });
+
+    expect(order).toEqual([`approve:${PR}`, "brain"]); // approved before the model starts
+    expect(lines[0]).toBe(`✅ approved ${PR}`);
+    expect(lines[1]).toBe(`🔍 reviewing ${PR}`);
+    expect(lines[lines.length - 1]).toBe("the review");
+  });
+
+  test("rv reports a refused approval and reviews anyway", async () => {
+    const PR = "https://github.com/o/r/pull/1";
+    const github: GitHubPort = { approve: async () => ({ ok: false, error: "can not approve your own PR" }) };
+    const lines: string[] = [];
+    await dispatchCommand({ ...build(), github }, actor(), "C1", `rv ${PR}`, {
+      reply: async (t: string) => {
+        lines.push(t);
+      },
+    });
+    expect(lines[0]).toBe(`⚠️ could not approve ${PR} - can not approve your own PR`);
+    expect(lines[1]).toContain("reviewing");
+    expect(lines[lines.length - 1]).toBe("drafted answer"); // review still ran
+  });
+
+  test("rv does not repeat the approve line if the brain approves too", async () => {
+    const PR = "https://github.com/o/r/pull/1";
+    const github: GitHubPort = { approve: async () => ({ ok: true }) };
+    const streamed: LlmPort = {
+      complete: async () => "unused",
+      stream: async (_p, sink) => {
+        const command = `gh pr review ${PR} --approve`;
+        sink({ type: "tool", id: "t1", title: command, command, status: "complete" });
+        return "done";
+      },
+    };
+    const lines: string[] = [];
+    await dispatchCommand({ ...build(), github, llm: streamed }, actor(), "C1", `rv ${PR}`, {
+      reply: async (t: string) => {
+        lines.push(t);
+      },
+    });
+    expect(lines.filter((l) => l.startsWith("✅ approved"))).toHaveLength(1);
+  });
+
   test("rv announces every gh action to the thread, even from a long heredoc command", async () => {
     const PR = "https://github.com/o/r/pull/1";
     // What the CLI really emits: a short approve, then one shell call that writes
@@ -202,7 +266,7 @@ describe("dispatchCommand", () => {
     });
 
     expect(out).toBe(""); // delivered to the thread, not returned
-    expect(lines[0]).toContain("on it, reviewing");
+    expect(lines[0]).toContain("reviewing");
     expect(lines).toContain(`✅ approved ${PR}`);
     expect(lines).toContain(`📝 posted the review on ${PR}`);
     expect(lines).toContain(`⚠️ requested changes on ${PR}`);

@@ -23,6 +23,7 @@ import { createClaudeCliLlm } from "./infrastructure/llm/claudeCli.ts";
 import { WebClient } from "@slack/web-api";
 import { createSlackApp } from "./infrastructure/slack/app.ts";
 import { createSlackAdmin } from "./infrastructure/slack/adminClient.ts";
+import { createGhCli } from "./infrastructure/github/ghCli.ts";
 import { createDraftReply } from "./application/draftReply.ts";
 import { toolPolicyFor } from "./domain/toolPolicy.ts";
 import { createDashboard } from "./infrastructure/dashboard/server.ts";
@@ -145,6 +146,8 @@ const main = async () => {
     commandLog,
     disabledCommands,
     slack: slackAdmin,
+    // `review` approves through this directly, before the brain starts.
+    github: createGhCli(),
     draft,
     toolPolicy,
     commandPrefix: config.commandPrefix,

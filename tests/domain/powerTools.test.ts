@@ -36,18 +36,24 @@ describe("reviewPrompt", () => {
     const p = reviewPrompt(["https://github.com/o/r/pull/1"], "Evie");
     expect(p).toContain("You are Evie");
     expect(p).toContain("https://github.com/o/r/pull/1");
-    expect(p).toContain("gh pr review <url> --approve"); // approve first
+    expect(p).toContain("Do NOT run `gh pr review --approve` yourself"); // the caller already did
     expect(p).toContain("--request-changes"); // reverse on high risk
     expect(p).toContain("Task tool"); // child agents for big PRs
     expect(p).toContain("just a cozy little glance from me and my claude");
   });
 
-  test("never skips a merged or closed PR - it is approved and reviewed like any other", () => {
+  test("never skips a merged or closed PR - it is reviewed like any other", () => {
     const p = reviewPrompt(["https://github.com/o/r/pull/1"], "Evie");
     expect(p).toContain("NEVER skip a PR");
-    expect(p).toMatch(/regardless of whether the PR is open, merged or closed/);
+    expect(p).toMatch(/Merged and closed PRs get the exact same treatment as open ones/);
     // the old behavior - bail out on a merged PR - must be gone
     expect(p).not.toMatch(/skip a pr that is already merged/i);
+  });
+
+  test("the approve is the caller's job, not the model's", () => {
+    const p = reviewPrompt(["https://github.com/o/r/pull/1"], "Evie");
+    expect(p).toContain("ALREADY DONE, before you started");
+    expect(p).toContain("Take the approval as a given");
   });
 
   test("splits a high-risk review: full review as a comment, blockers only in request-changes", () => {
