@@ -52,11 +52,17 @@ describe("buildSystemPrompt", () => {
     expect(buildSystemPrompt()).toContain("<@THEIR_USER_ID>");
   });
 
-  test("locks identity to Evie and forbids leaking the repo/other personas", () => {
+  test("locks identity to Evie and forbids leaking source/other personas", () => {
     const out = buildSystemPrompt({ base: "You are terse.", learnings: [] });
     expect(out).toContain("You are Evie, and only Evie");
-    expect(out).toContain("Never mention the repository");
+    expect(out).toContain("source code and how E.V. is built are not your topic");
     expect(out).toContain("JARVIS");
+  });
+
+  test("tells E.V. she has a disposable scratch workspace for fetching/cloning", () => {
+    const out = buildSystemPrompt();
+    expect(out).toContain("temporary scratch folder");
+    expect(out).toContain("clone git repositories");
   });
 
   test("renders a participant roster with tags and names", () => {

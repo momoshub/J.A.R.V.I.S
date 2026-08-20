@@ -84,6 +84,7 @@ const main = async () => {
       token: config.dashboardToken,
       ownerSlackId: config.ownerSlackId,
       model: modelLabel(config),
+      allowedOrigins: config.dashboardAllowedOrigins,
     },
     { users, messages, learnings, settings, clock },
   );

@@ -30,6 +30,8 @@ export type DashboardConfig = {
   token: string;
   ownerSlackId: string;
   model: string;
+  /** Extra browser origins allowed to POST (for proxy/tunnel access). */
+  allowedOrigins?: readonly string[];
 };
 
 export type DashboardDeps = {
@@ -57,14 +59,16 @@ const authorized = (req: Request, url: URL, token: string): boolean => {
 const LOOPBACK_HOSTS = new Set(["localhost", "127.0.0.1", "0.0.0.0", "::1", "[::1]"]);
 
 /**
- * CSRF guard for a loopback-bound tool. A cross-site attacker's Origin is its own
- * domain, never a loopback host, so we allow requests with no Origin, an Origin
- * that matches exactly, or any loopback Origin. The last case tolerates the
- * benign localhost vs 127.0.0.1 mismatch that otherwise 403s the dashboard.
+ * CSRF guard for a token-gated, loopback-bound tool. A cross-site attacker's
+ * Origin is its own domain and it does not have the token anyway, so we allow
+ * requests with no Origin, an exact match, a loopback Origin, or a configured
+ * allowed Origin. Loopback tolerance covers the benign localhost vs 127.0.0.1
+ * mismatch; the allow-list covers proxy/tunnel/port-forward access.
  */
-const sameOrigin = (req: Request, url: URL): boolean => {
+const originAllowed = (req: Request, url: URL, allowed: readonly string[]): boolean => {
   const origin = req.headers.get("origin");
   if (origin === null || origin === url.origin) return true;
+  if (allowed.includes(origin)) return true;
   try {
     return LOOPBACK_HOSTS.has(new URL(origin).hostname);
   } catch {
@@ -162,7 +166,18 @@ export const createDashboard = (config: DashboardConfig, deps: DashboardDeps) =>
 
     // --- mutations (same-origin only) ---
     if (req.method === "POST") {
-      if (!sameOrigin(req, url)) return new Response("Forbidden", { status: 403 });
+      if (!originAllowed(req, url, config.allowedOrigins ?? [])) {
+        const origin = req.headers.get("origin") ?? "(none)";
+        console.warn(
+          `[dashboard] blocked cross-origin POST from ${origin} (expected ${url.origin}). ` +
+            `If this is your dashboard, add it to DASHBOARD_ALLOWED_ORIGINS.`,
+        );
+        return new Response(
+          `Forbidden: request Origin ${origin} is not allowed (server expected ${url.origin}). ` +
+            `Add ${origin} to DASHBOARD_ALLOWED_ORIGINS in .env to permit it.`,
+          { status: 403 },
+        );
+      }
       const form = await req.formData();
 
       switch (url.pathname) {

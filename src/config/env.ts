@@ -36,6 +36,10 @@ const schema = z
     OWNER_SLACK_ID: z.string().min(1, "OWNER_SLACK_ID is required"),
     DASHBOARD_PORT: z.coerce.number().int().positive().default(2001),
     DASHBOARD_TOKEN: z.string().min(24, "DASHBOARD_TOKEN must be at least 24 characters"),
+    // Extra browser origins allowed to POST to the dashboard (comma separated),
+    // for when you reach it through a proxy/tunnel/port-forward. Loopback origins
+    // are always allowed.
+    DASHBOARD_ALLOWED_ORIGINS: z.string().optional(),
     DATABASE_PATH: z.string().default("data/ev.db"),
   })
   .refine((env) => env.LLM_PROVIDER !== "anthropic" || !!env.ANTHROPIC_API_KEY, {
@@ -60,6 +64,7 @@ export type AppConfig = {
   ownerSlackId: string;
   dashboardPort: number;
   dashboardToken: string;
+  dashboardAllowedOrigins: string[];
   databasePath: string;
 };
 
@@ -92,6 +97,10 @@ export const loadConfig = (source: Record<string, string | undefined> = process.
     ownerSlackId: env.OWNER_SLACK_ID,
     dashboardPort: env.DASHBOARD_PORT,
     dashboardToken: env.DASHBOARD_TOKEN,
+    dashboardAllowedOrigins: (env.DASHBOARD_ALLOWED_ORIGINS ?? "")
+      .split(",")
+      .map((o) => o.trim())
+      .filter(Boolean),
     databasePath: env.DATABASE_PATH,
   };
 };
