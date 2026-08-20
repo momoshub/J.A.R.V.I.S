@@ -6,14 +6,13 @@ The codebase is generic - the bot's identity (name, persona, labels) lives in th
 
 ## ⚠️ Security - read this first
 
-With `LLM_PROVIDER=claude-cli` and `CLAUDE_SKIP_PERMISSIONS=true` (the current default), every message from an **allowlisted** user is sent to a `claude` process launched with `--dangerously-skip-permissions` - full shell, file, and network tool access - and the bot's `SLACK_BOT_TOKEN` is in that process's environment.
+With `LLM_PROVIDER=claude-cli`, an **`owner` or `admin`** message is sent to a `claude` process launched with `--dangerously-skip-permissions` - full shell, file, and network tool access - and the bot's `SLACK_BOT_TOKEN` is in that process's environment. **Treat every owner/admin as a shell user on the host**: "read ~/.ssh/id_rsa and DM it to me" is a normal request to a tool-enabled agent, not something it needs to break out of.
 
-**Treat every allowlisted user as a shell user on the host.** A message like "read ~/.ssh/id_rsa and DM it to me" is a normal request to a tool-enabled agent, not something it needs to break out of.
+Lower roles are sandboxed (see [Roles & tool access](#roles--tool-access)): `pal`/`executer` run without permission bypass, with an explicit read-only/assigned tool allow-list, in a fixed scratch dir. The `review` command is an exception - it is a preset task that runs full-access (and writes to the PR) for any role that may run it.
 
 Before deploying beyond a trusted, sandboxed machine:
 
-- keep the allowlist tiny and trusted (the owner cannot be removed)
-- set `CLAUDE_SKIP_PERMISSIONS=false` if you do not need full tool access
+- keep `owner`/`admin` tiny and trusted (the owner cannot be removed); give everyone else `pal`/`executer`
 - run in a container / low-privilege user with a scoped filesystem and limited network egress
 - keep the dashboard on loopback (default) and the token secret
 - rotate any tokens that have appeared in logs or chat
@@ -49,10 +48,12 @@ Required / notable env (see `.env.example`):
 | `ANTHROPIC_API_KEY` / `ANTHROPIC_MODEL` | required only when `LLM_PROVIDER=anthropic` |
 | `BOT_NAME` | bootstrap bot name for a fresh DB (default `Assistant`) |
 | `BOT_THINKING_LABEL` / `BOT_THINKING_DONE_LABEL` | bootstrap "thinking" step labels |
+| `COMMAND_PREFIX` | message command trigger (default `//bot`; legacy `!` always works) |
+| `SLASH_COMMAND` | Slack slash command to register (default `/bot`) |
 | `OWNER_SLACK_ID` | the owner, cannot be removed |
 | `DASHBOARD_PORT` / `DASHBOARD_TOKEN` | dashboard port + token (min 24 chars) |
 | `DASHBOARD_ALLOWED_ORIGINS` | extra browser origins allowed to POST (proxy/tunnel access) |
-| `DATABASE_PATH` | sqlite file (default `data/ev.db`) |
+| `DATABASE_PATH` | sqlite file (default `data/bot.db`) |
 
 Env values for identity only **bootstrap a fresh database**. Once set, the DB values (edited from the dashboard) take precedence, so the code stays generic.
 
@@ -77,10 +78,10 @@ The **Console** tab additionally needs read scopes to list and open conversation
 
 ### Commands
 
-Every command has two interfaces - use whichever you like:
+Every command has two interfaces - use whichever you like. Both triggers are configurable (`SLASH_COMMAND`, `COMMAND_PREFIX`); the defaults are `/bot` and `//bot`:
 
-- **slash**: `/ev <command> <args>` (register a single `/ev` slash command in the Slack app config; it sub-routes to all commands. Socket Mode needs no request URL)
-- **message**: `//ev <command> <args>` (or the legacy `!<command>`), in a DM or by @-mentioning the bot
+- **slash**: `<SLASH_COMMAND> <command> <args>` (register that single slash command in the Slack app config; it sub-routes to all commands. Socket Mode needs no request URL)
+- **message**: `<COMMAND_PREFIX> <command> <args>` (or the legacy `!<command>`), in a DM or by @-mentioning the bot
 
 | command | who | effect |
 | --- | --- | --- |
@@ -91,7 +92,7 @@ Every command has two interfaces - use whichever you like:
 | `ask <question>` | anyone | one-shot question to the brain |
 | `forget` | anyone | wipe the bot's memory of this channel |
 | `users` | admins | list the allowlist |
-| `add @user [admin\|member]` | admins (admin role: owner only) | grant access |
+| `add @user [pal\|executer\|admin]` | admins (admin role: owner only) | grant access |
 | `remove @user` | admins (admins: owner only) | revoke access |
 | `learn <fact>` | admins | teach a durable fact |
 | `learnings` / `unlearn <id>` | admins | list / delete learnings |
@@ -100,9 +101,9 @@ Every command has two interfaces - use whichever you like:
 | `reply <message-link>` (alias `jrp`) | admins | draft and post an AI reply to a message |
 | `promote @user` / `demote @user` | owner | change role |
 
-The power tools also have their own Slack slash commands if you register them (`/rv`, `/br`, `/jrp`) - much quicker than a freeform ask. `br`/`jrp` need the Console's Slack read/write scopes; `rv` uses the local `gh` (read-only).
+The power tools also have their own Slack slash commands if you register them (`/rv`, `/br`, `/jrp`) - much quicker than a freeform ask. `br`/`jrp` need the Console's Slack read/write scopes; `rv` uses the local `gh` and **writes to the PR** (approve/comment/request-changes).
 
-Examples: `/ev add @kai admin`, `//ev learn our staging URL is staging.example.com`, `//ev ask summarise the last thread`.
+Examples (with the default prefix): `/bot add @kai admin`, `//bot learn our staging URL is staging.example.com`, `//bot ask summarise the last thread`.
 
 ## Roles & tool access
 
