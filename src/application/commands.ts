@@ -416,6 +416,30 @@ export const COMMANDS: readonly CommandDef[] = [
     },
   },
   {
+    name: "rm-msg",
+    aliases: ["rmmsg", "unsend"],
+    minRole: "admin",
+    usage: "<message-link>",
+    summary: "delete a message I posted",
+    run: async ({ deps, args, prefix }) => {
+      if (!deps.slack) return "Slack tools are not available.";
+      const ref = parseMessageLink((args[0] ?? "").replace(/^<|>$/g, ""));
+      if (!ref) return `Paste a Slack message link: \`${prefix} rm-msg <message-link>\``;
+      try {
+        await deps.slack.remove(ref.channel, ref.ts);
+        return "🗑️ deleted that one";
+      } catch (e) {
+        // A bot token may only delete what the bot itself posted, so the usual
+        // failure is someone else's message rather than anything being wrong.
+        const err = e instanceof Error ? e.message : String(e);
+        if (/cant_delete_message|message_not_found/.test(err)) {
+          return "I can only delete messages I posted myself - that one is not mine (or is already gone).";
+        }
+        return `Could not delete it: ${err}`;
+      }
+    },
+  },
+  {
     name: "reply",
     aliases: ["jrp"],
     minRole: "admin",

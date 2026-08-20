@@ -43,14 +43,22 @@ const actor = (over: Partial<AllowedUser> = {}): AllowedUser => ({
 
 const llm: LlmPort = { complete: async () => "drafted answer" };
 
-type SlackCalls = { posts: { channel: string; text: string; threadTs?: string }[]; reactions: string[] };
+type SlackCalls = {
+  posts: { channel: string; text: string; threadTs?: string }[];
+  reactions: string[];
+  removed: { channel: string; ts: string }[];
+  removeError?: Error;
+};
 
 const fakeSlack = (calls: SlackCalls, thread: SlackMessage[] = []): SlackAdminPort => ({
   listConversations: async () => [],
   history: async () => ({ messages: [] }),
   replies: async () => thread,
   update: async () => {},
-  remove: async () => {},
+  remove: async (channel, ts) => {
+    if (calls.removeError) throw calls.removeError;
+    calls.removed.push({ channel, ts });
+  },
   post: async (channel, text, threadTs) => {
     calls.posts.push({ channel, text, threadTs });
   },
@@ -78,7 +86,7 @@ const threadMsg = (text: string): SlackMessage => ({
 
 const build = (thread: SlackMessage[] = [threadMsg("hi there")]): CommandDeps => {
   db = openDatabase(":memory:");
-  slackCalls = { posts: [], reactions: [] };
+  slackCalls = { posts: [], reactions: [], removed: [] };
   return {
     users: createUserRepo(db),
     messages: createMessageRepo(db),
@@ -332,6 +340,29 @@ describe("dispatchCommand", () => {
     expect(out).toContain("posted");
     expect(slackCalls.posts).toHaveLength(1);
     expect(slackCalls.posts[0]).toMatchObject({ channel: "C0TEST00001", text: "an AI-drafted reply", threadTs: "1787122692.303399" });
+  });
+
+  test("rm-msg deletes the linked message", async () => {
+    const deps = build();
+    const out = await dispatchCommand(deps, actor(), "C1", `rm-msg ${LINK}`);
+    expect(out).toContain("deleted");
+    expect(slackCalls.removed).toEqual([{ channel: "C0TEST00001", ts: "1787122692.303399" }]);
+  });
+
+  test("rm-msg needs a link", async () => {
+    expect(await dispatchCommand(build(), actor(), "C1", "rm-msg")).toContain("message link");
+  });
+
+  test("rm-msg explains when the message is not the bot's own", async () => {
+    const deps = build();
+    slackCalls.removeError = new Error("An API error occurred: cant_delete_message");
+    const out = await dispatchCommand(deps, actor(), "C1", `rm-msg ${LINK}`);
+    expect(out).toContain("only delete messages I posted myself");
+  });
+
+  test("rm-msg is admin-gated", async () => {
+    const pal = actor({ slackId: "U9", role: "pal" });
+    expect(await dispatchCommand(build(), pal, "C1", `rm-msg ${LINK}`)).toContain("access");
   });
 
   test("pal can review but not bomb/reply", async () => {

@@ -99,6 +99,7 @@ Every command has two interfaces - use whichever you like. Both triggers are con
 | `review <pr-url>` (alias `rv`) | pal+ | review a PR: approve first (even if it is already merged or closed), then post the review as a GitHub comment *and* back in the thread; request changes on high risk (big PRs are cloned + reviewed by child agents). Runs full-access. |
 | `bomb [category] <message-link>` (alias `br`) | admins | reaction-bomb a message with a burst of emoji |
 | `reply <message-link>` (alias `jrp`) | admins | draft and post an AI reply to a message |
+| `rm-msg <message-link>` (aliases `rmmsg`, `unsend`) | admins | delete a message the bot posted (a bot token cannot delete anyone else's) |
 | `promote @user` / `demote @user` | owner | change role |
 
 The power tools also have their own Slack slash commands if you register them (`/rv`, `/br`, `/jrp`) - much quicker than a freeform ask. `br`/`jrp` need the Console's Slack read/write scopes; `rv` uses the local `gh` and **writes to the PR** (approve/comment/request-changes).
