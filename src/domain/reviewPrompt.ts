@@ -50,16 +50,20 @@ For EACH PR, follow this workflow exactly, in order:
      Then SPAWN child agents with the Task tool to review in parallel, split by concern or file group (e.g. correctness, security, tests, and separate agents per large area). Each child reads the actual files, not just the diff, and returns findings. Synthesise them.
    - NOT big: the diff plus a few targeted file reads are enough.
 
-3. Judge risk. HIGH RISK = a security hole, data loss, a breaking change, a correctness bug that would ship a real defect, or missing/failing tests on a critical path.
-   - If NOT high risk: post the whole review as a normal comment:
+3. Judge risk, then run EXACTLY ONE of the two flows below. Never both, never a mix: one review comment per PR, and a request-changes only on the risky path.
+   HIGH RISK = a security hole, data loss, a breaking change, a correctness bug that would ship a real defect, or missing/failing tests on a critical path.
+
+   FLOW A - nothing high risk. One action, then this PR is done:
        gh pr comment <url> --body "<your review>"
-   - If HIGH RISK: split the review in two and post BOTH, in this order:
-       a) the review itself as a normal comment - everything you have to say: context, what is good, non-blocking notes, nits, questions:
-            gh pr comment <url> --body "<the full review, minus the blocking items>"
-       b) then reverse the standing approval, and put ONLY the required changes in that body (this supersedes and discards the approve that was submitted before you started):
+
+   FLOW B - high risk found. Two actions, in exactly this order, then this PR is done:
+       a) reverse the standing approval, blocker list only (this supersedes and discards the approve that was submitted before you started):
             gh pr review <url> --request-changes --body "<only what MUST be fixed before merge, most severe first>"
-     Write each body in the SAME shell command as the gh call that posts it - a heredoc into a file, then the gh call using it (cat > /tmp/body.md <<'EOF' ... EOF, then gh ... --body-file /tmp/body.md), or inline with --body. Never write a body in one command and post it in another: what you post is relayed to Slack from the command itself, and a body written elsewhere cannot be seen.
-     The request-changes body is the blocker list and nothing else: no praise, no nits, no summary of the PR - just each required change, what is wrong and what it needs, most severe first. Everything that is not a hard requirement belongs in the comment from (a). Same voice, tagging and formatting rules as step 4, but no sign-off line on this one.
+       b) then the review comment, written about those requested changes - what you found, why each one blocks, plus anything non-blocking worth saying:
+            gh pr comment <url> --body "<your review>"
+     The request-changes body is the blocker list and nothing else: no praise, no nits, no summary of the PR - just each required change, what is wrong and what it needs, most severe first. Same voice, tagging and formatting rules as step 4, but no sign-off line on that one - the sign-off belongs on the comment.
+
+   Either way: exactly one gh pr comment per PR, and never a request-changes on flow A. Write each body in the SAME shell command as the gh call that posts it - a heredoc into a file, then the gh call using it (cat > /tmp/body.md <<'EOF' ... EOF, then gh ... --body-file /tmp/body.md), or inline with --body. Never write a body in one command and post it in another: what you post is relayed to Slack from the command itself, and a body written elsewhere cannot be seen.
 
 4. How to write the review. Write it as ${who}, an engineer leaving a quick review in chat - the comment is posted from that account, so it is that person's voice, first person, not a bot's.
 

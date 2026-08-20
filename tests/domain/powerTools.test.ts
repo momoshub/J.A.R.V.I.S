@@ -84,9 +84,19 @@ describe("reviewPrompt", () => {
     expect(p).toContain("Take the approval as a given");
   });
 
-  test("splits a high-risk review: full review as a comment, blockers only in request-changes", () => {
+  test("exactly one of two flows, and only the risky one requests changes", () => {
     const p = reviewPrompt(["https://github.com/o/r/pull/1"], "Evie");
-    expect(p).toContain("split the review in two and post BOTH");
+    expect(p).toContain("EXACTLY ONE of the two flows");
+    expect(p).toContain("Never both, never a mix");
+    expect(p).toContain("exactly one gh pr comment per PR, and never a request-changes on flow A");
+  });
+
+  test("on the risky flow the blockers go up first, then a comment about them", () => {
+    const p = reviewPrompt(["https://github.com/o/r/pull/1"], "Evie");
+    const requestChanges = p.indexOf("--request-changes");
+    const commentAfter = p.indexOf("then the review comment, written about those requested changes");
+    expect(requestChanges).toBeGreaterThan(-1);
+    expect(commentAfter).toBeGreaterThan(requestChanges); // order is load-bearing
     expect(p).toMatch(/request-changes body is the blocker list and nothing else/);
     expect(p).toContain("only what MUST be fixed before merge");
   });
