@@ -59,5 +59,23 @@ export type Message = {
   createdAt: number;
 };
 
+export type SlackConversation = { id: string; name: string; kind: "channel" | "group" | "im" | "mpim" };
+export type SlackMessage = {
+  ts: string;
+  userId: string;
+  userName: string;
+  text: string;
+  replyCount: number;
+  threadTs?: string;
+  own: boolean;
+  mentionsBot: boolean;
+};
+
 export const fmtTime = (ms: number): string =>
   ms ? new Date(ms).toISOString().replace("T", " ").slice(0, 16) : "-";
+
+/** Slack timestamps are "seconds.micros" strings. */
+export const fmtSlackTs = (ts: string): string => {
+  const secs = Number(ts.split(".")[0]);
+  return secs ? new Date(secs * 1000).toISOString().replace("T", " ").slice(5, 16) : "-";
+};

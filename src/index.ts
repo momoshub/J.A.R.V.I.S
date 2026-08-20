@@ -19,7 +19,10 @@ import { loadBotProfile } from "./application/botProfile.ts";
 import { seedOwner } from "./infrastructure/db/seed.ts";
 import { createAnthropicLlm } from "./infrastructure/llm/anthropic.ts";
 import { createClaudeCliLlm } from "./infrastructure/llm/claudeCli.ts";
+import { WebClient } from "@slack/web-api";
 import { createSlackApp } from "./infrastructure/slack/app.ts";
+import { createSlackAdmin } from "./infrastructure/slack/adminClient.ts";
+import { createDraftReply } from "./application/draftReply.ts";
 import { createDashboard } from "./infrastructure/dashboard/server.ts";
 import type { LlmPort } from "./application/ports.ts";
 import type { RespondDeps } from "./application/respond.ts";
@@ -97,7 +100,17 @@ const main = async () => {
       distDir: join(import.meta.dir, "..", "web", "dist"),
       allowedOrigins: config.dashboardAllowedOrigins,
     },
-    { users, messages, learnings, settings, clock, profile },
+    {
+      users,
+      messages,
+      learnings,
+      settings,
+      clock,
+      profile,
+      // Console: manage the bot's live Slack messages, with AI-drafted replies.
+      slack: createSlackAdmin(new WebClient(config.slackBotToken)),
+      draft: createDraftReply({ llm, promptContext: deps.promptContext! }),
+    },
   );
   dashboard.start();
 

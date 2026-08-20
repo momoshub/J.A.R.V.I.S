@@ -64,6 +64,8 @@ bun start        # or: bun dev  (watch mode)
 
 The Slack app needs Socket Mode plus the `app_mention` and `message.im` event subscriptions and the `chat:write`, `app_mentions:read`, `im:history`, `users:read` scopes. Live streaming uses `chat.startStream`; if your app lacks that capability the bot falls back to a single post automatically.
 
+The **Console** tab additionally needs read scopes to list and open conversations: `channels:read`, `groups:read`, `im:read`, `mpim:read` and the matching history scopes `channels:history`, `groups:history`, `mpim:history` (DM history is covered by `im:history`). Without them the Console shows a `missing_scope` error but the rest of the dashboard works.
+
 ## Talking to the bot
 
 - DM it, or @-mention it in a channel it is in
@@ -93,7 +95,8 @@ A **React 19 + Vite + React Router 7** single-page app (in `web/`) served by the
 - **Users** - manage the allowlist and roles (the owner is protected)
 - **Learnings** - durable facts injected into every reply
 - **Identity** - edit the bot name, "thinking" label, and system prompt (persona), or reset the persona to default
-- **Conversations** - browse channels and DMs, read stored turns, clear a channel
+- **Conversations** - browse the bot's own stored memory (SQLite), read turns, clear a channel
+- **Console** - a live Slack message manager (the web port of a terminal TUI): pick a channel/DM, read messages and threads, edit or delete the bot's own messages, reply, and generate an AI draft to review before posting. Requires extra Slack scopes (below); missing scopes surface as an in-app error.
 
 Identity and learnings are stored in the DB and applied on the next reply - no restart.
 

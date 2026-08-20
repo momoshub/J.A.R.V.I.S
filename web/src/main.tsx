@@ -29,6 +29,7 @@ import {
   type Message,
   type Overview,
 } from "./api.ts";
+import { ConsolePage } from "./console.tsx";
 import "./styles.css";
 
 /** Wrap an action so thrown API errors surface as `{ error }` instead of crashing. */
@@ -48,6 +49,7 @@ const NAV = [
   { to: "/learnings", label: "Learnings" },
   { to: "/identity", label: "Identity" },
   { to: "/conversations", label: "Conversations" },
+  { to: "/console", label: "Console" },
 ];
 
 function Layout() {
@@ -388,6 +390,10 @@ const router = createBrowserRouter([
           return { ok: true };
         }),
         element: <ConversationsPage />,
+      },
+      {
+        path: "console",
+        element: <ConsolePage />,
       },
       {
         path: "conversations/:channel",

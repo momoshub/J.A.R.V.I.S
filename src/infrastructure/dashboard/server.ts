@@ -13,6 +13,8 @@ import { join, normalize } from "node:path";
 import type { UserRole } from "../../domain/types.ts";
 import { DEFAULT_PERSONALITY } from "../../domain/personality.ts";
 import type { BotProfile } from "../../application/botProfile.ts";
+import type { SlackAdminPort } from "../../application/slackAdmin.ts";
+import type { DraftReply } from "../../application/draftReply.ts";
 import type { Clock } from "../../application/ports.ts";
 import type { MessageRepo } from "../db/messageRepo.ts";
 import type { UserRepo } from "../db/userRepo.ts";
@@ -38,6 +40,10 @@ export type DashboardDeps = {
   clock: Clock;
   /** Current bot identity, for the header and identity editor. */
   profile: () => BotProfile;
+  /** Slack Web API operations for the console (may be absent if not wired). */
+  slack?: SlackAdminPort;
+  /** Generate an AI reply draft from a thread. */
+  draft?: DraftReply;
 };
 
 const SLACK_ID = /^[UW][A-Z0-9]+$/;
@@ -108,6 +114,16 @@ const withHeaders = (res: Response): Response => {
 export const createDashboard = (config: DashboardConfig, deps: DashboardDeps) => {
   const jsonError = (message: string, status = 400) => Response.json({ error: message }, { status });
 
+  /** Run a Slack Web API call, surfacing scope/API errors as JSON to the client. */
+  const slackGuard = async (fn: () => Promise<unknown>): Promise<Response> => {
+    if (!deps.slack) return jsonError("Slack console is not configured", 503);
+    try {
+      return Response.json(await fn());
+    } catch (e) {
+      return jsonError(e instanceof Error ? e.message : String(e), 502);
+    }
+  };
+
   /** Serve a static file from distDir, falling back to index.html (SPA routing). */
   const serveStatic = async (pathname: string): Promise<Response> => {
     const rel = normalize(pathname).replace(/^(\.\.[/\\])+/, "").replace(/^\/+/, "");
@@ -164,6 +180,19 @@ export const createDashboard = (config: DashboardConfig, deps: DashboardDeps) =>
           return Response.json(
             channel ? deps.messages.recentForChannel(channel, CONVERSATION_LIMIT) : [],
           );
+        }
+        // --- Slack console (live Slack Web API) ---
+        case "/api/slack/conversations":
+          return slackGuard(() => deps.slack!.listConversations());
+        case "/api/slack/history": {
+          const channel = url.searchParams.get("channel") ?? "";
+          const limit = Math.min(50, Math.max(1, Number(url.searchParams.get("limit")) || 30));
+          return slackGuard(() => deps.slack!.history(channel, limit));
+        }
+        case "/api/slack/thread": {
+          const channel = url.searchParams.get("channel") ?? "";
+          const ts = url.searchParams.get("ts") ?? "";
+          return slackGuard(() => deps.slack!.replies(channel, ts));
         }
       }
       return jsonError("Not found", 404);
@@ -237,6 +266,36 @@ export const createDashboard = (config: DashboardConfig, deps: DashboardDeps) =>
           if (channel) deps.messages.clearChannel(channel);
           return Response.json({ ok: true });
         }
+
+        // --- Slack console mutations ---
+        case "/api/slack/update":
+          return slackGuard(async () => {
+            await deps.slack!.update(String(body.channel), String(body.ts), String(body.text ?? ""));
+            return { ok: true };
+          });
+        case "/api/slack/delete":
+          return slackGuard(async () => {
+            await deps.slack!.remove(String(body.channel), String(body.ts));
+            return { ok: true };
+          });
+        case "/api/slack/post":
+          return slackGuard(async () => {
+            const text = String(body.text ?? "").trim();
+            if (!text) throw new Error("Message is empty");
+            const threadTs = body.threadTs ? String(body.threadTs) : undefined;
+            await deps.slack!.post(String(body.channel), text, threadTs);
+            return { ok: true };
+          });
+        case "/api/slack/draft":
+          return slackGuard(async () => {
+            if (!deps.draft) throw new Error("Drafting is not configured");
+            const channel = String(body.channel ?? "");
+            const threadTs = body.threadTs ? String(body.threadTs) : undefined;
+            const thread = threadTs
+              ? await deps.slack!.replies(channel, threadTs)
+              : await deps.slack!.history(channel, 15);
+            return { draft: await deps.draft(thread) };
+          });
       }
       return jsonError("Not found", 404);
     }
