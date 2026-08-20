@@ -40,6 +40,21 @@ export type PromptMessage = {
   readonly content: string;
 };
 
+/** A durable fact E.V. has learned, shown and edited from the dashboard. */
+export type Learning = {
+  readonly id: number;
+  readonly content: string;
+  readonly createdBy: string;
+  readonly createdAt: number;
+};
+
+/** Editable pieces that shape E.V.'s system prompt. */
+export type PromptContext = {
+  /** Overridden base personality/rules; falls back to the built-in default. */
+  readonly base?: string;
+  readonly learnings: readonly string[];
+};
+
 /** Outcome of an access-control check. */
 export type AccessDecision =
   | { readonly allowed: true; readonly user: AllowedUser }

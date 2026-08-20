@@ -2,18 +2,28 @@
  * Admin dashboard served with Bun.serve.
  *
  * Token-gated (query `?token=` or `X-Dashboard-Token` header) and bound to
- * loopback only. Lets the owner eyeball E.V.'s state and manage the allowlist
- * without touching Slack. The request routing is a small dispatcher; all storage
- * goes through the repos so the rules stay in one place. The dashboard token
- * represents owner-level authority, so mutations here still refuse to touch the
- * owner record.
+ * loopback only. The owner can browse conversations, curate learnings, edit
+ * E.V.'s system prompt, and manage the allowlist. All storage goes through the
+ * repos so the rules stay in one place; the dashboard token represents
+ * owner-level authority, so mutations still refuse to touch the owner record.
  */
 import { timingSafeEqual as cryptoTimingSafeEqual } from "node:crypto";
 import type { UserRole } from "../../domain/types.ts";
+import { DEFAULT_PERSONALITY } from "../../domain/personality.ts";
 import type { Clock } from "../../application/ports.ts";
 import type { MessageRepo } from "../db/messageRepo.ts";
 import type { UserRepo } from "../db/userRepo.ts";
-import { renderDashboard } from "./views.ts";
+import type { LearningsRepo } from "../db/learningsRepo.ts";
+import { SETTING_KEYS, type SettingsRepo } from "../db/settingsRepo.ts";
+import {
+  layout,
+  renderConversation,
+  renderConversations,
+  renderLearnings,
+  renderOverview,
+  renderPrompt,
+  renderUsers,
+} from "./views.ts";
 
 export type DashboardConfig = {
   port: number;
@@ -25,12 +35,14 @@ export type DashboardConfig = {
 export type DashboardDeps = {
   users: UserRepo;
   messages: MessageRepo;
+  learnings: LearningsRepo;
+  settings: SettingsRepo;
   clock: Clock;
 };
 
 const SLACK_ID = /^[UW][A-Z0-9]+$/;
+const CONVERSATION_LIMIT = 200;
 
-/** Constant-time string compare via the platform primitive. */
 const tokensMatch = (a: string, b: string): boolean => {
   const ab = Buffer.from(a);
   const bb = Buffer.from(b);
@@ -42,7 +54,6 @@ const authorized = (req: Request, url: URL, token: string): boolean => {
   return tokensMatch(provided, token);
 };
 
-/** Reject cross-site state-changing requests (basic CSRF defense). */
 const sameOrigin = (req: Request, url: URL): boolean => {
   const origin = req.headers.get("origin");
   return origin === null || origin === url.origin;
@@ -50,8 +61,6 @@ const sameOrigin = (req: Request, url: URL): boolean => {
 
 const asRole = (v: string | null): UserRole => (v === "admin" ? "admin" : "member");
 
-// Strict headers on every response: no referrer leak of the token, no framing,
-// and a locked-down CSP (inline styles only, forms post to self, no scripts).
 const SECURITY_HEADERS: Record<string, string> = {
   "Referrer-Policy": "no-referrer",
   "X-Content-Type-Options": "nosniff",
@@ -65,13 +74,20 @@ const withHeaders = (res: Response): Response => {
   return res;
 };
 
-const redirectHome = (token: string): Response =>
-  new Response(null, {
-    status: 303,
-    headers: { Location: `/?token=${encodeURIComponent(token)}` },
-  });
+const html = (body: string): Response =>
+  new Response(body, { headers: { "content-type": "text/html; charset=utf-8" } });
 
 export const createDashboard = (config: DashboardConfig, deps: DashboardDeps) => {
+  const subtitle = `model: ${config.model} - owner: <code>${config.ownerSlackId}</code>`;
+  const redirect = (path: string): Response =>
+    new Response(null, {
+      status: 303,
+      headers: { Location: `${path}?token=${encodeURIComponent(config.token)}` },
+    });
+
+  const page = (active: Parameters<typeof layout>[0]["active"], title: string, body: string) =>
+    html(layout({ title: `E.V. - ${title}`, active, subtitle, body, token: config.token }));
+
   const route = async (req: Request, url: URL): Promise<Response> => {
     if (url.pathname === "/health") return Response.json({ ok: true });
 
@@ -79,56 +95,122 @@ export const createDashboard = (config: DashboardConfig, deps: DashboardDeps) =>
       return new Response("Unauthorized. Append ?token=...", { status: 401 });
     }
 
-    // JSON read API
+    // --- read JSON API ---
     if (url.pathname === "/api/users" && req.method === "GET") {
       return Response.json(deps.users.list());
     }
     if (url.pathname === "/api/stats" && req.method === "GET") {
-      return Response.json({ users: deps.users.list().length, messages: deps.messages.count() });
-    }
-
-    // Mutations - require a same-origin request.
-    if (url.pathname === "/api/users" && req.method === "POST") {
-      if (!sameOrigin(req, url)) return new Response("Forbidden", { status: 403 });
-      const form = await req.formData();
-      const slackId = String(form.get("slackId") ?? "").trim();
-      if (!SLACK_ID.test(slackId)) return new Response("Invalid Slack id", { status: 400 });
-      if (slackId === config.ownerSlackId) {
-        return new Response("The owner record cannot be modified", { status: 400 });
-      }
-      const existing = deps.users.get(slackId);
-      deps.users.upsert({
-        slackId,
-        role: asRole(form.get("role") as string | null),
-        displayName: existing?.displayName ?? "",
-        addedBy: "dashboard",
-        createdAt: existing?.createdAt ?? deps.clock(),
+      return Response.json({
+        users: deps.users.list().length,
+        messages: deps.messages.count(),
+        learnings: deps.learnings.list().length,
+        channels: deps.messages.channels().length,
       });
-      return redirectHome(config.token);
     }
 
-    if (url.pathname === "/api/users/remove" && req.method === "POST") {
+    // --- pages ---
+    if (req.method === "GET") {
+      switch (url.pathname) {
+        case "/":
+          return page(
+            "overview",
+            "Overview",
+            renderOverview({
+              userCount: deps.users.list().length,
+              messageCount: deps.messages.count(),
+              learningCount: deps.learnings.list().length,
+              channelCount: deps.messages.channels().length,
+            }),
+          );
+        case "/users":
+          return page("users", "Users", renderUsers(deps.users.list(), config.ownerSlackId, config.token));
+        case "/learnings":
+          return page("learnings", "Learnings", renderLearnings(deps.learnings.list(), config.token));
+        case "/prompt": {
+          const override = deps.settings.get(SETTING_KEYS.systemPrompt);
+          return page(
+            "prompt",
+            "Prompt",
+            renderPrompt(
+              { current: override ?? DEFAULT_PERSONALITY, usingDefault: override === undefined },
+              config.token,
+            ),
+          );
+        }
+        case "/conversations":
+          return page("conversations", "Conversations", renderConversations(deps.messages.channels(), config.token));
+        case "/conversation": {
+          const channel = url.searchParams.get("channel") ?? "";
+          const messages = channel ? deps.messages.recentForChannel(channel, CONVERSATION_LIMIT) : [];
+          return page("conversations", "Conversation", renderConversation({ channelId: channel, messages }, config.token));
+        }
+      }
+    }
+
+    // --- mutations (same-origin only) ---
+    if (req.method === "POST") {
       if (!sameOrigin(req, url)) return new Response("Forbidden", { status: 403 });
       const form = await req.formData();
-      const slackId = String(form.get("slackId") ?? "").trim();
-      if (slackId === config.ownerSlackId) {
-        return new Response("The owner cannot be removed", { status: 400 });
-      }
-      deps.users.remove(slackId);
-      return redirectHome(config.token);
-    }
 
-    if (url.pathname === "/" && req.method === "GET") {
-      const html = renderDashboard(
-        {
-          users: deps.users.list(),
-          messageCount: deps.messages.count(),
-          ownerSlackId: config.ownerSlackId,
-          model: config.model,
-        },
-        config.token,
-      );
-      return new Response(html, { headers: { "content-type": "text/html; charset=utf-8" } });
+      switch (url.pathname) {
+        case "/api/users": {
+          const slackId = String(form.get("slackId") ?? "").trim();
+          if (!SLACK_ID.test(slackId)) return new Response("Invalid Slack id", { status: 400 });
+          if (slackId === config.ownerSlackId) {
+            return new Response("The owner record cannot be modified", { status: 400 });
+          }
+          const existing = deps.users.get(slackId);
+          deps.users.upsert({
+            slackId,
+            role: asRole(form.get("role") as string | null),
+            displayName: existing?.displayName ?? "",
+            addedBy: "dashboard",
+            createdAt: existing?.createdAt ?? deps.clock(),
+          });
+          return redirect("/users");
+        }
+
+        case "/api/users/remove": {
+          const slackId = String(form.get("slackId") ?? "").trim();
+          if (slackId === config.ownerSlackId) {
+            return new Response("The owner cannot be removed", { status: 400 });
+          }
+          deps.users.remove(slackId);
+          return redirect("/users");
+        }
+
+        case "/api/learnings": {
+          const content = String(form.get("content") ?? "").trim();
+          if (!content) return new Response("Empty learning", { status: 400 });
+          deps.learnings.add(content, "dashboard", deps.clock());
+          return redirect("/learnings");
+        }
+
+        case "/api/learnings/remove": {
+          const id = Number(form.get("id"));
+          if (!Number.isInteger(id)) return new Response("Invalid id", { status: 400 });
+          deps.learnings.remove(id);
+          return redirect("/learnings");
+        }
+
+        case "/api/prompt": {
+          const prompt = String(form.get("prompt") ?? "").trim();
+          if (!prompt) return new Response("Empty prompt", { status: 400 });
+          deps.settings.set(SETTING_KEYS.systemPrompt, prompt);
+          return redirect("/prompt");
+        }
+
+        case "/api/prompt/reset": {
+          deps.settings.remove(SETTING_KEYS.systemPrompt);
+          return redirect("/prompt");
+        }
+
+        case "/api/conversation/clear": {
+          const channel = String(form.get("channel") ?? "").trim();
+          if (channel) deps.messages.clearChannel(channel);
+          return redirect("/conversations");
+        }
+      }
     }
 
     return new Response("Not found", { status: 404 });
@@ -140,12 +222,10 @@ export const createDashboard = (config: DashboardConfig, deps: DashboardDeps) =>
   let server: { stop: () => void } | undefined;
   return {
     start: () => {
-      // Loopback only - never expose the allowlist manager to the LAN.
       server = Bun.serve({ port: config.port, hostname: "127.0.0.1", fetch: handle });
       console.log(`[dashboard] E.V. control deck on http://localhost:${config.port}`);
     },
     stop: () => server?.stop(),
-    // exposed for tests
     handle,
   };
 };

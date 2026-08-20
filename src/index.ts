@@ -10,6 +10,8 @@ import { loadConfig, modelLabel, type AppConfig } from "./config/env.ts";
 import { openDatabase } from "./infrastructure/db/client.ts";
 import { createUserRepo } from "./infrastructure/db/userRepo.ts";
 import { createMessageRepo } from "./infrastructure/db/messageRepo.ts";
+import { createLearningsRepo } from "./infrastructure/db/learningsRepo.ts";
+import { createSettingsRepo, SETTING_KEYS } from "./infrastructure/db/settingsRepo.ts";
 import { seedOwner } from "./infrastructure/db/seed.ts";
 import { createAnthropicLlm } from "./infrastructure/llm/anthropic.ts";
 import { createClaudeCliLlm } from "./infrastructure/llm/claudeCli.ts";
@@ -40,6 +42,8 @@ const main = async () => {
   const db = openDatabase(config.databasePath);
   const users = createUserRepo(db);
   const messages = createMessageRepo(db);
+  const learnings = createLearningsRepo(db);
+  const settings = createSettingsRepo(db);
   const clock = () => Date.now();
 
   seedOwner(users, config.ownerSlackId, clock);
@@ -53,6 +57,11 @@ const main = async () => {
     llm,
     clock,
     ownerSlackId: config.ownerSlackId,
+    // Live personality + learnings, editable from the dashboard.
+    promptContext: () => ({
+      base: settings.get(SETTING_KEYS.systemPrompt),
+      learnings: learnings.list().map((l) => l.content),
+    }),
   };
 
   const dashboard = createDashboard(
@@ -62,7 +71,7 @@ const main = async () => {
       ownerSlackId: config.ownerSlackId,
       model: modelLabel(config),
     },
-    { users, messages, clock },
+    { users, messages, learnings, settings, clock },
   );
   dashboard.start();
 

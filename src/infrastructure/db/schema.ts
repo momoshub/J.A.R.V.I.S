@@ -43,4 +43,13 @@ export const migrate = (db: Database): void => {
       value TEXT NOT NULL
     );
   `);
+
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS learnings (
+      id         INTEGER PRIMARY KEY AUTOINCREMENT,
+      content    TEXT NOT NULL,
+      created_by TEXT NOT NULL DEFAULT 'system',
+      created_at INTEGER NOT NULL
+    );
+  `);
 };

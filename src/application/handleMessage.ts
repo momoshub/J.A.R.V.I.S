@@ -13,6 +13,7 @@ import {
 } from "../domain/conversation.ts";
 import { buildSystemPrompt } from "../domain/personality.ts";
 import type { Clock, LlmPort } from "./ports.ts";
+import type { PromptContext } from "../domain/types.ts";
 import type { MessageRepo } from "../infrastructure/db/messageRepo.ts";
 import type { UserRepo } from "../infrastructure/db/userRepo.ts";
 
@@ -23,6 +24,8 @@ export type HandleMessageDeps = {
   clock: Clock;
   ownerSlackId: string;
   contextWindow?: number;
+  /** Supplies the editable base prompt + learnings; defaults to the built-in personality. */
+  promptContext?: () => PromptContext;
 };
 
 export type InboundMessage = {
@@ -64,7 +67,12 @@ export const handleMessage = async (
 
   const window = deps.contextWindow ?? DEFAULT_CONTEXT_WINDOW;
   const history = deps.messages.recentForChannel(inbound.channelId, window);
-  const system = buildSystemPrompt(inbound.displayName ?? decision.user.displayName);
+  const ctx = deps.promptContext?.() ?? { learnings: [] };
+  const system = buildSystemPrompt({
+    base: ctx.base,
+    learnings: ctx.learnings,
+    addresseeName: inbound.displayName ?? decision.user.displayName,
+  });
 
   const reply = (await deps.llm.complete({
     system,

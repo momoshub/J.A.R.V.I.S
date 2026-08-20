@@ -2,6 +2,8 @@ import { beforeEach, describe, expect, test } from "bun:test";
 import { openDatabase, type DbClient } from "../../src/infrastructure/db/client.ts";
 import { createUserRepo } from "../../src/infrastructure/db/userRepo.ts";
 import { createMessageRepo } from "../../src/infrastructure/db/messageRepo.ts";
+import { createLearningsRepo } from "../../src/infrastructure/db/learningsRepo.ts";
+import { createSettingsRepo } from "../../src/infrastructure/db/settingsRepo.ts";
 import type { AllowedUser } from "../../src/domain/types.ts";
 
 let db: DbClient;
@@ -99,5 +101,48 @@ describe("messageRepo", () => {
     repo.append({ channelId: "C1", slackUserId: "U1", role: "user", content: "b" }, 2);
     expect(repo.clearChannel("C1")).toBe(2);
     expect(repo.recentForChannel("C1", 10)).toHaveLength(0);
+  });
+
+  test("channels summarises distinct channels, most recent first", () => {
+    const repo = createMessageRepo(db);
+    repo.append({ channelId: "C1", slackUserId: "U1", role: "user", content: "a" }, 1);
+    repo.append({ channelId: "C1", slackUserId: "U1", role: "user", content: "b" }, 2);
+    repo.append({ channelId: "C2", slackUserId: "U1", role: "user", content: "c" }, 5);
+    const chans = repo.channels();
+    expect(chans.map((c) => c.channelId)).toEqual(["C2", "C1"]);
+    expect(chans.find((c) => c.channelId === "C1")?.count).toBe(2);
+    expect(chans[0]?.lastAt).toBe(5);
+  });
+});
+
+describe("settingsRepo", () => {
+  test("set, get, overwrite, remove", () => {
+    const repo = createSettingsRepo(db);
+    expect(repo.get("k")).toBeUndefined();
+    repo.set("k", "v1");
+    expect(repo.get("k")).toBe("v1");
+    repo.set("k", "v2");
+    expect(repo.get("k")).toBe("v2");
+    repo.remove("k");
+    expect(repo.get("k")).toBeUndefined();
+  });
+});
+
+describe("learningsRepo", () => {
+  test("add returns a row and list is ordered", () => {
+    const repo = createLearningsRepo(db);
+    const a = repo.add("first", "kai", 1);
+    repo.add("second", "kai", 2);
+    expect(a.id).toBeGreaterThan(0);
+    expect(repo.list().map((l) => l.content)).toEqual(["first", "second"]);
+  });
+
+  test("update and remove", () => {
+    const repo = createLearningsRepo(db);
+    const l = repo.add("typo", "kai", 1);
+    repo.update(l.id, "fixed");
+    expect(repo.list()[0]?.content).toBe("fixed");
+    repo.remove(l.id);
+    expect(repo.list()).toHaveLength(0);
   });
 });

@@ -2,6 +2,8 @@ import { describe, expect, test } from "bun:test";
 import { openDatabase } from "../../src/infrastructure/db/client.ts";
 import { createUserRepo } from "../../src/infrastructure/db/userRepo.ts";
 import { createMessageRepo } from "../../src/infrastructure/db/messageRepo.ts";
+import { createLearningsRepo } from "../../src/infrastructure/db/learningsRepo.ts";
+import { createSettingsRepo, SETTING_KEYS } from "../../src/infrastructure/db/settingsRepo.ts";
 import { createDashboard } from "../../src/infrastructure/dashboard/server.ts";
 
 const OWNER = "U0OWNER0001";
@@ -11,12 +13,20 @@ const build = () => {
   const db = openDatabase(":memory:");
   const users = createUserRepo(db);
   const messages = createMessageRepo(db);
+  const learnings = createLearningsRepo(db);
+  const settings = createSettingsRepo(db);
   users.upsert({ slackId: OWNER, role: "owner", displayName: "Kai", addedBy: "system", createdAt: 1 });
   const dash = createDashboard(
     { port: 0, token: TOKEN, ownerSlackId: OWNER, model: "claude-opus-4-8" },
-    { users, messages, clock: () => 99 },
+    { users, messages, learnings, settings, clock: () => 99 },
   );
-  return { dash, users };
+  return { dash, users, messages, learnings, settings };
+};
+
+const form = (fields: Record<string, string>): FormData => {
+  const f = new FormData();
+  for (const [k, v] of Object.entries(fields)) f.set(k, v);
+  return f;
 };
 
 const req = (path: string, init?: RequestInit) =>
@@ -108,9 +118,97 @@ describe("dashboard mutations", () => {
   test("removes a non-owner user", async () => {
     const { dash, users } = build();
     users.upsert({ slackId: "U5", role: "member", displayName: "", addedBy: "x", createdAt: 1 });
-    const form = new FormData();
-    form.set("slackId", "U5");
-    await dash.handle(req(`/api/users/remove?token=${TOKEN}`, { method: "POST", body: form }));
+    await dash.handle(
+      req(`/api/users/remove?token=${TOKEN}`, { method: "POST", body: form({ slackId: "U5" }) }),
+    );
     expect(users.get("U5")).toBeUndefined();
+  });
+});
+
+describe("dashboard learnings", () => {
+  test("adds and lists a learning", async () => {
+    const { dash, learnings } = build();
+    const res = await dash.handle(
+      req(`/api/learnings?token=${TOKEN}`, { method: "POST", body: form({ content: "staging is X" }) }),
+    );
+    expect(res.status).toBe(303);
+    expect(learnings.list().map((l) => l.content)).toEqual(["staging is X"]);
+  });
+
+  test("rejects an empty learning", async () => {
+    const { dash } = build();
+    const res = await dash.handle(
+      req(`/api/learnings?token=${TOKEN}`, { method: "POST", body: form({ content: "  " }) }),
+    );
+    expect(res.status).toBe(400);
+  });
+
+  test("removes a learning by id", async () => {
+    const { dash, learnings } = build();
+    const l = learnings.add("temp", "test", 1);
+    await dash.handle(
+      req(`/api/learnings/remove?token=${TOKEN}`, { method: "POST", body: form({ id: String(l.id) }) }),
+    );
+    expect(learnings.list()).toHaveLength(0);
+  });
+
+  test("renders learnings on the page", async () => {
+    const { dash, learnings } = build();
+    learnings.add("remember the milk", "kai", 1);
+    const res = await dash.handle(req(`/learnings?token=${TOKEN}`));
+    expect(await res.text()).toContain("remember the milk");
+  });
+});
+
+describe("dashboard prompt editor", () => {
+  test("shows the default prompt when no override", async () => {
+    const { dash } = build();
+    const res = await dash.handle(req(`/prompt?token=${TOKEN}`));
+    const body = await res.text();
+    expect(body).toContain("built-in default");
+    expect(body).toContain("temperament of Tony Stark");
+  });
+
+  test("saves and then reflects a custom prompt", async () => {
+    const { dash, settings } = build();
+    await dash.handle(
+      req(`/api/prompt?token=${TOKEN}`, { method: "POST", body: form({ prompt: "You are terse." }) }),
+    );
+    expect(settings.get(SETTING_KEYS.systemPrompt)).toBe("You are terse.");
+    const res = await dash.handle(req(`/prompt?token=${TOKEN}`));
+    const body = await res.text();
+    expect(body).toContain("custom override");
+    expect(body).toContain("You are terse.");
+  });
+
+  test("reset clears the override", async () => {
+    const { dash, settings } = build();
+    settings.set(SETTING_KEYS.systemPrompt, "custom");
+    await dash.handle(req(`/api/prompt/reset?token=${TOKEN}`, { method: "POST", body: form({}) }));
+    expect(settings.get(SETTING_KEYS.systemPrompt)).toBeUndefined();
+  });
+});
+
+describe("dashboard conversations", () => {
+  test("lists channels and renders a conversation", async () => {
+    const { dash, messages } = build();
+    messages.append({ channelId: "C1", slackUserId: OWNER, role: "user", content: "hello world" }, 10);
+    messages.append({ channelId: "C1", slackUserId: OWNER, role: "assistant", content: "hi back" }, 11);
+    const list = await dash.handle(req(`/conversations?token=${TOKEN}`));
+    expect(await list.text()).toContain("C1");
+    const convo = await dash.handle(req(`/conversation?channel=C1&token=${TOKEN}`));
+    const body = await convo.text();
+    expect(body).toContain("hello world");
+    expect(body).toContain("hi back");
+  });
+
+  test("clears a channel's memory", async () => {
+    const { dash, messages } = build();
+    messages.append({ channelId: "C9", slackUserId: OWNER, role: "user", content: "x" }, 1);
+    const res = await dash.handle(
+      req(`/api/conversation/clear?token=${TOKEN}`, { method: "POST", body: form({ channel: "C9" }) }),
+    );
+    expect(res.status).toBe(303);
+    expect(messages.recentForChannel("C9", 10)).toHaveLength(0);
   });
 });

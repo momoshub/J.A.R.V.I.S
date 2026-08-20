@@ -26,12 +26,21 @@ const toMessage = (row: Row): StoredMessage => ({
   createdAt: row.created_at,
 });
 
+/** A channel summary for the dashboard's conversation browser. */
+export type ChannelSummary = {
+  channelId: string;
+  count: number;
+  lastAt: number;
+};
+
 export type MessageRepo = {
   append: (message: NewMessage, createdAt: number) => StoredMessage;
   /** Recent turns for a channel, returned oldest-first. */
   recentForChannel: (channelId: string, limit: number) => StoredMessage[];
   clearChannel: (channelId: string) => number;
   count: () => number;
+  /** Distinct channels with a turn count, most-recently-active first. */
+  channels: () => ChannelSummary[];
 };
 
 export const createMessageRepo = (db: DbClient): MessageRepo => {
@@ -48,6 +57,10 @@ export const createMessageRepo = (db: DbClient): MessageRepo => {
   const clearStmt = db.query("DELETE FROM messages WHERE channel_id = $channelId");
   const countStmt = db.query<{ n: number }, []>(
     "SELECT COUNT(*) AS n FROM messages",
+  );
+  const channelsStmt = db.query<{ channel_id: string; n: number; last_at: number }, []>(
+    `SELECT channel_id, COUNT(*) AS n, MAX(created_at) AS last_at
+     FROM messages GROUP BY channel_id ORDER BY last_at DESC`,
   );
 
   return {
@@ -68,5 +81,9 @@ export const createMessageRepo = (db: DbClient): MessageRepo => {
       return Number(res.changes);
     },
     count: () => countStmt.get()?.n ?? 0,
+    channels: () =>
+      channelsStmt
+        .all()
+        .map((r) => ({ channelId: r.channel_id, count: r.n, lastAt: r.last_at })),
   };
 };

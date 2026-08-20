@@ -79,7 +79,15 @@ The Slack app needs Socket Mode on, plus the `app_mention` and `message.im` even
 
 ## Dashboard
 
-Open `http://localhost:2001/?token=YOUR_DASHBOARD_TOKEN`. View stored-turn and user counts, add or revoke users. The owner cannot be revoked.
+Open `http://localhost:2001/?token=YOUR_DASHBOARD_TOKEN` (loopback only). Tabs:
+
+- **Overview** - counts for users, conversations, stored turns, learnings
+- **Users** - add or revoke allowlisted users and roles (the owner is protected)
+- **Learnings** - add/delete durable facts that get injected into every reply as known facts
+- **Prompt** - edit E.V.'s system prompt (personality and rules) live, or reset to the built-in default
+- **Conversations** - browse every channel and DM, read the stored turns, and clear a channel's memory
+
+Prompt overrides and learnings are stored in the DB and applied on the next reply - no restart needed.
 
 ## Testing
 
