@@ -295,7 +295,7 @@ export const COMMANDS: readonly CommandDef[] = [
     aliases: ["rv"],
     minRole: "pal",
     usage: "<pr-url> [pr-url...]",
-    summary: "quick read-only code review of a PR",
+    summary: "review a PR: approve it, then post the review to GitHub and here",
     run: async ({ deps, args, prefix, reply }) => {
       if (args.length === 0) return `Which PR? \`${prefix} review <pr-url>\``;
       if (!deps.llm) return "My brain is not wired up right now.";
@@ -331,13 +331,25 @@ export const COMMANDS: readonly CommandDef[] = [
           seen.add(line);
           void reply(line);
         };
+        // The only PR url we can attribute an action to when the command itself
+        // carries none (e.g. `gh pr review 2149 --repo ...`).
+        const soleUrl = args.length === 1 ? (args[0]?.match(PR_URL)?.[0] ?? "") : "";
         out = await deps.llm.stream(params, (ev) => {
           if (ev.type !== "tool" || ev.status !== "complete") return;
-          const t = ev.title.toLowerCase();
-          const url = ev.title.match(PR_URL)?.[0] ?? "";
-          if (/gh pr review/.test(t) && /--approve/.test(t)) announce(`✅ approved ${url}`);
-          else if (/gh pr review/.test(t) && /request-changes/.test(t)) announce(`⚠️ requested changes on ${url}`);
-          else if (/gh pr comment/.test(t)) announce(`📝 posted the review on ${url}`);
+          // Match the command in full, never the card title: the title is clipped
+          // at 200 chars, and a `gh pr review` written after a heredoc body sits
+          // well past that - which is how a request-changes went unannounced.
+          const ran = ev.command ?? ev.title;
+          const t = ran.toLowerCase();
+          const url = ran.match(PR_URL)?.[0] ?? soleUrl;
+          const at = url ? ` ${url}` : "";
+          const on = url ? ` on ${url}` : "";
+          // Independent, not else-if: one shell call can approve and then reverse.
+          // `[^\n]*` keeps a match on the gh line itself, so prose inside a heredoc
+          // body ("flipping back to request-changes") cannot trigger a false line.
+          if (/gh pr review[^\n]*--approve/.test(t)) announce(`✅ approved${at}`);
+          if (/gh pr review[^\n]*--request-changes/.test(t)) announce(`⚠️ requested changes${on}`);
+          if (/gh pr comment\b/.test(t)) announce(`📝 posted the review${on}`);
         });
       } else {
         out = await deps.llm.complete(params);

@@ -66,8 +66,17 @@ export const renderPrompt = (
 
 const truncate = (s: string, n: number): string => (s.length > n ? `${s.slice(0, n - 3)}...` : s);
 
-/** Turn a tool_use name + accumulated input JSON into a short card title/details. */
-export const summarizeTool = (name: string, jsonStr: string): { title: string; details?: string } => {
+/**
+ * Turn a tool_use name + accumulated input JSON into a short card title/details.
+ *
+ * `command` carries the Bash command in full: the card text is clipped for Slack,
+ * but consumers that match on what ran (the review command's progress lines) need
+ * the whole thing - a `gh pr review` can sit past 200 chars, after a heredoc body.
+ */
+export const summarizeTool = (
+  name: string,
+  jsonStr: string,
+): { title: string; details?: string; command?: string } => {
   let input: Record<string, unknown> = {};
   try {
     input = jsonStr ? (JSON.parse(jsonStr) as Record<string, unknown>) : {};
@@ -75,7 +84,11 @@ export const summarizeTool = (name: string, jsonStr: string): { title: string; d
     // partial/invalid json - fall back to the name only
   }
   if (name === "Bash" && typeof input.command === "string") {
-    return { title: truncate(`run: ${input.command}`, 200), details: truncate(input.command, 256) };
+    return {
+      title: truncate(`run: ${input.command}`, 200),
+      details: truncate(input.command, 256),
+      command: input.command,
+    };
   }
   const firstString = Object.values(input).find((v) => typeof v === "string") as string | undefined;
   return {
@@ -148,9 +161,9 @@ export const createClaudeCliLlm = (config: ClaudeCliConfig = {}): LlmPort => {
     const proc = spawnClaude(config, [...buildArgs(config, true, policy), "--append-system-prompt", system], renderPrompt(messages, assistantName), policy);
     const stderrPromise = new Response(proc.stderr).text();
 
-    // index -> in-flight tool_use block; id -> resolved card title.
+    // index -> in-flight tool_use block; id -> resolved card, replayed on the result.
     const toolByIndex = new Map<number, { id: string; name: string; json: string }>();
-    const titleById = new Map<string, string>();
+    const cardById = new Map<string, { title: string; command?: string }>();
     let finalText = "";
     let streamedText = "";
 
@@ -179,17 +192,23 @@ export const createClaudeCliLlm = (config: ClaudeCliConfig = {}): LlmPort => {
         } else if (ev.type === "content_block_stop" && typeof index === "number") {
           const tb = toolByIndex.get(index);
           if (tb) {
-            const { title, details } = summarizeTool(tb.name, tb.json);
-            titleById.set(tb.id, title);
-            sink({ type: "tool", id: tb.id, title, details, status: "in_progress" });
+            const { title, details, command } = summarizeTool(tb.name, tb.json);
+            cardById.set(tb.id, { title, command });
+            sink({ type: "tool", id: tb.id, title, details, command, status: "in_progress" });
           }
         }
       } else if (e.type === "user") {
         const content = ((e.message as Record<string, unknown>)?.content ?? []) as Record<string, unknown>[];
         for (const c of content) {
           if (c.type === "tool_result" && typeof c.tool_use_id === "string") {
-            const title = titleById.get(c.tool_use_id) ?? "tool";
-            sink({ type: "tool", id: c.tool_use_id, title, status: c.is_error ? "error" : "complete" });
+            const card = cardById.get(c.tool_use_id);
+            sink({
+              type: "tool",
+              id: c.tool_use_id,
+              title: card?.title ?? "tool",
+              command: card?.command,
+              status: c.is_error ? "error" : "complete",
+            });
           }
         }
       } else if (e.type === "result" && typeof e.result === "string") {

@@ -174,6 +174,62 @@ describe("dispatchCommand", () => {
     expect(out).toBe("drafted answer");
   });
 
+  test("rv announces every gh action to the thread, even from a long heredoc command", async () => {
+    const PR = "https://github.com/o/r/pull/1";
+    // What the CLI really emits: a short approve, then one shell call that writes
+    // the body with a heredoc and only then runs gh - past the card's 200 chars.
+    const heredoc = `cat > /tmp/r.md <<'EOF'\n${"blocker prose ".repeat(30)}\nEOF\ngh pr review ${PR} --request-changes --body-file /tmp/r.md`;
+    const streamed: LlmPort = {
+      complete: async () => "unused",
+      stream: async (_p, sink) => {
+        const emit = (id: string, command: string) => {
+          const title = `run: ${command}`.slice(0, 200);
+          sink({ type: "tool", id, title, command, status: "in_progress" });
+          sink({ type: "tool", id, title, command, status: "complete" });
+        };
+        emit("t1", `gh pr review ${PR} --approve 2>&1`);
+        emit("t2", `gh pr comment ${PR} --body "the review"`);
+        emit("t3", heredoc);
+        return "final review text";
+      },
+    };
+    const deps = { ...build(), llm: streamed };
+    const lines: string[] = [];
+    const out = await dispatchCommand(deps, actor(), "C1", `rv ${PR}`, {
+      reply: async (text: string) => {
+        lines.push(text);
+      },
+    });
+
+    expect(out).toBe(""); // delivered to the thread, not returned
+    expect(lines[0]).toContain("on it, reviewing");
+    expect(lines).toContain(`✅ approved ${PR}`);
+    expect(lines).toContain(`📝 posted the review on ${PR}`);
+    expect(lines).toContain(`⚠️ requested changes on ${PR}`);
+    expect(lines[lines.length - 1]).toBe("final review text");
+  });
+
+  test("rv does not announce actions that only appear as prose in a body", async () => {
+    const PR = "https://github.com/o/r/pull/1";
+    const streamed: LlmPort = {
+      complete: async () => "unused",
+      stream: async (_p, sink) => {
+        const command = `gh pr comment ${PR} --body "flipping to request-changes next, and my --approve stands"`;
+        sink({ type: "tool", id: "t1", title: command, command, status: "complete" });
+        return "done";
+      },
+    };
+    const lines: string[] = [];
+    await dispatchCommand({ ...build(), llm: streamed }, actor(), "C1", `rv ${PR}`, {
+      reply: async (text: string) => {
+        lines.push(text);
+      },
+    });
+    expect(lines).toContain(`📝 posted the review on ${PR}`);
+    expect(lines.some((l) => l.includes("requested changes"))).toBe(false);
+    expect(lines.some((l) => l.includes("approved"))).toBe(false);
+  });
+
   test("rv needs a PR url", async () => {
     expect(await dispatchCommand(build(), actor(), "C1", "rv")).toContain("Which PR");
   });

@@ -101,6 +101,16 @@ describe("createClaudeCliLlm", () => {
     expect(out.details).toBe("ls -la");
   });
 
+  test("summarizeTool keeps the whole Bash command even when the card is clipped", () => {
+    // A heredoc body pushes the real gh call past the 200-char card title.
+    const body = "x".repeat(400);
+    const cmd = `cat > /tmp/r.md <<'EOF'\n${body}\nEOF\ngh pr review https://github.com/o/r/pull/1 --request-changes --body-file /tmp/r.md`;
+    const out = summarizeTool("Bash", JSON.stringify({ command: cmd }));
+    expect(out.title.length).toBeLessThanOrEqual(200);
+    expect(out.title).not.toContain("gh pr review"); // clipped out of the card
+    expect(out.command).toBe(cmd); // ... but preserved in full for matching
+  });
+
   test("summarizeTool falls back to the tool name", () => {
     expect(summarizeTool("Read", '{"file_path":"/x"}').title).toBe("Read");
     expect(summarizeTool("Weird", "not json").title).toBe("Weird");

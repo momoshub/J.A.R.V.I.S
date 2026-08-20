@@ -16,6 +16,12 @@ export type LlmStreamEvent =
       readonly id: string;
       readonly title: string;
       readonly details?: string;
+      /**
+       * The full, untruncated shell command (Bash tool only). `title`/`details`
+       * are clipped for display, so anything matching on what actually ran - e.g.
+       * spotting `gh pr review` at the end of a heredoc - must use this.
+       */
+      readonly command?: string;
       readonly status: "in_progress" | "complete" | "error";
     };
 
