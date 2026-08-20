@@ -112,7 +112,7 @@ Examples (with the default prefix): `/bot add @kai admin`, `//bot learn our stag
 A `workflow` turns a thread into a long-running job you can talk to.
 
 ```
-X/jv workflow migrate the webhook handler to the new signature check
+//bot workflow migrate the webhook handler to the new signature check
 ```
 
 The bot claims a Claude CLI session id, runs the first turn, and keeps that
@@ -129,7 +129,7 @@ it got to; `workflow stop` ends it and the thread goes back to normal chat.
 - the session id is in the database, so a bot restart does not lose the session
 - turns may run up to 15 minutes each
 
-Because it lives in a thread, start it with the message form (`X/jv workflow ...`)
+Because it lives in a thread, start it with the message form (`//bot workflow ...`)
 rather than the slash command - a slash command has no thread to bind to.
 
 ## Roles & tool access
