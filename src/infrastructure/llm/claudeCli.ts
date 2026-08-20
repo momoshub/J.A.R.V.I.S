@@ -108,14 +108,14 @@ const buildArgs = (config: ClaudeCliConfig, stream: boolean, policy?: ToolPolicy
   return args;
 };
 
-const spawnClaude = (config: ClaudeCliConfig, args: string[], prompt: string, cwd?: string) =>
+const spawnClaude = (config: ClaudeCliConfig, args: string[], prompt: string, policy?: ToolPolicy) =>
   Bun.spawn({
     cmd: [config.binPath ?? "claude", ...args],
     stdin: Buffer.from(prompt),
     stdout: "pipe",
     stderr: "pipe",
-    cwd: cwd ?? config.cwd,
-    timeout: config.timeoutMs ?? 120_000,
+    cwd: policy?.cwd ?? config.cwd,
+    timeout: policy?.timeoutMs ?? config.timeoutMs ?? 120_000,
     // Non-interactive hint. process.env carries the bot's SLACK_BOT_TOKEN etc so the
     // CLI's Bash tool can call the Slack Web API with her own credentials.
     env: { ...process.env, IS_SANDBOX: "1" },
@@ -123,7 +123,7 @@ const spawnClaude = (config: ClaudeCliConfig, args: string[], prompt: string, cw
 
 export const createClaudeCliLlm = (config: ClaudeCliConfig = {}): LlmPort => {
   const complete = async ({ system, messages, assistantName, policy }: LlmCompleteParams) => {
-    const proc = spawnClaude(config, [...buildArgs(config, false, policy), "--append-system-prompt", system], renderPrompt(messages, assistantName), policy?.cwd);
+    const proc = spawnClaude(config, [...buildArgs(config, false, policy), "--append-system-prompt", system], renderPrompt(messages, assistantName), policy);
     const [stdout, stderr, exitCode] = await Promise.all([
       new Response(proc.stdout).text(),
       new Response(proc.stderr).text(),
@@ -145,7 +145,7 @@ export const createClaudeCliLlm = (config: ClaudeCliConfig = {}): LlmPort => {
   };
 
   const stream = async ({ system, messages, assistantName, policy }: LlmCompleteParams, sink: LlmStreamSink) => {
-    const proc = spawnClaude(config, [...buildArgs(config, true, policy), "--append-system-prompt", system], renderPrompt(messages, assistantName), policy?.cwd);
+    const proc = spawnClaude(config, [...buildArgs(config, true, policy), "--append-system-prompt", system], renderPrompt(messages, assistantName), policy);
     const stderrPromise = new Response(proc.stderr).text();
 
     // index -> in-flight tool_use block; id -> resolved card title.

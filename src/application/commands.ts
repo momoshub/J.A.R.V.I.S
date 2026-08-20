@@ -49,7 +49,9 @@ export type CommandDeps = {
   ownerSlackId: string;
 };
 
-const REACTION_BOMB_SIZE = 18;
+const REACTION_BOMB_SIZE = 23;
+/** review clones + spawns child agents, so allow much longer than a chat reply. */
+const REVIEW_TIMEOUT_MS = 600_000;
 
 /** Public metadata for one command, for the dashboard. */
 export type CommandInfo = {
@@ -284,15 +286,19 @@ export const COMMANDS: readonly CommandDef[] = [
     minRole: "pal",
     usage: "<pr-url> [pr-url...]",
     summary: "quick read-only code review of a PR",
-    run: async ({ deps, actor, args, prefix }) => {
+    run: async ({ deps, args, prefix }) => {
       if (args.length === 0) return `Which PR? \`${prefix} review <pr-url>\``;
       if (!deps.llm) return "My brain is not wired up right now.";
-      const system = reviewPrompt(args, botNameOf(deps));
+      // A preset, tightly-scoped task: always run FULL access (it approves/comments
+      // on GitHub, clones, and spawns child agents) with a long timeout, regardless
+      // of the caller's role.
+      const full = deps.toolPolicy?.("owner") ?? { skipPermissions: true };
+      const policy = { ...full, timeoutMs: REVIEW_TIMEOUT_MS };
       const reply = await deps.llm.complete({
-        system,
+        system: reviewPrompt(args, botNameOf(deps)),
         messages: [{ role: "user", content: `review ${args.join(" ")}` }],
         assistantName: botNameOf(deps),
-        policy: deps.toolPolicy?.(actor.role),
+        policy,
       });
       return reply.trim() || "I could not put a review together for that one.";
     },

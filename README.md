@@ -95,7 +95,7 @@ Every command has two interfaces - use whichever you like:
 | `remove @user` | admins (admins: owner only) | revoke access |
 | `learn <fact>` | admins | teach a durable fact |
 | `learnings` / `unlearn <id>` | admins | list / delete learnings |
-| `review <pr-url>` (alias `rv`) | admins | quick read-only code review of a PR |
+| `review <pr-url>` (alias `rv`) | pal+ | review a PR: approve first, post a comment; request changes on high risk (big PRs are cloned + reviewed by child agents). Runs full-access. |
 | `bomb [category] <message-link>` (alias `br`) | admins | reaction-bomb a message with a burst of emoji |
 | `reply <message-link>` (alias `jrp`) | admins | draft and post an AI reply to a message |
 | `promote @user` / `demote @user` | owner | change role |

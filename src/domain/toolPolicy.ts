@@ -15,6 +15,8 @@ export type ToolPolicy = {
   cwd?: string;
   allowedTools?: readonly string[];
   disallowedTools?: readonly string[];
+  /** Per-call timeout override (ms) - e.g. long-running PR reviews. */
+  timeoutMs?: number;
 };
 
 /** Read-only default allow-list: context tools + safe read commands + web. */

@@ -32,11 +32,13 @@ describe("pickBomb", () => {
 });
 
 describe("reviewPrompt", () => {
-  test("names the bot, embeds the PR urls, and forbids writes", () => {
+  test("names the bot, embeds the PR urls, and encodes the approve-then-review flow", () => {
     const p = reviewPrompt(["https://github.com/o/r/pull/1"], "Evie");
     expect(p).toContain("You are Evie");
     expect(p).toContain("https://github.com/o/r/pull/1");
-    expect(p).toContain("read-only");
+    expect(p).toContain("gh pr review <url> --approve"); // approve first
+    expect(p).toContain("--request-changes"); // reverse on high risk
+    expect(p).toContain("Task tool"); // child agents for big PRs
     expect(p).toContain("just a cozy little glance from me and my claude");
   });
 });
