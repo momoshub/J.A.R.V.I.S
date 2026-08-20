@@ -275,8 +275,8 @@ export const COMMANDS: readonly CommandDef[] = [
     },
   },
   {
-    name: "rv",
-    aliases: ["review"],
+    name: "review",
+    aliases: ["rv"],
     minRole: "admin",
     usage: "<pr-url> [pr-url...]",
     summary: "quick read-only code review of a PR",
@@ -293,8 +293,8 @@ export const COMMANDS: readonly CommandDef[] = [
     },
   },
   {
-    name: "br",
-    aliases: ["bomb"],
+    name: "bomb",
+    aliases: ["br"],
     minRole: "admin",
     usage: "[category] <message-link>",
     summary: `reaction-bomb a message (${EMOJI_CATEGORY_NAMES.slice(0, 6).join(", ")}, ...)`,
@@ -312,8 +312,8 @@ export const COMMANDS: readonly CommandDef[] = [
     },
   },
   {
-    name: "jrp",
-    aliases: ["reply"],
+    name: "reply",
+    aliases: ["jrp"],
     minRole: "admin",
     usage: "<message-link>",
     summary: "draft and post an AI reply to a message",
