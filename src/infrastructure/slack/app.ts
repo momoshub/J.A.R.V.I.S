@@ -10,7 +10,7 @@
 import { App } from "@slack/bolt";
 import type { WebClient } from "@slack/web-api";
 import { respond, type RespondDeps } from "../../application/respond.ts";
-import { parseCommand } from "../../application/commands.ts";
+import { commandLineOf } from "../../application/commands.ts";
 import { createSlackStream, type Streamer } from "./stream.ts";
 
 /** Messages longer than this get a "thinking" step before content streams. */
@@ -105,7 +105,7 @@ export const createHandler =
     if (
       stream &&
       deps.llm.stream &&
-      parseCommand(msg.text) === undefined &&
+      commandLineOf(msg.text) === undefined &&
       msg.text.trim().length > LONG_MESSAGE_CHARS
     ) {
       stream.showThinking(config.thinkingLabel());
@@ -166,6 +166,20 @@ export const createSlackApp = (config: SlackAppConfig, deps: Deps) => {
       client: asClient(client),
       say: say as Incoming["say"],
     });
+  });
+
+  // Slash command: /ev <command> <args...> - same registry as `//ev ...` messages.
+  // Register a single "/ev" command in the Slack app config; it sub-routes here.
+  app.command("/ev", async ({ command, ack, respond: reply }) => {
+    await ack();
+    const result = await respond(deps, {
+      channelId: command.channel_id,
+      slackUserId: command.user_id,
+      text: `//ev ${command.text ?? ""}`,
+      displayName: command.user_name,
+    });
+    const text = result.kind === "ignored" ? "Nothing to do." : result.text;
+    await reply({ response_type: "ephemeral", text });
   });
 
   return {

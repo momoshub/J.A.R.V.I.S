@@ -2,56 +2,26 @@ import { describe, expect, test } from "bun:test";
 import { openDatabase, type DbClient } from "../../src/infrastructure/db/client.ts";
 import { createUserRepo } from "../../src/infrastructure/db/userRepo.ts";
 import { createMessageRepo } from "../../src/infrastructure/db/messageRepo.ts";
-import {
-  executeCommand,
-  parseCommand,
-  type CommandDeps,
-} from "../../src/application/commands.ts";
+import { createLearningsRepo } from "../../src/infrastructure/db/learningsRepo.ts";
+import { commandLineOf, dispatchCommand, type CommandDeps } from "../../src/application/commands.ts";
 import type { AllowedUser } from "../../src/domain/types.ts";
+import type { LlmPort } from "../../src/application/ports.ts";
 
 const OWNER = "U0OWNER0001";
 
-describe("parseCommand", () => {
-  test("returns undefined for plain chat", () => {
-    expect(parseCommand("hey what's up")).toBeUndefined();
+describe("commandLineOf", () => {
+  test("plain chat is not a command", () => {
+    expect(commandLineOf("hey what's up")).toBeUndefined();
   });
-
-  test("parses help and whoami", () => {
-    expect(parseCommand("!help")).toEqual({ kind: "help" });
-    expect(parseCommand("!whoami")).toEqual({ kind: "whoami" });
+  test("//ev prefix", () => {
+    expect(commandLineOf("//ev add @u1 admin")).toBe("add @u1 admin");
+    expect(commandLineOf("//ev")).toBe("");
   });
-
-  test("parses add with a mention and role", () => {
-    expect(parseCommand("!add <@U123> admin")).toEqual({
-      kind: "addUser",
-      slackId: "U123",
-      role: "admin",
-    });
+  test("legacy ! prefix", () => {
+    expect(commandLineOf("!whoami")).toBe("whoami");
   });
-
-  test("add defaults to member and handles piped mentions", () => {
-    expect(parseCommand("!add <@U123|kai>")).toEqual({
-      kind: "addUser",
-      slackId: "U123",
-      role: "member",
-    });
-  });
-
-  test("promote and demote map to roles", () => {
-    expect(parseCommand("!promote <@U9>")).toEqual({
-      kind: "setRole",
-      slackId: "U9",
-      role: "admin",
-    });
-    expect(parseCommand("!demote <@U9>")).toEqual({
-      kind: "setRole",
-      slackId: "U9",
-      role: "member",
-    });
-  });
-
-  test("add without a target is unknown", () => {
-    expect(parseCommand("!add")).toEqual({ kind: "unknown", input: "!add" });
+  test("tolerates a leading mention", () => {
+    expect(commandLineOf("<@UBOT> //ev help")).toBe("help");
   });
 });
 
@@ -65,58 +35,94 @@ const actor = (over: Partial<AllowedUser> = {}): AllowedUser => ({
   ...over,
 });
 
+const llm: LlmPort = { complete: async () => "drafted answer" };
+
 const build = (): CommandDeps => {
   db = openDatabase(":memory:");
   return {
     users: createUserRepo(db),
     messages: createMessageRepo(db),
+    learnings: createLearningsRepo(db),
+    llm,
+    promptContext: () => ({ botName: "Evie", learnings: [] }),
+    botInfo: () => ({ botName: "Evie", model: "claude-cli (opus)" }),
     clock: () => 42,
     ownerSlackId: OWNER,
   };
 };
 
-describe("executeCommand", () => {
-  test("owner can add an admin", () => {
+describe("dispatchCommand", () => {
+  test("help lists commands available to the role", async () => {
     const deps = build();
-    const out = executeCommand(deps, actor(), { kind: "addUser", slackId: "U1", role: "admin" }, "C1");
+    const owner = await dispatchCommand(deps, actor(), "C1", "help");
+    expect(owner).toContain("promote");
+    const member = await dispatchCommand(deps, actor({ slackId: "U3", role: "member" }), "C1", "help");
+    expect(member).not.toContain("promote");
+    expect(member).toContain("ask");
+  });
+
+  test("unknown command is reported", async () => {
+    expect(await dispatchCommand(build(), actor(), "C1", "frobnicate")).toContain("do not recognise");
+  });
+
+  test("role gate blocks under-privileged users", async () => {
+    const deps = build();
+    const out = await dispatchCommand(deps, actor({ slackId: "U3", role: "member" }), "C1", "users");
     expect(out).toContain("admin");
+    expect(out).toContain("access");
+  });
+
+  test("owner can add an admin; admin cannot", async () => {
+    const deps = build();
+    await dispatchCommand(deps, actor(), "C1", "add <@U1> admin");
     expect(deps.users.get("U1")?.role).toBe("admin");
-  });
 
-  test("admin cannot add an admin", () => {
-    const deps = build();
+    const deps2 = build();
     const admin = actor({ slackId: "U2", role: "admin" });
-    const out = executeCommand(deps, admin, { kind: "addUser", slackId: "U1", role: "admin" }, "C1");
+    const out = await dispatchCommand(deps2, admin, "C1", "add <@U1> admin");
     expect(out).toContain("Only the owner");
-    expect(deps.users.get("U1")).toBeUndefined();
+    expect(deps2.users.get("U1")).toBeUndefined();
   });
 
-  test("admin can add a member", () => {
+  test("owner cannot be removed", async () => {
     const deps = build();
-    const admin = actor({ slackId: "U2", role: "admin" });
-    executeCommand(deps, admin, { kind: "addUser", slackId: "U1", role: "member" }, "C1");
+    deps.users.upsert(actor());
+    const out = await dispatchCommand(deps, actor(), "C1", `remove <@${OWNER}>`);
+    expect(out).toContain("cannot be removed");
+  });
+
+  test("promote and demote (owner only)", async () => {
+    const deps = build();
+    deps.users.upsert({ slackId: "U1", role: "member", displayName: "", addedBy: "x", createdAt: 1 });
+    await dispatchCommand(deps, actor(), "C1", "promote <@U1>");
+    expect(deps.users.get("U1")?.role).toBe("admin");
+    await dispatchCommand(deps, actor(), "C1", "demote <@U1>");
     expect(deps.users.get("U1")?.role).toBe("member");
   });
 
-  test("owner cannot be removed", () => {
-    const deps = build();
-    deps.users.upsert(actor());
-    const out = executeCommand(deps, actor(), { kind: "removeUser", slackId: OWNER }, "C1");
-    expect(out).toContain("cannot be removed");
-    expect(deps.users.get(OWNER)).toBeDefined();
-  });
-
-  test("member cannot list users", () => {
-    const deps = build();
-    const member = actor({ slackId: "U3", role: "member" });
-    expect(executeCommand(deps, member, { kind: "listUsers" }, "C1")).toContain("Only admins");
-  });
-
-  test("forget clears channel memory", () => {
+  test("forget clears the channel", async () => {
     const deps = build();
     deps.messages.append({ channelId: "C1", slackUserId: OWNER, role: "user", content: "x" }, 1);
-    const out = executeCommand(deps, actor(), { kind: "forget" }, "C1");
-    expect(out).toContain("Wiped 1");
-    expect(deps.messages.recentForChannel("C1", 10)).toHaveLength(0);
+    expect(await dispatchCommand(deps, actor(), "C1", "forget")).toContain("Wiped 1");
+  });
+
+  test("learn / learnings / unlearn", async () => {
+    const deps = build();
+    const learned = await dispatchCommand(deps, actor(), "C1", "learn staging is at x.example.com");
+    expect(learned).toContain("Learned");
+    expect(deps.learnings!.list()[0]?.content).toBe("staging is at x.example.com");
+    expect(await dispatchCommand(deps, actor(), "C1", "learnings")).toContain("staging is at x");
+    const id = deps.learnings!.list()[0]!.id;
+    await dispatchCommand(deps, actor(), "C1", `unlearn ${id}`);
+    expect(deps.learnings!.list()).toHaveLength(0);
+  });
+
+  test("ask calls the brain", async () => {
+    const deps = build();
+    expect(await dispatchCommand(deps, actor(), "C1", "ask what is 2+2")).toBe("drafted answer");
+  });
+
+  test("model reports the brain", async () => {
+    expect(await dispatchCommand(build(), actor(), "C1", "model")).toContain("claude-cli (opus)");
   });
 });

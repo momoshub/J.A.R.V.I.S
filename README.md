@@ -75,17 +75,29 @@ The **Console** tab additionally needs read scopes to list and open conversation
 - It tags people with their Slack `<@id>` when they are in the conversation
 - For workspace questions it uses its own bot token and the Slack Web API, never a third-party connector
 
-### Commands (prefix with `!`)
+### Commands
+
+Every command has two interfaces - use whichever you like:
+
+- **slash**: `/ev <command> <args>` (register a single `/ev` slash command in the Slack app config; it sub-routes to all commands. Socket Mode needs no request URL)
+- **message**: `//ev <command> <args>` (or the legacy `!<command>`), in a DM or by @-mentioning the bot
 
 | command | who | effect |
 | --- | --- | --- |
-| `!help` | anyone | list commands |
-| `!whoami` | anyone | show your role |
-| `!users` | admins | list the allowlist |
-| `!add @user [admin\|member]` | admins (admin role: owner only) | grant access |
-| `!remove @user` | admins (admins: owner only) | revoke access |
-| `!promote @user` / `!demote @user` | owner | change role |
-| `!forget` | anyone | wipe the bot's memory of this channel |
+| `help` | anyone | list the commands you can run |
+| `ping` | anyone | check the bot is awake |
+| `whoami` | anyone | show your role |
+| `model` | anyone | show the brain and current model |
+| `ask <question>` | anyone | one-shot question to the brain |
+| `forget` | anyone | wipe the bot's memory of this channel |
+| `users` | admins | list the allowlist |
+| `add @user [admin\|member]` | admins (admin role: owner only) | grant access |
+| `remove @user` | admins (admins: owner only) | revoke access |
+| `learn <fact>` | admins | teach a durable fact |
+| `learnings` / `unlearn <id>` | admins | list / delete learnings |
+| `promote @user` / `demote @user` | owner | change role |
+
+Examples: `/ev add @kai admin`, `//ev learn our staging URL is staging.example.com`, `//ev ask summarise the last thread`.
 
 ## Dashboard
 

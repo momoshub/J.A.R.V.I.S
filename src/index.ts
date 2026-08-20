@@ -89,6 +89,9 @@ const main = async () => {
       base: settings.get(SETTING_KEYS.systemPrompt),
       learnings: learnings.list().map((l) => l.content),
     }),
+    // For the command registry (learn/learnings, model/status).
+    learnings,
+    botInfo: () => ({ botName: profile().name, model: modelLabel(config) }),
   };
 
   const dashboard = createDashboard(

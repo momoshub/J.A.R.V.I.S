@@ -16,6 +16,7 @@ import type { Clock, LlmPort, LlmStreamSink } from "./ports.ts";
 import type { PromptContext } from "../domain/types.ts";
 import type { MessageRepo } from "../infrastructure/db/messageRepo.ts";
 import type { UserRepo } from "../infrastructure/db/userRepo.ts";
+import type { LearningsRepo } from "../infrastructure/db/learningsRepo.ts";
 
 export type HandleMessageDeps = {
   users: UserRepo;
@@ -26,6 +27,10 @@ export type HandleMessageDeps = {
   contextWindow?: number;
   /** Supplies the editable base prompt + learnings; defaults to the built-in personality. */
   promptContext?: () => PromptContext;
+  /** Learnings repo, for the `learn`/`learnings` commands. */
+  learnings?: LearningsRepo;
+  /** Bot name + model, for the `model`/`status` command. */
+  botInfo?: () => { botName: string; model: string };
 };
 
 /** Author id recorded for the bot's own turns (never a real Slack id). */
