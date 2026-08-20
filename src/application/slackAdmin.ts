@@ -10,6 +10,8 @@ export type SlackConversation = {
   id: string;
   name: string;
   kind: "channel" | "group" | "im" | "mpim";
+  /** epoch ms of the latest message, for recency sorting (0 if unknown). */
+  lastActive: number;
 };
 
 export type SlackMessage = {
@@ -26,7 +28,7 @@ export type SlackMessage = {
 };
 
 export type SlackAdminPort = {
-  /** Conversations the bot can see (channels it is in, DMs, groups). */
+  /** Conversations the bot is a member of (joined channels, DMs, groups), recent first. */
   listConversations: () => Promise<SlackConversation[]>;
   /** Recent messages in a conversation, newest last. */
   history: (channel: string, limit: number) => Promise<SlackMessage[]>;

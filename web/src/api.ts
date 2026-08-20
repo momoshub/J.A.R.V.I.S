@@ -59,7 +59,12 @@ export type Message = {
   createdAt: number;
 };
 
-export type SlackConversation = { id: string; name: string; kind: "channel" | "group" | "im" | "mpim" };
+export type SlackConversation = {
+  id: string;
+  name: string;
+  kind: "channel" | "group" | "im" | "mpim";
+  lastActive: number;
+};
 export type SlackMessage = {
   ts: string;
   userId: string;

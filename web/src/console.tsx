@@ -47,7 +47,12 @@ export function ConsolePage() {
   }, []);
 
   useEffect(() => {
-    run(async () => setConvos(await get<SlackConversation[]>("slack/conversations")));
+    run(async () => {
+      const list = await get<SlackConversation[]>("slack/conversations");
+      setConvos(list);
+      // Open the most recently active conversation by default.
+      setChannel((cur) => cur || list[0]?.id || "");
+    });
   }, [run]);
 
   const loadHistory = useCallback(
@@ -113,6 +118,15 @@ export function ConsolePage() {
 
   const convoOptions = convos.filter((c) => c.name.toLowerCase().includes(convoFilter.toLowerCase()));
 
+  const ago = (ms: number): string => {
+    if (!ms) return "";
+    const s = Math.max(0, Math.floor((Date.now() - ms) / 1000));
+    if (s < 90) return "just now";
+    if (s < 3600) return `${Math.floor(s / 60)}m ago`;
+    if (s < 86400) return `${Math.floor(s / 3600)}h ago`;
+    return `${Math.floor(s / 86400)}d ago`;
+  };
+
   const marker = (m: SlackMessage) =>
     m.own ? <span className="badge assistant" title="your message">✎</span> : m.mentionsBot ? <span className="badge user" title="mentions you">@</span> : <span className="mk-space" />;
 
@@ -158,7 +172,9 @@ export function ConsolePage() {
         <select value={channel} onChange={(e) => setChannel(e.target.value)} style={{ minWidth: 240 }}>
           <option value="">select a conversation...</option>
           {convoOptions.map((c) => (
-            <option key={c.id} value={c.id}>{c.name}</option>
+            <option key={c.id} value={c.id}>
+              {c.name}{c.lastActive ? ` · ${ago(c.lastActive)}` : ""}
+            </option>
           ))}
         </select>
         <select value={limit} onChange={(e) => setLimit(Number(e.target.value))}>

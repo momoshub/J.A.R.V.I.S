@@ -50,14 +50,16 @@ export const createSlackAdmin = (client: WebClient): SlackAdminPort => {
     }
   };
 
-  const conversationName = async (c: {
+  type RawConversation = {
     id?: string;
     name?: string;
     is_im?: boolean;
     is_mpim?: boolean;
     is_private?: boolean;
     user?: string;
-  }): Promise<SlackConversation> => {
+  };
+
+  const conversationName = async (c: RawConversation): Promise<SlackConversation> => {
     const kind: SlackConversation["kind"] = c.is_im
       ? "im"
       : c.is_mpim
@@ -65,8 +67,19 @@ export const createSlackAdmin = (client: WebClient): SlackAdminPort => {
         : c.is_private
           ? "group"
           : "channel";
-    const name = c.is_im ? `@${await userName(c.user)}` : `#${c.name ?? c.id}`;
-    return { id: c.id ?? "", name, kind };
+    const name = c.is_im ? `@${await userName(c.user)}` : c.is_mpim ? "group dm" : `#${c.name ?? c.id}`;
+    return { id: c.id ?? "", name, kind, lastActive: 0 };
+  };
+
+  /** Latest message time (epoch ms) in a conversation, 0 if unknown/empty. */
+  const latestActivity = async (channel: string): Promise<number> => {
+    try {
+      const h = (await client.conversations.history({ channel, limit: 1 })) as { messages?: RawMessage[] };
+      const ts = h.messages?.[0]?.ts;
+      return ts ? Math.floor(Number(ts) * 1000) : 0;
+    } catch {
+      return 0;
+    }
   };
 
   const toMessage = async (m: RawMessage, botId: string): Promise<SlackMessage> => {
@@ -85,13 +98,21 @@ export const createSlackAdmin = (client: WebClient): SlackAdminPort => {
 
   return {
     listConversations: async () => {
-      const res = (await client.conversations.list({
+      // users.conversations returns only conversations the bot is a MEMBER of
+      // (joined channels, private groups, DMs, group DMs) - not every public channel.
+      const res = (await client.users.conversations({
         types: "public_channel,private_channel,im,mpim",
         exclude_archived: true,
         limit: 200,
-      })) as { channels?: Parameters<typeof conversationName>[0][] };
-      const list = await Promise.all((res.channels ?? []).map(conversationName));
-      return list.filter((c) => c.id);
+      })) as { channels?: RawConversation[] };
+      const raw = (res.channels ?? []).filter((c) => c.id).slice(0, 60);
+      const list = await Promise.all(
+        raw.map(async (c) => {
+          const base = await conversationName(c);
+          return { ...base, lastActive: await latestActivity(c.id!) };
+        }),
+      );
+      return list.sort((a, b) => b.lastActive - a.lastActive);
     },
 
     history: async (channel, limit) => {
