@@ -20,7 +20,6 @@ import {
   fmtTime,
   get,
   post,
-  token,
   type AllowedUser,
   type Bootstrap,
   type Channel,
@@ -95,7 +94,6 @@ function ErrorView() {
     <div className="card error">
       <h2>Something went wrong</h2>
       <p>{msg}</p>
-      {!token && <p className="muted">No dashboard token found. Open the URL with `?token=YOUR_TOKEN`.</p>}
     </div>
   );
 }

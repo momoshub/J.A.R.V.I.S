@@ -2,13 +2,10 @@
  * Admin dashboard server (Bun.serve), bound to loopback.
  *
  * Serves a React single-page app (built to `distDir`) plus a JSON API under
- * `/api`. The SPA shell and its assets are public (they hold no data); every
- * `/api` route requires the dashboard token (query `?token=` on first load, then
- * the `X-Dashboard-Token` header from the app). Mutations additionally require a
- * same-origin/allow-listed Origin (CSRF) and return JSON. The token represents
- * owner-level authority, so mutations still refuse to touch the owner record.
+ * `/api`. It is a local, loopback-only tool with no token auth - the only guard
+ * on mutations is a same-origin/allow-listed Origin check (CSRF) that needs no
+ * user action. Mutations still refuse to touch the owner record.
  */
-import { timingSafeEqual as cryptoTimingSafeEqual } from "node:crypto";
 import { join, normalize } from "node:path";
 import type { UserRole } from "../../domain/types.ts";
 import { DEFAULT_PERSONALITY } from "../../domain/personality.ts";
@@ -26,7 +23,6 @@ import { SETTING_KEYS, type SettingsRepo } from "../db/settingsRepo.ts";
 
 export type DashboardConfig = {
   port: number;
-  token: string;
   ownerSlackId: string;
   model: string;
   commandPrefix: string;
@@ -59,23 +55,12 @@ const parseCsv = (v: string | undefined): Set<string> =>
 const SLACK_ID = /^[UW][A-Z0-9]+$/;
 const CONVERSATION_LIMIT = 200;
 
-const tokensMatch = (a: string, b: string): boolean => {
-  const ab = Buffer.from(a);
-  const bb = Buffer.from(b);
-  return ab.length === bb.length && cryptoTimingSafeEqual(ab, bb);
-};
-
-const authorized = (req: Request, url: URL, token: string): boolean => {
-  const provided = url.searchParams.get("token") ?? req.headers.get("x-dashboard-token") ?? "";
-  return tokensMatch(provided, token);
-};
-
 const LOOPBACK_HOSTS = new Set(["localhost", "127.0.0.1", "::1", "[::1]"]);
 
 /**
- * CSRF guard for a token-gated, loopback-bound tool. A cross-site attacker's
- * Origin is its own domain and it lacks the token, so we allow no Origin, an
- * exact match, a loopback Origin, or a configured allowed Origin.
+ * CSRF guard for a loopback-bound tool. A cross-site attacker's Origin is its own
+ * domain, so we allow no Origin, an exact match, a loopback Origin, or a
+ * configured allowed Origin.
  */
 const originAllowed = (req: Request, url: URL, allowed: readonly string[]): boolean => {
   const origin = req.headers.get("origin");
@@ -150,8 +135,6 @@ export const createDashboard = (config: DashboardConfig, deps: DashboardDeps) =>
   };
 
   const api = async (req: Request, url: URL): Promise<Response> => {
-    if (!authorized(req, url, config.token)) return jsonError("Unauthorized", 401);
-
     if (req.method === "GET") {
       switch (url.pathname) {
         case "/api/bootstrap":

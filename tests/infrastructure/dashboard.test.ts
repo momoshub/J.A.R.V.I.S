@@ -8,7 +8,6 @@ import { loadBotProfile } from "../../src/application/botProfile.ts";
 import { createDashboard } from "../../src/infrastructure/dashboard/server.ts";
 
 const OWNER = "U0OWNER0001";
-const TOKEN = "secret-token-secret-token-1234";
 
 const build = () => {
   const db = openDatabase(":memory:");
@@ -20,7 +19,7 @@ const build = () => {
   const profile = () =>
     loadBotProfile(settings, { name: "TestBot", thinkingLabel: "thinking...", thinkingDoneLabel: "✅" });
   const dash = createDashboard(
-    { port: 0, token: TOKEN, ownerSlackId: OWNER, model: "claude-opus-4-8", distDir: "/nonexistent", commandPrefix: "//bot", slashCommand: "/bot" },
+    { port: 0, ownerSlackId: OWNER, model: "claude-opus-4-8", distDir: "/nonexistent", commandPrefix: "//bot", slashCommand: "/bot" },
     { users, messages, learnings, settings, clock: () => 99, profile },
   );
   return { dash, users, messages, learnings, settings };
@@ -32,13 +31,13 @@ const api = (path: string, init?: RequestInit) =>
 const postJson = (path: string, body: unknown, headers: Record<string, string> = {}) =>
   api(path, { method: "POST", body: JSON.stringify(body), headers: { "content-type": "application/json", ...headers } });
 
-describe("dashboard auth + static", () => {
-  test("api rejects without a token", async () => {
+describe("dashboard static + api", () => {
+  test("api needs no token (local, loopback-only)", async () => {
     const res = await build().dash.handle(api("/api/overview"));
-    expect(res.status).toBe(401);
+    expect(res.status).toBe(200);
   });
 
-  test("health needs no token", async () => {
+  test("health responds", async () => {
     const res = await build().dash.handle(api("/health"));
     expect(res.status).toBe(200);
     expect(((await res.json()) as { ok: boolean }).ok).toBe(true);
@@ -52,7 +51,7 @@ describe("dashboard auth + static", () => {
   });
 
   test("sets security headers", async () => {
-    const res = await build().dash.handle(api(`/api/overview?token=${TOKEN}`));
+    const res = await build().dash.handle(api(`/api/overview`));
     expect(res.headers.get("content-security-policy")).toContain("script-src 'self'");
     expect(res.headers.get("x-frame-options")).toBe("DENY");
   });
@@ -63,13 +62,13 @@ describe("dashboard read API", () => {
     const { dash, messages, learnings } = build();
     messages.append({ channelId: "C1", slackUserId: "U1", role: "user", content: "x" }, 1);
     learnings.add("l", "kai", 1);
-    const res = await dash.handle(api(`/api/overview?token=${TOKEN}`));
+    const res = await dash.handle(api(`/api/overview`));
     expect(await res.json()).toMatchObject({ users: 1, conversations: 1, messages: 1, learnings: 1 });
   });
 
   test("bootstrap exposes bot name and owner", async () => {
     const { dash } = build();
-    expect(await (await dash.handle(api(`/api/bootstrap?token=${TOKEN}`))).json()).toMatchObject({
+    expect(await (await dash.handle(api(`/api/bootstrap`))).json()).toMatchObject({
       botName: "TestBot",
       ownerSlackId: OWNER,
     });
@@ -77,7 +76,7 @@ describe("dashboard read API", () => {
 
   test("identity returns persona + labels", async () => {
     const { dash } = build();
-    const id = (await (await dash.handle(api(`/api/identity?token=${TOKEN}`))).json()) as {
+    const id = (await (await dash.handle(api(`/api/identity`))).json()) as {
       usingDefault: boolean;
       persona: string;
     };
@@ -89,26 +88,26 @@ describe("dashboard read API", () => {
 describe("dashboard mutations", () => {
   test("adds a user via JSON POST", async () => {
     const { dash, users } = build();
-    const res = await dash.handle(postJson(`/api/users?token=${TOKEN}`, { slackId: "U999", role: "admin" }));
+    const res = await dash.handle(postJson(`/api/users`, { slackId: "U999", role: "admin" }));
     expect(res.status).toBe(200);
     expect(users.get("U999")?.role).toBe("admin");
   });
 
   test("rejects a malformed slack id", async () => {
-    const res = await build().dash.handle(postJson(`/api/users?token=${TOKEN}`, { slackId: "nope" }));
+    const res = await build().dash.handle(postJson(`/api/users`, { slackId: "nope" }));
     expect(res.status).toBe(400);
   });
 
   test("refuses to modify the owner", async () => {
     const { dash, users } = build();
-    const res = await dash.handle(postJson(`/api/users?token=${TOKEN}`, { slackId: OWNER, role: "admin" }));
+    const res = await dash.handle(postJson(`/api/users`, { slackId: OWNER, role: "admin" }));
     expect(res.status).toBe(400);
     expect(users.get(OWNER)?.role).toBe("owner");
   });
 
   test("refuses to remove the owner", async () => {
     const { dash, users } = build();
-    const res = await dash.handle(postJson(`/api/users/remove?token=${TOKEN}`, { slackId: OWNER }));
+    const res = await dash.handle(postJson(`/api/users/remove`, { slackId: OWNER }));
     expect(res.status).toBe(400);
     expect(users.get(OWNER)).toBeDefined();
   });
@@ -116,7 +115,7 @@ describe("dashboard mutations", () => {
   test("rejects a cross-origin POST", async () => {
     const { dash, users } = build();
     const res = await dash.handle(
-      postJson(`/api/users?token=${TOKEN}`, { slackId: "U777" }, { origin: "http://evil.example" }),
+      postJson(`/api/users`, { slackId: "U777" }, { origin: "http://evil.example" }),
     );
     expect(res.status).toBe(403);
     expect(users.get("U777")).toBeUndefined();
@@ -125,7 +124,7 @@ describe("dashboard mutations", () => {
   test("allows a loopback origin that differs from the request host", async () => {
     const { dash, users } = build();
     const res = await dash.handle(
-      new Request(`http://127.0.0.1/api/users?token=${TOKEN}`, {
+      new Request(`http://127.0.0.1/api/users`, {
         method: "POST",
         body: JSON.stringify({ slackId: "U444", role: "pal" }),
         headers: { "content-type": "application/json", origin: "http://localhost:2001" },
@@ -137,17 +136,17 @@ describe("dashboard mutations", () => {
 
   test("learnings add/remove", async () => {
     const { dash, learnings } = build();
-    await dash.handle(postJson(`/api/learnings?token=${TOKEN}`, { content: "staging is X" }));
+    await dash.handle(postJson(`/api/learnings`, { content: "staging is X" }));
     const [l] = learnings.list();
     expect(l?.content).toBe("staging is X");
-    await dash.handle(postJson(`/api/learnings/remove?token=${TOKEN}`, { id: l!.id }));
+    await dash.handle(postJson(`/api/learnings/remove`, { id: l!.id }));
     expect(learnings.list()).toHaveLength(0);
   });
 
   test("identity save sets name, labels and persona", async () => {
     const { dash, settings } = build();
     await dash.handle(
-      postJson(`/api/identity?token=${TOKEN}`, {
+      postJson(`/api/identity`, {
         name: "Evie",
         thinkingLabel: "☄️",
         thinkingDoneLabel: "🐦‍🔥",
@@ -160,21 +159,21 @@ describe("dashboard mutations", () => {
   });
 
   test("identity requires a name", async () => {
-    const res = await build().dash.handle(postJson(`/api/identity?token=${TOKEN}`, { name: "  " }));
+    const res = await build().dash.handle(postJson(`/api/identity`, { name: "  " }));
     expect(res.status).toBe(400);
   });
 
   test("prompt reset clears the override", async () => {
     const { dash, settings } = build();
     settings.set(SETTING_KEYS.systemPrompt, "custom");
-    await dash.handle(postJson(`/api/prompt/reset?token=${TOKEN}`, {}));
+    await dash.handle(postJson(`/api/prompt/reset`, {}));
     expect(settings.get(SETTING_KEYS.systemPrompt)).toBeUndefined();
   });
 
   test("conversation clear wipes a channel", async () => {
     const { dash, messages } = build();
     messages.append({ channelId: "C9", slackUserId: "U1", role: "user", content: "x" }, 1);
-    await dash.handle(postJson(`/api/conversation/clear?token=${TOKEN}`, { channel: "C9" }));
+    await dash.handle(postJson(`/api/conversation/clear`, { channel: "C9" }));
     expect(messages.recentForChannel("C9", 10)).toHaveLength(0);
   });
 });

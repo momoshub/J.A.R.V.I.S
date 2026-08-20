@@ -51,7 +51,7 @@ Required / notable env (see `.env.example`):
 | `COMMAND_PREFIX` | message command trigger (default `//bot`; legacy `!` always works) |
 | `SLASH_COMMAND` | Slack slash command to register (default `/bot`) |
 | `OWNER_SLACK_ID` | the owner, cannot be removed |
-| `DASHBOARD_PORT` / `DASHBOARD_TOKEN` | dashboard port + token (min 24 chars) |
+| `DASHBOARD_PORT` | dashboard port (local, loopback-only, no auth) |
 | `DASHBOARD_ALLOWED_ORIGINS` | extra browser origins allowed to POST (proxy/tunnel access) |
 | `DATABASE_PATH` | sqlite file (default `data/bot.db`) |
 
@@ -120,7 +120,7 @@ Sandboxed roles run the Claude CLI without `--dangerously-skip-permissions`, wit
 
 ## Dashboard
 
-A **React 19 + Vite + React Router 7** single-page app (in `web/`) served by the bot and backed by a JSON API under `/api`. Open `http://localhost:2001/?token=YOUR_DASHBOARD_TOKEN` (loopback only). The token is read once from the URL, kept in `sessionStorage`, and sent as the `X-Dashboard-Token` header on API calls. Tabs:
+A **React 19 + Vite + React Router 7** single-page app (in `web/`) served by the bot and backed by a JSON API under `/api`. Open `http://localhost:2001/` - it is loopback-only with no auth token (mutations still keep an automatic same-origin CSRF check). Tabs:
 
 - **Overview** - counts for users, conversations, stored turns, learnings
 - **Users** - manage the allowlist and roles (the owner is protected)

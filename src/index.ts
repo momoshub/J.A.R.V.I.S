@@ -154,7 +154,6 @@ const main = async () => {
   const dashboard = createDashboard(
     {
       port: config.dashboardPort,
-      token: config.dashboardToken,
       ownerSlackId: config.ownerSlackId,
       model: modelLabel(config),
       commandPrefix: config.commandPrefix,

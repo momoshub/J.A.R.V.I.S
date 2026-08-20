@@ -1,17 +1,8 @@
 /**
- * Tiny JSON API client. The dashboard token arrives once in the URL (`?token=`),
- * is stashed in sessionStorage so refreshes keep working, and is sent as the
- * `X-Dashboard-Token` header on every request (a custom header the browser will
- * not attach cross-origin, which doubles as CSRF protection).
+ * Tiny JSON API client. The dashboard is a local, loopback-only tool with no auth
+ * token; requests just go to the same-origin `/api`.
  */
-const urlToken = new URLSearchParams(location.search).get("token");
-if (urlToken) sessionStorage.setItem("dashboard_token", urlToken);
-export const token = urlToken ?? sessionStorage.getItem("dashboard_token") ?? "";
-
-const headers = (): HeadersInit => ({
-  "X-Dashboard-Token": token,
-  "content-type": "application/json",
-});
+const headers = (): HeadersInit => ({ "content-type": "application/json" });
 
 export const get = async <T>(path: string): Promise<T> => {
   const res = await fetch(`/api/${path}`, { headers: headers() });

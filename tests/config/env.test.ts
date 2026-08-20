@@ -6,7 +6,6 @@ const base = {
   SLACK_APP_TOKEN: "xapp-x",
   ANTHROPIC_API_KEY: "sk-x",
   OWNER_SLACK_ID: "U0OWNER0001",
-  DASHBOARD_TOKEN: "0123456789abcdef0123456789abcdef",
 };
 
 describe("loadConfig", () => {
@@ -26,11 +25,5 @@ describe("loadConfig", () => {
   test("coerces the dashboard port", () => {
     const c = loadConfig({ ...base, DASHBOARD_PORT: "3000" });
     expect(c.dashboardPort).toBe(3000);
-  });
-
-  test("rejects a short dashboard token", () => {
-    expect(() => loadConfig({ ...base, DASHBOARD_TOKEN: "tooshort" })).toThrow(
-      /Invalid configuration/,
-    );
   });
 });
