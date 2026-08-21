@@ -138,6 +138,26 @@ describe("buildSystemPrompt", () => {
     expect(buildSystemPrompt({ learnUrl: "" })).not.toContain("Remembering something");
   });
 
+  test("offers to run a real command when a chat request is one", () => {
+    const p = buildSystemPrompt({
+      channelId: "C1",
+      threadTs: "100.1",
+      commandPrefix: "X/ev",
+      runUrl: "http://127.0.0.1:2002/api/commands/run",
+    });
+    expect(p).toContain("Running my own commands");
+    expect(p).toContain('"channel":"C1"');
+    expect(p).toContain('"thread":"100.1"');
+    expect(p).toContain("http://127.0.0.1:2002/api/commands/run");
+    expect(p).toContain("Run it as the person who asked, never as anyone else");
+    expect(p).toContain("X/ev");
+  });
+
+  test("no command block without the endpoint - the listener may not run them", () => {
+    expect(buildSystemPrompt({ channelId: "C1" })).not.toContain("Running my own commands");
+    expect(buildSystemPrompt({ runUrl: "http://x/run" })).not.toContain("Running my own commands");
+  });
+
   test("omits the roster block when there are no participants", () => {
     expect(buildSystemPrompt({ learnings: [], participants: [] })).not.toContain(
       "mention or reply to them with their Slack tag",

@@ -29,6 +29,7 @@ import { createGhCli } from "./infrastructure/github/ghCli.ts";
 import { createDraftReply } from "./application/draftReply.ts";
 import { toolPolicyFor } from "./domain/toolPolicy.ts";
 import { createDashboard } from "./infrastructure/dashboard/server.ts";
+import { dispatchCommand } from "./application/commands.ts";
 import { createActivityLog } from "./infrastructure/logger.ts";
 import type { CommandLogRepo } from "./infrastructure/db/commandLogRepo.ts";
 import type { LlmPort } from "./application/ports.ts";
@@ -166,6 +167,7 @@ const main = async () => {
     // The dashboard API is loopback-only, so the brain can save a learning the
     // same way the dashboard does - offered to admins/owner conversations only.
     learnUrl: `http://127.0.0.1:${config.dashboardPort}/api/learnings`,
+    runUrl: `http://127.0.0.1:${config.dashboardPort}/api/commands/run`,
     commandPrefix: config.commandPrefix,
     slashCommand: config.slashCommand,
   };
@@ -191,6 +193,19 @@ const main = async () => {
       slack: slackAdmin,
       draft,
       commandLog,
+      // Lets the brain run a real command when a chat request is really one.
+      // The actor's own role decides what is allowed - nothing is elevated by
+      // going through here.
+      runCommand: async ({ actor, channel, threadTs, line }) => {
+        const user = users.get(actor);
+        if (!user) throw new Error(`${actor} is not on the access list`);
+        return dispatchCommand(deps, user, channel, line, {
+          prefix: config.commandPrefix,
+          slash: config.slashCommand,
+          threadTs,
+          reply: (text: string) => slackAdmin.post(channel, text, threadTs),
+        });
+      },
     },
   );
   dashboard.start();

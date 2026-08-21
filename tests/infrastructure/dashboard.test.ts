@@ -177,3 +177,92 @@ describe("dashboard mutations", () => {
     expect(messages.recentForChannel("C9", 10)).toHaveLength(0);
   });
 });
+
+describe("running a command through the API", () => {
+  const withRunner = () => {
+    const db = openDatabase(":memory:");
+    const users = createUserRepo(db);
+    const messages = createMessageRepo(db);
+    const learnings = createLearningsRepo(db);
+    const settings = createSettingsRepo(db);
+    users.upsert({ slackId: OWNER, role: "owner", displayName: "Kai", addedBy: "system", createdAt: 1 });
+    const seen: unknown[] = [];
+    const profile = () =>
+      loadBotProfile(settings, { name: "TestBot", thinkingLabel: "thinking...", thinkingDoneLabel: "✅" });
+    const dash = createDashboard(
+      { port: 0, ownerSlackId: OWNER, model: "m", distDir: "/nonexistent", commandPrefix: "//bot", slashCommand: "/bot" },
+      {
+        users,
+        messages,
+        learnings,
+        settings,
+        clock: () => 99,
+        profile,
+        runCommand: async (req) => {
+          seen.push(req);
+          if (req.line.startsWith("boom")) throw new Error("that command failed");
+          return `ran ${req.line}`;
+        },
+      },
+    );
+    return { dash, seen };
+  };
+
+  test("passes the actor, channel, thread and line through", async () => {
+    const { dash, seen } = withRunner();
+    const res = await dash.handle(
+      postJson("/api/commands/run", {
+        actor: OWNER,
+        channel: "C1",
+        thread: "100.1",
+        line: "review https://github.com/o/r/pull/1",
+      }),
+    );
+    expect(res.status).toBe(200);
+    expect(await res.json()).toEqual({ ok: true, result: "ran review https://github.com/o/r/pull/1" });
+    expect(seen[0]).toEqual({
+      actor: OWNER,
+      channel: "C1",
+      threadTs: "100.1",
+      line: "review https://github.com/o/r/pull/1",
+    });
+  });
+
+  test("rejects a malformed actor rather than guessing", async () => {
+    const { dash, seen } = withRunner();
+    for (const actor of ["", "not-an-id", "<@U123>", "C0123"]) {
+      const res = await dash.handle(postJson("/api/commands/run", { actor, channel: "C1", line: "ping" }));
+      expect(res.status).toBe(400);
+    }
+    expect(seen).toHaveLength(0);
+  });
+
+  test("channel and line are required", async () => {
+    const { dash } = withRunner();
+    expect((await dash.handle(postJson("/api/commands/run", { actor: OWNER, line: "ping" }))).status).toBe(400);
+    expect((await dash.handle(postJson("/api/commands/run", { actor: OWNER, channel: "C1" }))).status).toBe(400);
+  });
+
+  test("a failing command answers with the error, not a crash", async () => {
+    const { dash } = withRunner();
+    const res = await dash.handle(postJson("/api/commands/run", { actor: OWNER, channel: "C1", line: "boom" }));
+    expect(res.status).toBe(500);
+    expect(await res.json()).toEqual({ error: "that command failed" });
+  });
+
+  test("without a runner wired in, the endpoint is simply not there", async () => {
+    const { dash } = build();
+    const res = await dash.handle(postJson("/api/commands/run", { actor: OWNER, channel: "C1", line: "ping" }));
+    expect(res.status).toBe(503);
+  });
+
+  test("a cross-origin post is still refused", async () => {
+    const { dash, seen } = withRunner();
+    const res = await dash.handle(
+      postJson("/api/commands/run", { actor: OWNER, channel: "C1", line: "ping" }, { origin: "http://evil.example" }),
+    );
+    expect(res.status).toBeGreaterThanOrEqual(400);
+    expect(seen).toHaveLength(0);
+  });
+});
+

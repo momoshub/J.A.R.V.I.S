@@ -47,6 +47,23 @@ export type DashboardDeps = {
   draft?: DraftReply;
   /** Command execution audit log. */
   commandLog?: CommandLogRepo;
+  /**
+   * Run one of the bot's own commands on someone's behalf. Wired in the
+   * composition root, where the full command dependencies live; the brain
+   * reaches it through this endpoint when a chat request is really a command.
+   */
+  runCommand?: (req: RunCommandRequest) => Promise<string>;
+};
+
+/** One command asked for from outside the Slack transport. */
+export type RunCommandRequest = {
+  /** Slack id the command runs as; its role decides what is allowed. */
+  actor: string;
+  channel: string;
+  /** Thread to report into, when there is one. */
+  threadTs?: string;
+  /** The command line, e.g. `review https://github.com/o/r/pull/1`. */
+  line: string;
 };
 
 const parseCsv = (v: string | undefined): Set<string> =>
@@ -291,6 +308,20 @@ export const createDashboard = (config: DashboardConfig, deps: DashboardDeps) =>
           else disabled.delete(name);
           deps.settings.set(SETTING_KEYS.disabledCommands, [...disabled].join(","));
           return Response.json({ ok: true });
+        }
+        case "/api/commands/run": {
+          if (!deps.runCommand) return jsonError("Command running is not configured", 503);
+          const actor = String(body.actor ?? "").trim();
+          const channel = String(body.channel ?? "").trim();
+          const line = String(body.line ?? "").trim();
+          const threadTs = String(body.thread ?? body.threadTs ?? "").trim();
+          if (!SLACK_ID.test(actor)) return jsonError("A valid actor slack id is required");
+          if (!channel || !line) return jsonError("channel and line are required");
+          try {
+            return Response.json({ ok: true, result: await deps.runCommand({ actor, channel, threadTs: threadTs || undefined, line }) });
+          } catch (e) {
+            return jsonError(e instanceof Error ? e.message : String(e), 500);
+          }
         }
         case "/api/command-log/clear":
           deps.commandLog?.clear();

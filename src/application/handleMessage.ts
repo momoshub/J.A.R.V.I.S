@@ -63,6 +63,8 @@ export type HandleMessageDeps = {
   newSessionId?: () => string;
   /** Local endpoint the bot can POST a learning to, if the listener may teach. */
   learnUrl?: string;
+  /** Local endpoint the bot can POST a command to, if the listener may run one. */
+  runUrl?: string;
   /** Configured message command prefix + slash name, for the command layer. */
   commandPrefix?: string;
   slashCommand?: string;
@@ -153,6 +155,10 @@ export const handleMessage = async (
     // ... and keep a durable fact, but only when talking to someone who could
     // have taught it one by hand. Learnings apply to everyone, everywhere.
     learnUrl: canTeach(decision.user.role) ? deps.learnUrl : undefined,
+    // Same gate: only someone who could have typed the command gets it run for them.
+    runUrl: canTeach(decision.user.role) ? deps.runUrl : undefined,
+    threadTs: inbound.threadTs,
+    commandPrefix: deps.commandPrefix,
   });
 
   const params = {

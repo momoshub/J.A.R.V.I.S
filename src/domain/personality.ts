@@ -90,6 +90,25 @@ Remembering something (optional, your call):
 - Do it quietly: do not announce it and do not ask permission. Only mention it if someone asked you to remember something, and then just briefly.`;
 };
 
+/**
+ * Lets the brain run one of the bot's own commands when a request in chat is
+ * really a command - "review this PR" rather than `review <url>`. Offered on
+ * the same terms as remembering: only to people who could have typed it.
+ */
+export const commandRules = (runUrl: string, channelId: string, prefix: string, threadTs?: string): string => {
+  if (!runUrl || !channelId) return "";
+  const thread = threadTs ? `,"thread":"${threadTs}"` : "";
+  return `
+
+Running my own commands (when a request is really one):
+- I have preset commands - \`review\`, \`bomb\`, \`reply\`, \`rm-msg\`, \`workflow\`, \`learn\`, user management. When someone asks for one of those in plain words ("review this PR", "react to that with hearts"), run the command instead of improvising the work by hand. The command is tested, reports its own progress, and does it the way it is supposed to be done.
+- Run it as the person who asked, never as anyone else:
+  curl -s -X POST -H "Content-Type: application/json" -d '{"actor":"<their slack id>","channel":"${channelId}"${thread},"line":"<command and arguments>"}' ${runUrl}
+- The line is what would follow \`${prefix}\`, e.g. "review https://github.com/o/r/pull/1". Their own role decides what is allowed, so a command they could not type themselves will be refused - relay that plainly rather than working around it.
+- The command posts its own progress here as it goes. Do not repeat it, and do not narrate that you are running a command - just let it run and add anything it did not cover.
+- For an ordinary question, answer it yourself. This is for requests that map onto a real command.`;
+};
+
 export type BuildSystemPromptOptions = PromptContext & {
   /** best-effort display name of the person being replied to */
   readonly addresseeName?: string;
@@ -103,6 +122,12 @@ export type BuildSystemPromptOptions = PromptContext & {
   readonly reactScript?: string;
   /** endpoint for saving a learning; empty unless the listener may teach */
   readonly learnUrl?: string;
+  /** endpoint for running a command; empty unless the listener may run them */
+  readonly runUrl?: string;
+  /** thread the conversation is in, so a triggered command reports there */
+  readonly threadTs?: string;
+  /** configured message command prefix, for explaining what a command line is */
+  readonly commandPrefix?: string;
 };
 
 const renderParticipants = (participants: readonly Participant[]): string => {
@@ -133,6 +158,12 @@ export const buildSystemPrompt = (options: Partial<BuildSystemPromptOptions> = {
   const roster = renderParticipants(options.participants ?? []);
   const reactions = reactionRules(options.channelId ?? "", options.reactable ?? [], options.reactScript);
   const remembering = learningRules(options.learnUrl ?? "");
+  const commands = commandRules(
+    options.runUrl ?? "",
+    options.channelId ?? "",
+    options.commandPrefix ?? "//bot",
+    options.threadTs,
+  );
 
-  return `${base}${learningsBlock}${addressed}${roster}\n\n${OPERATING_RULES}${reactions}${remembering}\n\n${WORKSPACE_NOTE}\n\n${identityLock(botName)}`;
+  return `${base}${learningsBlock}${addressed}${roster}\n\n${OPERATING_RULES}${reactions}${commands}${remembering}\n\n${WORKSPACE_NOTE}\n\n${identityLock(botName)}`;
 };

@@ -110,6 +110,8 @@ The power tools also have their own Slack slash commands if you register them (`
 
 Examples (with the default prefix): `/bot add @kai admin`, `//bot learn our staging URL is staging.example.com`, `//bot ask summarise the last thread`.
 
+**You do not have to type the command.** In a chat with an `owner` or `admin`, the bot can run one for you: "review this PR for me" runs `review`, and its progress appears in the thread as usual. It runs the command **as the person who asked**, so their role still decides what is allowed - nothing is elevated by asking in words instead of typing it. Lower roles get no such offer.
+
 ## Workflows
 
 A `workflow` turns a thread into a long-running job you can talk to.
