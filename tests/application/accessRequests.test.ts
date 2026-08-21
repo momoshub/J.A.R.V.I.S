@@ -16,6 +16,7 @@ type Posted = { channel: string; text: string; threadTs?: string };
 const build = () => {
   const db = openDatabase(":memory:");
   const posts: Posted[] = [];
+  const settled: string[] = [];
   let dm = 0;
   const slack: SlackAdminPort = {
     listConversations: async () => [],
@@ -32,7 +33,9 @@ const build = () => {
       return { channel: `D-${userId}`, ts: `notice-${dm}` };
     },
     postDmInteractive: async () => undefined,
-    settleInteractive: async () => {},
+    settleInteractive: async (_c, _ts, text) => {
+      settled.push(text);
+    },
     addReactions: async () => 0,
     resolveNames: async () => ({}),
   };
@@ -45,7 +48,7 @@ const build = () => {
     ownerSlackId: OWNER,
     llm: { complete: async () => "hello" } as LlmPort,
   };
-  return { deps, posts };
+  return { deps, posts, settled };
 };
 
 const who = {
@@ -69,8 +72,9 @@ describe("requestAccess", () => {
     expect(toOwner?.text).toContain("✅");
     expect(toOwner?.text).toContain("❌");
 
-    const pending = deps.accessRequests.pendingFor(STRANGER);
-    expect(pending?.noticeTs).toBe("notice-1"); // remembered, so a reaction can find it
+    // the notice is remembered, so a reaction on it can find the request
+    const pending = deps.accessRequests.pendingFor(STRANGER)!;
+    expect(deps.accessRequests.noticesFor(pending.id)).toEqual([{ channel: `D-${OWNER}`, ts: "notice-1" }]);
   });
 
   test("a second message does not ask the owner again", async () => {
@@ -183,5 +187,76 @@ describe("a stranger speaking", () => {
     const now = await handleMessage(deps, { channelId: "C1", slackUserId: STRANGER, text: "hello?" });
     expect(now.kind).toBe("reply");
     expect(posts.some((p) => p.channel === "C1" && p.text.includes("you are in"))).toBe(true);
+  });
+});
+
+describe("admins decide too", () => {
+  const ADMIN = "U0ADMIN01";
+
+  const withAdmin = () => {
+    const b = build();
+    b.deps.users.upsert({ slackId: ADMIN, role: "admin", displayName: "A", addedBy: "x", createdAt: 1 });
+    b.deps.users.upsert({ slackId: "U0PAL0001", role: "pal", displayName: "P", addedBy: "x", createdAt: 1 });
+    return b;
+  };
+
+  test("the notice goes to the owner and every admin, not just the owner", async () => {
+    const { deps, posts } = withAdmin();
+    await requestAccess(deps, who, "nope");
+
+    const asked = posts.filter((p) => p.text.includes("is asking me something")).map((p) => p.channel);
+    expect(asked).toContain(OWNER);
+    expect(asked).toContain(ADMIN);
+    expect(asked).not.toContain("U0PAL0001"); // a pal does not get to decide
+  });
+
+  test("an admin's ✅ resolves it, from their own copy of the notice", async () => {
+    const { deps } = withAdmin();
+    await requestAccess(deps, who, "nope");
+    // the admin's notice is the second one raised
+    const notices = deps.accessRequests.noticesFor(deps.accessRequests.pendingFor(STRANGER)!.id);
+    expect(notices).toHaveLength(2);
+
+    const out = await decideAccessRequest(deps, {
+      slackUserId: ADMIN,
+      reaction: "white_check_mark",
+      ...notices[1]!,
+    });
+
+    expect(out.kind).toBe("approved");
+    expect(deps.users.get(STRANGER)?.role).toBe(GRANTED_ROLE);
+  });
+
+  test("deciding settles every copy, so the other decider does not act on a stale one", async () => {
+    const { deps, settled } = withAdmin();
+    await requestAccess(deps, who, "nope");
+    const notices = deps.accessRequests.noticesFor(deps.accessRequests.pendingFor(STRANGER)!.id);
+
+    await decideAccessRequest(deps, { slackUserId: OWNER, reaction: "x", ...notices[0]! });
+
+    expect(settled).toHaveLength(2); // both the owner's and the admin's
+    expect(settled[0]).toContain("declined");
+    // and the admin clicking afterwards changes nothing
+    const late = await decideAccessRequest(deps, {
+      slackUserId: ADMIN,
+      reaction: "white_check_mark",
+      ...notices[1]!,
+    });
+    expect(late.kind).toBe("ignored");
+    expect(deps.users.get(STRANGER)).toBeUndefined();
+  });
+
+  test("a pal still cannot decide", async () => {
+    const { deps } = withAdmin();
+    await requestAccess(deps, who, "nope");
+    const notices = deps.accessRequests.noticesFor(deps.accessRequests.pendingFor(STRANGER)!.id);
+
+    const out = await decideAccessRequest(deps, {
+      slackUserId: "U0PAL0001",
+      reaction: "white_check_mark",
+      ...notices[0]!,
+    });
+    expect(out.kind).toBe("ignored");
+    expect(deps.users.get(STRANGER)).toBeUndefined();
   });
 });

@@ -22,6 +22,9 @@ export const REJECT_REACTIONS = ["x", "negative_squared_cross_mark", "no_entry",
 /** Role granted on approval. Deliberately the lowest one. */
 export const GRANTED_ROLE: UserRole = "pal";
 
+/** Roles that may decide an access request. */
+export const DECIDERS: readonly UserRole[] = ["owner", "admin"];
+
 /** Excerpt of the message quoted to the owner. */
 const ASKED_CHARS = 200;
 
@@ -40,6 +43,17 @@ export type Requester = {
   threadTs?: string;
   text: string;
 };
+
+/** The owner plus every admin, owner first, without repeats. */
+const decidersOf = (deps: AccessRequestDeps): string[] => [
+  ...new Set([
+    deps.ownerSlackId,
+    ...deps.users
+      .list()
+      .filter((u) => DECIDERS.includes(u.role))
+      .map((u) => u.slackId),
+  ]),
+];
 
 const clip = (s: string): string => (s.length > ASKED_CHARS ? `${s.slice(0, ASKED_CHARS)}…` : s);
 
@@ -70,12 +84,18 @@ export const requestAccess = async (
   );
 
   const name = who.displayName ? ` (${who.displayName})` : "";
-  const notice = await deps.slack.postDm(
-    deps.ownerSlackId,
-    `🙋 <@${who.slackUserId}>${name} is asking me something and is not on the list.\n> ${clip(who.text)}\n\nReact ✅ to add them as *${GRANTED_ROLE}*, ❌ to decline.`,
-  );
-  if (!notice) return fallback; // could not reach the owner, so do not promise anything
-  deps.accessRequests.setNotice(request.id, notice.channel, notice.ts);
+  const text = `🙋 <@${who.slackUserId}>${name} is asking me something and is not on the list.\n> ${clip(who.text)}\n\nReact ✅ to add them as *${GRANTED_ROLE}*, ❌ to decline.`;
+
+  // Everyone who may decide has to be able to see it, so each of them gets the
+  // notice and a reaction on any one of them resolves the request.
+  let raised = 0;
+  for (const id of decidersOf(deps)) {
+    const notice = await deps.slack.postDm(id, text).catch(() => undefined);
+    if (!notice) continue;
+    raised += 1;
+    deps.accessRequests.addNotice(request.id, notice.channel, notice.ts);
+  }
+  if (raised === 0) return fallback; // nobody could be reached, so promise nothing
 
   return "I do not know you yet, so I have asked the owner to let you in 🙏 I will reply here either way.";
 };
@@ -104,7 +124,11 @@ export const decideAccessRequest = async (
   event: ReactionOnNotice,
 ): Promise<AccessDecision> => {
   if (!deps.accessRequests || !deps.slack) return { kind: "ignored" };
-  if (event.slackUserId !== deps.ownerSlackId) return { kind: "ignored" };
+  // The owner always counts, even before they are in the allowlist.
+  const clicker = deps.users.get(event.slackUserId);
+  const mayDecide =
+    event.slackUserId === deps.ownerSlackId || (clicker !== undefined && DECIDERS.includes(clicker.role));
+  if (!mayDecide) return { kind: "ignored" };
 
   const approve = APPROVE_REACTIONS.includes(event.reaction);
   const reject = REJECT_REACTIONS.includes(event.reaction);
@@ -129,20 +153,24 @@ export const decideAccessRequest = async (
     });
   }
 
+  // Settle every notice so a second decider does not find live buttons.
+  for (const n of deps.accessRequests.noticesFor(request.id)) {
+    await deps.slack
+      .settleInteractive(
+        n.channel,
+        n.ts,
+        approve
+          ? `✅ <@${request.slackUserId}> was added as *${GRANTED_ROLE}* by <@${event.slackUserId}>.`
+          : `❌ <@${request.slackUserId}> was declined by <@${event.slackUserId}>.`,
+      )
+      .catch(() => undefined);
+  }
+
   const toThem = approve
     ? `<@${request.slackUserId}> you are in ✅ ask me anything.`
     : `<@${request.slackUserId}> sorry, the owner said no this time.`;
   await deps.slack
     .post(request.channelId, toThem, request.threadTs || undefined)
     .catch(() => undefined);
-  await deps.slack
-    .postDm(
-      deps.ownerSlackId,
-      approve
-        ? `✅ added <@${request.slackUserId}> as *${GRANTED_ROLE}*.`
-        : `❌ declined <@${request.slackUserId}>.`,
-    )
-    .catch(() => undefined);
-
   return { kind: approve ? "approved" : "rejected", request };
 };

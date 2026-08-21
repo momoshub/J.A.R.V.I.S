@@ -79,6 +79,27 @@ export const migrate = (db: Database): void => {
   migrateWorkflows(db);
   migrateAccessRequests(db);
   migrateCommandApprovals(db);
+  migrateAccessNotices(db);
+};
+
+/**
+ * Migration v8: an access request can be put to several people.
+ *
+ * Admins decide these as well as the owner, and a DM only the owner can see is
+ * not something an admin can react to - so each notice is its own row and a
+ * reaction on any of them resolves the request.
+ */
+const migrateAccessNotices = (db: Database): void => {
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS access_request_notices (
+      request_id INTEGER NOT NULL,
+      channel    TEXT NOT NULL,
+      ts         TEXT NOT NULL,
+      PRIMARY KEY (channel, ts)
+    );
+  `);
+  db.exec("CREATE INDEX IF NOT EXISTS idx_access_notices_request ON access_request_notices (request_id);");
+  db.exec("PRAGMA user_version = 8;");
 };
 
 /**

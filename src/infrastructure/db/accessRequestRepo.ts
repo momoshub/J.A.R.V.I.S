@@ -51,8 +51,13 @@ export type AccessRequestRepo = {
   pendingFor: (slackUserId: string) => AccessRequest | undefined;
   /** The request whose notice is this message - how a reaction is resolved. */
   byNotice: (channel: string, ts: string) => AccessRequest | undefined;
-  /** Remember where the owner was asked, so their reaction can be matched. */
-  setNotice: (id: number, channel: string, ts: string) => void;
+  /**
+   * Remember one place the request was raised. There may be several: the owner
+   * and every admin can decide, and each of them has to be able to see it.
+   */
+  addNotice: (id: number, channel: string, ts: string) => void;
+  /** Every notice raised for a request, so all of them can be settled. */
+  noticesFor: (id: number) => { channel: string; ts: string }[];
   /** Close it. False when it was already decided (a second reaction, say). */
   decide: (id: number, status: "approved" | "rejected", at: number) => boolean;
   listPending: () => AccessRequest[];
@@ -68,10 +73,15 @@ export const createAccessRequestRepo = (db: DbClient): AccessRequestRepo => {
     "SELECT * FROM access_requests WHERE slack_user_id = ? AND status = 'pending'",
   );
   const noticeStmt = db.query<Row, [string, string]>(
-    "SELECT * FROM access_requests WHERE notice_channel = ? AND notice_ts = ?",
+    `SELECT r.* FROM access_requests r
+     JOIN access_request_notices n ON n.request_id = r.id
+     WHERE n.channel = ? AND n.ts = ?`,
   );
-  const noticeUpdate = db.query(
-    "UPDATE access_requests SET notice_channel = $channel, notice_ts = $ts WHERE id = $id",
+  const addNoticeStmt = db.query(
+    "INSERT OR IGNORE INTO access_request_notices (request_id, channel, ts) VALUES ($id, $channel, $ts)",
+  );
+  const noticesStmt = db.query<{ channel: string; ts: string }, [number]>(
+    "SELECT channel, ts FROM access_request_notices WHERE request_id = ?",
   );
   const decideStmt = db.query(
     "UPDATE access_requests SET status = $status, decided_at = $at WHERE id = $id AND status = 'pending'",
@@ -98,9 +108,10 @@ export const createAccessRequestRepo = (db: DbClient): AccessRequestRepo => {
       const row = noticeStmt.get(channel, ts);
       return row ? toRequest(row) : undefined;
     },
-    setNotice: (id, channel, ts) => {
-      noticeUpdate.run({ $id: id, $channel: channel, $ts: ts });
+    addNotice: (id, channel, ts) => {
+      addNoticeStmt.run({ $id: id, $channel: channel, $ts: ts });
     },
+    noticesFor: (id) => noticesStmt.all(id),
     decide: (id, status, at) => Number(decideStmt.run({ $id: id, $status: status, $at: at }).changes) > 0,
     listPending: () => listStmt.all().map(toRequest),
   };

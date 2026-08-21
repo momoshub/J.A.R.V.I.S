@@ -73,7 +73,7 @@ The **Console** tab additionally needs read scopes to list and open conversation
 - It replies in-thread, streaming the answer live, with tool calls shown as a task timeline
 - Long messages show a configurable "thinking" step first
 - It only answers allowlisted users; the owner is always allowed
-- Someone it does not know is not turned away: the owner gets a DM with who spoke and what they said, and decides with a reaction - ✅ adds them as `pal`, ❌ declines. Either way the person is answered where they asked
+- Someone it does not know is not turned away: the owner **and every admin** get a DM with who spoke and what they said, and whichever of them gets there first decides with a reaction - ✅ adds them as `pal`, ❌ declines. Either way the person is answered where they asked, and the other copies settle so nobody decides twice
 - It tags people with their Slack `<@id>` when they are in the conversation
 - For workspace questions it uses its own bot token and the Slack Web API, never a third-party connector
 
