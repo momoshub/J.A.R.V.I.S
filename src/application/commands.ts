@@ -14,6 +14,7 @@ import { buildSystemPrompt, DEFAULT_BOT_NAME } from "../domain/personality.ts";
 import { validateRemoval, validateRoleChange } from "../domain/access.ts";
 import { reviewPrompt } from "../domain/reviewPrompt.ts";
 import { BOMB_SIZE, DEFAULT_CATEGORY, parseCategories, pickBomb, renderCategories } from "../domain/emoji.ts";
+import { mentionedId } from "../domain/mentions.ts";
 import { parseMessageLink } from "../domain/slackLinks.ts";
 import { postedBody } from "../domain/ghCommand.ts";
 import { runWorkflowTurn, WORKFLOW_MIN_ROLE, type WorkflowDeps } from "./workflow.ts";
@@ -122,15 +123,10 @@ type CommandDef = {
 const RANK: Record<UserRole, number> = { pal: 0, executer: 1, admin: 2, owner: 3 };
 /** Roles an allowance applies to; mirrors LIMITED_ROLES without the import cycle. */
 const LIMITED: readonly UserRole[] = ["pal"];
-const MENTION = /<@([A-Z0-9]+)(?:\|[^>]+)?>/;
 const LEADING_MENTION = /^<@[A-Z0-9]+(?::[^>]+|\|[^>]+)?>\s*/;
 
-const slackIdOf = (token?: string): string | undefined => {
-  if (!token) return undefined;
-  const m = token.match(MENTION);
-  if (m?.[1]) return m[1];
-  return /^[UW][A-Z0-9]+$/.test(token) ? token : undefined;
-};
+/** One definition of what a mentioned user looks like, shared with the transport. */
+const slackIdOf = (token?: string): string | undefined => mentionedId(token);
 
 const roleOf = (token?: string): UserRole | undefined =>
   token === "owner" || token === "admin" || token === "executer" || token === "pal" ? token : undefined;

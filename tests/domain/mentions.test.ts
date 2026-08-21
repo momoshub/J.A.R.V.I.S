@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { annotateMentions, extractMentionIds, hasContent } from "../../src/domain/mentions.ts";
+import { annotateMentions, extractMentionIds, hasContent, mentionedId } from "../../src/domain/mentions.ts";
 
 const names: Record<string, string> = { U0USER00001: "Jarvis", U1: "Kai" };
 const resolve = (id: string) => names[id];
@@ -43,3 +43,28 @@ describe("hasContent", () => {
     expect(hasContent("<@U1> hi")).toBe(true);
   });
 });
+
+describe("mentionedId", () => {
+  test("reads every form a mention can arrive in", () => {
+    expect(mentionedId("<@U123ABC>")).toBe("U123ABC");
+    expect(mentionedId("<@U123ABC|robin>")).toBe("U123ABC");
+    // the annotated form is what commands actually receive, because the
+    // transport annotates before anything parses arguments
+    expect(mentionedId("<@U123ABC:Robin>")).toBe("U123ABC");
+    expect(mentionedId("<@U123ABC:Robin Example>")).toBe("U123ABC");
+    expect(mentionedId("U123ABC")).toBe("U123ABC");
+    expect(mentionedId("W123ABC")).toBe("W123ABC");
+  });
+
+  test("what a mention annotates to still reads back", () => {
+    const annotated = annotateMentions("<@U123ABC>", () => "Robin");
+    expect(mentionedId(annotated)).toBe("U123ABC");
+  });
+
+  test("anything else is nobody", () => {
+    for (const junk of [undefined, "", "robin", "@robin", "<#C123>", "<@u123abc>", "hello <@U1> there"]) {
+      expect(mentionedId(junk)).toBeUndefined();
+    }
+  });
+});
+

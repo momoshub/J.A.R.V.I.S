@@ -29,5 +29,20 @@ export const annotateMentions = (text: string, resolve: (id: string) => string |
     return name ? `<@${id}:${name}>` : `<@${id}>`;
   });
 
+/**
+ * The user id in a single mention token, in any of the forms one can arrive in:
+ * plain `<@U123>`, piped `<@U123|name>`, annotated `<@U123:Name>`, or a bare id.
+ *
+ * Command arguments are parsed *after* annotation, so anything reading a
+ * mentioned user has to understand the annotated form too - missing it means a
+ * command silently reads as having no target at all.
+ */
+export const mentionedId = (token: string | undefined): string | undefined => {
+  if (!token) return undefined;
+  const m = token.match(/^<@([A-Z0-9]+)(?::[^>]*|\|[^>]*)?>$/);
+  if (m?.[1]) return m[1];
+  return /^[UW][A-Z0-9]+$/.test(token) ? token : undefined;
+};
+
 /** True if `text` has anything beyond mentions and whitespace. */
 export const hasContent = (text: string): boolean => text.replace(ANY_MENTION, "").trim().length > 0;

@@ -147,6 +147,21 @@ describe("dispatchCommand", () => {
     expect(deps2.users.get("U1")).toBeUndefined();
   });
 
+  test("a mention still reads after the transport has annotated it", async () => {
+    // production sends `<@U1:Robin>`, not `<@U1>` - reading only the bare form
+    // made every @user command silently target nobody
+    const deps = build();
+    await dispatchCommand(deps, actor(), "C1", "add <@U1:Robin> admin");
+    expect(deps.users.get("U1")?.role).toBe("admin");
+
+    await dispatchCommand(deps, actor(), "C1", "demote <@U1:Robin>");
+    expect(deps.users.get("U1")?.role).toBe("pal");
+
+    const limit = await dispatchCommand(deps, actor(), "C1", "limit <@U1:Robin> 25");
+    expect(limit).toContain("<@U1>");
+    expect(limit).toContain("25");
+  });
+
   test("owner cannot be removed", async () => {
     const deps = build();
     deps.users.upsert(actor());
