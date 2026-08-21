@@ -104,7 +104,7 @@ Every command has two interfaces - use whichever you like. Both triggers are con
 | `workflow <task>` / `workflow stop` / `workflow status` (alias `wf`) | executers+ | start a long task in this thread and keep talking to it (see [Workflows](#workflows)) |
 | `promote @user` / `demote @user` | owner | change role |
 
-A slash command is invisible to everyone but its caller, so the **owner gets a copy in their DM**: one header saying who ran what, then the same progress and result the caller sees. Trivial commands (`help`, `ping`, `whoami`, `model`) are not copied, and the owner is never copied on their own.
+A slash command is invisible to everyone but its caller, so the **owner gets a copy in their DM** - one thread per run: a header saying who ran what, with the progress and result threaded under it. Trivial commands (`help`, `ping`, `whoami`, `model`) are not copied, and the owner is never copied on their own.
 
 The power tools also have their own Slack slash commands if you register them (`/rv`, `/br`, `/jrp`) - much quicker than a freeform ask. `br`/`jrp` need the Console's Slack read/write scopes; `rv` uses the local `gh` and **writes to the PR** (approve/comment/request-changes).
 

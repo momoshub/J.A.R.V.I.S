@@ -10,6 +10,7 @@ import { commandLineOf, dispatchCommand, notifiesOwner } from "./commands.ts";
 import { runWorkflowTurn, WORKFLOW_MIN_ROLE } from "./workflow.ts";
 import { requestAccess } from "./accessRequests.ts";
 import type { UserRole } from "../domain/types.ts";
+import type { PostedRef } from "./slackAdmin.ts";
 import { handleMessage, type HandleMessageDeps, type HandleResult, type InboundMessage } from "./handleMessage.ts";
 import type { LlmStreamSink } from "./ports.ts";
 
@@ -80,19 +81,27 @@ export const respond = async (
     : undefined;
 
   // A slash command is invisible to everyone but its caller, so the owner gets
-  // their own copy of anything that actually did something - headed once with
-  // who ran what, then the same progress the caller is watching.
+  // their own copy of anything that actually did something. One invocation is
+  // one DM thread: a header saying who ran what, and everything else hanging
+  // off it, so a busy day is a list of runs rather than a wall of fragments.
   const mirror =
     deps.slack && inbound.viaSlash && actor.slackId !== deps.ownerSlackId && notifiesOwner(line);
-  let headed = false;
+  let root: PostedRef | undefined;
+  let opening = false;
   const toOwner = async (text: string): Promise<void> => {
     if (!mirror) return;
     try {
-      if (!headed) {
-        headed = true;
-        await deps.slack!.postDm(deps.ownerSlackId, `📋 <@${actor.slackId}> ran \`${deps.slashCommand ?? "/bot"} ${line}\``);
+      if (!root) {
+        // Guard the header against a second caller slipping in while it posts.
+        if (opening) return;
+        opening = true;
+        root = await deps.slack!.postDm(
+          deps.ownerSlackId,
+          `📋 <@${actor.slackId}> ran \`${deps.slashCommand ?? "/bot"} ${line}\``,
+        );
+        if (!root) return; // could not open the DM, so there is no thread to fill
       }
-      await deps.slack!.postDm(deps.ownerSlackId, text);
+      await deps.slack!.post(root.channel, text, root.ts);
     } catch {
       // the owner's copy is never worth failing the caller's command over
     }

@@ -419,14 +419,31 @@ describe("owner copy of slash commands", () => {
     return deps;
   };
 
-  test("the owner gets a headed copy of what a pal ran", async () => {
+  test("the owner gets one DM thread per run, headed with who ran what", async () => {
     const deps = withUsers();
     await slashFrom(deps, "Upal", "ask what is 2+2");
 
     const toOwner = slackCalls.posts.filter((p) => p.channel === OWNER);
-    expect(toOwner[0]?.text).toContain("<@Upal> ran");
-    expect(toOwner[0]?.text).toContain("/ev ask what is 2+2");
-    expect(toOwner.map((p) => p.text)).toContain("drafted answer");
+    const header = toOwner[0];
+    expect(header?.text).toContain("<@Upal> ran");
+    expect(header?.text).toContain("/ev ask what is 2+2");
+    expect(header?.threadTs).toBeUndefined(); // the header opens the thread
+
+    // everything else hangs off it rather than landing as its own DM
+    const rest = toOwner.slice(1);
+    expect(rest.map((p) => p.text)).toContain("drafted answer");
+    expect(rest.every((p) => p.threadTs === "dm-1")).toBe(true);
+  });
+
+  test("two runs are two threads, not one pile", async () => {
+    const deps = withUsers();
+    await slashFrom(deps, "Upal", "ask what is 2+2");
+    await slashFrom(deps, "Upal", "ask what is 3+3");
+
+    const toOwner = slackCalls.posts.filter((p) => p.channel === OWNER);
+    const headers = toOwner.filter((p) => p.threadTs === undefined);
+    expect(headers).toHaveLength(2);
+    expect(new Set(toOwner.filter((p) => p.threadTs).map((p) => p.threadTs)).size).toBe(2);
   });
 
   test("the owner is not copied on their own slash commands", async () => {
