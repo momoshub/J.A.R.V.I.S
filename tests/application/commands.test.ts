@@ -4,6 +4,7 @@ import { createUserRepo } from "../../src/infrastructure/db/userRepo.ts";
 import { createMessageRepo } from "../../src/infrastructure/db/messageRepo.ts";
 import { createLearningsRepo } from "../../src/infrastructure/db/learningsRepo.ts";
 import { commandLineOf, dispatchCommand, type CommandDeps } from "../../src/application/commands.ts";
+import { respond, type RespondDeps } from "../../src/application/respond.ts";
 import type { AllowedUser } from "../../src/domain/types.ts";
 import type { LlmPort } from "../../src/application/ports.ts";
 import type { SlackAdminPort, SlackMessage } from "../../src/application/slackAdmin.ts";
@@ -398,3 +399,67 @@ describe("dispatchCommand", () => {
     expect(await dispatchCommand(build(), pal, "C1", `jrp ${LINK}`)).toContain("access");
   });
 });
+
+describe("owner copy of slash commands", () => {
+  const slashFrom = async (deps: CommandDeps & RespondDeps, user: string, line: string) =>
+    respond(deps, {
+      channelId: "C1",
+      slackUserId: user,
+      text: `X/ev ${line}`,
+      viaSlash: true,
+    });
+
+  const withUsers = () => {
+    const deps = build() as CommandDeps & RespondDeps;
+    deps.commandPrefix = "X/ev";
+    deps.slashCommand = "/ev";
+    deps.users.upsert({ slackId: OWNER, role: "owner", displayName: "Kai", addedBy: "x", createdAt: 1 });
+    deps.users.upsert({ slackId: "Upal", role: "pal", displayName: "Robin", addedBy: "x", createdAt: 1 });
+    return deps;
+  };
+
+  test("the owner gets a headed copy of what a pal ran", async () => {
+    const deps = withUsers();
+    await slashFrom(deps, "Upal", "ask what is 2+2");
+
+    const toOwner = slackCalls.posts.filter((p) => p.channel === OWNER);
+    expect(toOwner[0]?.text).toContain("<@Upal> ran");
+    expect(toOwner[0]?.text).toContain("/ev ask what is 2+2");
+    expect(toOwner.map((p) => p.text)).toContain("drafted answer");
+  });
+
+  test("the owner is not copied on their own slash commands", async () => {
+    const deps = withUsers();
+    await slashFrom(deps, OWNER, "ask what is 2+2");
+    const toOwner = slackCalls.posts.filter((p) => p.channel === OWNER);
+    expect(toOwner.map((t) => t.text).some((t) => t.includes("ran"))).toBe(false);
+  });
+
+  test("trivial commands are not worth a DM", async () => {
+    const deps = withUsers();
+    await slashFrom(deps, "Upal", "ping");
+    await slashFrom(deps, "Upal", "whoami");
+    expect(slackCalls.posts.filter((p) => p.channel === OWNER)).toHaveLength(0);
+  });
+
+  test("a message command in a thread is public already, so nothing is mirrored", async () => {
+    const deps = withUsers();
+    await respond(deps, { channelId: "C1", slackUserId: "Upal", text: "X/ev ask hi", threadTs: "1.1" });
+    expect(slackCalls.posts.filter((p) => p.channel === OWNER)).toHaveLength(0);
+  });
+
+  test("a failed owner DM never breaks the caller's command", async () => {
+    const deps = withUsers();
+    const good = deps.slack!.postDm;
+    deps.slack = {
+      ...deps.slack!,
+      postDm: async (userId: string, text: string) => {
+        if (userId === OWNER) throw new Error("channel_not_found");
+        return good(userId, text);
+      },
+    };
+    const res = await slashFrom(deps, "Upal", "ask what is 2+2");
+    expect(res).toEqual({ kind: "reply", text: "drafted answer" });
+  });
+});
+

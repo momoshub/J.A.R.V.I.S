@@ -104,6 +104,11 @@ type CommandDef = {
   minRole: UserRole;
   usage: string;
   summary: string;
+  /**
+   * Skip the owner's copy of a slash invocation. Set on commands that do
+   * nothing and reveal nothing - mirroring a `ping` is pure noise.
+   */
+  trivial?: boolean;
   run: (ctx: Context) => string | Promise<string>;
 };
 
@@ -144,6 +149,7 @@ const changeRole = (ctx: Context, slackId: string, next: UserRole, requireExisti
 export const COMMANDS: readonly CommandDef[] = [
   {
     name: "help",
+    trivial: true,
     aliases: ["commands", "?"],
     minRole: "pal",
     usage: "",
@@ -152,6 +158,7 @@ export const COMMANDS: readonly CommandDef[] = [
   },
   {
     name: "ping",
+    trivial: true,
     minRole: "pal",
     usage: "",
     summary: "check I am awake",
@@ -159,6 +166,7 @@ export const COMMANDS: readonly CommandDef[] = [
   },
   {
     name: "whoami",
+    trivial: true,
     minRole: "pal",
     usage: "",
     summary: "show your access level",
@@ -166,6 +174,7 @@ export const COMMANDS: readonly CommandDef[] = [
   },
   {
     name: "model",
+    trivial: true,
     aliases: ["status"],
     minRole: "pal",
     usage: "",
@@ -563,6 +572,15 @@ export const commandLineOf = (text: string, prefix: string = DEFAULT_COMMAND_PRE
   if (t === p || lower.startsWith(`${p.toLowerCase()} `)) return t.slice(p.length).trim();
   if (t.startsWith("!")) return t.slice(1).trim();
   return undefined;
+};
+
+/**
+ * Whether a slash invocation of this line is worth copying to the owner.
+ * Unknown commands count: a failed guess is still something worth seeing.
+ */
+export const notifiesOwner = (line: string): boolean => {
+  const name = (line.trim().split(/\s+/)[0] || "help").toLowerCase();
+  return byName.get(name)?.trivial !== true;
 };
 
 /** Metadata for every command, ordered as declared - for the dashboard. */

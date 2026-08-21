@@ -6,7 +6,7 @@
  */
 import { decideAccess } from "../domain/access.ts";
 import { cleanInboundText } from "../domain/conversation.ts";
-import { commandLineOf, dispatchCommand } from "./commands.ts";
+import { commandLineOf, dispatchCommand, notifiesOwner } from "./commands.ts";
 import { runWorkflowTurn, WORKFLOW_MIN_ROLE } from "./workflow.ts";
 import type { UserRole } from "../domain/types.ts";
 import { handleMessage, type HandleMessageDeps, type HandleResult, type InboundMessage } from "./handleMessage.ts";
@@ -59,11 +59,39 @@ export const respond = async (
   // Destination for progress + direct results: a DM when invoked via slash (there
   // is no thread to reply in), otherwise the thread the message came from. Long
   // commands (review) post through this; simple ones just return their text.
-  const reply = deps.slack
+  const deliver = deps.slack
     ? inbound.viaSlash
       ? (text: string) => deps.slack!.postDm(inbound.slackUserId, text)
       : (text: string) => deps.slack!.post(inbound.channelId, text, inbound.threadTs)
     : undefined;
+
+  // A slash command is invisible to everyone but its caller, so the owner gets
+  // their own copy of anything that actually did something - headed once with
+  // who ran what, then the same progress the caller is watching.
+  const mirror =
+    deps.slack && inbound.viaSlash && actor.slackId !== deps.ownerSlackId && notifiesOwner(line);
+  let headed = false;
+  const toOwner = async (text: string): Promise<void> => {
+    if (!mirror) return;
+    try {
+      if (!headed) {
+        headed = true;
+        await deps.slack!.postDm(deps.ownerSlackId, `📋 <@${actor.slackId}> ran \`${deps.slashCommand ?? "/bot"} ${line}\``);
+      }
+      await deps.slack!.postDm(deps.ownerSlackId, text);
+    } catch {
+      // the owner's copy is never worth failing the caller's command over
+    }
+  };
+
+  const reply = deliver
+    ? async (text: string) => {
+        await deliver(text);
+        await toOwner(text);
+      }
+    : mirror
+      ? toOwner
+      : undefined;
 
   const text = await dispatchCommand(deps, actor, inbound.channelId, line, {
     prefix: deps.commandPrefix,
@@ -72,5 +100,7 @@ export const respond = async (
     threadTs: inbound.viaSlash ? undefined : inbound.threadTs,
     reply,
   });
+  // Commands that returned their result rather than posting it still get copied.
+  if (text.trim()) await toOwner(text);
   return { kind: "reply", text };
 };
