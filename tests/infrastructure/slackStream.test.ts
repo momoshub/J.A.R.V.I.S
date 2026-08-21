@@ -113,3 +113,56 @@ describe("createSlackStream", () => {
     expect(await s.finish()).toBe(false);
   });
 });
+
+describe("hidden actions", () => {
+  test("a reaction or a localhost call posts no card at all", async () => {
+    const rec: { appends: unknown[]; stops: number } = { appends: [], stops: 0 };
+    const stream = createSlackStream(() => ({
+      append: async (a) => {
+        rec.appends.push(a);
+      },
+      stop: async () => {
+        rec.stops += 1;
+      },
+    }));
+
+    stream.sink({
+      type: "tool",
+      id: "t1",
+      title: "run: curl ... reactions.add",
+      command: 'curl -X POST -d "channel=C1&name=eyes" https://slack.com/api/reactions.add',
+      status: "complete",
+    });
+    stream.sink({
+      type: "tool",
+      id: "t2",
+      title: "run: curl localhost",
+      command: "curl -s http://127.0.0.1:2002/api/learnings",
+      status: "complete",
+    });
+
+    await stream.finish();
+    expect(rec.appends).toHaveLength(0);
+    expect(stream.started).toBe(false); // not even a stream opened for these
+  });
+
+  test("a real tool call still shows", async () => {
+    const rec: { appends: unknown[] } = { appends: [] };
+    const stream = createSlackStream(() => ({
+      append: async (a) => {
+        rec.appends.push(a);
+      },
+      stop: async () => {},
+    }));
+    stream.sink({
+      type: "tool",
+      id: "t1",
+      title: "run: gh pr view",
+      command: "gh pr view https://github.com/o/r/pull/1",
+      status: "complete",
+    });
+    await stream.finish(); // appends are serialised on a promise chain
+    expect(rec.appends).toHaveLength(1);
+  });
+});
+

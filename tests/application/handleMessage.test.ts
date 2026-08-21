@@ -200,7 +200,7 @@ describe("handleMessage", () => {
     expect(stored.map((m) => m.slackTs)).toEqual(["1787241529.047069", "1787241600.111222"]);
 
     // the second turn's prompt can point at both, in this channel
-    expect(system).toContain("Reacting with emoji (optional, your call)");
+    expect(system).toContain("Reacting with emoji (your call, and lean towards yes)");
     expect(system).toContain("channel=C1&timestamp=<ts>&name=<emoji>");
     expect(system).toContain("ts 1787241529.047069");
     expect(system).toContain("ts 1787241600.111222");

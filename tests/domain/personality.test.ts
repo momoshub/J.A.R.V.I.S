@@ -95,16 +95,18 @@ describe("buildSystemPrompt", () => {
         { ts: "2.2", speakerId: "U2", excerpt: "nice one" },
       ],
     });
-    expect(p).toContain("Reacting with emoji (optional, your call)");
+    expect(p).toContain("Reacting with emoji (your call, and lean towards yes)");
     expect(p).toContain("channel=C1&timestamp=<ts>&name=<emoji>");
     expect(p).toContain('- ts 1.1 - from <@U1>: "shipped it"');
     expect(p).toContain('- ts 2.2 - from <@U2>: "nice one"');
-    expect(p).toContain("Several emoji on one message are fine");
+    expect(p).toContain("Several emoji on one message are good");
   });
 
-  test("reactions stay optional and silent", () => {
+  test("reactions are encouraged, silent, and never a substitute for replying", () => {
     const p = buildSystemPrompt({ channelId: "C1", reactable: [{ ts: "1.1", speakerId: "U1", excerpt: "hi" }] });
-    expect(p).toContain("It is entirely optional and most replies need none");
+    expect(p).toContain("React often");
+    expect(p).toContain("lean towards yes");
+    expect(p).toContain("a reaction never replaces the reply");
     expect(p).toContain("never announce, describe or list the reactions you added");
   });
 

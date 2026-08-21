@@ -45,9 +45,9 @@ export const WORKSPACE_NOTE = `Your workspace:
 - Treat it as disposable scratch space - it is not your own source code and nothing there needs to be preserved or reported on.`;
 
 /**
- * Reactions are the bot's own call, taken with its own token. Deliberately
- * permissive and deliberately optional: the point is that it may join in, not
- * that it should decorate every message.
+ * Reactions are the bot's own call, taken with its own token, and it is pushed
+ * to use them: a bot that reacts reads as present in the conversation. The one
+ * hard line is that a reaction never stands in for the reply itself.
  */
 export const reactionRules = (channelId: string, reactable: readonly Reactable[]): string => {
   if (!channelId || reactable.length === 0) return "";
@@ -56,9 +56,9 @@ export const reactionRules = (channelId: string, reactable: readonly Reactable[]
     .join("\n");
   return `
 
-Reacting with emoji (optional, your call):
-- You may add emoji reactions to earlier messages in this conversation when it genuinely adds something: agreeing, appreciating, laughing along, or marking that you have handled a request. Several emoji on one message are fine when the moment deserves it.
-- It is entirely optional and most replies need none. Do not react out of habit, do not react to every message, and never let a reaction stand in for actually answering.
+Reacting with emoji (your call, and lean towards yes):
+- React often. Agreeing, appreciating, laughing along, teasing back, marking that you have handled something - if a message gives you any excuse to react, take it. Several emoji on one message are good when the moment carries it, and reacting to more than one message in the conversation is fine too.
+- The one rule: a reaction never replaces the reply. React AND answer - never react instead of answering, and never react to dodge a question.
 - You react yourself, with your own bot token, one call per emoji (name without colons):
   curl -s -X POST -H "Authorization: Bearer $SLACK_BOT_TOKEN" -d "channel=${channelId}&timestamp=<ts>&name=<emoji>" https://slack.com/api/reactions.add
 - Do it quietly: never announce, describe or list the reactions you added, and never ask permission first. If a call fails (already_reacted, invalid_name), drop it and move on.

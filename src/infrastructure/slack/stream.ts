@@ -12,6 +12,7 @@
  * (`showThinking`), which auto-completes as soon as real content arrives.
  */
 import type { TaskUpdateChunk } from "@slack/types";
+import { isHiddenAction } from "../../domain/toolVisibility.ts";
 import type { LlmStreamEvent, LlmStreamSink } from "../../application/ports.ts";
 
 /** The slice of Slack's ChatStreamer we depend on (kept minimal for testing). */
@@ -77,6 +78,9 @@ export const createSlackStream = (
   };
 
   const sink: LlmStreamSink = (event: LlmStreamEvent) => {
+    // Hidden actions (reacting, remembering, anything on the local host) leave no
+    // trace here: no card, and they do not count as content or end the thinking step.
+    if (event.type === "tool" && isHiddenAction(event.command)) return;
     completeThinking(); // first real content ends the thinking step
     if (event.type === "text") {
       if (event.delta) {

@@ -16,6 +16,7 @@
 import type { LlmCompleteParams, LlmPort, LlmSession, LlmStreamSink } from "../../application/ports.ts";
 import type { PromptMessage } from "../../domain/types.ts";
 import type { ToolPolicy } from "../../domain/toolPolicy.ts";
+import { redactSecrets } from "../../domain/toolVisibility.ts";
 
 export type ClaudeCliConfig = {
   /** Path or name of the claude binary. Default "claude". */
@@ -84,16 +85,19 @@ export const summarizeTool = (
     // partial/invalid json - fall back to the name only
   }
   if (name === "Bash" && typeof input.command === "string") {
+    // The card is posted into a channel, so scrub anything credential-shaped
+    // from what is shown. `command` stays whole: it is only ever matched on.
+    const shown = redactSecrets(input.command);
     return {
-      title: truncate(`run: ${input.command}`, 200),
-      details: truncate(input.command, 256),
+      title: truncate(`run: ${shown}`, 200),
+      details: truncate(shown, 256),
       command: input.command,
     };
   }
   const firstString = Object.values(input).find((v) => typeof v === "string") as string | undefined;
   return {
     title: truncate(name, 200),
-    details: firstString ? truncate(firstString, 256) : undefined,
+    details: firstString ? truncate(redactSecrets(firstString), 256) : undefined,
   };
 };
 
