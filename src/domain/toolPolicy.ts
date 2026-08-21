@@ -68,11 +68,24 @@ export type ToolPolicyOptions = {
    * conversation without handing anyone an outbound request with its token.
    */
   readonly reactScript?: string;
+  /**
+   * Absolute path of the command helper. Granted to every role: what it can
+   * actually run is decided by the caller's own role when the command
+   * dispatches, so this hands over no authority of its own.
+   */
+  readonly runScript?: string;
 };
 
-/** Reacting is granted to every role, including the assigned executer list. */
-const withReactions = (tools: readonly string[], reactScript?: string): readonly string[] =>
-  reactScript ? [...tools, `Bash(${reactScript}:*)`] : tools;
+/**
+ * Helpers every role gets on top of its list: reacting, and asking the bot to
+ * run one of its own commands. Neither grants authority - the command's role
+ * gate still decides - so they sit outside the assigned tools.
+ */
+const withHelpers = (tools: readonly string[], opts: ToolPolicyOptions): readonly string[] => [
+  ...tools,
+  ...(opts.reactScript ? [`Bash(${opts.reactScript}:*)`] : []),
+  ...(opts.runScript ? [`Bash(${opts.runScript}:*)`] : []),
+];
 
 export const toolPolicyFor = (role: UserRole, opts: ToolPolicyOptions): ToolPolicy => {
   switch (role) {
@@ -83,9 +96,9 @@ export const toolPolicyFor = (role: UserRole, opts: ToolPolicyOptions): ToolPoli
       return {
         skipPermissions: false,
         cwd: opts.sandboxCwd,
-        allowedTools: withReactions(
+        allowedTools: withHelpers(
           opts.executerTools && opts.executerTools.length > 0 ? opts.executerTools : PAL_TOOLS,
-          opts.reactScript,
+          opts,
         ),
         disallowedTools: SANDBOX_DISALLOW,
       };
@@ -94,7 +107,7 @@ export const toolPolicyFor = (role: UserRole, opts: ToolPolicyOptions): ToolPoli
       return {
         skipPermissions: false,
         cwd: opts.sandboxCwd,
-        allowedTools: withReactions(PAL_TOOLS, opts.reactScript),
+        allowedTools: withHelpers(PAL_TOOLS, opts),
         disallowedTools: SANDBOX_DISALLOW,
       };
   }

@@ -24,6 +24,7 @@ import type { CommandLogRepo } from "../infrastructure/db/commandLogRepo.ts";
 import type { WorkflowRepo } from "../infrastructure/db/workflowRepo.ts";
 import type { AccessRequestRepo } from "../infrastructure/db/accessRequestRepo.ts";
 import { requestAccess } from "./accessRequests.ts";
+import type { CommandTickets } from "./commandTickets.ts";
 import type { SlackAdminPort, SlackMessage } from "./slackAdmin.ts";
 import type { GitHubPort } from "./github.ts";
 import type { DraftReply } from "./draftReply.ts";
@@ -63,8 +64,12 @@ export type HandleMessageDeps = {
   newSessionId?: () => string;
   /** Local endpoint the bot can POST a learning to, if the listener may teach. */
   learnUrl?: string;
-  /** Local endpoint the bot can POST a command to, if the listener may run one. */
+  /** Local endpoint the bot can POST a command to. */
   runUrl?: string;
+  /** Absolute path of the command helper, granted to every role. */
+  runScript?: string;
+  /** Mints the per-turn ticket that decides who a triggered command runs as. */
+  commandTickets?: CommandTickets;
   /** Configured message command prefix + slash name, for the command layer. */
   commandPrefix?: string;
   slashCommand?: string;
@@ -155,9 +160,15 @@ export const handleMessage = async (
     // ... and keep a durable fact, but only when talking to someone who could
     // have taught it one by hand. Learnings apply to everyone, everywhere.
     learnUrl: canTeach(decision.user.role) ? deps.learnUrl : undefined,
-    // Same gate: only someone who could have typed the command gets it run for them.
-    runUrl: canTeach(decision.user.role) ? deps.runUrl : undefined,
-    threadTs: inbound.threadTs,
+    // Offered to everyone: the command's own role gate decides what actually
+    // runs, so asking in words can never do more than typing it would.
+    runUrl: deps.runUrl,
+    runScript: deps.runScript,
+    runTicket: deps.commandTickets?.issue({
+      actor: decision.user.slackId,
+      channel: inbound.channelId,
+      threadTs: inbound.threadTs,
+    }),
     commandPrefix: deps.commandPrefix,
   });
 

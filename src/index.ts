@@ -30,6 +30,7 @@ import { createDraftReply } from "./application/draftReply.ts";
 import { toolPolicyFor } from "./domain/toolPolicy.ts";
 import { createDashboard } from "./infrastructure/dashboard/server.ts";
 import { dispatchCommand } from "./application/commands.ts";
+import { createCommandTickets } from "./application/commandTickets.ts";
 import { createActivityLog } from "./infrastructure/logger.ts";
 import type { CommandLogRepo } from "./infrastructure/db/commandLogRepo.ts";
 import type { LlmPort } from "./application/ports.ts";
@@ -74,6 +75,7 @@ const main = async () => {
   const activity = createActivityLog(config.logDir);
   const workflows = createWorkflowRepo(db);
   const accessRequests = createAccessRequestRepo(db);
+  const commandTickets = createCommandTickets(() => Date.now());
   const baseCommandLog = createCommandLogRepo(db);
   const commandLog: CommandLogRepo = {
     ...baseCommandLog,
@@ -117,11 +119,13 @@ const main = async () => {
   // Every role may react, through a helper that can only reach reactions.add -
   // a general `curl` in a sandbox would be an outbound channel for the token.
   const reactScript = join(import.meta.dir, "..", "bin", "slack-react.sh");
+  const runScript = join(import.meta.dir, "..", "bin", "jarvis-run.sh");
   const toolPolicy = (role: Parameters<typeof toolPolicyFor>[0]) =>
     toolPolicyFor(role, {
       fullCwd,
       sandboxCwd,
       reactScript,
+      runScript,
       executerTools: (settings.get(SETTING_KEYS.executerTools) ?? "")
         .split(/[,\n]/)
         .map((s) => s.trim())
@@ -168,6 +172,8 @@ const main = async () => {
     // same way the dashboard does - offered to admins/owner conversations only.
     learnUrl: `http://127.0.0.1:${config.dashboardPort}/api/learnings`,
     runUrl: `http://127.0.0.1:${config.dashboardPort}/api/commands/run`,
+    runScript,
+    commandTickets,
     commandPrefix: config.commandPrefix,
     slashCommand: config.slashCommand,
   };
@@ -196,14 +202,16 @@ const main = async () => {
       // Lets the brain run a real command when a chat request is really one.
       // The actor's own role decides what is allowed - nothing is elevated by
       // going through here.
-      runCommand: async ({ actor, channel, threadTs, line }) => {
-        const user = users.get(actor);
-        if (!user) throw new Error(`${actor} is not on the access list`);
-        return dispatchCommand(deps, user, channel, line, {
+      runCommand: async ({ ticket, line }) => {
+        const ctx = commandTickets.redeem(ticket);
+        if (!ctx) throw new Error("that ticket is not valid any more");
+        const user = users.get(ctx.actor);
+        if (!user) throw new Error("whoever asked is not on the access list");
+        return dispatchCommand(deps, user, ctx.channel, line, {
           prefix: config.commandPrefix,
           slash: config.slashCommand,
-          threadTs,
-          reply: (text: string) => slackAdmin.post(channel, text, threadTs),
+          threadTs: ctx.threadTs,
+          reply: (text: string) => slackAdmin.post(ctx.channel, text, ctx.threadTs),
         });
       },
     },

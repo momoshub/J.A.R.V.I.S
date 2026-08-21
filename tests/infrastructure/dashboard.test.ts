@@ -200,7 +200,7 @@ describe("running a command through the API", () => {
         profile,
         runCommand: async (req) => {
           seen.push(req);
-          if (req.line.startsWith("boom")) throw new Error("that command failed");
+          if (req.ticket === "stale") throw new Error("that ticket is not valid any more");
           return `ran ${req.line}`;
         },
       },
@@ -208,61 +208,48 @@ describe("running a command through the API", () => {
     return { dash, seen };
   };
 
-  test("passes the actor, channel, thread and line through", async () => {
+  test("passes the ticket and line through, and nothing else", async () => {
     const { dash, seen } = withRunner();
     const res = await dash.handle(
       postJson("/api/commands/run", {
-        actor: OWNER,
-        channel: "C1",
-        thread: "100.1",
+        ticket: "tkt123",
         line: "review https://github.com/o/r/pull/1",
+        // a caller trying to name someone must not get anywhere
+        actor: "Usomeoneelse",
+        channel: "Celsewhere",
       }),
     );
     expect(res.status).toBe(200);
     expect(await res.json()).toEqual({ ok: true, result: "ran review https://github.com/o/r/pull/1" });
-    expect(seen[0]).toEqual({
-      actor: OWNER,
-      channel: "C1",
-      threadTs: "100.1",
-      line: "review https://github.com/o/r/pull/1",
-    });
+    expect(seen[0]).toEqual({ ticket: "tkt123", line: "review https://github.com/o/r/pull/1" });
   });
 
-  test("rejects a malformed actor rather than guessing", async () => {
+  test("ticket and line are both required", async () => {
     const { dash, seen } = withRunner();
-    for (const actor of ["", "not-an-id", "<@U123>", "C0123"]) {
-      const res = await dash.handle(postJson("/api/commands/run", { actor, channel: "C1", line: "ping" }));
-      expect(res.status).toBe(400);
-    }
+    expect((await dash.handle(postJson("/api/commands/run", { line: "ping" }))).status).toBe(400);
+    expect((await dash.handle(postJson("/api/commands/run", { ticket: "t" }))).status).toBe(400);
     expect(seen).toHaveLength(0);
   });
 
-  test("channel and line are required", async () => {
+  test("a spent or unknown ticket is refused, not guessed at", async () => {
     const { dash } = withRunner();
-    expect((await dash.handle(postJson("/api/commands/run", { actor: OWNER, line: "ping" }))).status).toBe(400);
-    expect((await dash.handle(postJson("/api/commands/run", { actor: OWNER, channel: "C1" }))).status).toBe(400);
-  });
-
-  test("a failing command answers with the error, not a crash", async () => {
-    const { dash } = withRunner();
-    const res = await dash.handle(postJson("/api/commands/run", { actor: OWNER, channel: "C1", line: "boom" }));
+    const res = await dash.handle(postJson("/api/commands/run", { ticket: "stale", line: "ping" }));
     expect(res.status).toBe(500);
-    expect(await res.json()).toEqual({ error: "that command failed" });
+    expect(await res.json()).toEqual({ error: "that ticket is not valid any more" });
   });
 
   test("without a runner wired in, the endpoint is simply not there", async () => {
     const { dash } = build();
-    const res = await dash.handle(postJson("/api/commands/run", { actor: OWNER, channel: "C1", line: "ping" }));
+    const res = await dash.handle(postJson("/api/commands/run", { ticket: "t", line: "ping" }));
     expect(res.status).toBe(503);
   });
 
   test("a cross-origin post is still refused", async () => {
     const { dash, seen } = withRunner();
     const res = await dash.handle(
-      postJson("/api/commands/run", { actor: OWNER, channel: "C1", line: "ping" }, { origin: "http://evil.example" }),
+      postJson("/api/commands/run", { ticket: "t", line: "ping" }, { origin: "http://evil.example" }),
     );
     expect(res.status).toBeGreaterThanOrEqual(400);
     expect(seen).toHaveLength(0);
   });
 });
-

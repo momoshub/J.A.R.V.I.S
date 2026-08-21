@@ -95,18 +95,22 @@ Remembering something (optional, your call):
  * really a command - "review this PR" rather than `review <url>`. Offered on
  * the same terms as remembering: only to people who could have typed it.
  */
-export const commandRules = (runUrl: string, channelId: string, prefix: string, threadTs?: string): string => {
-  if (!runUrl || !channelId) return "";
-  const thread = threadTs ? `,"thread":"${threadTs}"` : "";
+export const commandRules = (
+  runScript: string,
+  runUrl: string,
+  ticket: string,
+  prefix: string,
+): string => {
+  if (!runScript || !runUrl || !ticket) return "";
   return `
 
 Running my own commands (when a request is really one):
-- I have preset commands - \`review\`, \`bomb\`, \`reply\`, \`rm-msg\`, \`workflow\`, \`learn\`, user management. When someone asks for one of those in plain words ("review this PR", "react to that with hearts"), run the command instead of improvising the work by hand. The command is tested, reports its own progress, and does it the way it is supposed to be done.
-- Run it as the person who asked, never as anyone else:
-  curl -s -X POST -H "Content-Type: application/json" -d '{"actor":"<their slack id>","channel":"${channelId}"${thread},"line":"<command and arguments>"}' ${runUrl}
-- The line is what would follow \`${prefix}\`, e.g. "review https://github.com/o/r/pull/1". Their own role decides what is allowed, so a command they could not type themselves will be refused - relay that plainly rather than working around it.
-- The command posts its own progress here as it goes. Do not repeat it, and do not narrate that you are running a command - just let it run and add anything it did not cover.
-- For an ordinary question, answer it yourself. This is for requests that map onto a real command.`;
+- I have preset commands - \`review\`, \`bomb\`, \`reply\`, \`rm-msg\`, \`workflow\`, \`learn\`, user management. When someone asks for one of those in plain words ("review this PR", "react to that with hearts", "have another look"), run the command instead of doing the work by hand. The command is tested, it reports its own progress, and it has permissions this conversation does not - a review posts to GitHub, which you cannot do from here.
+- Run it like this, where the line is whatever would follow \`${prefix}\`:
+  ${runScript} ${runUrl} ${ticket} review https://github.com/o/r/pull/1
+- The ticket is this conversation's, and it already carries who you are talking to - the command runs as them. Their role decides what is allowed, so a command they could not type themselves comes back refused: relay that plainly instead of working around it or doing the job by hand.
+- The command posts its own progress here as it goes. Do not repeat it, do not narrate that you are running one, and do not paste a review you did yourself - just let it run and add anything it did not cover.
+- For an ordinary question, answer it yourself. This is only for requests that map onto a real command.`;
 };
 
 export type BuildSystemPromptOptions = PromptContext & {
@@ -122,10 +126,12 @@ export type BuildSystemPromptOptions = PromptContext & {
   readonly reactScript?: string;
   /** endpoint for saving a learning; empty unless the listener may teach */
   readonly learnUrl?: string;
-  /** endpoint for running a command; empty unless the listener may run them */
+  /** endpoint for running a command */
   readonly runUrl?: string;
-  /** thread the conversation is in, so a triggered command reports there */
-  readonly threadTs?: string;
+  /** absolute path of the command helper */
+  readonly runScript?: string;
+  /** this turn's ticket, which carries who a triggered command runs as */
+  readonly runTicket?: string;
   /** configured message command prefix, for explaining what a command line is */
   readonly commandPrefix?: string;
 };
@@ -159,10 +165,10 @@ export const buildSystemPrompt = (options: Partial<BuildSystemPromptOptions> = {
   const reactions = reactionRules(options.channelId ?? "", options.reactable ?? [], options.reactScript);
   const remembering = learningRules(options.learnUrl ?? "");
   const commands = commandRules(
+    options.runScript ?? "",
     options.runUrl ?? "",
-    options.channelId ?? "",
+    options.runTicket ?? "",
     options.commandPrefix ?? "//bot",
-    options.threadTs,
   );
 
   return `${base}${learningsBlock}${addressed}${roster}\n\n${OPERATING_RULES}${reactions}${commands}${remembering}\n\n${WORKSPACE_NOTE}\n\n${identityLock(botName)}`;

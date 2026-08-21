@@ -18,6 +18,7 @@ const HIDDEN = [
   // Self-actions the bot performs silently.
   /slack\.com\/api\/reactions\.(add|remove)/i,
   /slack-react\.sh\b/i,
+  /jarvis-run\.sh\b/i,
   /\/api\/learnings\b/i,
   // Anything aimed at the host the bot runs on.
   /\blocalhost\b/i,

@@ -110,7 +110,9 @@ The power tools also have their own Slack slash commands if you register them (`
 
 Examples (with the default prefix): `/bot add @kai admin`, `//bot learn our staging URL is staging.example.com`, `//bot ask summarise the last thread`.
 
-**You do not have to type the command.** In a chat with an `owner` or `admin`, the bot can run one for you: "review this PR for me" runs `review`, and its progress appears in the thread as usual. It runs the command **as the person who asked**, so their role still decides what is allowed - nothing is elevated by asking in words instead of typing it. Lower roles get no such offer.
+**You do not have to type the command.** Ask in words - "review this PR for me", "have another look" - and the bot runs the real command, progress and all. This matters beyond convenience: `review` posts to GitHub, which a sandboxed chat cannot do, so a `pal` asking in words used to get a hand-rolled review that could not be posted.
+
+Anyone may ask, and the command runs **as the person who asked**, so their own role still decides what is allowed - asking in words can never do more than typing it would. The bot never names the actor: each turn is given a short-lived ticket bound to whoever it is talking to, and the ticket is what the command runs as.
 
 ## Workflows
 

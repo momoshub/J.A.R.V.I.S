@@ -138,24 +138,31 @@ describe("buildSystemPrompt", () => {
     expect(buildSystemPrompt({ learnUrl: "" })).not.toContain("Remembering something");
   });
 
+  const runOpts = {
+    commandPrefix: "X/ev",
+    runScript: "/bin/jarvis-run.sh",
+    runUrl: "http://127.0.0.1:2002/api/commands/run",
+    runTicket: "tkt123",
+  };
+
   test("offers to run a real command when a chat request is one", () => {
-    const p = buildSystemPrompt({
-      channelId: "C1",
-      threadTs: "100.1",
-      commandPrefix: "X/ev",
-      runUrl: "http://127.0.0.1:2002/api/commands/run",
-    });
+    const p = buildSystemPrompt(runOpts);
     expect(p).toContain("Running my own commands");
-    expect(p).toContain('"channel":"C1"');
-    expect(p).toContain('"thread":"100.1"');
-    expect(p).toContain("http://127.0.0.1:2002/api/commands/run");
-    expect(p).toContain("Run it as the person who asked, never as anyone else");
+    expect(p).toContain("/bin/jarvis-run.sh http://127.0.0.1:2002/api/commands/run tkt123");
     expect(p).toContain("X/ev");
+    expect(p).toContain("it already carries who you are talking to");
   });
 
-  test("no command block without the endpoint - the listener may not run them", () => {
-    expect(buildSystemPrompt({ channelId: "C1" })).not.toContain("Running my own commands");
-    expect(buildSystemPrompt({ runUrl: "http://x/run" })).not.toContain("Running my own commands");
+  test("the brain never names the actor - the ticket does", () => {
+    const p = buildSystemPrompt(runOpts);
+    expect(p).not.toContain('"actor"');
+    expect(p).toContain("comes back refused");
+  });
+
+  test("no command block without a script, endpoint or ticket", () => {
+    expect(buildSystemPrompt({ ...runOpts, runTicket: undefined })).not.toContain("Running my own commands");
+    expect(buildSystemPrompt({ ...runOpts, runScript: undefined })).not.toContain("Running my own commands");
+    expect(buildSystemPrompt({ ...runOpts, runUrl: undefined })).not.toContain("Running my own commands");
   });
 
   test("omits the roster block when there are no participants", () => {

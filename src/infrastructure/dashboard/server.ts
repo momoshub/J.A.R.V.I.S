@@ -55,13 +55,13 @@ export type DashboardDeps = {
   runCommand?: (req: RunCommandRequest) => Promise<string>;
 };
 
-/** One command asked for from outside the Slack transport. */
+/**
+ * One command asked for from outside the Slack transport. The ticket carries
+ * who it runs as - deliberately not the caller, who may be a sandboxed session
+ * that would otherwise be able to name anyone.
+ */
 export type RunCommandRequest = {
-  /** Slack id the command runs as; its role decides what is allowed. */
-  actor: string;
-  channel: string;
-  /** Thread to report into, when there is one. */
-  threadTs?: string;
+  ticket: string;
   /** The command line, e.g. `review https://github.com/o/r/pull/1`. */
   line: string;
 };
@@ -311,14 +311,11 @@ export const createDashboard = (config: DashboardConfig, deps: DashboardDeps) =>
         }
         case "/api/commands/run": {
           if (!deps.runCommand) return jsonError("Command running is not configured", 503);
-          const actor = String(body.actor ?? "").trim();
-          const channel = String(body.channel ?? "").trim();
+          const ticket = String(body.ticket ?? "").trim();
           const line = String(body.line ?? "").trim();
-          const threadTs = String(body.thread ?? body.threadTs ?? "").trim();
-          if (!SLACK_ID.test(actor)) return jsonError("A valid actor slack id is required");
-          if (!channel || !line) return jsonError("channel and line are required");
+          if (!ticket || !line) return jsonError("ticket and line are required");
           try {
-            return Response.json({ ok: true, result: await deps.runCommand({ actor, channel, threadTs: threadTs || undefined, line }) });
+            return Response.json({ ok: true, result: await deps.runCommand({ ticket, line }) });
           } catch (e) {
             return jsonError(e instanceof Error ? e.message : String(e), 500);
           }
