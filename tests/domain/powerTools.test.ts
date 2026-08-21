@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { parseMessageLink } from "../../src/domain/slackLinks.ts";
-import { EMOJI_CATEGORY_NAMES, pickBomb } from "../../src/domain/emoji.ts";
+import { BOMB_SIZE, EMOJI_CATEGORIES, EMOJI_CATEGORY_NAMES, pickBomb } from "../../src/domain/emoji.ts";
 import { REQUEST_CHANGES_BODY, reviewPrompt } from "../../src/domain/reviewPrompt.ts";
 
 describe("parseMessageLink", () => {
@@ -18,13 +18,52 @@ describe("parseMessageLink", () => {
 
 describe("pickBomb", () => {
   test("returns distinct emoji from a known category, capped", () => {
-    const out = pickBomb("positive", 5);
-    expect(out).toHaveLength(5);
-    expect(new Set(out).size).toBe(5);
+    const { emojis, used, unknown } = pickBomb(["positive"], 5);
+    expect(emojis).toHaveLength(5);
+    expect(new Set(emojis).size).toBe(5);
+    expect(used).toEqual(["positive"]);
+    expect(unknown).toEqual([]);
   });
-  test("empty for an unknown category", () => {
-    expect(pickBomb("nope", 5)).toEqual([]);
+
+  test("a bare category name still works", () => {
+    expect(pickBomb("party", 3).emojis).toHaveLength(3);
   });
+
+  test("categories combine into one pool, de-duplicated", () => {
+    const { emojis, used } = pickBomb(["money", "face", "negative"], BOMB_SIZE);
+    expect(used).toEqual(["money", "face", "negative"]);
+    expect(emojis).toHaveLength(BOMB_SIZE);
+    expect(new Set(emojis).size).toBe(BOMB_SIZE); // no emoji twice, even across categories
+  });
+
+  test("unknown names are reported, the known ones still fire", () => {
+    const { emojis, used, unknown } = pickBomb(["face", "nope"], 4);
+    expect(emojis).toHaveLength(4);
+    expect(used).toEqual(["face"]);
+    expect(unknown).toEqual(["nope"]);
+  });
+
+  test("nothing at all for an entirely unknown category", () => {
+    expect(pickBomb(["nope"], 5).emojis).toEqual([]);
+  });
+
+  test("every category can supply a full burst on its own, or says why not", () => {
+    for (const name of EMOJI_CATEGORY_NAMES) {
+      const pool = EMOJI_CATEGORIES[name] ?? [];
+      // drink and money are naturally small; the rest must carry a full bomb
+      const expected = Math.min(BOMB_SIZE, pool.length);
+      expect(pickBomb([name], BOMB_SIZE).emojis).toHaveLength(expected);
+      if (!["drink", "money"].includes(name)) expect(pool.length).toBeGreaterThanOrEqual(BOMB_SIZE);
+    }
+  });
+
+  test("no category repeats an emoji, which Slack would reject as already_reacted", () => {
+    for (const name of EMOJI_CATEGORY_NAMES) {
+      const pool = EMOJI_CATEGORIES[name] ?? [];
+      expect(new Set(pool).size).toBe(pool.length);
+    }
+  });
+
   test("categories are exposed", () => {
     expect(EMOJI_CATEGORY_NAMES).toContain("party");
     expect(EMOJI_CATEGORY_NAMES).toContain("heart");

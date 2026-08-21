@@ -8,6 +8,7 @@ import type { AllowedUser } from "../../src/domain/types.ts";
 import type { LlmPort } from "../../src/application/ports.ts";
 import type { SlackAdminPort, SlackMessage } from "../../src/application/slackAdmin.ts";
 import type { GitHubPort } from "../../src/application/github.ts";
+import { BOMB_SIZE } from "../../src/domain/emoji.ts";
 
 const OWNER = "U0OWNER0001";
 
@@ -319,40 +320,43 @@ describe("dispatchCommand", () => {
     expect(await dispatchCommand(build(), actor(), "C1", "rv")).toContain("Which PR");
   });
 
-  test("br bombs a linked message with reactions", async () => {
+  test("br bombs a linked message with a full burst by default", async () => {
     const deps = build();
     const out = await dispatchCommand(deps, actor(), "C1", `br party ${LINK}`);
     expect(out).toContain("party");
-    expect(slackCalls.reactions.length).toBeGreaterThan(0);
+    expect(slackCalls.reactions).toHaveLength(BOMB_SIZE);
   });
 
-  test("br help lists every category with a taste of each", async () => {
-    const out = await dispatchCommand(build(), actor(), "C1", "br help");
-    expect(out).toContain("`positive`");
-    expect(out).toContain("`negative`");
-    expect(out).toContain(":tada:"); // rendered, not just named
-    expect(out).toContain("No category means *positive*");
-    expect(slackCalls.reactions).toHaveLength(0); // nothing was bombed
+  test("br combines categories and honours a count", async () => {
+    const deps = build();
+    const out = await dispatchCommand(deps, actor(), "C1", `br money,face,negative 9 ${LINK}`);
+    expect(slackCalls.reactions).toHaveLength(9);
+    expect(new Set(slackCalls.reactions).size).toBe(9); // pooled, not repeated
+    expect(out).toContain("money, face, negative");
   });
 
-  test("an unknown category answers with the list", async () => {
-    const out = await dispatchCommand(build(), actor(), "C1", `br notacategory ${LINK}`);
-    expect(out).toContain("Unknown category");
-    expect(out).toContain("`party`");
+  test("br takes the count in either position and never exceeds the cap", async () => {
+    const deps = build();
+    await dispatchCommand(deps, actor(), "C1", `br 4 heart ${LINK}`);
+    expect(slackCalls.reactions).toHaveLength(4);
+
+    const deps2 = build();
+    await dispatchCommand(deps2, actor(), "C1", `br heart 999 ${LINK}`);
+    expect(slackCalls.reactions).toHaveLength(BOMB_SIZE);
   });
 
-  test("a missing link points at the help", async () => {
-    const out = await dispatchCommand(build(), actor(), "C1", "br party");
-    expect(out).toContain("message link");
-    expect(out).toContain("bomb help");
+  test("br defaults to positive when no category is named", async () => {
+    const deps = build();
+    const out = await dispatchCommand(deps, actor(), "C1", `br ${LINK}`);
+    expect(out).toContain("positive");
+    expect(slackCalls.reactions).toHaveLength(BOMB_SIZE);
   });
 
-  test("br rejects an unknown category", async () => {
-    expect(await dispatchCommand(build(), actor(), "C1", `br notacategory ${LINK}`)).toContain("Unknown category");
-  });
-
-  test("br needs a link", async () => {
-    expect(await dispatchCommand(build(), actor(), "C1", "br party")).toContain("message link");
+  test("br fires the known categories and names the unknown one", async () => {
+    const deps = build();
+    const out = await dispatchCommand(deps, actor(), "C1", `br face,nope 5 ${LINK}`);
+    expect(slackCalls.reactions).toHaveLength(5);
+    expect(out).toContain("no such category: nope");
   });
 
   test("jrp drafts and posts a reply to the linked thread", async () => {

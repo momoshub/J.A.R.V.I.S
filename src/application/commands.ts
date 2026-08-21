@@ -13,7 +13,7 @@
 import { buildSystemPrompt, DEFAULT_BOT_NAME } from "../domain/personality.ts";
 import { validateRemoval, validateRoleChange } from "../domain/access.ts";
 import { reviewPrompt } from "../domain/reviewPrompt.ts";
-import { EMOJI_CATEGORY_NAMES, pickBomb, renderCategories } from "../domain/emoji.ts";
+import { BOMB_SIZE, DEFAULT_CATEGORY, parseCategories, pickBomb, renderCategories } from "../domain/emoji.ts";
 import { parseMessageLink } from "../domain/slackLinks.ts";
 import { postedBody } from "../domain/ghCommand.ts";
 import { runWorkflowTurn, WORKFLOW_MIN_ROLE, type WorkflowDeps } from "./workflow.ts";
@@ -59,7 +59,6 @@ export type CommandDeps = {
   ownerSlackId: string;
 };
 
-const REACTION_BOMB_SIZE = 23;
 /** Ceiling for a relayed GitHub body in one Slack message. */
 const RELAYED_BODY_CHARS = 3000;
 const clip = (s: string): string =>
@@ -406,23 +405,39 @@ export const COMMANDS: readonly CommandDef[] = [
     name: "bomb",
     aliases: ["br"],
     minRole: "admin",
-    usage: "[category] <message-link> | help",
-    summary: `reaction-bomb a message (${EMOJI_CATEGORY_NAMES.slice(0, 6).join(", ")}, ...; \`bomb help\` lists all)`,
+    usage: "[categories] [count] <message-link> | help",
+    summary: `reaction-bomb a message (combine categories with commas; \`bomb help\` lists them)`,
     run: async ({ deps, args, prefix }) => {
-      const categoryList = `Categories for \`${prefix} bomb [category] <message-link>\`:\n${renderCategories()}\n\nNo category means *positive*.`;
-      if (/^(help|\?|list|categories)$/i.test(args[0] ?? "") && args.length === 1) return categoryList;
+      const usage = `\`${prefix} bomb [categories] [count] <message-link>\`
+Combine with commas and set a count, e.g. \`${prefix} bomb money,face,negative 9 <link>\`
+Up to ${BOMB_SIZE} reactions; no category means *${DEFAULT_CATEGORY}*.`;
+      if (args.length === 1 && /^(help|\?|list|categories)$/i.test(args[0] ?? "")) {
+        return `${usage}\n\n${renderCategories()}`;
+      }
       if (!deps.slack) return "Slack tools are not available.";
-      // last arg is the link; an optional leading token is the category
+
+      // Last arg is the link; the tokens before it are the category list and an
+      // optional count, in either order - a bare number can only be the count.
       const link = args[args.length - 1] ?? "";
       const ref = parseMessageLink(link.replace(/^<|>$/g, ""));
-      if (!ref) return `Paste a Slack message link: \`${prefix} bomb [category] <message-link>\`\nOr \`${prefix} bomb help\` to see the categories.`;
-      const category = args.length > 1 ? (args[0] ?? "positive").toLowerCase() : "positive";
-      const emojis = pickBomb(category, REACTION_BOMB_SIZE);
-      if (emojis.length === 0) return `Unknown category *${category}*.\n\n${categoryList}`;
+      if (!ref) return `Paste a Slack message link:\n${usage}`;
+
+      let count = BOMB_SIZE;
+      let categories = [DEFAULT_CATEGORY];
+      for (const token of args.slice(0, -1)) {
+        if (/^\d+$/.test(token)) count = Math.min(Math.max(Number(token), 1), BOMB_SIZE);
+        else categories = parseCategories(token);
+      }
+
+      const { emojis, used, unknown } = pickBomb(categories, count);
+      if (emojis.length === 0) {
+        return `No emoji for ${unknown.map((u) => `*${u}*`).join(", ") || "that"}.\n\n${renderCategories()}`;
+      }
       const landed = await deps.slack.addReactions(ref.channel, ref.ts, emojis);
-      return landed > 0
-        ? `💥 dropped ${landed} *${category}* reactions`
-        : "Could not add any reactions (already bombed, or I am not in that channel).";
+      if (landed === 0) return "Could not add any reactions (already bombed, or I am not in that channel).";
+      const skipped = unknown.length > 0 ? ` (no such category: ${unknown.join(", ")})` : "";
+      const short = landed < count ? `, ${count - landed} did not stick` : "";
+      return `💥 dropped ${landed} *${used.join(", ")}* reactions${short}${skipped}`;
     },
   },
   {
