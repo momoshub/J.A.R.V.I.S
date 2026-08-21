@@ -15,7 +15,6 @@ import { annotateMentions, extractMentionIds } from "../../domain/mentions.ts";
 import { createSlackStream, type Streamer } from "./stream.ts";
 
 /** Messages longer than this get a "thinking" step before content streams. */
-const LONG_MESSAGE_CHARS = 40;
 
 export type SlackAppConfig = {
   botToken: string;
@@ -28,6 +27,8 @@ export type SlackAppConfig = {
   thinkingLabel: () => string;
   /** Live label the thinking step flips to once content arrives. */
   thinkingDoneLabel: () => string;
+  /** Silence before a thinking card appears; defaults to THINKING_AFTER_MS. */
+  thinkingAfterMs?: number;
   /** Message command prefix (e.g. "X/ev") and the Slack slash command name. */
   commandPrefix: string;
   slashCommand: string;
@@ -138,14 +139,11 @@ export const createHandler =
         )
       : undefined;
 
-    // For long, streamable, non-command messages, show a thinking step first.
-    if (
-      stream &&
-      deps.llm.stream &&
-      commandLineOf(text, config.commandPrefix) === undefined &&
-      text.trim().length > LONG_MESSAGE_CHARS
-    ) {
-      stream.showThinking(config.thinkingLabel());
+    // Arm a thinking step for streamable, non-command messages. It only appears
+    // if the turn is still silent a few seconds in - how long the answer takes
+    // is the thing worth reassuring about, and message length never predicted it.
+    if (stream && deps.llm.stream && commandLineOf(text, config.commandPrefix) === undefined) {
+      stream.showThinkingAfter(config.thinkingLabel(), config.thinkingAfterMs);
     }
 
     try {

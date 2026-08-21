@@ -58,6 +58,7 @@ const build = (opts: {
   llm: LlmPort;
   streamUpdates: boolean;
   rec?: Recorded;
+  thinkingAfterMs?: number;
 }) => {
   const db = openDatabase(":memory:");
   const users = createUserRepo(db);
@@ -80,6 +81,7 @@ const build = (opts: {
     thinkingDoneLabel: () => "done",
     commandPrefix: "//bot",
     slashCommand: "/bot",
+    thinkingAfterMs: opts.thinkingAfterMs ?? 5,
   };
   const said: { text: string }[] = [];
   const rec = opts.rec ?? { appends: [], stops: 0, stopThrows: false, appendThrows: false };
@@ -141,20 +143,33 @@ describe("createHandler streaming truth table", () => {
     expect(rec.stops).toBe(0);
   });
 
-  test("shows a thinking step for long messages, not short ones", async () => {
-    const long = build({ llm: streamingLlm("ok", [{ type: "text", delta: "ok" }]), streamUpdates: true });
-    await long.handle(long.msg("this is a fairly long message that exceeds forty chars"));
-    const firstTask = long.rec.appends.find((a) => "chunks" in (a as object)) as
-      | { chunks: Array<{ id: string; status: string }> }
-      | undefined;
-    expect(firstTask?.chunks[0]?.id).toBe("__thinking__");
-
-    const short = build({ llm: streamingLlm("ok", [{ type: "text", delta: "ok" }]), streamUpdates: true });
-    await short.handle(short.msg("hi"));
-    const anyThinking = short.rec.appends.some(
+  const thinkingCard = (appends: unknown[]) =>
+    appends.some(
       (a) => "chunks" in (a as object) && (a as { chunks: Array<{ id: string }> }).chunks[0]?.id === "__thinking__",
     );
-    expect(anyThinking).toBe(false);
+
+  test("a quick answer never flashes a thinking step", async () => {
+    const quick = build({
+      llm: streamingLlm("ok", [{ type: "text", delta: "ok" }]),
+      streamUpdates: true,
+      thinkingAfterMs: 1_000, // far longer than this turn takes
+    });
+    await quick.handle(quick.msg("this is a fairly long message that exceeds forty chars"));
+    expect(thinkingCard(quick.rec.appends)).toBe(false);
+  });
+
+  test("a slow turn shows one, however short the message was", async () => {
+    const slow: LlmPort = {
+      complete: async () => "ok",
+      stream: async (_p, sink) => {
+        await new Promise((r) => setTimeout(r, 25));
+        sink({ type: "text", delta: "ok" });
+        return "ok";
+      },
+    };
+    const b = build({ llm: slow, streamUpdates: true, thinkingAfterMs: 1 });
+    await b.handle(b.msg("hi"));
+    expect(thinkingCard(b.rec.appends)).toBe(true);
   });
 
   test("posts an error message when respond throws", async () => {

@@ -8,8 +8,9 @@
  * `!commands`) never open one. Appends are serialised on a promise chain so they
  * never overlap; if any step fails the caller falls back to a plain post.
  *
- * For longer messages the caller can show a "thinking" step first
- * (`showThinking`), which auto-completes as soon as real content arrives.
+ * The caller can arm a "thinking" step (`showThinkingAfter`), which appears only
+ * if the turn is still silent when the delay is up and auto-completes as soon as
+ * real content arrives - so a quick answer never flashes a placeholder.
  */
 import type { TaskUpdateChunk } from "@slack/types";
 import { isHiddenAction } from "../../domain/toolVisibility.ts";
@@ -21,10 +22,18 @@ export type Streamer = {
   stop: (args?: { markdown_text?: string }) => Promise<unknown>;
 };
 
+/** How long a turn may stay silent before a "thinking" card is worth showing. */
+export const THINKING_AFTER_MS = 5_000;
+
 export type SlackStream = {
   sink: LlmStreamSink;
-  /** Show a leading "thinking" task card (id is reserved, auto-completes). */
+  /** Show a leading "thinking" task card now (id is reserved, auto-completes). */
   showThinking: (title: string) => void;
+  /**
+   * Show that card only if nothing has arrived yet after `delayMs`. A turn that
+   * answers quickly never shows one at all.
+   */
+  showThinkingAfter: (title: string, delayMs?: number) => void;
   /** True once the underlying stream has been opened. */
   readonly started: boolean;
   /** Await pending appends and close the stream. False if it broke or showed no content. */
@@ -47,6 +56,13 @@ export const createSlackStream = (
   let thinkingShown = false;
   let thinkingDone = false;
   let contentShown = false;
+  let pending: ReturnType<typeof setTimeout> | undefined;
+
+  const cancelPending = (): void => {
+    if (pending === undefined) return;
+    clearTimeout(pending);
+    pending = undefined;
+  };
 
   const enqueue = (fn: () => Promise<unknown>): void => {
     chain = chain.then(fn).catch((e) => {
@@ -77,10 +93,22 @@ export const createSlackStream = (
     task({ type: "task_update", id: THINKING_ID, title, status: "in_progress" });
   };
 
+  const showThinkingAfter = (title: string, delayMs = THINKING_AFTER_MS) => {
+    cancelPending();
+    pending = setTimeout(() => {
+      pending = undefined;
+      // Content beat the timer, so there is nothing to reassure anyone about.
+      if (!contentShown) showThinking(title);
+    }, delayMs);
+    // Never hold the process open for a placeholder.
+    (pending as { unref?: () => void }).unref?.();
+  };
+
   const sink: LlmStreamSink = (event: LlmStreamEvent) => {
     // Hidden actions (reacting, remembering, anything on the local host) leave no
     // trace here: no card, and they do not count as content or end the thinking step.
     if (event.type === "tool" && isHiddenAction(event.command)) return;
+    cancelPending(); // something arrived, so no placeholder is needed
     completeThinking(); // first real content ends the thinking step
     if (event.type === "text") {
       if (event.delta) {
@@ -103,10 +131,12 @@ export const createSlackStream = (
   return {
     sink,
     showThinking,
+    showThinkingAfter,
     get started() {
       return streamer !== undefined;
     },
     finish: async () => {
+      cancelPending();
       completeThinking();
       try {
         await chain;

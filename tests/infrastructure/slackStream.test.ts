@@ -166,3 +166,54 @@ describe("hidden actions", () => {
   });
 });
 
+describe("delayed thinking card", () => {
+  const mk = () => {
+    const rec: { appends: unknown[] } = { appends: [] };
+    const stream = createSlackStream(() => ({
+      append: async (a) => {
+        rec.appends.push(a);
+      },
+      stop: async () => {},
+    }));
+    return { rec, stream };
+  };
+
+  test("stays hidden when content arrives before the delay is up", async () => {
+    const { rec, stream } = mk();
+    stream.showThinkingAfter("thinking..", 50);
+    stream.sink({ type: "text", delta: "immediate answer" });
+    await new Promise((r) => setTimeout(r, 80)); // let the timer have its chance
+    await stream.finish();
+    expect(rec.appends.some((a) => "chunks" in (a as object))).toBe(false);
+  });
+
+  test("appears once the turn has been silent for the delay", async () => {
+    const { rec, stream } = mk();
+    stream.showThinkingAfter("thinking..", 5);
+    await new Promise((r) => setTimeout(r, 30));
+    expect(rec.appends.some((a) => "chunks" in (a as object))).toBe(true);
+  });
+
+  test("a hidden action does not count as content, so the card still comes", async () => {
+    const { rec, stream } = mk();
+    stream.showThinkingAfter("thinking..", 15);
+    stream.sink({
+      type: "tool",
+      id: "t1",
+      title: "run: curl reactions.add",
+      command: "curl -X POST https://slack.com/api/reactions.add",
+      status: "complete",
+    });
+    await new Promise((r) => setTimeout(r, 40));
+    expect(rec.appends.some((a) => "chunks" in (a as object))).toBe(true);
+  });
+
+  test("finishing cancels a pending card", async () => {
+    const { rec, stream } = mk();
+    stream.showThinkingAfter("thinking..", 20);
+    await stream.finish();
+    await new Promise((r) => setTimeout(r, 40));
+    expect(rec.appends).toHaveLength(0);
+  });
+});
+
