@@ -163,8 +163,9 @@ export const createSlackAdmin = (client: WebClient): SlackAdminPort => {
     postDm: async (userId, text) => {
       const open = (await client.conversations.open({ users: userId })) as { channel?: { id?: string } };
       const channel = open.channel?.id;
-      if (!channel) return;
-      await client.chat.postMessage({ channel, text });
+      if (!channel) return undefined;
+      const posted = (await client.chat.postMessage({ channel, text })) as { ts?: string };
+      return posted.ts ? { channel, ts: posted.ts } : undefined;
     },
 
     addReactions: async (channel, ts, names) => {

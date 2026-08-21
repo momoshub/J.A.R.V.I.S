@@ -111,3 +111,21 @@ export type Workflow = {
   readonly updatedAt: number;
 };
 
+/** Someone the bot does not know yet, waiting on the owner's verdict. */
+export type AccessRequest = {
+  readonly id: number;
+  readonly slackUserId: string;
+  readonly displayName: string;
+  /** Where they spoke, so the answer reaches them there. */
+  readonly channelId: string;
+  readonly threadTs: string;
+  /** What they said, quoted to the owner for context. */
+  readonly asked: string;
+  /** The DM the owner reacts on. */
+  readonly noticeChannel: string;
+  readonly noticeTs: string;
+  readonly status: "pending" | "approved" | "rejected";
+  readonly createdAt: number;
+  readonly decidedAt?: number;
+};
+

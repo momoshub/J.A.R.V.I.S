@@ -34,6 +34,9 @@ export type HistoryPage = {
   nextCursor?: string;
 };
 
+/** Where a posted message ended up. */
+export type PostedRef = { channel: string; ts: string };
+
 export type SlackAdminPort = {
   /** Conversations the bot is a member of (joined channels, DMs, groups), recent first. */
   listConversations: () => Promise<SlackConversation[]>;
@@ -50,8 +53,11 @@ export type SlackAdminPort = {
   remove: (channel: string, ts: string) => Promise<void>;
   /** Post a message, optionally into a thread. */
   post: (channel: string, text: string, threadTs?: string) => Promise<void>;
-  /** Open (or reuse) a DM with a user and post a message there. */
-  postDm: (userId: string, text: string) => Promise<void>;
+  /**
+   * Open (or reuse) a DM with a user and post there. Returns where it landed,
+   * so a message can later be found again - matching a reaction to it, say.
+   */
+  postDm: (userId: string, text: string) => Promise<PostedRef | undefined>;
   /** Add reactions to a message (tolerant of already-reacted / invalid names). Returns how many landed. */
   addReactions: (channel: string, ts: string, names: readonly string[]) => Promise<number>;
   /** Resolve Slack display names for a set of user ids (cached, best-effort). */

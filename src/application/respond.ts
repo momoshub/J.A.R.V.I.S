@@ -8,6 +8,7 @@ import { decideAccess } from "../domain/access.ts";
 import { cleanInboundText } from "../domain/conversation.ts";
 import { commandLineOf, dispatchCommand, notifiesOwner } from "./commands.ts";
 import { runWorkflowTurn, WORKFLOW_MIN_ROLE } from "./workflow.ts";
+import { requestAccess } from "./accessRequests.ts";
 import type { UserRole } from "../domain/types.ts";
 import { handleMessage, type HandleMessageDeps, type HandleResult, type InboundMessage } from "./handleMessage.ts";
 import type { LlmStreamSink } from "./ports.ts";
@@ -41,7 +42,20 @@ export const respond = async (
   }
 
   const decision = decideAccess(inbound.slackUserId, deps.ownerSlackId, deps.users.get);
-  if (!decision.allowed) return { kind: "denied", text: decision.reason };
+  if (!decision.allowed) {
+    const text = await requestAccess(
+      deps,
+      {
+        slackUserId: inbound.slackUserId,
+        displayName: inbound.displayName,
+        channelId: inbound.channelId,
+        threadTs: inbound.threadTs,
+        text: inbound.text,
+      },
+      decision.reason,
+    );
+    return { kind: "denied", text };
+  }
 
   // Make sure the actor exists so role checks resolve (owner auto-provisions).
   if (!deps.users.get(decision.user.slackId)) {

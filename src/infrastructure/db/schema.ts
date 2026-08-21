@@ -77,6 +77,42 @@ export const migrate = (db: Database): void => {
   migrateSlackTs(db);
   migrateThreadTs(db);
   migrateWorkflows(db);
+  migrateAccessRequests(db);
+};
+
+/**
+ * Migration v6: pending access requests.
+ *
+ * Someone the bot does not know is not turned away any more - the owner is
+ * asked. `notice_ts` is the DM the owner reacts on, which is how a reaction
+ * finds its way back to the person who is waiting.
+ */
+const migrateAccessRequests = (db: Database): void => {
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS access_requests (
+      id            INTEGER PRIMARY KEY AUTOINCREMENT,
+      slack_user_id TEXT NOT NULL,
+      display_name  TEXT NOT NULL DEFAULT '',
+      channel_id    TEXT NOT NULL,
+      thread_ts     TEXT NOT NULL DEFAULT '',
+      asked         TEXT NOT NULL DEFAULT '',
+      notice_channel TEXT NOT NULL DEFAULT '',
+      notice_ts     TEXT NOT NULL DEFAULT '',
+      status        TEXT NOT NULL DEFAULT 'pending',
+      created_at    INTEGER NOT NULL,
+      decided_at    INTEGER
+    );
+  `);
+  // One open request per person; decided ones stay for the record.
+  db.exec(`
+    CREATE UNIQUE INDEX IF NOT EXISTS idx_access_requests_pending
+      ON access_requests (slack_user_id) WHERE status = 'pending';
+  `);
+  db.exec(`
+    CREATE INDEX IF NOT EXISTS idx_access_requests_notice
+      ON access_requests (notice_channel, notice_ts);
+  `);
+  db.exec("PRAGMA user_version = 6;");
 };
 
 /**

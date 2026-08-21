@@ -10,6 +10,7 @@
 import { App } from "@slack/bolt";
 import type { WebClient } from "@slack/web-api";
 import { respond, type RespondDeps } from "../../application/respond.ts";
+import { decideAccessRequest } from "../../application/accessRequests.ts";
 import { commandLineOf } from "../../application/commands.ts";
 import { annotateMentions, extractMentionIds } from "../../domain/mentions.ts";
 import { createSlackStream, type Streamer } from "./stream.ts";
@@ -199,6 +200,29 @@ export const createSlackApp = (config: SlackAppConfig, deps: Deps) => {
       client: asClient(client),
       say: say as Incoming["say"],
     });
+  });
+
+  // The owner reacting on an access-request notice decides it.
+  app.event("reaction_added", async ({ event }) => {
+    const e = event as {
+      user?: string;
+      reaction?: string;
+      item?: { type?: string; channel?: string; ts?: string };
+    };
+    if (!e.user || !e.reaction || e.item?.type !== "message" || !e.item.channel || !e.item.ts) return;
+    try {
+      const outcome = await decideAccessRequest(deps, {
+        slackUserId: e.user,
+        reaction: e.reaction,
+        channel: e.item.channel,
+        ts: e.item.ts,
+      });
+      if (outcome.kind !== "ignored") {
+        log(`access ${outcome.kind} for ${outcome.request.slackUserId}`);
+      }
+    } catch (err) {
+      log(`access request failed: ${err instanceof Error ? err.message : String(err)}`);
+    }
   });
 
   // Direct messages -> reply inline. Ignore bot echoes and non-DM channels.

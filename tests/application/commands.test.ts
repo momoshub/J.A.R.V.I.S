@@ -66,6 +66,7 @@ const fakeSlack = (calls: SlackCalls, thread: SlackMessage[] = []): SlackAdminPo
   },
   postDm: async (userId, text) => {
     calls.posts.push({ channel: userId, text });
+    return { channel: userId, ts: `dm-${calls.posts.length}` };
   },
   addReactions: async (_c, _ts, names) => {
     calls.reactions.push(...names);

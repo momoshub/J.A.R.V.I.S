@@ -16,6 +16,7 @@ import { createMessageRepo } from "./infrastructure/db/messageRepo.ts";
 import { createLearningsRepo } from "./infrastructure/db/learningsRepo.ts";
 import { createCommandLogRepo } from "./infrastructure/db/commandLogRepo.ts";
 import { createWorkflowRepo } from "./infrastructure/db/workflowRepo.ts";
+import { createAccessRequestRepo } from "./infrastructure/db/accessRequestRepo.ts";
 import { createSettingsRepo, SETTING_KEYS } from "./infrastructure/db/settingsRepo.ts";
 import { loadBotProfile } from "./application/botProfile.ts";
 import { seedOwner } from "./infrastructure/db/seed.ts";
@@ -71,6 +72,7 @@ const main = async () => {
   // failed commands additionally land in errors.log.
   const activity = createActivityLog(config.logDir);
   const workflows = createWorkflowRepo(db);
+  const accessRequests = createAccessRequestRepo(db);
   const baseCommandLog = createCommandLogRepo(db);
   const commandLog: CommandLogRepo = {
     ...baseCommandLog,
@@ -156,6 +158,8 @@ const main = async () => {
     github: createGhCli(),
     // Long tasks driven from a thread, each holding its own CLI session.
     workflows,
+    // A stranger is put to the owner for a ✅ / ❌ rather than refused outright.
+    accessRequests,
     reactScript,
     draft,
     toolPolicy,

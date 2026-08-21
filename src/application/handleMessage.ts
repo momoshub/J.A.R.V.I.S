@@ -22,6 +22,8 @@ import type { UserRepo } from "../infrastructure/db/userRepo.ts";
 import type { LearningsRepo } from "../infrastructure/db/learningsRepo.ts";
 import type { CommandLogRepo } from "../infrastructure/db/commandLogRepo.ts";
 import type { WorkflowRepo } from "../infrastructure/db/workflowRepo.ts";
+import type { AccessRequestRepo } from "../infrastructure/db/accessRequestRepo.ts";
+import { requestAccess } from "./accessRequests.ts";
 import type { SlackAdminPort, SlackMessage } from "./slackAdmin.ts";
 import type { GitHubPort } from "./github.ts";
 import type { DraftReply } from "./draftReply.ts";
@@ -55,6 +57,8 @@ export type HandleMessageDeps = {
   reactScript?: string;
   /** Long-running workflow sessions bound to a thread. */
   workflows?: WorkflowRepo;
+  /** Pending access requests, so a stranger is put to the owner rather than refused. */
+  accessRequests?: AccessRequestRepo;
   /** Fresh CLI session id for a new workflow; injected for deterministic tests. */
   newSessionId?: () => string;
   /** Local endpoint the bot can POST a learning to, if the listener may teach. */
@@ -95,7 +99,21 @@ export const handleMessage = async (
   if (!hasContent(text)) return { kind: "ignored" };
 
   const decision = decideAccess(inbound.slackUserId, deps.ownerSlackId, deps.users.get);
-  if (!decision.allowed) return { kind: "denied", text: decision.reason };
+  if (!decision.allowed) {
+    // Ask the owner rather than turning them away.
+    const asked = await requestAccess(
+      deps,
+      {
+        slackUserId: inbound.slackUserId,
+        displayName: inbound.displayName,
+        channelId: inbound.channelId,
+        threadTs: inbound.threadTs,
+        text,
+      },
+      decision.reason,
+    );
+    return { kind: "denied", text: asked };
+  }
 
   // Keep the allowlist's view of who this is current (owner is auto-provisioned).
   ensureUserRecord(deps, decision.user.slackId, decision.user.role, inbound.displayName);

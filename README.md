@@ -63,7 +63,7 @@ Env values for identity only **bootstrap a fresh database**. Once set, the DB va
 bun start        # or: bun dev  (watch mode)
 ```
 
-The Slack app needs Socket Mode plus the `app_mention` and `message.im` event subscriptions and the `chat:write`, `app_mentions:read`, `im:history`, `users:read` scopes. Live streaming uses `chat.startStream`; if your app lacks that capability the bot falls back to a single post automatically.
+The Slack app needs Socket Mode plus the `app_mention`, `message.im` and `reaction_added` event subscriptions and the `chat:write`, `app_mentions:read`, `im:history`, `users:read`, `reactions:read`, `reactions:write` scopes. (`reaction_added` + `reactions:read` are what let the owner approve an access request with ✅; `reactions:write` is the bot reacting.) Live streaming uses `chat.startStream`; if your app lacks that capability the bot falls back to a single post automatically.
 
 The **Console** tab additionally needs read scopes to list and open conversations: `channels:read`, `groups:read`, `im:read`, `mpim:read` and the matching history scopes `channels:history`, `groups:history`, `mpim:history` (DM history is covered by `im:history`). Without them the Console shows a `missing_scope` error but the rest of the dashboard works.
 
@@ -73,6 +73,7 @@ The **Console** tab additionally needs read scopes to list and open conversation
 - It replies in-thread, streaming the answer live, with tool calls shown as a task timeline
 - Long messages show a configurable "thinking" step first
 - It only answers allowlisted users; the owner is always allowed
+- Someone it does not know is not turned away: the owner gets a DM with who spoke and what they said, and decides with a reaction - ✅ adds them as `pal`, ❌ declines. Either way the person is answered where they asked
 - It tags people with their Slack `<@id>` when they are in the conversation
 - For workspace questions it uses its own bot token and the Slack Web API, never a third-party connector
 
