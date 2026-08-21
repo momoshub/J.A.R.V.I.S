@@ -140,10 +140,12 @@ Each allowlisted user has a role that scopes what the brain may do when they tal
 | --- | --- |
 | `owner` | full control, cannot be removed |
 | `admin` | full tool access (real shell, writes), manages users |
-| `pal` | sandboxed read-only tools in a fixed scratch dir (gh/git/aws read-only, datadog/notion read, web search), and may use `review` |
+| `pal` | sandboxed read-only tools in a fixed scratch dir: GitHub read (`gh pr/issue/repo/run/release/api`, plus the GitHub MCP), Notion read (search/fetch/comments), web search + fetch, git/aws read-only. May use `review`, and may react |
 | `executer` | sandboxed, tools assigned from the dashboard (Users -> Executer tools) |
 
 Sandboxed roles run the Claude CLI without `--dangerously-skip-permissions`, with an explicit `--allowedTools` allow-list, so anything off the list is denied (verified: `pal` cannot write files). The `executer` allow-list is edited on the Users page.
+
+**Reacting** is granted to every role, including sandboxed ones, via `bin/slack-react.sh` - a helper that can only reach `reactions.add`. Sandboxed roles deliberately do *not* get a general `curl`: the bot's token is in the CLI's environment, so an arbitrary outbound request would be a way to send it somewhere.
 
 ## Dashboard
 

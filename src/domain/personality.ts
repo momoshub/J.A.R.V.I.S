@@ -49,8 +49,12 @@ export const WORKSPACE_NOTE = `Your workspace:
  * to use them: a bot that reacts reads as present in the conversation. The one
  * hard line is that a reaction never stands in for the reply itself.
  */
-export const reactionRules = (channelId: string, reactable: readonly Reactable[]): string => {
-  if (!channelId || reactable.length === 0) return "";
+export const reactionRules = (
+  channelId: string,
+  reactable: readonly Reactable[],
+  reactScript?: string,
+): string => {
+  if (!channelId || reactable.length === 0 || !reactScript) return "";
   const lines = reactable
     .map((r) => `- ts ${r.ts} - from <@${r.speakerId}>: "${r.excerpt}"`)
     .join("\n");
@@ -59,8 +63,8 @@ export const reactionRules = (channelId: string, reactable: readonly Reactable[]
 Reacting with emoji (your call, and lean towards yes):
 - React often. Agreeing, appreciating, laughing along, teasing back, marking that you have handled something - if a message gives you any excuse to react, take it. Several emoji on one message are good when the moment carries it, and reacting to more than one message in the conversation is fine too.
 - The one rule: a reaction never replaces the reply. React AND answer - never react instead of answering, and never react to dodge a question.
-- You react yourself, with your own bot token, one call per emoji (name without colons):
-  curl -s -X POST -H "Authorization: Bearer $SLACK_BOT_TOKEN" -d "channel=${channelId}&timestamp=<ts>&name=<emoji>" https://slack.com/api/reactions.add
+- You react yourself, one call for however many emoji you want (names without colons):
+  ${reactScript} ${channelId} <ts> <emoji> [emoji...]
 - Do it quietly: never announce, describe or list the reactions you added, and never ask permission first. If a call fails (already_reacted, invalid_name), drop it and move on.
 - Only these messages can be reacted to, newest last:
 ${lines}`;
@@ -95,6 +99,8 @@ export type BuildSystemPromptOptions = PromptContext & {
   readonly channelId?: string;
   /** earlier messages the bot may react to */
   readonly reactable?: readonly Reactable[];
+  /** absolute path of the reaction helper; without it, reacting is not offered */
+  readonly reactScript?: string;
   /** endpoint for saving a learning; empty unless the listener may teach */
   readonly learnUrl?: string;
 };
@@ -125,7 +131,7 @@ export const buildSystemPrompt = (options: Partial<BuildSystemPromptOptions> = {
     : "";
 
   const roster = renderParticipants(options.participants ?? []);
-  const reactions = reactionRules(options.channelId ?? "", options.reactable ?? []);
+  const reactions = reactionRules(options.channelId ?? "", options.reactable ?? [], options.reactScript);
   const remembering = learningRules(options.learnUrl ?? "");
 
   return `${base}${learningsBlock}${addressed}${roster}\n\n${OPERATING_RULES}${reactions}${remembering}\n\n${WORKSPACE_NOTE}\n\n${identityLock(botName)}`;

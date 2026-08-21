@@ -111,10 +111,14 @@ const main = async () => {
   // roles (pal/executer) run in a separate fixed scratch dir.
   const fullCwd = ensureDir(config.claudeCwd ?? join(tmpdir(), "bot-agent-workspace"));
   const sandboxCwd = ensureDir(join(tmpdir(), "bot-sandbox-workspace"));
+  // Every role may react, through a helper that can only reach reactions.add -
+  // a general `curl` in a sandbox would be an outbound channel for the token.
+  const reactScript = join(import.meta.dir, "..", "bin", "slack-react.sh");
   const toolPolicy = (role: Parameters<typeof toolPolicyFor>[0]) =>
     toolPolicyFor(role, {
       fullCwd,
       sandboxCwd,
+      reactScript,
       executerTools: (settings.get(SETTING_KEYS.executerTools) ?? "")
         .split(/[,\n]/)
         .map((s) => s.trim())
@@ -152,6 +156,7 @@ const main = async () => {
     github: createGhCli(),
     // Long tasks driven from a thread, each holding its own CLI session.
     workflows,
+    reactScript,
     draft,
     toolPolicy,
     // The dashboard API is loopback-only, so the brain can save a learning the

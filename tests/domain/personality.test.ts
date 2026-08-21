@@ -90,28 +90,34 @@ describe("buildSystemPrompt", () => {
   test("offers reactions with the channel and the messages that can take them", () => {
     const p = buildSystemPrompt({
       channelId: "C1",
+      reactScript: "/bin/react.sh",
       reactable: [
         { ts: "1.1", speakerId: "U1", excerpt: "shipped it" },
         { ts: "2.2", speakerId: "U2", excerpt: "nice one" },
       ],
     });
     expect(p).toContain("Reacting with emoji (your call, and lean towards yes)");
-    expect(p).toContain("channel=C1&timestamp=<ts>&name=<emoji>");
+    expect(p).toContain("/bin/react.sh C1 <ts> <emoji>");
     expect(p).toContain('- ts 1.1 - from <@U1>: "shipped it"');
     expect(p).toContain('- ts 2.2 - from <@U2>: "nice one"');
     expect(p).toContain("Several emoji on one message are good");
   });
 
   test("reactions are encouraged, silent, and never a substitute for replying", () => {
-    const p = buildSystemPrompt({ channelId: "C1", reactable: [{ ts: "1.1", speakerId: "U1", excerpt: "hi" }] });
+    const p = buildSystemPrompt({ channelId: "C1", reactScript: "/bin/react.sh", reactable: [{ ts: "1.1", speakerId: "U1", excerpt: "hi" }] });
     expect(p).toContain("React often");
     expect(p).toContain("lean towards yes");
     expect(p).toContain("a reaction never replaces the reply");
     expect(p).toContain("never announce, describe or list the reactions you added");
   });
 
-  test("no reaction block without a channel or without anything to react to", () => {
-    expect(buildSystemPrompt({ channelId: "C1", reactable: [] })).not.toContain("Reacting with emoji");
+  test("no reaction block without a channel, a target, or the helper", () => {
+    expect(buildSystemPrompt({ channelId: "C1", reactScript: "/bin/react.sh", reactable: [] })).not.toContain(
+      "Reacting with emoji",
+    );
+    expect(
+      buildSystemPrompt({ channelId: "C1", reactable: [{ ts: "1.1", speakerId: "U1", excerpt: "hi" }] }),
+    ).not.toContain("Reacting with emoji"); // no helper, no offer
     expect(buildSystemPrompt({ reactable: [{ ts: "1.1", speakerId: "U1", excerpt: "hi" }] })).not.toContain(
       "Reacting with emoji",
     );

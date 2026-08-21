@@ -19,11 +19,31 @@ export type ToolPolicy = {
   timeoutMs?: number;
 };
 
-/** Read-only default allow-list: context tools + safe read commands + web. */
+/**
+ * Read-only default allow-list: context tools, safe read commands, the web, and
+ * read-only MCP connectors.
+ *
+ * MCP names depend on what the CLI's own config exposes; entries for servers
+ * that are not connected are simply inert, so listing them costs nothing.
+ */
 export const PAL_TOOLS: readonly string[] = [
-  "Read", "Grep", "Glob", "LS", "WebSearch", "WebFetch", "TodoWrite",
+  "Read", "Grep", "Glob", "LS", "TodoWrite",
+  // the web
+  "WebSearch", "WebFetch",
+  // github, read only
   "Bash(gh pr view:*)", "Bash(gh pr diff:*)", "Bash(gh pr checks:*)", "Bash(gh pr list:*)",
+  "Bash(gh issue view:*)", "Bash(gh issue list:*)",
+  "Bash(gh repo view:*)", "Bash(gh release view:*)", "Bash(gh release list:*)",
+  "Bash(gh run view:*)", "Bash(gh run list:*)", "Bash(gh workflow list:*)",
   "Bash(gh search:*)", "Bash(gh api:*)",
+  "mcp__claude_ai_Github_MCP", "mcp__github",
+  // notion, read only
+  "mcp__claude_ai_Notion__notion-search", "mcp__claude_ai_Notion__notion-fetch",
+  "mcp__claude_ai_Notion__notion-get-comments", "mcp__claude_ai_Notion__notion-get-users",
+  "mcp__claude_ai_Notion__notion-query-data-sources",
+  "mcp__claude_ai_Notion__notion-list-recent-pages", "mcp__claude_ai_Notion__notion-list-shared-pages",
+  "mcp__notion__notion-search", "mcp__notion__notion-fetch",
+  // git, read only
   "Bash(git log:*)", "Bash(git show:*)", "Bash(git diff:*)", "Bash(git status:*)",
   "Bash(git branch:*)", "Bash(git blame:*)", "Bash(git grep:*)",
   "Bash(aws:*)",
@@ -42,7 +62,17 @@ export type ToolPolicyOptions = {
   readonly sandboxCwd?: string;
   /** tool allow-list for the executer role, assigned from the control deck. */
   readonly executerTools?: readonly string[];
+  /**
+   * Absolute path of the reaction helper. Sandboxed roles get exactly this
+   * script rather than a general `curl`, so the bot can react in every
+   * conversation without handing anyone an outbound request with its token.
+   */
+  readonly reactScript?: string;
 };
+
+/** Reacting is granted to every role, including the assigned executer list. */
+const withReactions = (tools: readonly string[], reactScript?: string): readonly string[] =>
+  reactScript ? [...tools, `Bash(${reactScript}:*)`] : tools;
 
 export const toolPolicyFor = (role: UserRole, opts: ToolPolicyOptions): ToolPolicy => {
   switch (role) {
@@ -53,7 +83,10 @@ export const toolPolicyFor = (role: UserRole, opts: ToolPolicyOptions): ToolPoli
       return {
         skipPermissions: false,
         cwd: opts.sandboxCwd,
-        allowedTools: opts.executerTools && opts.executerTools.length > 0 ? opts.executerTools : PAL_TOOLS,
+        allowedTools: withReactions(
+          opts.executerTools && opts.executerTools.length > 0 ? opts.executerTools : PAL_TOOLS,
+          opts.reactScript,
+        ),
         disallowedTools: SANDBOX_DISALLOW,
       };
     case "pal":
@@ -61,7 +94,7 @@ export const toolPolicyFor = (role: UserRole, opts: ToolPolicyOptions): ToolPoli
       return {
         skipPermissions: false,
         cwd: opts.sandboxCwd,
-        allowedTools: PAL_TOOLS,
+        allowedTools: withReactions(PAL_TOOLS, opts.reactScript),
         disallowedTools: SANDBOX_DISALLOW,
       };
   }

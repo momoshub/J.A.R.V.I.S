@@ -182,6 +182,7 @@ describe("handleMessage", () => {
   test("remembers the Slack ts and offers earlier messages as reaction targets", async () => {
     let system = "";
     const deps = build(fakeLlm("sure thing", (_m, s) => (system = s)));
+    deps.reactScript = "/bin/react.sh";
 
     await handleMessage(deps, {
       channelId: "C1",
@@ -201,7 +202,7 @@ describe("handleMessage", () => {
 
     // the second turn's prompt can point at both, in this channel
     expect(system).toContain("Reacting with emoji (your call, and lean towards yes)");
-    expect(system).toContain("channel=C1&timestamp=<ts>&name=<emoji>");
+    expect(system).toContain("/bin/react.sh C1 <ts> <emoji>");
     expect(system).toContain("ts 1787241529.047069");
     expect(system).toContain("ts 1787241600.111222");
   });
@@ -265,6 +266,7 @@ describe("handleMessage", () => {
   test("reaction targets come from this thread only", async () => {
     let system = "";
     const deps = build(fakeLlm("ok", (_m, s) => (system = s)));
+    deps.reactScript = "/bin/react.sh";
     await handleMessage(deps, {
       channelId: "D1",
       slackUserId: OWNER,

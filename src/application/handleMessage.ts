@@ -51,6 +51,8 @@ export type HandleMessageDeps = {
   draft?: DraftReply;
   /** Per-role CLI tool policy (sandbox/allow-list) applied to the chat brain. */
   toolPolicy?: (role: UserRole) => ToolPolicy;
+  /** Absolute path of the reaction helper, granted to every role. */
+  reactScript?: string;
   /** Long-running workflow sessions bound to a thread. */
   workflows?: WorkflowRepo;
   /** Fresh CLI session id for a new workflow; injected for deterministic tests. */
@@ -129,6 +131,7 @@ export const handleMessage = async (
     // Lets the bot react to earlier messages with its own token, if it wants to.
     channelId: inbound.channelId,
     reactable: reactableMessages(history),
+    reactScript: deps.reactScript,
     // ... and keep a durable fact, but only when talking to someone who could
     // have taught it one by hand. Learnings apply to everyone, everywhere.
     learnUrl: canTeach(decision.user.role) ? deps.learnUrl : undefined,
