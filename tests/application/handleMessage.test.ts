@@ -24,6 +24,8 @@ const noopSlack: SlackAdminPort = {
   remove: async () => {},
   post: async () => {},
   postDm: async () => undefined,
+  postDmInteractive: async () => undefined,
+  settleInteractive: async () => {},
   addReactions: async () => 0,
   resolveNames: async () => ({}),
 };

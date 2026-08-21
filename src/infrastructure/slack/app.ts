@@ -11,7 +11,8 @@ import { App } from "@slack/bolt";
 import type { WebClient } from "@slack/web-api";
 import { respond, type RespondDeps } from "../../application/respond.ts";
 import { decideAccessRequest } from "../../application/accessRequests.ts";
-import { commandLineOf } from "../../application/commands.ts";
+import { APPROVE_ACTION, decideCommandApproval, REJECT_ACTION } from "../../application/commandLimits.ts";
+import { commandLineOf, dispatchCommand } from "../../application/commands.ts";
 import { annotateMentions, extractMentionIds } from "../../domain/mentions.ts";
 import { createSlackStream, type Streamer } from "./stream.ts";
 
@@ -86,6 +87,13 @@ type SlashArgs = {
   command: { channel_id: string; user_id: string; user_name?: string; text?: string };
   ack: () => Promise<unknown>;
   respond: (msg: { response_type?: "ephemeral" | "in_channel"; text: string }) => Promise<unknown>;
+};
+
+/** The slice of Bolt's action payload we use (kept minimal for testing). */
+export type ApprovalArgs = {
+  ack: () => Promise<unknown>;
+  body: { user?: { id?: string }; channel?: { id?: string }; message?: { ts?: string } };
+  action: { action_id?: string; value?: string };
 };
 
 export type Incoming = {
@@ -201,6 +209,43 @@ export const createSlackApp = (config: SlackAppConfig, deps: Deps) => {
       say: say as Incoming["say"],
     });
   });
+
+  // Approve / Reject on a held command. Only owner and admin get anywhere.
+  const onApprovalButton = async ({ ack, body, action }: ApprovalArgs) => {
+    await ack();
+    const clicked = body.user?.id;
+    const value = action?.value;
+    if (!clicked || !value) return;
+    try {
+      const outcome = await decideCommandApproval(
+        deps,
+        { slackUserId: clicked, actionId: action.action_id ?? "", value },
+        ({ actor, line, channelId, threadTs }) =>
+          dispatchCommand(deps, actor, channelId, line, {
+            prefix: config.commandPrefix,
+            slash: config.slashCommand,
+            threadTs,
+            preApproved: true,
+            reply: deps.slack ? (text: string) => deps.slack!.post(channelId, text, threadTs) : undefined,
+          }),
+      );
+      log(`command approval ${outcome.kind}`);
+      // Settle the notice so a decided request cannot be clicked again.
+      const settled =
+        outcome.kind === "approved"
+          ? `✅ approved - <@${outcome.requester}> ran \`${outcome.line}\``
+          : outcome.kind === "rejected"
+            ? `❌ rejected <@${outcome.requester}>'s command`
+            : undefined;
+      if (settled && body.channel?.id && body.message?.ts) {
+        await deps.slack?.settleInteractive(body.channel.id, body.message.ts, settled).catch(() => undefined);
+      }
+    } catch (err) {
+      log(`command approval failed: ${err instanceof Error ? err.message : String(err)}`);
+    }
+  };
+  app.action({ action_id: APPROVE_ACTION }, onApprovalButton as never);
+  app.action({ action_id: REJECT_ACTION }, onApprovalButton as never);
 
   // The owner reacting on an access-request notice decides it.
   app.event("reaction_added", async ({ event }) => {

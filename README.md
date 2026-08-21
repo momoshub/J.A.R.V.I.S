@@ -102,6 +102,7 @@ Every command has two interfaces - use whichever you like. Both triggers are con
 | `reply <message-link>` (alias `jrp`) | admins | draft and post an AI reply to a message |
 | `rm-msg <message-link>` (aliases `rmmsg`, `unsend`) | admins | delete a message the bot posted (a bot token cannot delete anyone else's) |
 | `workflow <task>` / `workflow stop` / `workflow status` (alias `wf`) | executers+ | start a long task in this thread and keep talking to it (see [Workflows](#workflows)) |
+| `limit [@user] [n\|default]` (alias `quota`) | anyone (setting: admins) | show command allowance; admins set someone's |
 | `promote @user` / `demote @user` | owner | change role |
 
 A slash command is invisible to everyone but its caller, so the **owner gets a copy in their DM** - one thread per run: a header saying who ran what, with the progress and result threaded under it. Trivial commands (`help`, `ping`, `whoami`, `model`) are not copied, and the owner is never copied on their own.
@@ -138,6 +139,31 @@ it got to; `workflow stop` ends it and the thread goes back to normal chat.
 
 Because it lives in a thread, start it with the message form (`//bot workflow ...`)
 rather than the slash command - a slash command has no thread to bind to.
+
+## Command allowance
+
+A `pal` may run **10 commands per rolling 4 hours**. Past that a command is not
+refused - it is parked, and the owner gets a DM with **Approve** / **Reject**
+buttons naming who asked and what for. Approving runs it *as the requester*, so
+approving grants that one command and not the approver's authority; rejecting
+says so in the thread they asked in. Only `owner` and `admin` can press the
+buttons, a decided request cannot be clicked again, and the buttons are replaced
+with the outcome once it is settled.
+
+Trivial commands (`help`, `ping`, `whoami`, `model`) never count. Higher roles
+are not counted at all - they already have the shell.
+
+Admins can give someone their own allowance:
+
+```
+//bot limit @robin 25         25 commands per 4h
+//bot limit @robin 0          every command needs approval
+//bot limit @robin default    back to the default
+//bot limit                  your own standing
+```
+
+Interactive buttons need the Slack app's **Interactivity** switched on (Socket
+Mode needs no request URL).
 
 ## Roles & tool access
 

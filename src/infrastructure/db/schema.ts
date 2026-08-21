@@ -78,6 +78,35 @@ export const migrate = (db: Database): void => {
   migrateThreadTs(db);
   migrateWorkflows(db);
   migrateAccessRequests(db);
+  migrateCommandApprovals(db);
+};
+
+/**
+ * Migration v7: commands held for approval.
+ *
+ * A rate-limited role does not simply get refused - the command is parked here
+ * and the owner is asked. `notice_ts` is the message carrying the buttons, so a
+ * click finds its way back to what it was approving.
+ */
+const migrateCommandApprovals = (db: Database): void => {
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS command_approvals (
+      id             INTEGER PRIMARY KEY AUTOINCREMENT,
+      slack_user_id  TEXT NOT NULL,
+      display_name   TEXT NOT NULL DEFAULT '',
+      channel_id     TEXT NOT NULL,
+      thread_ts      TEXT NOT NULL DEFAULT '',
+      line           TEXT NOT NULL,
+      notice_channel TEXT NOT NULL DEFAULT '',
+      notice_ts      TEXT NOT NULL DEFAULT '',
+      status         TEXT NOT NULL DEFAULT 'pending',
+      decided_by     TEXT NOT NULL DEFAULT '',
+      created_at     INTEGER NOT NULL,
+      decided_at     INTEGER
+    );
+  `);
+  db.exec("CREATE INDEX IF NOT EXISTS idx_command_approvals_status ON command_approvals (status, id DESC);");
+  db.exec("PRAGMA user_version = 7;");
 };
 
 /**

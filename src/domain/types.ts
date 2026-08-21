@@ -129,3 +129,20 @@ export type AccessRequest = {
   readonly decidedAt?: number;
 };
 
+/** A command held until someone with authority approves it. */
+export type CommandApproval = {
+  readonly id: number;
+  readonly slackUserId: string;
+  readonly displayName: string;
+  readonly channelId: string;
+  readonly threadTs: string;
+  /** The command line as it would have been typed. */
+  readonly line: string;
+  readonly noticeChannel: string;
+  readonly noticeTs: string;
+  readonly status: "pending" | "approved" | "rejected";
+  readonly decidedBy?: string;
+  readonly createdAt: number;
+  readonly decidedAt?: number;
+};
+

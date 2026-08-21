@@ -49,6 +49,8 @@ type SlackCalls = {
   posts: { channel: string; text: string; threadTs?: string }[];
   reactions: string[];
   removed: { channel: string; ts: string }[];
+  buttons: string[];
+  settled: { channel: string; ts: string; text: string }[];
   removeError?: Error;
 };
 
@@ -67,6 +69,14 @@ const fakeSlack = (calls: SlackCalls, thread: SlackMessage[] = []): SlackAdminPo
   postDm: async (userId, text) => {
     calls.posts.push({ channel: userId, text });
     return { channel: userId, ts: `dm-${calls.posts.length}` };
+  },
+  postDmInteractive: async (userId, text, actions) => {
+    calls.posts.push({ channel: userId, text });
+    calls.buttons.push(...actions.map((a) => `${a.actionId}:${a.value}`));
+    return { channel: userId, ts: `notice-${calls.posts.length}` };
+  },
+  settleInteractive: async (channel, ts, text) => {
+    calls.settled.push({ channel, ts, text });
   },
   addReactions: async (_c, _ts, names) => {
     calls.reactions.push(...names);
@@ -89,7 +99,7 @@ const threadMsg = (text: string): SlackMessage => ({
 
 const build = (thread: SlackMessage[] = [threadMsg("hi there")]): CommandDeps => {
   db = openDatabase(":memory:");
-  slackCalls = { posts: [], reactions: [], removed: [] };
+  slackCalls = { posts: [], reactions: [], removed: [], buttons: [], settled: [] };
   return {
     users: createUserRepo(db),
     messages: createMessageRepo(db),

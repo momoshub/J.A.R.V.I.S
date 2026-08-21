@@ -17,6 +17,7 @@ import { BOMB_SIZE, DEFAULT_CATEGORY, parseCategories, pickBomb, renderCategorie
 import { parseMessageLink } from "../domain/slackLinks.ts";
 import { postedBody } from "../domain/ghCommand.ts";
 import { runWorkflowTurn, WORKFLOW_MIN_ROLE, type WorkflowDeps } from "./workflow.ts";
+import { allowanceFor, holdForApproval, limitFor, PAL_WINDOW_MS, setLimit, type CommandLimitDeps } from "./commandLimits.ts";
 import type { AllowedUser, PromptContext, UserRole } from "../domain/types.ts";
 import type { ToolPolicy } from "../domain/toolPolicy.ts";
 import type { Clock, LlmPort } from "./ports.ts";
@@ -28,6 +29,8 @@ import type { UserRepo } from "../infrastructure/db/userRepo.ts";
 import type { LearningsRepo } from "../infrastructure/db/learningsRepo.ts";
 import type { CommandLogRepo } from "../infrastructure/db/commandLogRepo.ts";
 import type { WorkflowRepo } from "../infrastructure/db/workflowRepo.ts";
+import type { CommandApprovalRepo } from "../infrastructure/db/commandApprovalRepo.ts";
+import type { SettingsRepo } from "../infrastructure/db/settingsRepo.ts";
 
 /** Neutral fallbacks; the real prefix/slash come from config (see index.ts). */
 export const DEFAULT_COMMAND_PREFIX = "//bot";
@@ -51,6 +54,10 @@ export type CommandDeps = {
   workflows?: WorkflowRepo;
   /** Fresh CLI session id for a new workflow; injected for deterministic tests. */
   newSessionId?: () => string;
+  /** Commands parked for approval once a limited role runs out of allowance. */
+  commandApprovals?: CommandApprovalRepo;
+  /** Settings, for per-person command allowances. */
+  settings?: SettingsRepo;
   /** AI reply drafting, for reply. */
   draft?: DraftReply;
   /** Per-role CLI tool policy (sandbox/allow-list), for ask + review. */
@@ -113,6 +120,8 @@ type CommandDef = {
 };
 
 const RANK: Record<UserRole, number> = { pal: 0, executer: 1, admin: 2, owner: 3 };
+/** Roles an allowance applies to; mirrors LIMITED_ROLES without the import cycle. */
+const LIMITED: readonly UserRole[] = ["pal"];
 const MENTION = /<@([A-Z0-9]+)(?:\|[^>]+)?>/;
 const LEADING_MENTION = /^<@[A-Z0-9]+(?::[^>]+|\|[^>]+)?>\s*/;
 
@@ -450,6 +459,47 @@ Up to ${BOMB_SIZE} reactions; no category means *${DEFAULT_CATEGORY}*.`;
     },
   },
   {
+    name: "limit",
+    aliases: ["quota"],
+    minRole: "pal",
+    usage: "[@user] [n|default]",
+    summary: "show command allowance; admins can set someone's",
+    run: (ctx) => {
+      const { deps, actor, args, prefix } = ctx;
+      const window = Math.round(PAL_WINDOW_MS / 3_600_000);
+      const report = (id: string): string => {
+        const target = deps.users.get(id);
+        if (!target) return "I do not know that user.";
+        const allowance = allowanceFor(deps as CommandLimitDeps, target, TRIVIAL_COMMANDS);
+        if (!LIMITED.includes(target.role)) return `<@${id}> is *${target.role}* - no allowance applies.`;
+        return `<@${id}>: ${allowance.used}/${allowance.limit} commands used in the last ${window}h.`;
+      };
+
+      const slackId = slackIdOf(args[0]);
+      // No target: your own standing.
+      if (!slackId) return report(actor.slackId);
+      if (args.length === 1) {
+        if (RANK[actor.role] < RANK.admin && slackId !== actor.slackId) {
+          return "Only admins can look up someone else's allowance.";
+        }
+        return report(slackId);
+      }
+
+      if (RANK[actor.role] < RANK.admin) return "Only admins can change an allowance.";
+      const raw = (args[1] ?? "").toLowerCase();
+      if (raw === "default" || raw === "reset") {
+        setLimit(deps as CommandLimitDeps, slackId, undefined);
+        return `<@${slackId}> is back on the default allowance (${limitFor(deps as CommandLimitDeps, slackId)} per ${window}h).`;
+      }
+      const n = Number(raw);
+      if (!Number.isInteger(n) || n < 0) return `How many? \`${prefix} limit @user <number|default>\``;
+      setLimit(deps as CommandLimitDeps, slackId, n);
+      return n === 0
+        ? `<@${slackId}> now needs approval for every command.`
+        : `<@${slackId}> can now run *${n}* commands per ${window}h.`;
+    },
+  },
+  {
     name: "workflow",
     aliases: ["wf"],
     minRole: WORKFLOW_MIN_ROLE,
@@ -578,6 +628,9 @@ export const commandLineOf = (text: string, prefix: string = DEFAULT_COMMAND_PRE
  * Whether a slash invocation of this line is worth copying to the owner.
  * Unknown commands count: a failed guess is still something worth seeing.
  */
+/** Commands that cost nothing and so do not count against an allowance. */
+export const TRIVIAL_COMMANDS: readonly string[] = COMMANDS.filter((c) => c.trivial).map((c) => c.name);
+
 export const notifiesOwner = (line: string): boolean => {
   const name = (line.trim().split(/\s+/)[0] || "help").toLowerCase();
   return byName.get(name)?.trivial !== true;
@@ -598,6 +651,8 @@ export type DispatchOptions = {
   slash?: string;
   /** Thread the command came from; workflows are bound to one. */
   threadTs?: string;
+  /** Already approved by someone with authority - skip the allowance check. */
+  preApproved?: boolean;
   /** Destination sink for progress + direct results (thread or DM). */
   reply?: (text: string) => Promise<void>;
 };
@@ -635,6 +690,23 @@ export const dispatchCommand = async (
     const msg = `\`${command.name}\` is currently disabled.`;
     log(command.name, false, msg);
     return msg;
+  }
+  // A limited role that has run out is not turned away - the command is parked
+  // and put to the owner. Trivial commands never count and are never held.
+  if (!command.trivial && !opts.preApproved) {
+    const allowance = allowanceFor(deps as CommandLimitDeps, actor, TRIVIAL_COMMANDS);
+    if (allowance.limited) {
+      const msg = await holdForApproval(
+        deps as CommandLimitDeps,
+        actor,
+        trimmed,
+        channelId,
+        opts.threadTs,
+        allowance,
+      );
+      log(command.name, false, msg);
+      return msg;
+    }
   }
   try {
     const result = await command.run({

@@ -37,6 +37,15 @@ export type HistoryPage = {
 /** Where a posted message ended up. */
 export type PostedRef = { channel: string; ts: string };
 
+/** A button on an interactive message. */
+export type InteractiveAction = {
+  actionId: string;
+  label: string;
+  /** Opaque payload handed back when it is pressed. */
+  value: string;
+  style?: "primary" | "danger";
+};
+
 export type SlackAdminPort = {
   /** Conversations the bot is a member of (joined channels, DMs, groups), recent first. */
   listConversations: () => Promise<SlackConversation[]>;
@@ -58,6 +67,17 @@ export type SlackAdminPort = {
    * so a message can later be found again - matching a reaction to it, say.
    */
   postDm: (userId: string, text: string) => Promise<PostedRef | undefined>;
+  /**
+   * DM a message with buttons on it. The transport owns how they are rendered;
+   * callers only say what the buttons are and what they carry.
+   */
+  postDmInteractive: (
+    userId: string,
+    text: string,
+    actions: readonly InteractiveAction[],
+  ) => Promise<PostedRef | undefined>;
+  /** Replace an interactive message's buttons with settled text. */
+  settleInteractive: (channel: string, ts: string, text: string) => Promise<void>;
   /** Add reactions to a message (tolerant of already-reacted / invalid names). Returns how many landed. */
   addReactions: (channel: string, ts: string, names: readonly string[]) => Promise<number>;
   /** Resolve Slack display names for a set of user ids (cached, best-effort). */

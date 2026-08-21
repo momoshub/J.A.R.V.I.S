@@ -17,6 +17,7 @@ import { createLearningsRepo } from "./infrastructure/db/learningsRepo.ts";
 import { createCommandLogRepo } from "./infrastructure/db/commandLogRepo.ts";
 import { createWorkflowRepo } from "./infrastructure/db/workflowRepo.ts";
 import { createAccessRequestRepo } from "./infrastructure/db/accessRequestRepo.ts";
+import { createCommandApprovalRepo } from "./infrastructure/db/commandApprovalRepo.ts";
 import { createSettingsRepo, SETTING_KEYS } from "./infrastructure/db/settingsRepo.ts";
 import { loadBotProfile } from "./application/botProfile.ts";
 import { seedOwner } from "./infrastructure/db/seed.ts";
@@ -75,6 +76,7 @@ const main = async () => {
   const activity = createActivityLog(config.logDir);
   const workflows = createWorkflowRepo(db);
   const accessRequests = createAccessRequestRepo(db);
+  const commandApprovals = createCommandApprovalRepo(db);
   const commandTickets = createCommandTickets(() => Date.now());
   const baseCommandLog = createCommandLogRepo(db);
   const commandLog: CommandLogRepo = {
@@ -165,6 +167,10 @@ const main = async () => {
     workflows,
     // A stranger is put to the owner for a ✅ / ❌ rather than refused outright.
     accessRequests,
+    // A pal out of allowance has their command parked for approval.
+    commandApprovals,
+    // Per-person allowances live here, set with the `limit` command.
+    settings,
     reactScript,
     draft,
     toolPolicy,

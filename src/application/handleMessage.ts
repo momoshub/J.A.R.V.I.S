@@ -23,6 +23,8 @@ import type { LearningsRepo } from "../infrastructure/db/learningsRepo.ts";
 import type { CommandLogRepo } from "../infrastructure/db/commandLogRepo.ts";
 import type { WorkflowRepo } from "../infrastructure/db/workflowRepo.ts";
 import type { AccessRequestRepo } from "../infrastructure/db/accessRequestRepo.ts";
+import type { CommandApprovalRepo } from "../infrastructure/db/commandApprovalRepo.ts";
+import type { SettingsRepo } from "../infrastructure/db/settingsRepo.ts";
 import { requestAccess } from "./accessRequests.ts";
 import type { CommandTickets } from "./commandTickets.ts";
 import type { SlackAdminPort, SlackMessage } from "./slackAdmin.ts";
@@ -60,6 +62,10 @@ export type HandleMessageDeps = {
   workflows?: WorkflowRepo;
   /** Pending access requests, so a stranger is put to the owner rather than refused. */
   accessRequests?: AccessRequestRepo;
+  /** Commands parked for approval once a limited role runs out of allowance. */
+  commandApprovals?: CommandApprovalRepo;
+  /** Settings, for per-person command allowances. */
+  settings?: SettingsRepo;
   /** Fresh CLI session id for a new workflow; injected for deterministic tests. */
   newSessionId?: () => string;
   /** Local endpoint the bot can POST a learning to, if the listener may teach. */

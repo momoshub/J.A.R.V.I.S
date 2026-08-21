@@ -44,6 +44,12 @@ export type CommandLogRepo = {
   recent: (limit: number) => CommandLogEntry[];
   clear: () => number;
   count: () => number;
+  /**
+   * How many commands this person has run since `since`, ignoring the names in
+   * `excluding`. Backs the per-role rate limit, so it counts what was actually
+   * attempted - a refusal still consumed a turn of someone's attention.
+   */
+  countSince: (slackUserId: string, since: number, excluding?: readonly string[]) => number;
 };
 
 export const createCommandLogRepo = (db: DbClient): CommandLogRepo => {
@@ -57,7 +63,16 @@ export const createCommandLogRepo = (db: DbClient): CommandLogRepo => {
   const clearStmt = db.query("DELETE FROM command_log");
   const countStmt = db.query<{ n: number }, []>("SELECT COUNT(*) AS n FROM command_log");
 
+  const countSinceStmt = (excluded: number) =>
+    db.query<{ n: number }, [string, number, ...string[]]>(
+      `SELECT COUNT(*) AS n FROM command_log
+       WHERE slack_user_id = ? AND created_at >= ?
+       ${excluded > 0 ? `AND command NOT IN (${Array(excluded).fill("?").join(",")})` : ""}`,
+    );
+
   return {
+    countSince: (slackUserId, since, excluding = []) =>
+      countSinceStmt(excluding.length).get(slackUserId, since, ...excluding)?.n ?? 0,
     add: (entry, createdAt) => {
       insertStmt.run({
         $slackUserId: entry.slackUserId,

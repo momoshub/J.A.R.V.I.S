@@ -31,6 +31,8 @@ const build = () => {
       dm += 1;
       return { channel: `D-${userId}`, ts: `notice-${dm}` };
     },
+    postDmInteractive: async () => undefined,
+    settleInteractive: async () => {},
     addReactions: async () => 0,
     resolveNames: async () => ({}),
   };
