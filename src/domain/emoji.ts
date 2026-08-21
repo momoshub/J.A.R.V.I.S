@@ -23,6 +23,19 @@ export const EMOJI_CATEGORIES: Record<string, readonly string[]> = {
 
 export const EMOJI_CATEGORY_NAMES = Object.keys(EMOJI_CATEGORIES);
 
+/** How many emoji to show as a taste of each category. */
+const PREVIEW = 5;
+
+/** The categories, each with a few of its emoji rendered, for a help listing. */
+export const renderCategories = (): string =>
+  EMOJI_CATEGORY_NAMES.map((name) => {
+    const preview = (EMOJI_CATEGORIES[name] ?? [])
+      .slice(0, PREVIEW)
+      .map((e) => `:${e}:`)
+      .join(" ");
+    return `- \`${name}\` ${preview}`;
+  }).join("\n");
+
 /** Pick up to `n` distinct emoji from a category (shuffled). Empty if unknown. */
 export const pickBomb = (category: string, n: number, rng: () => number = Math.random): string[] => {
   const pool = EMOJI_CATEGORIES[category];

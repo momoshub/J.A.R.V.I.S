@@ -326,6 +326,27 @@ describe("dispatchCommand", () => {
     expect(slackCalls.reactions.length).toBeGreaterThan(0);
   });
 
+  test("br help lists every category with a taste of each", async () => {
+    const out = await dispatchCommand(build(), actor(), "C1", "br help");
+    expect(out).toContain("`positive`");
+    expect(out).toContain("`negative`");
+    expect(out).toContain(":tada:"); // rendered, not just named
+    expect(out).toContain("No category means *positive*");
+    expect(slackCalls.reactions).toHaveLength(0); // nothing was bombed
+  });
+
+  test("an unknown category answers with the list", async () => {
+    const out = await dispatchCommand(build(), actor(), "C1", `br notacategory ${LINK}`);
+    expect(out).toContain("Unknown category");
+    expect(out).toContain("`party`");
+  });
+
+  test("a missing link points at the help", async () => {
+    const out = await dispatchCommand(build(), actor(), "C1", "br party");
+    expect(out).toContain("message link");
+    expect(out).toContain("bomb help");
+  });
+
   test("br rejects an unknown category", async () => {
     expect(await dispatchCommand(build(), actor(), "C1", `br notacategory ${LINK}`)).toContain("Unknown category");
   });

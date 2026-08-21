@@ -13,7 +13,7 @@
 import { buildSystemPrompt, DEFAULT_BOT_NAME } from "../domain/personality.ts";
 import { validateRemoval, validateRoleChange } from "../domain/access.ts";
 import { reviewPrompt } from "../domain/reviewPrompt.ts";
-import { EMOJI_CATEGORY_NAMES, pickBomb } from "../domain/emoji.ts";
+import { EMOJI_CATEGORY_NAMES, pickBomb, renderCategories } from "../domain/emoji.ts";
 import { parseMessageLink } from "../domain/slackLinks.ts";
 import { postedBody } from "../domain/ghCommand.ts";
 import { runWorkflowTurn, WORKFLOW_MIN_ROLE, type WorkflowDeps } from "./workflow.ts";
@@ -406,17 +406,19 @@ export const COMMANDS: readonly CommandDef[] = [
     name: "bomb",
     aliases: ["br"],
     minRole: "admin",
-    usage: "[category] <message-link>",
-    summary: `reaction-bomb a message (${EMOJI_CATEGORY_NAMES.slice(0, 6).join(", ")}, ...)`,
+    usage: "[category] <message-link> | help",
+    summary: `reaction-bomb a message (${EMOJI_CATEGORY_NAMES.slice(0, 6).join(", ")}, ...; \`bomb help\` lists all)`,
     run: async ({ deps, args, prefix }) => {
+      const categoryList = `Categories for \`${prefix} bomb [category] <message-link>\`:\n${renderCategories()}\n\nNo category means *positive*.`;
+      if (/^(help|\?|list|categories)$/i.test(args[0] ?? "") && args.length === 1) return categoryList;
       if (!deps.slack) return "Slack tools are not available.";
       // last arg is the link; an optional leading token is the category
       const link = args[args.length - 1] ?? "";
       const ref = parseMessageLink(link.replace(/^<|>$/g, ""));
-      if (!ref) return `Paste a Slack message link: \`${prefix} bomb [category] <message-link>\``;
+      if (!ref) return `Paste a Slack message link: \`${prefix} bomb [category] <message-link>\`\nOr \`${prefix} bomb help\` to see the categories.`;
       const category = args.length > 1 ? (args[0] ?? "positive").toLowerCase() : "positive";
       const emojis = pickBomb(category, REACTION_BOMB_SIZE);
-      if (emojis.length === 0) return `Unknown category. Try: ${EMOJI_CATEGORY_NAMES.join(", ")}`;
+      if (emojis.length === 0) return `Unknown category *${category}*.\n\n${categoryList}`;
       const landed = await deps.slack.addReactions(ref.channel, ref.ts, emojis);
       return landed > 0
         ? `💥 dropped ${landed} *${category}* reactions`
