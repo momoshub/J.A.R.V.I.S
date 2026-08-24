@@ -3,6 +3,7 @@ import { openDatabase, type DbClient } from "../../src/infrastructure/db/client.
 import { createUserRepo } from "../../src/infrastructure/db/userRepo.ts";
 import { createMessageRepo } from "../../src/infrastructure/db/messageRepo.ts";
 import { createLearningsRepo } from "../../src/infrastructure/db/learningsRepo.ts";
+import { createSettingsRepo } from "../../src/infrastructure/db/settingsRepo.ts";
 import { commandLineOf, dispatchCommand, type CommandDeps } from "../../src/application/commands.ts";
 import { respond, type RespondDeps } from "../../src/application/respond.ts";
 import type { AllowedUser } from "../../src/domain/types.ts";
@@ -230,8 +231,43 @@ describe("dispatchCommand", () => {
     expect(await dispatchCommand(deps, actor(), "C1", "ask what is 2+2")).toBe("drafted answer");
   });
 
-  test("model reports the brain", async () => {
-    expect(await dispatchCommand(build(), actor(), "C1", "model")).toContain("claude-cli (opus)");
+  test("model reports the brain, and any per-role override", async () => {
+    const deps = build();
+    deps.settings = createSettingsRepo(db);
+    expect(await dispatchCommand(deps, actor(), "C1", "model")).toContain("claude-cli (opus)");
+
+    await dispatchCommand(deps, actor(), "C1", "model pal haiku");
+    const shown = await dispatchCommand(deps, actor(), "C1", "model");
+    expect(shown).toContain("*pal*");
+    expect(shown).toContain("haiku");
+  });
+
+  test("an admin sets a role's model; a pal cannot", async () => {
+    const deps = build();
+    deps.settings = createSettingsRepo(db);
+
+    const out = await dispatchCommand(deps, actor(), "C1", "model pal haiku");
+    expect(out).toContain("haiku");
+    expect(deps.settings.get("model:pal")).toBe("haiku");
+
+    const pal = actor({ slackId: "U0PAL0001", role: "pal" });
+    expect(await dispatchCommand(deps, pal, "C1", "model pal opus")).toContain("Only admins");
+    expect(deps.settings.get("model:pal")).toBe("haiku");
+    // but a pal may look
+    expect(await dispatchCommand(deps, pal, "C1", "model pal")).toContain("haiku");
+  });
+
+  test("model default clears the override, and junk is refused", async () => {
+    const deps = build();
+    deps.settings = createSettingsRepo(db);
+    await dispatchCommand(deps, actor(), "C1", "model pal haiku");
+
+    expect(await dispatchCommand(deps, actor(), "C1", "model pal not a model")).toContain("Which model?");
+    expect(deps.settings.get("model:pal")).toBe("haiku");
+
+    await dispatchCommand(deps, actor(), "C1", "model pal default");
+    expect(deps.settings.get("model:pal")).toBe("");
+    expect(await dispatchCommand(deps, actor(), "C1", "model pal")).toContain("uses the default");
   });
 
   const LINK = "https://team.slack.com/archives/C0TEST00001/p1787122692303399";

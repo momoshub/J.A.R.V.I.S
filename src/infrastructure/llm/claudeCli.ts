@@ -112,7 +112,10 @@ const buildArgs = (
   const args = stream
     ? ["-p", "--output-format", "stream-json", "--verbose", "--include-partial-messages"]
     : ["-p", "--output-format", "json"];
-  if (config.model) args.push("--model", config.model);
+  // A policy may name its own model - a cheaper one for roles whose chat does
+  // not warrant the expensive default.
+  const model = policy?.model ?? config.model;
+  if (model) args.push("--model", model);
   // A workflow keeps one CLI session alive across turns: claim the id on the
   // first call, resume it on every later one, and the model keeps its context.
   if (session) args.push(session.resume ? "--resume" : "--session-id", session.id);

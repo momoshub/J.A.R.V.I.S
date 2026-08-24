@@ -18,7 +18,7 @@ import { createCommandLogRepo } from "./infrastructure/db/commandLogRepo.ts";
 import { createWorkflowRepo } from "./infrastructure/db/workflowRepo.ts";
 import { createAccessRequestRepo } from "./infrastructure/db/accessRequestRepo.ts";
 import { createCommandApprovalRepo } from "./infrastructure/db/commandApprovalRepo.ts";
-import { createSettingsRepo, SETTING_KEYS } from "./infrastructure/db/settingsRepo.ts";
+import { createSettingsRepo, modelKey, SETTING_KEYS } from "./infrastructure/db/settingsRepo.ts";
 import { loadBotProfile } from "./application/botProfile.ts";
 import { seedOwner } from "./infrastructure/db/seed.ts";
 import { createAnthropicLlm } from "./infrastructure/llm/anthropic.ts";
@@ -122,12 +122,24 @@ const main = async () => {
   // a general `curl` in a sandbox would be an outbound channel for the token.
   const reactScript = join(import.meta.dir, "..", "bin", "slack-react.sh");
   const runScript = join(import.meta.dir, "..", "bin", "jarvis-run.sh");
+  // Model per role: a dashboard/command override wins, otherwise the env value,
+  // otherwise the adapter default. Read per call so a change needs no restart.
+  const modelsForRoles = () => {
+    const pick = (role: string, fallback?: string) => settings.get(modelKey(role))?.trim() || fallback;
+    return {
+      pal: pick("pal", config.claudeModelPal),
+      executer: pick("executer"),
+      admin: pick("admin"),
+      owner: pick("owner"),
+    };
+  };
   const toolPolicy = (role: Parameters<typeof toolPolicyFor>[0]) =>
     toolPolicyFor(role, {
       fullCwd,
       sandboxCwd,
       reactScript,
       runScript,
+      models: modelsForRoles(),
       executerTools: (settings.get(SETTING_KEYS.executerTools) ?? "")
         .split(/[,\n]/)
         .map((s) => s.trim())

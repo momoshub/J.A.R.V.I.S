@@ -95,6 +95,20 @@ describe("createClaudeCliLlm", () => {
     ).rejects.toThrow(/non-JSON/);
   });
 
+  test("a policy model overrides the adapter's", async () => {
+    // the fake echoes its own argv, so we can see which --model was passed
+    const bin = fakeBin(
+      `#!/usr/bin/env bash\ncat > /dev/null\nARGS="$*"\nif [[ "$ARGS" == *"--model haiku"* ]]; then R="haiku"; else R="$ARGS"; fi\necho "{\\"type\\":\\"result\\",\\"subtype\\":\\"success\\",\\"is_error\\":false,\\"result\\":\\"$R\\"}"`,
+    );
+    const llm = createClaudeCliLlm({ binPath: bin, model: "opus" });
+    const out = await llm.complete({
+      system: "s",
+      messages: [{ role: "user", content: "hi" }],
+      policy: { skipPermissions: true, model: "haiku" },
+    });
+    expect(out).toBe("haiku");
+  });
+
   test("summarizeTool renders a Bash command", () => {
     const out = summarizeTool("Bash", '{"command":"ls -la","description":"list"}');
     expect(out.title).toContain("ls -la");

@@ -36,6 +36,8 @@ const schema = z
     // claude-cli provider
     CLAUDE_BIN: z.string().default("claude"),
     CLAUDE_MODEL: z.string().default("opus"),
+    // Ordinary chat for the lowest role does not need the expensive model.
+    CLAUDE_MODEL_PAL: z.string().default("haiku"),
     CLAUDE_SKIP_PERMISSIONS: boolFromString(true),
     CLAUDE_CWD: z.string().optional(),
     CLAUDE_TIMEOUT_MS: z.coerce.number().int().positive().default(120_000),
@@ -73,6 +75,7 @@ export type AppConfig = {
   llmProvider: LlmProvider;
   claudeBin: string;
   claudeModel: string;
+  claudeModelPal: string;
   claudeSkipPermissions: boolean;
   claudeCwd?: string;
   claudeTimeoutMs: number;
@@ -111,6 +114,7 @@ export const loadConfig = (source: Record<string, string | undefined> = process.
     llmProvider: env.LLM_PROVIDER,
     claudeBin: env.CLAUDE_BIN,
     claudeModel: env.CLAUDE_MODEL,
+    claudeModelPal: env.CLAUDE_MODEL_PAL,
     claudeSkipPermissions: env.CLAUDE_SKIP_PERMISSIONS,
     claudeCwd: env.CLAUDE_CWD,
     claudeTimeoutMs: env.CLAUDE_TIMEOUT_MS,

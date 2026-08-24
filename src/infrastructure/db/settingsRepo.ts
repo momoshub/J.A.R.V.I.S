@@ -14,6 +14,9 @@ export const SETTING_KEYS = {
   executerTools: "executer_tools",
 } as const;
 
+/** Model override for one role, e.g. `model:pal`. Empty means "use the default". */
+export const modelKey = (role: string): string => `model:${role}`;
+
 export type SettingsRepo = {
   get: (key: string) => string | undefined;
   set: (key: string, value: string) => void;

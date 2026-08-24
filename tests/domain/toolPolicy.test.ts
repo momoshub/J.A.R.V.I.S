@@ -58,3 +58,34 @@ describe("toolPolicyFor", () => {
     expect(tools?.some((t) => t.includes("slack-react"))).toBe(false);
   });
 });
+
+describe("model per role", () => {
+  test("a role can be put on a cheaper model", () => {
+    const withModels = { ...opts, models: { pal: "haiku" } };
+    expect(toolPolicyFor("pal", withModels).model).toBe("haiku");
+    // everyone else stays on the adapter default
+    expect(toolPolicyFor("executer", withModels).model).toBeUndefined();
+    expect(toolPolicyFor("admin", withModels).model).toBeUndefined();
+    expect(toolPolicyFor("owner", withModels).model).toBeUndefined();
+  });
+
+  test("any role may be pinned, not just pal", () => {
+    const withModels = { ...opts, models: { executer: "sonnet", owner: "opus" } };
+    expect(toolPolicyFor("executer", withModels).model).toBe("sonnet");
+    expect(toolPolicyFor("owner", withModels).model).toBe("opus");
+  });
+
+  test("no models configured means no override at all", () => {
+    for (const role of ["pal", "executer", "admin", "owner"] as const) {
+      expect(toolPolicyFor(role, opts).model).toBeUndefined();
+    }
+  });
+
+  test("a cheaper model does not loosen the sandbox", () => {
+    const p = toolPolicyFor("pal", { ...opts, models: { pal: "haiku" } });
+    expect(p.skipPermissions).toBe(false);
+    expect(p.cwd).toBe("/scratch");
+    expect(p.disallowedTools).toEqual(SANDBOX_DISALLOW);
+  });
+});
+

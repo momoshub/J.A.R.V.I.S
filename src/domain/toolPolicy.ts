@@ -17,6 +17,8 @@ export type ToolPolicy = {
   disallowedTools?: readonly string[];
   /** Per-call timeout override (ms) - e.g. long-running PR reviews. */
   timeoutMs?: number;
+  /** Model for this call, overriding the adapter default. */
+  model?: string;
 };
 
 /**
@@ -74,6 +76,11 @@ export type ToolPolicyOptions = {
    * dispatches, so this hands over no authority of its own.
    */
   readonly runScript?: string;
+  /**
+   * Model per role, for roles that should not be spending the expensive one on
+   * ordinary chat. Absent means the adapter's default.
+   */
+  readonly models?: Partial<Record<UserRole, string>>;
 };
 
 /**
@@ -91,7 +98,7 @@ export const toolPolicyFor = (role: UserRole, opts: ToolPolicyOptions): ToolPoli
   switch (role) {
     case "owner":
     case "admin":
-      return { skipPermissions: true, cwd: opts.fullCwd };
+      return { skipPermissions: true, cwd: opts.fullCwd, model: opts.models?.[role] };
     case "executer":
       return {
         skipPermissions: false,
@@ -101,6 +108,7 @@ export const toolPolicyFor = (role: UserRole, opts: ToolPolicyOptions): ToolPoli
           opts,
         ),
         disallowedTools: SANDBOX_DISALLOW,
+        model: opts.models?.executer,
       };
     case "pal":
     default:
@@ -109,6 +117,7 @@ export const toolPolicyFor = (role: UserRole, opts: ToolPolicyOptions): ToolPoli
         cwd: opts.sandboxCwd,
         allowedTools: withHelpers(PAL_TOOLS, opts),
         disallowedTools: SANDBOX_DISALLOW,
+        model: opts.models?.pal,
       };
   }
 };

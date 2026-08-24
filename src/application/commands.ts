@@ -31,7 +31,7 @@ import type { LearningsRepo } from "../infrastructure/db/learningsRepo.ts";
 import type { CommandLogRepo } from "../infrastructure/db/commandLogRepo.ts";
 import type { WorkflowRepo } from "../infrastructure/db/workflowRepo.ts";
 import type { CommandApprovalRepo } from "../infrastructure/db/commandApprovalRepo.ts";
-import type { SettingsRepo } from "../infrastructure/db/settingsRepo.ts";
+import { modelKey, type SettingsRepo } from "../infrastructure/db/settingsRepo.ts";
 
 /** Neutral fallbacks; the real prefix/slash come from config (see index.ts). */
 export const DEFAULT_COMMAND_PREFIX = "//bot";
@@ -123,6 +123,7 @@ type CommandDef = {
 const RANK: Record<UserRole, number> = { pal: 0, executer: 1, admin: 2, owner: 3 };
 /** Roles an allowance applies to; mirrors LIMITED_ROLES without the import cycle. */
 const LIMITED: readonly UserRole[] = ["pal"];
+const ROLES: readonly UserRole[] = ["pal", "executer", "admin", "owner"];
 const LEADING_MENTION = /^<@[A-Z0-9]+(?::[^>]+|\|[^>]+)?>\s*/;
 
 /** One definition of what a mentioned user looks like, shared with the transport. */
@@ -182,11 +183,38 @@ export const COMMANDS: readonly CommandDef[] = [
     trivial: true,
     aliases: ["status"],
     minRole: "pal",
-    usage: "",
-    summary: "show my brain and current model",
-    run: ({ deps }) => {
+    usage: "[role] [name|default]",
+    summary: "show my brain and model; admins can set one per role",
+    run: (ctx) => {
+      const { deps, actor, args, prefix } = ctx;
       const info = deps.botInfo?.();
-      return info ? `I am *${info.botName}*, running on \`${info.model}\`.` : "Model info is unavailable.";
+      if (!info) return "Model info is unavailable.";
+
+      const role = roleOf((args[0] ?? "").toLowerCase());
+      if (!role) {
+        const overrides = ROLES.map((r) => [r, deps.settings?.get(modelKey(r))] as const).filter(([, m]) => m);
+        const extra = overrides.length
+          ? `\n${overrides.map(([r, m]) => `- *${r}*: \`${m}\``).join("\n")}`
+          : "";
+        return `I am *${info.botName}*, running on \`${info.model}\`.${extra}`;
+      }
+      if (args.length === 1) {
+        const own = deps.settings?.get(modelKey(role));
+        return own ? `*${role}* runs on \`${own}\`.` : `*${role}* uses the default, \`${info.model}\`.`;
+      }
+      if (RANK[actor.role] < RANK.admin) return "Only admins can change a model.";
+      const name = (args[1] ?? "").trim();
+      if (name === "default" || name === "reset") {
+        deps.settings?.set(modelKey(role), "");
+        return `*${role}* is back on the default model.`;
+      }
+      // A model name is one token; taking the first word of a sentence would
+      // quietly pin the role to something nobody asked for.
+      if (args.length > 2 || !/^[\w.:-]+$/.test(name)) {
+        return `Which model? \`${prefix} model ${role} <name|default>\``;
+      }
+      deps.settings?.set(modelKey(role), name);
+      return `*${role}* now runs on \`${name}\`.`;
     },
   },
   {
