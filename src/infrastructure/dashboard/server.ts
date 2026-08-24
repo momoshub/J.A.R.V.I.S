@@ -269,6 +269,14 @@ export const createDashboard = (config: DashboardConfig, deps: DashboardDeps) =>
           deps.learnings.add(content, "dashboard", deps.clock());
           return Response.json({ ok: true });
         }
+        case "/api/learnings/update": {
+          const id = Number(body.id);
+          const content = String(body.content ?? "").trim();
+          if (!Number.isInteger(id)) return jsonError("A learning id is required");
+          if (!content) return jsonError("Empty learning");
+          deps.learnings.update(id, content);
+          return Response.json({ ok: true });
+        }
         case "/api/learnings/remove": {
           const id = Number(body.id);
           if (!Number.isInteger(id)) return jsonError("Invalid id");

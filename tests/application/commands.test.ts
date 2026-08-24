@@ -195,6 +195,36 @@ describe("dispatchCommand", () => {
     expect(deps.learnings!.list()).toHaveLength(0);
   });
 
+  test("relearn rewords an existing learning", async () => {
+    const deps = build();
+    await dispatchCommand(deps, actor(), "C1", "learn staging is at old.example.com");
+    const id = deps.learnings!.list()[0]!.id;
+
+    const out = await dispatchCommand(deps, actor(), "C1", `relearn ${id} staging is at new.example.com`);
+    expect(out).toContain(`#${id}`);
+    expect(out).toContain("new.example.com");
+    expect(deps.learnings!.list()[0]?.content).toBe("staging is at new.example.com");
+    expect(deps.learnings!.list()).toHaveLength(1); // reworded, not duplicated
+  });
+
+  test("relearn needs an id that exists and something to say", async () => {
+    const deps = build();
+    await dispatchCommand(deps, actor(), "C1", "learn a fact");
+    const id = deps.learnings!.list()[0]!.id;
+
+    expect(await dispatchCommand(deps, actor(), "C1", "relearn")).toContain("Which one?");
+    expect(await dispatchCommand(deps, actor(), "C1", "relearn notanumber hello")).toContain("Which one?");
+    expect(await dispatchCommand(deps, actor(), "C1", `relearn ${id}`)).toContain("What should it say?");
+    expect(await dispatchCommand(deps, actor(), "C1", "relearn 999 hello")).toContain("no learning #999");
+    expect(deps.learnings!.list()[0]?.content).toBe("a fact"); // untouched throughout
+  });
+
+  test("relearn is admin-gated", async () => {
+    const deps = build();
+    const pal = actor({ slackId: "U0PAL0001", role: "pal" });
+    expect(await dispatchCommand(deps, pal, "C1", "relearn 1 anything")).toContain("access");
+  });
+
   test("ask calls the brain", async () => {
     const deps = build();
     expect(await dispatchCommand(deps, actor(), "C1", "ask what is 2+2")).toBe("drafted answer");

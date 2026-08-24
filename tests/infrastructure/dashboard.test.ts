@@ -178,6 +178,29 @@ describe("dashboard mutations", () => {
   });
 });
 
+describe("editing a learning", () => {
+  test("rewords it in place", async () => {
+    const { dash, learnings } = build();
+    learnings.add("staging is at old.example.com", "dashboard", 1);
+    const id = learnings.list()[0]!.id;
+
+    const res = await dash.handle(postJson("/api/learnings/update", { id, content: "staging is at new.example.com" }));
+    expect(res.status).toBe(200);
+    expect(learnings.list()[0]?.content).toBe("staging is at new.example.com");
+    expect(learnings.list()).toHaveLength(1);
+  });
+
+  test("refuses to blank one out or to guess at the id", async () => {
+    const { dash, learnings } = build();
+    learnings.add("a fact", "dashboard", 1);
+    const id = learnings.list()[0]!.id;
+
+    expect((await dash.handle(postJson("/api/learnings/update", { id, content: "   " }))).status).toBe(400);
+    expect((await dash.handle(postJson("/api/learnings/update", { content: "hi" }))).status).toBe(400);
+    expect(learnings.list()[0]?.content).toBe("a fact");
+  });
+});
+
 describe("running a command through the API", () => {
   const withRunner = () => {
     const db = openDatabase(":memory:");

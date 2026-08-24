@@ -307,6 +307,24 @@ export const COMMANDS: readonly CommandDef[] = [
     },
   },
   {
+    name: "relearn",
+    aliases: ["edit-learning"],
+    minRole: "admin",
+    usage: "<id> <new wording>",
+    summary: "reword something I have learned",
+    run: ({ deps, args, rest, prefix }) => {
+      if (!deps.learnings) return "Learnings are not available.";
+      const id = Number(args[0]);
+      if (!Number.isInteger(id)) return `Which one? \`${prefix} relearn <id> <new wording>\` (see \`${prefix} learnings\`)`;
+      const content = rest.slice(String(args[0]).length).trim();
+      if (!content) return `What should it say? \`${prefix} relearn ${id} <new wording>\``;
+      const before = deps.learnings.list().find((l) => l.id === id);
+      if (!before) return `I have no learning #${id}. Check \`${prefix} learnings\`.`;
+      deps.learnings.update(id, content);
+      return `Updated #${id}.\n~${before.content}~\n${content}`;
+    },
+  },
+  {
     name: "unlearn",
     minRole: "admin",
     usage: "<id>",

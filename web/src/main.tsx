@@ -224,10 +224,19 @@ function LearningsPage() {
             )}
             {learnings.map((l) => (
               <tr key={l.id}>
-                <td>{l.content}</td>
+                <td>
+                  {/* Edit in place: the row is the field, so rewording is one
+                      click and a save rather than delete-and-retype. */}
+                  <Form method="post" className="row" id={`learning-${l.id}`}>
+                    <input type="hidden" name="intent" value="update" />
+                    <input type="hidden" name="id" value={l.id} />
+                    <input name="content" defaultValue={l.content} required style={{ flex: 1 }} />
+                  </Form>
+                </td>
                 <td className="muted">{l.createdBy}</td>
                 <td className="muted">{fmtTime(l.createdAt)}</td>
-                <td>
+                <td className="row">
+                  <button type="submit" form={`learning-${l.id}`}>save</button>
                   <Form method="post">
                     <input type="hidden" name="intent" value="remove" />
                     <input type="hidden" name="id" value={l.id} />
@@ -391,7 +400,10 @@ const router = createBrowserRouter([
         loader: async () => ({ learnings: await get<Learning[]>("learnings") }),
         action: guard(async ({ request }) => {
           const fd = await request.formData();
-          if (fd.get("intent") === "remove") await post("learnings/remove", { id: Number(fd.get("id")) });
+          const intent = fd.get("intent");
+          if (intent === "remove") await post("learnings/remove", { id: Number(fd.get("id")) });
+          else if (intent === "update")
+            await post("learnings/update", { id: Number(fd.get("id")), content: fd.get("content") });
           else await post("learnings", { content: fd.get("content") });
           return { ok: true };
         }),

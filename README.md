@@ -96,7 +96,7 @@ Every command has two interfaces - use whichever you like. Both triggers are con
 | `add @user [pal\|executer\|admin]` | admins (admin role: owner only) | grant access |
 | `remove @user` | admins (admins: owner only) | revoke access |
 | `learn <fact>` | admins | teach a durable fact |
-| `learnings` / `unlearn <id>` | admins | list / delete learnings |
+| `learnings` / `relearn <id> <text>` / `unlearn <id>` | admins | list, reword or delete learnings |
 | `review <pr-url>` (alias `rv`) | pal+ | review a PR: approve first (even if it is already merged or closed), then post the review as a GitHub comment *and* back in the thread; request changes on high risk (big PRs are cloned + reviewed by child agents). Runs full-access. |
 | `bomb [categories] [count] <message-link>` (alias `br`) | admins | reaction-bomb a message. Combine categories with commas and set a count: `bomb money,face,negative 9 <link>`. Up to 23; `bomb help` lists every category |
 | `reply <message-link>` (alias `jrp`) | admins | draft and post an AI reply to a message |
@@ -186,7 +186,7 @@ A **React 19 + Vite + React Router 7** single-page app (in `web/`) served by the
 
 - **Overview** - counts for users, conversations, stored turns, learnings
 - **Users** - manage the allowlist and roles (the owner is protected)
-- **Learnings** - durable facts injected into every reply
+- **Learnings** - durable facts injected into every reply; edit one in place and save, or delete it
 - **Identity** - edit the bot name, "thinking" label, and system prompt (persona), or reset the persona to default
 - **Conversations** - browse the bot's own stored memory (SQLite), read turns, clear a channel
 - **Console** - a live Slack message manager (the web port of a terminal TUI): pick a channel/DM, read messages and threads, edit or delete the bot's own messages, reply, and generate an AI draft to review before posting. Requires extra Slack scopes (below); missing scopes surface as an in-app error.
