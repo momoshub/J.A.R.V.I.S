@@ -3,7 +3,7 @@ import { openDatabase } from "../../src/infrastructure/db/client.ts";
 import { createUserRepo } from "../../src/infrastructure/db/userRepo.ts";
 import { createMessageRepo } from "../../src/infrastructure/db/messageRepo.ts";
 import { createAccessRequestRepo } from "../../src/infrastructure/db/accessRequestRepo.ts";
-import { decideAccessRequest, GRANTED_ROLE, requestAccess } from "../../src/application/accessRequests.ts";
+import { decideAccessRequest, GRANTED_ROLE, REJECTED_COOLDOWN_MS, requestAccess } from "../../src/application/accessRequests.ts";
 import { handleMessage } from "../../src/application/handleMessage.ts";
 import type { SlackAdminPort } from "../../src/application/slackAdmin.ts";
 import type { LlmPort } from "../../src/application/ports.ts";
@@ -39,7 +39,15 @@ const build = () => {
     addReactions: async () => 0,
     resolveNames: async () => ({}),
   };
-  const deps = {
+  const deps: {
+    users: ReturnType<typeof createUserRepo>;
+    messages: ReturnType<typeof createMessageRepo>;
+    accessRequests: ReturnType<typeof createAccessRequestRepo>;
+    slack: SlackAdminPort;
+    clock: () => number;
+    ownerSlackId: string;
+    llm: LlmPort;
+  } = {
     users: createUserRepo(db),
     messages: createMessageRepo(db),
     accessRequests: createAccessRequestRepo(db),
@@ -77,13 +85,35 @@ describe("requestAccess", () => {
     expect(deps.accessRequests.noticesFor(pending.id)).toEqual([{ channel: `D-${OWNER}`, ts: "notice-1" }]);
   });
 
-  test("a second message does not ask the owner again", async () => {
+  test("answers once, then says nothing while they wait", async () => {
+    const { deps, posts } = build();
+    expect(await requestAccess(deps, who, "nope")).toContain("asked the owner");
+
+    // someone tagging repeatedly must not produce a wall of identical replies
+    for (let i = 0; i < 5; i++) expect(await requestAccess(deps, who, "nope")).toBeUndefined();
+    expect(posts.filter((p) => p.channel === OWNER)).toHaveLength(1);
+  });
+
+  test("a declined person cannot re-raise it by asking again", async () => {
     const { deps, posts } = build();
     await requestAccess(deps, who, "nope");
-    const reply = await requestAccess(deps, who, "nope");
+    const notices = deps.accessRequests.noticesFor(deps.accessRequests.pendingFor(STRANGER)!.id);
+    await decideAccessRequest(deps, { slackUserId: OWNER, reaction: "x", ...notices[0]! });
 
-    expect(reply).toContain("already asked");
-    expect(posts.filter((p) => p.channel === OWNER)).toHaveLength(1);
+    const before = posts.filter((p) => p.channel === OWNER).length;
+    for (let i = 0; i < 5; i++) expect(await requestAccess(deps, who, "nope")).toBeUndefined();
+    expect(posts.filter((p) => p.channel === OWNER)).toHaveLength(before); // no second notice
+  });
+
+  test("after the cooldown they may ask again", async () => {
+    const { deps, posts } = build();
+    await requestAccess(deps, who, "nope");
+    const notices = deps.accessRequests.noticesFor(deps.accessRequests.pendingFor(STRANGER)!.id);
+    await decideAccessRequest(deps, { slackUserId: OWNER, reaction: "x", ...notices[0]! });
+
+    deps.clock = () => 42 + REJECTED_COOLDOWN_MS + 1;
+    expect(await requestAccess(deps, who, "nope")).toContain("asked the owner");
+    expect(posts.filter((p) => p.channel === OWNER).length).toBeGreaterThan(1);
   });
 
   test("falls back to the plain refusal when the owner cannot be reached", async () => {
@@ -187,6 +217,21 @@ describe("a stranger speaking", () => {
     const now = await handleMessage(deps, { channelId: "C1", slackUserId: STRANGER, text: "hello?" });
     expect(now.kind).toBe("reply");
     expect(posts.some((p) => p.channel === "C1" && p.text.includes("you are in"))).toBe(true);
+  });
+});
+
+describe("a stranger who keeps tagging", () => {
+  test("gets one reply, and the conversation is not filled with refusals", async () => {
+    const { deps } = build();
+    const say = (text: string) =>
+      handleMessage(deps, { channelId: "C1", slackUserId: STRANGER, text, displayName: "Robin" });
+
+    const first = await say("jarvis?");
+    expect(first.kind).toBe("denied"); // answered once
+
+    for (const text of ["jarvis??", "hello", "are you there", "please"]) {
+      expect((await say(text)).kind).toBe("ignored"); // and then nothing
+    }
   });
 });
 

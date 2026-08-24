@@ -55,7 +55,7 @@ export const respond = async (
       },
       decision.reason,
     );
-    return { kind: "denied", text };
+    return text === undefined ? { kind: "ignored" } : { kind: "denied", text };
   }
 
   // Make sure the actor exists so role checks resolve (owner auto-provisions).

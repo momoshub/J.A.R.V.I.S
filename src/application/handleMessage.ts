@@ -125,7 +125,7 @@ export const handleMessage = async (
       },
       decision.reason,
     );
-    return { kind: "denied", text: asked };
+    return asked === undefined ? { kind: "ignored" } : { kind: "denied", text: asked };
   }
 
   // Keep the allowlist's view of who this is current (owner is auto-provisioned).

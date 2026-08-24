@@ -28,6 +28,9 @@ export const DECIDERS: readonly UserRole[] = ["owner", "admin"];
 /** Excerpt of the message quoted to the owner. */
 const ASKED_CHARS = 200;
 
+/** How long a declined person waits before their asking counts again. */
+export const REJECTED_COOLDOWN_MS = 24 * 60 * 60_000;
+
 export type AccessRequestDeps = {
   users: UserRepo;
   accessRequests?: AccessRequestRepo;
@@ -58,19 +61,32 @@ const decidersOf = (deps: AccessRequestDeps): string[] => [
 const clip = (s: string): string => (s.length > ASKED_CHARS ? `${s.slice(0, ASKED_CHARS)}…` : s);
 
 /**
- * Put a stranger in front of the owner and tell them so. Returns the line to
- * answer them with - including when nothing could be asked, in which case it
- * falls back to the old refusal rather than leaving them without a reply.
+ * Put a stranger in front of the deciders and tell them so.
+ *
+ * Answers once and then goes quiet: whoever is waiting has been told, and
+ * repeating it every time they speak turns one unanswered request into a wall
+ * of identical replies - in their channel and in the deciders' DMs. Returns
+ * undefined when the right response is to say nothing at all.
  */
 export const requestAccess = async (
   deps: AccessRequestDeps,
   who: Requester,
   fallback: string,
-): Promise<string> => {
+): Promise<string | undefined> => {
   if (!deps.accessRequests || !deps.slack) return fallback;
 
-  const existing = deps.accessRequests.pendingFor(who.slackUserId);
-  if (existing) return "I have already asked about you - waiting on the owner 🙏";
+  // Already waiting: they have been told once, and nothing has changed.
+  if (deps.accessRequests.pendingFor(who.slackUserId)) return undefined;
+
+  // Recently declined: asking again is not a new request, and must not raise a
+  // second notice with everyone who already said no.
+  const last = deps.accessRequests.latestFor(who.slackUserId);
+  if (
+    last?.status === "rejected" &&
+    deps.clock() - (last.decidedAt ?? last.createdAt) < REJECTED_COOLDOWN_MS
+  ) {
+    return undefined;
+  }
 
   const request = deps.accessRequests.open(
     {

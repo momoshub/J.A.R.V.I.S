@@ -49,6 +49,8 @@ export type AccessRequestRepo = {
   open: (req: NewAccessRequest, at: number) => AccessRequest;
   /** The request this person already has waiting, if any. */
   pendingFor: (slackUserId: string) => AccessRequest | undefined;
+  /** Their most recent request whatever became of it - backs the re-ask cooldown. */
+  latestFor: (slackUserId: string) => AccessRequest | undefined;
   /** The request whose notice is this message - how a reaction is resolved. */
   byNotice: (channel: string, ts: string) => AccessRequest | undefined;
   /**
@@ -71,6 +73,9 @@ export const createAccessRequestRepo = (db: DbClient): AccessRequestRepo => {
   );
   const pendingStmt = db.query<Row, [string]>(
     "SELECT * FROM access_requests WHERE slack_user_id = ? AND status = 'pending'",
+  );
+  const latestStmt = db.query<Row, [string]>(
+    "SELECT * FROM access_requests WHERE slack_user_id = ? ORDER BY id DESC LIMIT 1",
   );
   const noticeStmt = db.query<Row, [string, string]>(
     `SELECT r.* FROM access_requests r
@@ -102,6 +107,10 @@ export const createAccessRequestRepo = (db: DbClient): AccessRequestRepo => {
       ),
     pendingFor: (slackUserId) => {
       const row = pendingStmt.get(slackUserId);
+      return row ? toRequest(row) : undefined;
+    },
+    latestFor: (slackUserId) => {
+      const row = latestStmt.get(slackUserId);
       return row ? toRequest(row) : undefined;
     },
     byNotice: (channel, ts) => {
