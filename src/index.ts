@@ -133,8 +133,9 @@ const main = async () => {
       owner: pick("owner"),
     };
   };
-  const toolPolicy = (role: Parameters<typeof toolPolicyFor>[0]) =>
+  const toolPolicy = (role: Parameters<typeof toolPolicyFor>[0], channelId?: string) =>
     toolPolicyFor(role, {
+      channelModel: channelId ? settings.get(modelKey(`channel:${channelId}`)) : undefined,
       fullCwd,
       sandboxCwd,
       reactScript,

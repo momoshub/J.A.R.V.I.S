@@ -257,6 +257,32 @@ describe("dispatchCommand", () => {
     expect(await dispatchCommand(deps, pal, "C1", "model pal")).toContain("haiku");
   });
 
+  test("a channel can be pinned, here or by reference", async () => {
+    const deps = build();
+    deps.settings = createSettingsRepo(db);
+
+    const here = await dispatchCommand(deps, actor(), "C1", "model here sonnet");
+    expect(here).toContain("<#C1>");
+    expect(deps.settings.get("model:channel:C1")).toBe("sonnet");
+
+    await dispatchCommand(deps, actor(), "C1", "model <#C2|general> haiku");
+    expect(deps.settings.get("model:channel:C2")).toBe("haiku");
+
+    expect(await dispatchCommand(deps, actor(), "C1", "model here")).toContain("sonnet");
+    await dispatchCommand(deps, actor(), "C1", "model here default");
+    expect(deps.settings.get("model:channel:C1")).toBe("");
+  });
+
+  test("a pal cannot pin a channel, and nonsense targets are refused", async () => {
+    const deps = build();
+    deps.settings = createSettingsRepo(db);
+    const pal = actor({ slackId: "U0PAL0001", role: "pal" });
+
+    expect(await dispatchCommand(deps, pal, "C1", "model here haiku")).toContain("Only admins");
+    expect(deps.settings.get("model:channel:C1")).toBeUndefined();
+    expect(await dispatchCommand(deps, actor(), "C1", "model banana haiku")).toContain("A role or a channel");
+  });
+
   test("model default clears the override, and junk is refused", async () => {
     const deps = build();
     deps.settings = createSettingsRepo(db);

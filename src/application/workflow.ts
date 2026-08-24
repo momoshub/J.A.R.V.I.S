@@ -24,7 +24,7 @@ export type WorkflowDeps = {
   workflows?: WorkflowRepo;
   llm?: LlmPort;
   clock: Clock;
-  toolPolicy?: (role: UserRole) => ToolPolicy;
+  toolPolicy?: (role: UserRole, channelId?: string) => ToolPolicy;
   botInfo?: () => { botName: string; model: string };
   /** Fresh session id; injected so tests are deterministic. */
   newSessionId?: () => string;
@@ -46,7 +46,7 @@ export const runWorkflowTurn = async (
 ): Promise<string> => {
   if (!deps.llm) return "My brain is not wired up right now.";
   const name = botNameOf(deps);
-  const base = deps.toolPolicy?.(actor.role) ?? { skipPermissions: true };
+  const base = deps.toolPolicy?.(actor.role, workflow.channelId) ?? { skipPermissions: true };
   const params = {
     system: workflowPrompt(name, workflow.task),
     // Only the new message: the session is holding the rest of the conversation.

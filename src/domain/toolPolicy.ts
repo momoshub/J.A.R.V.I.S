@@ -81,6 +81,12 @@ export type ToolPolicyOptions = {
    * ordinary chat. Absent means the adapter's default.
    */
   readonly models?: Partial<Record<UserRole, string>>;
+  /**
+   * Model pinned to the conversation this call is happening in. Outranks the
+   * role's model: a channel is a room with a purpose, and whoever set it up
+   * knows what the work there is worth.
+   */
+  readonly channelModel?: string;
 };
 
 /**
@@ -94,11 +100,15 @@ const withHelpers = (tools: readonly string[], opts: ToolPolicyOptions): readonl
   ...(opts.runScript ? [`Bash(${opts.runScript}:*)`] : []),
 ];
 
+/** Channel beats role beats the adapter default. */
+const modelOf = (role: UserRole, opts: ToolPolicyOptions): string | undefined =>
+  opts.channelModel?.trim() || opts.models?.[role];
+
 export const toolPolicyFor = (role: UserRole, opts: ToolPolicyOptions): ToolPolicy => {
   switch (role) {
     case "owner":
     case "admin":
-      return { skipPermissions: true, cwd: opts.fullCwd, model: opts.models?.[role] };
+      return { skipPermissions: true, cwd: opts.fullCwd, model: modelOf(role, opts) };
     case "executer":
       return {
         skipPermissions: false,
@@ -108,7 +118,7 @@ export const toolPolicyFor = (role: UserRole, opts: ToolPolicyOptions): ToolPoli
           opts,
         ),
         disallowedTools: SANDBOX_DISALLOW,
-        model: opts.models?.executer,
+        model: modelOf("executer", opts),
       };
     case "pal":
     default:
@@ -117,7 +127,7 @@ export const toolPolicyFor = (role: UserRole, opts: ToolPolicyOptions): ToolPoli
         cwd: opts.sandboxCwd,
         allowedTools: withHelpers(PAL_TOOLS, opts),
         disallowedTools: SANDBOX_DISALLOW,
-        model: opts.models?.pal,
+        model: modelOf("pal", opts),
       };
   }
 };

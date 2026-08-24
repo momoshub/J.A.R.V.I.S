@@ -55,7 +55,7 @@ export type HandleMessageDeps = {
   /** AI reply drafting, for jrp. */
   draft?: DraftReply;
   /** Per-role CLI tool policy (sandbox/allow-list) applied to the chat brain. */
-  toolPolicy?: (role: UserRole) => ToolPolicy;
+  toolPolicy?: (role: UserRole, channelId?: string) => ToolPolicy;
   /** Absolute path of the reaction helper, granted to every role. */
   reactScript?: string;
   /** Long-running workflow sessions bound to a thread. */
@@ -182,7 +182,7 @@ export const handleMessage = async (
     system,
     messages: buildContextWindow(history, window),
     assistantName: ctx.botName,
-    policy: deps.toolPolicy?.(decision.user.role),
+    policy: deps.toolPolicy?.(decision.user.role, inbound.channelId),
   };
   const reply = (
     sink && deps.llm.stream

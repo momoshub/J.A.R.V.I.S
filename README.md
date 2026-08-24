@@ -92,7 +92,7 @@ Every command has two interfaces - use whichever you like. Both triggers are con
 | `whoami` | anyone | show your role |
 | `model` | anyone | show the brain and current model |
 | `ask <question>` | anyone | one-shot question to the brain |
-| `model [role] [name\|default]` | anyone (setting: admins) | show the brain; admins pin a role's model |
+| `model [role\|here\|#channel] [name\|default]` | anyone (setting: admins) | show the brain; admins pin a model per role or channel |
 | `forget` | anyone | wipe the bot's memory of this channel |
 | `users` | admins | list the allowlist |
 | `add @user [pal\|executer\|admin]` | admins (admin role: owner only) | grant access |
@@ -142,23 +142,28 @@ it got to; `workflow stop` ends it and the thread goes back to normal chat.
 Because it lives in a thread, start it with the message form (`//bot workflow ...`)
 rather than the slash command - a slash command has no thread to bind to.
 
-## Model per role
+## Model per role and per channel
 
 Ordinary chat with a `pal` does not need the expensive model, so it runs on
 `CLAUDE_MODEL_PAL` (default `haiku`) while everyone else uses `CLAUDE_MODEL`.
-Admins can change any role at runtime, no restart:
+Admins can change any role or channel at runtime, no restart:
 
 ```
-//bot model                  what I am running, plus any per-role override
-//bot model pal              what pal runs on
-//bot model pal sonnet       pin it
-//bot model pal default      back to CLAUDE_MODEL_PAL / CLAUDE_MODEL
+//bot model                     what I am running, and every override
+//bot model pal sonnet          pin a role
+//bot model here sonnet         pin this channel
+//bot model <#C123> haiku       pin another one
+//bot model pal default         clear it
 ```
 
-The model is chosen per call from the caller's role, so it never changes what
-that role is *allowed* to do - a cheaper model is still sandboxed identically.
-Preset tasks that force a policy keep their own model: `review` runs full-access
-whoever asked, so a pal's review is still done properly.
+**Channel beats role**, so a room with serious work in it can be put on the good
+model whoever is talking, and a noisy one can be made cheap for everybody.
+
+The model is chosen per call alongside the caller's tool policy, so it never
+changes what anyone is *allowed* to do - a cheaper model is sandboxed
+identically. Preset tasks that force a policy keep their own model: `review`
+runs full-access whoever asked and wherever it is asked, so a pal's review in a
+cheap channel is still done properly.
 
 ## Command allowance
 

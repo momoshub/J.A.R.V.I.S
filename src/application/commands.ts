@@ -62,7 +62,7 @@ export type CommandDeps = {
   /** AI reply drafting, for reply. */
   draft?: DraftReply;
   /** Per-role CLI tool policy (sandbox/allow-list), for ask + review. */
-  toolPolicy?: (role: UserRole) => ToolPolicy;
+  toolPolicy?: (role: UserRole, channelId?: string) => ToolPolicy;
   clock: Clock;
   ownerSlackId: string;
 };
@@ -124,6 +124,12 @@ const RANK: Record<UserRole, number> = { pal: 0, executer: 1, admin: 2, owner: 3
 /** Roles an allowance applies to; mirrors LIMITED_ROLES without the import cycle. */
 const LIMITED: readonly UserRole[] = ["pal"];
 const ROLES: readonly UserRole[] = ["pal", "executer", "admin", "owner"];
+/** `<#C123|name>` or a bare channel id, as a channel argument can arrive either way. */
+const channelRefOf = (token?: string): string | undefined => {
+  const m = token?.match(/^<#([A-Z0-9]+)(?:\|[^>]*)?>$/);
+  if (m?.[1]) return m[1];
+  return token && /^[CDG][A-Z0-9]+$/.test(token) ? token : undefined;
+};
 const LEADING_MENTION = /^<@[A-Z0-9]+(?::[^>]+|\|[^>]+)?>\s*/;
 
 /** One definition of what a mentioned user looks like, shared with the transport. */
@@ -183,38 +189,57 @@ export const COMMANDS: readonly CommandDef[] = [
     trivial: true,
     aliases: ["status"],
     minRole: "pal",
-    usage: "[role] [name|default]",
-    summary: "show my brain and model; admins can set one per role",
+    usage: "[role|here|#channel] [name|default]",
+    summary: "show my brain and model; admins set one per role or channel",
     run: (ctx) => {
-      const { deps, actor, args, prefix } = ctx;
+      const { deps, actor, channelId, args, prefix } = ctx;
       const info = deps.botInfo?.();
       if (!info) return "Model info is unavailable.";
+      const get = (key: string) => deps.settings?.get(key)?.trim() || undefined;
 
-      const role = roleOf((args[0] ?? "").toLowerCase());
-      if (!role) {
-        const overrides = ROLES.map((r) => [r, deps.settings?.get(modelKey(r))] as const).filter(([, m]) => m);
-        const extra = overrides.length
-          ? `\n${overrides.map(([r, m]) => `- *${r}*: \`${m}\``).join("\n")}`
-          : "";
+      // What is being set: a role, this channel, or a named one.
+      const first = (args[0] ?? "").toLowerCase();
+      const role = roleOf(first);
+      const channel =
+        role || !first
+          ? undefined
+          : first === "here" || first === "channel"
+            ? channelId
+            : channelRefOf(args[0]);
+      if (!role && !channel && first) {
+        return `A role or a channel, please: \`${prefix} model <${ROLES.join("|")}|here|#channel> [name|default]\``;
+      }
+
+      const key = role ? modelKey(role) : modelKey(`channel:${channel}`);
+      const label = role ? `*${role}*` : `<#${channel}>`;
+
+      if (!role && !channel) {
+        const overrides = [
+          ...ROLES.map((r) => [`*${r}*`, get(modelKey(r))] as const),
+          [`this channel`, get(modelKey(`channel:${channelId}`))] as const,
+        ].filter(([, m]) => m);
+        const extra = overrides.length ? `\n${overrides.map(([l, m]) => `- ${l}: \`${m}\``).join("\n")}` : "";
         return `I am *${info.botName}*, running on \`${info.model}\`.${extra}`;
       }
+
       if (args.length === 1) {
-        const own = deps.settings?.get(modelKey(role));
-        return own ? `*${role}* runs on \`${own}\`.` : `*${role}* uses the default, \`${info.model}\`.`;
+        const own = get(key);
+        return own ? `${label} runs on \`${own}\`.` : `${label} uses the default, \`${info.model}\`.`;
       }
       if (RANK[actor.role] < RANK.admin) return "Only admins can change a model.";
+
       const name = (args[1] ?? "").trim();
       if (name === "default" || name === "reset") {
-        deps.settings?.set(modelKey(role), "");
-        return `*${role}* is back on the default model.`;
+        deps.settings?.set(key, "");
+        return `${label} is back on the default model.`;
       }
       // A model name is one token; taking the first word of a sentence would
-      // quietly pin the role to something nobody asked for.
+      // quietly pin something nobody asked for.
       if (args.length > 2 || !/^[\w.:-]+$/.test(name)) {
-        return `Which model? \`${prefix} model ${role} <name|default>\``;
+        return `Which model? \`${prefix} model ${role ?? "here"} <name|default>\``;
       }
-      deps.settings?.set(modelKey(role), name);
-      return `*${role}* now runs on \`${name}\`.`;
+      deps.settings?.set(key, name);
+      return `${label} now runs on \`${name}\`.${channel ? " That beats any role model here." : ""}`;
     },
   },
   {
@@ -222,7 +247,7 @@ export const COMMANDS: readonly CommandDef[] = [
     minRole: "pal",
     usage: "<question>",
     summary: "ask me something in one shot",
-    run: async ({ deps, actor, rest, prefix }) => {
+    run: async ({ deps, actor, channelId, rest, prefix }) => {
       const question = rest.trim();
       if (!question) return `Ask me something: \`${prefix} ask <question>\``;
       if (!deps.llm) return "My brain is not wired up right now.";
@@ -232,7 +257,7 @@ export const COMMANDS: readonly CommandDef[] = [
         system,
         messages: [{ role: "user", content: question }],
         assistantName: ctx.botName,
-        policy: deps.toolPolicy?.(actor.role),
+        policy: deps.toolPolicy?.(actor.role, channelId),
       });
       return reply.trim() || "I do not have anything useful to add there.";
     },

@@ -352,4 +352,21 @@ describe("handleMessage", () => {
     await handleMessage(deps, { channelId: "D1", slackUserId: OWNER, text: "hello", threadTs: "100.1" });
     expect(seen.map((m) => m.content)).toEqual(["hello"]);
   });
+
+  test("the channel's model reaches the brain, over the role's", async () => {
+    let policy: { model?: string } | undefined;
+    const deps = build({
+      complete: async (p) => {
+        policy = p.policy;
+        return "ok";
+      },
+    });
+    deps.toolPolicy = (role, channelId) => ({
+      skipPermissions: false,
+      model: channelId === "C-cheap" ? "haiku" : role === "pal" ? "sonnet" : undefined,
+    });
+
+    await handleMessage(deps, { channelId: "C-cheap", slackUserId: OWNER, text: "hi" });
+    expect(policy?.model).toBe("haiku"); // the channel decided, not the role
+  });
 });

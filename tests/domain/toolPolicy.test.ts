@@ -75,6 +75,18 @@ describe("model per role", () => {
     expect(toolPolicyFor("owner", withModels).model).toBe("opus");
   });
 
+  test("a channel model beats the role's, for every role", () => {
+    const both = { ...opts, models: { pal: "haiku", owner: "opus" }, channelModel: "sonnet" };
+    for (const role of ["pal", "executer", "admin", "owner"] as const) {
+      expect(toolPolicyFor(role, both).model).toBe("sonnet");
+    }
+  });
+
+  test("a blank channel model falls through to the role", () => {
+    const p = toolPolicyFor("pal", { ...opts, models: { pal: "haiku" }, channelModel: "   " });
+    expect(p.model).toBe("haiku");
+  });
+
   test("no models configured means no override at all", () => {
     for (const role of ["pal", "executer", "admin", "owner"] as const) {
       expect(toolPolicyFor(role, opts).model).toBeUndefined();
