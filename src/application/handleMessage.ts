@@ -9,6 +9,7 @@ import { decideAccess } from "../domain/access.ts";
 import {
   buildContextWindow,
   cleanInboundText,
+  ATTACHMENT_MARKER,
   DEFAULT_CONTEXT_WINDOW,
   reactableMessages,
 } from "../domain/conversation.ts";
@@ -273,7 +274,7 @@ const withAttachments = (m: SlackMessage): string => {
   const attached = m.files
     .map((f) => `- ${f.name} (${f.mimetype})${f.urlPrivate ? ` ${f.urlPrivate}` : ""}`)
     .join("\n");
-  return `${text}${text ? "\n" : ""}[attached]\n${attached}`;
+  return `${text}${text ? "\n" : ""}${ATTACHMENT_MARKER}\n${attached}`;
 };
 
 /** Roles allowed to teach the bot - the same gate the `learn` command applies. */

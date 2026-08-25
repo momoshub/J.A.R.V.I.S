@@ -10,20 +10,43 @@ import type { PromptMessage, Reactable, StoredMessage } from "./types.ts";
 /** Default number of most-recent turns to keep in the prompt window. */
 export const DEFAULT_CONTEXT_WINDOW = 20;
 
+/** Marks the attachments listed on a turn. One definition, used both to write
+ * them and to make sure they survive the window. */
+export const ATTACHMENT_MARKER = "[attached]";
+
+const toPrompt = ({ role, content, slackUserId }: StoredMessage): PromptMessage => ({
+  role,
+  content,
+  speakerId: slackUserId,
+});
+
 /**
- * Build the ordered prompt window from stored history.
+ * Build the ordered prompt window from stored history, oldest-first.
  *
- * History is expected oldest-first. We keep the last `windowSize` turns so the
- * most recent context always survives.
+ * Taking the last N turns is wrong for a thread that has run long: the first
+ * message is the subject, and whatever was shared in it - the screenshot the
+ * whole thread is about - falls off the front exactly when the conversation
+ * gets interesting. So the root and any turn carrying an attachment are kept,
+ * and the rest of the window is the most recent turns. Order is preserved, so
+ * the newest turn is still last.
  */
 export const buildContextWindow = (
   history: readonly StoredMessage[],
   windowSize: number = DEFAULT_CONTEXT_WINDOW,
 ): PromptMessage[] => {
   const size = Math.max(0, Math.floor(windowSize));
-  return history
-    .slice(-size)
-    .map(({ role, content, slackUserId }) => ({ role, content, speakerId: slackUserId }));
+  if (size === 0) return [];
+  if (history.length <= size) return history.map(toPrompt);
+
+  const keep = new Set<number>([0]); // the root: what the thread is about
+  for (let i = 1; i < history.length && keep.size < size; i++) {
+    if (history[i]?.content.includes(ATTACHMENT_MARKER)) keep.add(i);
+  }
+  for (let i = history.length - 1; i >= 0 && keep.size < size; i--) keep.add(i);
+
+  return [...keep]
+    .sort((a, b) => a - b)
+    .map((i) => toPrompt(history[i] as StoredMessage));
 };
 
 /** How many recent messages the bot is offered as reaction targets. */
