@@ -14,6 +14,15 @@ export type SlackConversation = {
   lastActive: number;
 };
 
+/** A file shared on a Slack message. `urlPrivate` needs the bot token to fetch. */
+export type SlackFile = {
+  name: string;
+  mimetype: string;
+  /** Authenticated download url - not usable without the token. */
+  urlPrivate: string;
+  size?: number;
+};
+
 export type SlackMessage = {
   ts: string;
   userId: string;
@@ -25,6 +34,8 @@ export type SlackMessage = {
   own: boolean;
   /** text @-mentions our bot */
   mentionsBot: boolean;
+  /** Anything attached to the message: images, documents, snippets. */
+  files?: SlackFile[];
 };
 
 /** A page of history plus the cursor to fetch the next (older) page. */

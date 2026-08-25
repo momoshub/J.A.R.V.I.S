@@ -76,6 +76,9 @@ export type ToolPolicyOptions = {
    * dispatches, so this hands over no authority of its own.
    */
   readonly runScript?: string;
+  /** Absolute path of the Slack file downloader. Reading what people share is
+   * table stakes, so every role gets it - it can only reach files.slack.com. */
+  readonly fileScript?: string;
   /**
    * Model per role, for roles that should not be spending the expensive one on
    * ordinary chat. Absent means the adapter's default.
@@ -98,6 +101,7 @@ const withHelpers = (tools: readonly string[], opts: ToolPolicyOptions): readonl
   ...tools,
   ...(opts.reactScript ? [`Bash(${opts.reactScript}:*)`] : []),
   ...(opts.runScript ? [`Bash(${opts.runScript}:*)`] : []),
+  ...(opts.fileScript ? [`Bash(${opts.fileScript}:*)`] : []),
 ];
 
 /** Channel beats role beats the adapter default. */

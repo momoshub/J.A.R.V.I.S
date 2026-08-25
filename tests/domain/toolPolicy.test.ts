@@ -38,10 +38,12 @@ describe("toolPolicyFor", () => {
     expect(tools).toContain("WebFetch");
   });
 
-  test("every sandboxed role may react, through the helper and nothing wider", () => {
+  test("every sandboxed role may react and fetch a shared file, and nothing wider", () => {
+    const withHelpers = { ...opts, fileScript: "/opt/jarvis/bin/slack-file.sh" };
     for (const role of ["pal", "executer"] as const) {
-      const tools = toolPolicyFor(role, opts).allowedTools ?? [];
+      const tools = toolPolicyFor(role, withHelpers).allowedTools ?? [];
       expect(tools).toContain(`Bash(${REACT}:*)`);
+      expect(tools).toContain("Bash(/opt/jarvis/bin/slack-file.sh:*)");
       // a general curl would be an outbound channel for the bot token
       expect(tools).not.toContain("Bash(curl:*)");
     }

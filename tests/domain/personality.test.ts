@@ -165,6 +165,21 @@ describe("buildSystemPrompt", () => {
     expect(buildSystemPrompt({ ...runOpts, runUrl: undefined })).not.toContain("Running my own commands");
   });
 
+  test("reading links and attachments is a rule, not a suggestion", () => {
+    const p = buildSystemPrompt({ fileScript: "/bin/slack-file.sh" });
+    expect(p).toContain("Links and attachments (not optional)");
+    expect(p).toContain("open it before you answer");
+    expect(p).toContain("never ask someone to paste what you could have fetched");
+    expect(p).toContain("images and screenshots included");
+    expect(p).toContain("/bin/slack-file.sh <url> [destination]");
+  });
+
+  test("it must admit when something could not be opened", () => {
+    const p = buildSystemPrompt({});
+    expect(p).toContain("Do not pretend to have read it");
+    expect(p).not.toContain("slack-file.sh"); // no downloader, no instructions for one
+  });
+
   test("omits the roster block when there are no participants", () => {
     expect(buildSystemPrompt({ learnings: [], participants: [] })).not.toContain(
       "mention or reply to them with their Slack tag",

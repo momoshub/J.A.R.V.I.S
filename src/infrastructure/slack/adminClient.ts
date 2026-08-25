@@ -18,6 +18,7 @@ type RawMessage = {
   subtype?: string;
   reply_count?: number;
   thread_ts?: string;
+  files?: { name?: string; mimetype?: string; url_private?: string; size?: number }[];
 };
 
 const MENTION = (botId: string) => new RegExp(`<@${botId}(?:\\|[^>]+)?>`);
@@ -106,6 +107,16 @@ export const createSlackAdmin = (client: WebClient): SlackAdminPort => {
       threadTs: m.thread_ts,
       own: userId === botId,
       mentionsBot: botId ? MENTION(botId).test(m.text ?? "") : false,
+      ...(m.files && m.files.length > 0
+        ? {
+            files: m.files.map((f) => ({
+              name: f.name ?? "file",
+              mimetype: f.mimetype ?? "application/octet-stream",
+              urlPrivate: f.url_private ?? "",
+              ...(typeof f.size === "number" ? { size: f.size } : {}),
+            })),
+          }
+        : {}),
     };
   };
 

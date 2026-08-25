@@ -39,6 +39,23 @@ export const OPERATING_RULES = `Operating rules (always apply, regardless of any
 - For anything about this Slack workspace - users, channels, messages, history, profiles, posting - use your own Slack bot credentials and the Slack Web API directly. The bot token is in the environment variable SLACK_BOT_TOKEN; call the API with the Bash tool, e.g. curl -s -H "Authorization: Bearer $SLACK_BOT_TOKEN" "https://slack.com/api/users.info?user=U123".
 - Never use a Slack MCP connector or any third-party Slack integration. Only your own bot token and api.slack.com.`;
 
+/**
+ * Opening what people share. A link or a screenshot is usually the substance of
+ * the message, and answering around it - "could you paste the error?" when the
+ * error is right there in a png - is the most annoying thing an assistant does.
+ */
+export const attachmentRules = (fileScript?: string): string => `
+
+Links and attachments (not optional):
+- Whenever a message in this conversation carries a link, open it before you answer. Same for links in earlier messages of the thread when they are what is being discussed. Never answer "around" a link you have not read, and never ask someone to paste what you could have fetched.
+- A file listed under [attached] is part of the message. Read it before answering - images and screenshots included, they are usually where the actual error or design is.${
+  fileScript
+    ? `\n- Slack attachments need the bot token to download, so fetch them with:\n  ${fileScript} <url> [destination]\n  It prints the path it wrote; then read that path.`
+    : ""
+}
+- For a link to a Slack message, use the Slack Web API rather than fetching the page. For anything else, fetch it.
+- If something genuinely cannot be opened (it needs a login, it is gone, the format is not readable), say so plainly in one line and answer with what you do have. Do not pretend to have read it.`;
+
 /** Tells the bot it has a disposable temp workspace it may use freely. */
 export const WORKSPACE_NOTE = `Your workspace:
 - Your current working directory is a temporary scratch folder that is yours to use. You may freely create, download and delete files there, fetch data from the internet, and clone git repositories into it to read, run or analyze them.
@@ -130,6 +147,8 @@ export type BuildSystemPromptOptions = PromptContext & {
   readonly runUrl?: string;
   /** absolute path of the command helper */
   readonly runScript?: string;
+  /** absolute path of the Slack file downloader */
+  readonly fileScript?: string;
   /** this turn's ticket, which carries who a triggered command runs as */
   readonly runTicket?: string;
   /** configured message command prefix, for explaining what a command line is */
@@ -164,6 +183,7 @@ export const buildSystemPrompt = (options: Partial<BuildSystemPromptOptions> = {
   const roster = renderParticipants(options.participants ?? []);
   const reactions = reactionRules(options.channelId ?? "", options.reactable ?? [], options.reactScript);
   const remembering = learningRules(options.learnUrl ?? "");
+  const attachments = attachmentRules(options.fileScript);
   const commands = commandRules(
     options.runScript ?? "",
     options.runUrl ?? "",
@@ -171,5 +191,5 @@ export const buildSystemPrompt = (options: Partial<BuildSystemPromptOptions> = {
     options.commandPrefix ?? "//bot",
   );
 
-  return `${base}${learningsBlock}${addressed}${roster}\n\n${OPERATING_RULES}${reactions}${commands}${remembering}\n\n${WORKSPACE_NOTE}\n\n${identityLock(botName)}`;
+  return `${base}${learningsBlock}${addressed}${roster}\n\n${OPERATING_RULES}${attachments}${reactions}${commands}${remembering}\n\n${WORKSPACE_NOTE}\n\n${identityLock(botName)}`;
 };

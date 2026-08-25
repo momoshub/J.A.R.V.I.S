@@ -122,6 +122,7 @@ const main = async () => {
   // a general `curl` in a sandbox would be an outbound channel for the token.
   const reactScript = join(import.meta.dir, "..", "bin", "slack-react.sh");
   const runScript = join(import.meta.dir, "..", "bin", "jarvis-run.sh");
+  const fileScript = join(import.meta.dir, "..", "bin", "slack-file.sh");
   // Model per role: a dashboard/command override wins, otherwise the env value,
   // otherwise the adapter default. Read per call so a change needs no restart.
   const modelsForRoles = () => {
@@ -140,6 +141,7 @@ const main = async () => {
       sandboxCwd,
       reactScript,
       runScript,
+      fileScript,
       models: modelsForRoles(),
       executerTools: (settings.get(SETTING_KEYS.executerTools) ?? "")
         .split(/[,\n]/)
@@ -185,6 +187,7 @@ const main = async () => {
     // Per-person allowances live here, set with the `limit` command.
     settings,
     reactScript,
+    fileScript,
     draft,
     toolPolicy,
     // The dashboard API is loopback-only, so the brain can save a learning the

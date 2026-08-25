@@ -77,6 +77,7 @@ The **Console** tab additionally needs read scopes to list and open conversation
 - Someone it does not know is not turned away: the owner **and every admin** get a DM with who spoke and what they said, and whichever of them gets there first decides with a reaction - ✅ adds them as `pal`, ❌ declines. Either way the person is answered where they asked, and the other copies settle so nobody decides twice. They are answered **once**: tagging again while the request is open says nothing, and someone who was declined cannot re-raise it by asking - there is a 24h cooldown before their asking counts again
 - It tags people with their Slack `<@id>` when they are in the conversation
 - For workspace questions it uses its own bot token and the Slack Web API, never a third-party connector
+- **It opens what you share.** Links in a message (or earlier in the thread) are fetched before it answers, and attachments - screenshots, logs, documents - are downloaded and read. It will not ask you to paste something it could have opened, and if something genuinely cannot be read it says so rather than answering around it
 
 ### Commands
 
@@ -202,6 +203,8 @@ Each allowlisted user has a role that scopes what the brain may do when they tal
 | `executer` | sandboxed, tools assigned from the dashboard (Users -> Executer tools) |
 
 Sandboxed roles run the Claude CLI without `--dangerously-skip-permissions`, with an explicit `--allowedTools` allow-list, so anything off the list is denied (verified: `pal` cannot write files). The `executer` allow-list is edited on the Users page.
+
+Two more helpers are granted to every role for the same reason: `bin/slack-file.sh` (downloads a Slack attachment, and refuses any url that is not a Slack file) and `bin/jarvis-run.sh` (asks the bot to run one of its own commands, gated by the caller's role).
 
 **Reacting** is granted to every role, including sandboxed ones, via `bin/slack-react.sh` - a helper that can only reach `reactions.add`. Sandboxed roles deliberately do *not* get a general `curl`: the bot's token is in the CLI's environment, so an arbitrary outbound request would be a way to send it somewhere.
 

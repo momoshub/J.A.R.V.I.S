@@ -369,4 +369,41 @@ describe("handleMessage", () => {
     await handleMessage(deps, { channelId: "C-cheap", slackUserId: OWNER, text: "hi" });
     expect(policy?.model).toBe("haiku"); // the channel decided, not the role
   });
+
+  test("attachments are shown to the brain, with a url it can fetch", async () => {
+    let seen: readonly PromptMessage[] = [];
+    const deps = build(fakeLlm("ok", (m) => (seen = m)));
+    deps.slack = {
+      ...noopSlack,
+      replies: async () => [
+        {
+          ...slackMsg({ ts: "100.1", userId: OWNER, text: "why does this fail" }),
+          files: [
+            { name: "error.png", mimetype: "image/png", urlPrivate: "https://files.slack.com/x/error.png" },
+          ],
+        },
+        // a file with no message text at all must not vanish
+        {
+          ...slackMsg({ ts: "100.2", userId: OWNER, text: "" }),
+          files: [{ name: "trace.log", mimetype: "text/plain", urlPrivate: "https://files.slack.com/x/trace.log" }],
+        },
+      ],
+    };
+
+    await handleMessage(deps, {
+      channelId: "D1",
+      slackUserId: OWNER,
+      text: "why does this fail",
+      threadTs: "100.1",
+      messageTs: "100.1",
+    });
+
+    const texts = seen.map((m) => m.content);
+    expect(texts[0]).toContain("why does this fail");
+    expect(texts[0]).toContain("[attached]");
+    expect(texts[0]).toContain("error.png (image/png)");
+    expect(texts[0]).toContain("https://files.slack.com/x/error.png");
+    // the text-less turn survives because of what it carries
+    expect(texts[1]).toContain("trace.log");
+  });
 });

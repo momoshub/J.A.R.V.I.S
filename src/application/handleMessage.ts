@@ -58,6 +58,8 @@ export type HandleMessageDeps = {
   toolPolicy?: (role: UserRole, channelId?: string) => ToolPolicy;
   /** Absolute path of the reaction helper, granted to every role. */
   reactScript?: string;
+  /** Absolute path of the Slack file downloader, granted to every role. */
+  fileScript?: string;
   /** Long-running workflow sessions bound to a thread. */
   workflows?: WorkflowRepo;
   /** Pending access requests, so a stranger is put to the owner rather than refused. */
@@ -163,6 +165,7 @@ export const handleMessage = async (
     channelId: inbound.channelId,
     reactable: reactableMessages(history),
     reactScript: deps.reactScript,
+    fileScript: deps.fileScript,
     // ... and keep a durable fact, but only when talking to someone who could
     // have taught it one by hand. Learnings apply to everyone, everywhere.
     learnUrl: canTeach(decision.user.role) ? deps.learnUrl : undefined,
@@ -230,13 +233,13 @@ const loadThread = async (
   if (thread.length === 0) return undefined;
 
   const turns = thread
-    .filter((m) => m.text.trim().length > 0)
+    .filter((m) => m.text.trim().length > 0 || (m.files?.length ?? 0) > 0)
     .map((m, i) => ({
       id: i,
       channelId: inbound.channelId,
       slackUserId: m.own ? ASSISTANT_AUTHOR : m.userId,
       role: (m.own ? "assistant" : "user") as StoredMessage["role"],
-      content: m.text.trim(),
+      content: withAttachments(m),
       createdAt: Math.round(Number(m.ts) * 1000) || 0,
       slackTs: m.ts,
       threadTs: inbound.threadTs,
@@ -256,6 +259,21 @@ const loadThread = async (
     });
   }
   return turns;
+};
+
+/**
+ * A turn as the model should see it: its text, plus anything attached.
+ *
+ * An attachment is invisible in `text`, so without this the model cannot know a
+ * screenshot or a document was ever shared - let alone open it.
+ */
+const withAttachments = (m: SlackMessage): string => {
+  const text = m.text.trim();
+  if (!m.files || m.files.length === 0) return text;
+  const attached = m.files
+    .map((f) => `- ${f.name} (${f.mimetype})${f.urlPrivate ? ` ${f.urlPrivate}` : ""}`)
+    .join("\n");
+  return `${text}${text ? "\n" : ""}[attached]\n${attached}`;
 };
 
 /** Roles allowed to teach the bot - the same gate the `learn` command applies. */
