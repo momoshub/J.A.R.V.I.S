@@ -132,6 +132,24 @@ describe("reviewPrompt", () => {
     expect(p).toContain("On flow B the cap never squeezes the blockers");
   });
 
+  test("when nothing was approved, the prompt does not pretend one exists", () => {
+    const url = "https://github.com/o/r/pull/1";
+    const p = reviewPrompt([url], "Evie", { login: "kai" }, []);
+    expect(p).toContain("NOT approved, and not yours to approve");
+    expect(p).toContain("You have not approved this PR and will not");
+    expect(p).not.toContain("ALREADY DONE");
+    expect(p).toContain("Approving is never yours to do");
+  });
+
+  test("mixed policies are spelled out per PR", () => {
+    const a = "https://github.com/o/r/pull/1";
+    const b = "https://github.com/o/other/pull/2";
+    const p = reviewPrompt([a, b], "Evie", undefined, [a]);
+    expect(p).toContain("Approvals differ per PR here");
+    expect(p).toContain("Already approved before you started:");
+    expect(p).toContain(b);
+  });
+
   test("the approve is the caller's job, not the model's", () => {
     const p = reviewPrompt(["https://github.com/o/r/pull/1"], "Evie");
     expect(p).toContain("ALREADY DONE, before you started");

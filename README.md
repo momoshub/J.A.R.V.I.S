@@ -100,6 +100,7 @@ Every command has two interfaces - use whichever you like. Both triggers are con
 | `remove @user` | admins (admins: owner only) | revoke access |
 | `learn <fact>` | admins | teach a durable fact |
 | `learnings` / `relearn <id> <text>` / `unlearn <id>` | admins | list, reword or delete learnings |
+| `review-policy [owner/repo] [first\|after\|default]` (alias `rvpolicy`) | anyone (setting: admins) | how a repo gets approved - see [Review policy per repo](#review-policy-per-repo) |
 | `review <pr-url>` (alias `rv`) | pal+ | review a PR: approve first (even if it is already merged or closed), then post the review as a GitHub comment *and* back in the thread; request changes on high risk (big PRs are cloned + reviewed by child agents). Runs full-access. |
 | `bomb [categories] [count] <message-link>` (alias `br`) | admins | reaction-bomb a message. Combine categories with commas and set a count: `bomb money,face,negative 9 <link>`. Up to 23; `bomb help` lists every category |
 | `reply <message-link>` (alias `jrp`) | admins | draft and post an AI reply to a message |
@@ -165,6 +166,28 @@ changes what anyone is *allowed* to do - a cheaper model is sandboxed
 identically. Preset tasks that force a policy keep their own model: `review`
 runs full-access whoever asked and wherever it is asked, so a pal's review in a
 cheap channel is still done properly.
+
+## Review policy per repo
+
+By default `review` approves immediately and reverses that with a request for
+changes if the review turns up something blocking. Some repositories want the
+opposite - nothing approved until a review has been written and come back clean:
+
+```
+//bot review-policy owner/repo after      approve only after a clean review
+//bot review-policy owner/repo first      the default
+//bot review-policy owner/repo default    clear it
+//bot review-policy                       the default, and every repo that differs
+```
+
+On `after`, the up-front approval is skipped, the brain is told plainly that
+nothing is approved (so the review is not written as a formality), and once it
+finishes the approval is decided by **asking GitHub** for the PR's review
+decision rather than inferring it - `CHANGES_REQUESTED` means no approval, and
+it says so in the thread.
+
+Policies are configuration, in the database: no repository is named anywhere in
+this codebase, which matters because it is open.
 
 ## Command allowance
 

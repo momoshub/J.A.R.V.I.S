@@ -308,6 +308,7 @@ describe("dispatchCommand", () => {
     const order: string[] = [];
     const github: GitHubPort = {
       whoami: async () => ({ login: "kai-at-acme", name: "Kai" }),
+      reviewDecision: async () => undefined,
       approve: async (url) => {
         order.push(`approve:${url}`);
         return { ok: true };
@@ -342,6 +343,7 @@ describe("dispatchCommand", () => {
     const PR = "https://github.com/o/r/pull/1";
     const github: GitHubPort = {
       whoami: async () => undefined,
+      reviewDecision: async () => undefined,
       approve: async () => ({ ok: false, error: "can not approve your own PR" }),
     };
     const lines: string[] = [];
@@ -357,7 +359,11 @@ describe("dispatchCommand", () => {
 
   test("rv does not repeat the approve line if the brain approves too", async () => {
     const PR = "https://github.com/o/r/pull/1";
-    const github: GitHubPort = { whoami: async () => undefined, approve: async () => ({ ok: true }) };
+    const github: GitHubPort = {
+      whoami: async () => undefined,
+      reviewDecision: async () => undefined,
+      approve: async () => ({ ok: true }),
+    };
     const streamed: LlmPort = {
       complete: async () => "unused",
       stream: async (_p, sink) => {
@@ -595,6 +601,102 @@ describe("owner copy of slash commands", () => {
     };
     const res = await slashFrom(deps, "Upal", "ask what is 2+2");
     expect(res).toEqual({ kind: "reply", text: "drafted answer" });
+  });
+});
+
+describe("per-repo review policy", () => {
+  const PR = "https://github.com/acme/sql-runner/pull/905";
+  const OTHER = "https://github.com/acme/acme-be/pull/1";
+
+  const withPolicy = (decision?: string) => {
+    const deps = build();
+    deps.settings = createSettingsRepo(db);
+    const calls: string[] = [];
+    deps.github = {
+      whoami: async () => undefined,
+      reviewDecision: async () => decision,
+      approve: async (url) => {
+        calls.push(url);
+        return { ok: true };
+      },
+    };
+    let system = "";
+    deps.llm = {
+      complete: async (p) => {
+        system = p.system;
+        return "the review";
+      },
+    };
+    const lines: string[] = [];
+    const reply = async (t: string) => {
+      lines.push(t);
+    };
+    return { deps, calls, lines, reply, sys: () => system };
+  };
+
+  test("by default a PR is approved before the review, as before", async () => {
+    const { deps, calls, lines, reply } = withPolicy();
+    await dispatchCommand(deps, actor(), "C1", `rv ${PR}`, { reply });
+    expect(calls).toEqual([PR]);
+    expect(lines[0]).toBe(`✅ approved ${PR}`);
+  });
+
+  test("on approve-after nothing is approved up front", async () => {
+    const { deps, calls, lines, reply, sys } = withPolicy(undefined);
+    await dispatchCommand(deps, actor(), "C1", "review-policy acme/sql-runner after");
+
+    await dispatchCommand(deps, actor(), "C1", `rv ${PR}`, { reply });
+    expect(lines[0]).toContain("reviewing"); // no approval line first
+    // and the brain is told there is no approval to lean on
+    expect(sys()).toContain("NOT approved, and not yours to approve");
+    // approved only once the review came back clean
+    expect(calls).toEqual([PR]);
+    expect(lines[lines.length - 1]).toContain("the review came back clean");
+  });
+
+  test("a blocked review is not approved at all", async () => {
+    const { deps, calls, lines, reply } = withPolicy("CHANGES_REQUESTED");
+    await dispatchCommand(deps, actor(), "C1", "review-policy acme/sql-runner after");
+
+    await dispatchCommand(deps, actor(), "C1", `rv ${PR}`, { reply });
+    expect(calls).toEqual([]); // never approved
+    expect(lines[lines.length - 1]).toContain("not approving");
+    expect(lines[lines.length - 1]).toContain("changes are requested");
+  });
+
+  test("the policy is per repo, so others are untouched", async () => {
+    const { deps, calls, lines, reply } = withPolicy();
+    await dispatchCommand(deps, actor(), "C1", "review-policy acme/sql-runner after");
+
+    await dispatchCommand(deps, actor(), "C1", `rv ${OTHER}`, { reply });
+    expect(lines[0]).toBe(`✅ approved ${OTHER}`); // still approved up front
+    expect(calls).toEqual([OTHER]);
+  });
+
+  test("admins set it, anyone can read it, junk is refused", async () => {
+    const deps = build();
+    deps.settings = createSettingsRepo(db);
+    const pal = actor({ slackId: "U0PAL0001", role: "pal" });
+
+    expect(await dispatchCommand(deps, pal, "C1", "review-policy acme/x after")).toContain("Only admins");
+    expect(await dispatchCommand(deps, actor(), "C1", "review-policy notarepo after")).toContain("Which repo?");
+    expect(await dispatchCommand(deps, actor(), "C1", "review-policy acme/x sometimes")).toContain(
+      "First or after?",
+    );
+
+    await dispatchCommand(deps, actor(), "C1", "review-policy acme/x after");
+    expect(await dispatchCommand(deps, pal, "C1", "review-policy acme/x")).toContain("approve-after");
+    expect(await dispatchCommand(deps, actor(), "C1", "review-policy")).toContain("acme/x");
+
+    await dispatchCommand(deps, actor(), "C1", "review-policy acme/x default");
+    expect(await dispatchCommand(deps, pal, "C1", "review-policy acme/x")).toContain("uses the default");
+  });
+
+  test("a PR url works as the repo argument too", async () => {
+    const deps = build();
+    deps.settings = createSettingsRepo(db);
+    await dispatchCommand(deps, actor(), "C1", `review-policy ${PR} after`);
+    expect(deps.settings.get("review_policy:acme/sql-runner")).toBe("approve-after");
   });
 });
 

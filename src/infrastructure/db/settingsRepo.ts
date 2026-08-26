@@ -17,10 +17,15 @@ export const SETTING_KEYS = {
 /** Model override for one role, e.g. `model:pal`. Empty means "use the default". */
 export const modelKey = (role: string): string => `model:${role}`;
 
+/** Review policy for one repository, e.g. `review_policy:owner/repo`. */
+export const reviewPolicyKey = (repo: string): string => `review_policy:${repo.toLowerCase()}`;
+
 export type SettingsRepo = {
   get: (key: string) => string | undefined;
   set: (key: string, value: string) => void;
   remove: (key: string) => void;
+  /** Every stored setting, for listing a family of keys. */
+  list: () => { key: string; value: string }[];
 };
 
 export const createSettingsRepo = (db: DbClient): SettingsRepo => {
@@ -32,6 +37,7 @@ export const createSettingsRepo = (db: DbClient): SettingsRepo => {
      ON CONFLICT(key) DO UPDATE SET value = excluded.value`,
   );
   const removeStmt = db.query("DELETE FROM settings WHERE key = $key");
+  const listStmt = db.query<{ key: string; value: string }, []>("SELECT key, value FROM settings ORDER BY key");
 
   return {
     get: (key) => getStmt.get(key)?.value,
@@ -41,5 +47,6 @@ export const createSettingsRepo = (db: DbClient): SettingsRepo => {
     remove: (key) => {
       removeStmt.run({ $key: key });
     },
+    list: () => listStmt.all(),
   };
 };

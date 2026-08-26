@@ -21,6 +21,33 @@ import type { Reviewer } from "./types.ts";
  */
 export const REQUEST_CHANGES_BODY = "requested changes";
 
+/**
+ * What the model should believe about approvals, which depends on the policy
+ * each repository is on. Never let it think an approval exists that does not:
+ * on a repository that approves only after review, claiming one already stands
+ * makes the whole review read as a formality.
+ */
+const approvalState = (prUrls: readonly string[], approved: readonly string[]): string => {
+  const pending = prUrls.filter((u) => !approved.includes(u));
+  if (pending.length === 0) {
+    return "ALREADY DONE, before you started: each PR above has been approved for you - a bodyless approving review, submitted directly, not by you. Do NOT run `gh pr review --approve` yourself; it is done. Take the approval as a given and start at step 1.";
+  }
+  if (approved.length === 0) {
+    return "NOT approved, and not yours to approve: nothing has been approved here, and you must never run `gh pr review --approve`. Whether these get approved is decided after your review, from what you find. Review them as they stand.";
+  }
+  return `Approvals differ per PR here, and none of them are yours to make - never run \`gh pr review --approve\`.\nAlready approved before you started:\n${approved.join("\n")}\nNot approved, and approved only after your review if nothing blocks:\n${pending.join("\n")}`;
+};
+
+/**
+ * How to treat an approval sitting on the PR under your own name. When one was
+ * placed up front it is noise and must be ignored; when none was, saying so
+ * stops the review from referring to an approval that does not exist.
+ */
+const ownApprovalNote = (approvedUpFront: boolean, account: string): string =>
+  approvedUpFront
+    ? `The PR already carries an approving review${account} - you submitted it a second ago, before you started reading. Ignore it completely: never mention it, never call it "an existing approval", never treat it as anyone else's sign-off.`
+    : `You have not approved this PR and will not - do not refer to an approval of your own, because there is not one. Whether it gets approved is settled after your review.`;
+
 /** A PR counts as "big" (clone + child agents) past these thresholds. */
 export const BIG_PR_FILES = 5;
 export const BIG_PR_LINES = 200;
@@ -29,6 +56,8 @@ export const reviewPrompt = (
   prUrls: readonly string[],
   botName: string,
   reviewer?: Reviewer,
+  /** Which of `prUrls` were approved before the review started. */
+  approved: readonly string[] = prUrls,
 ): string => {
   const many = prUrls.length > 1;
   // The comment is posted by the gh account, so it is written in that person's
@@ -40,7 +69,7 @@ ${prUrls.join("\n")}
 
 You have FULL tools for this task: gh (read AND write), git, a shell, and the Task tool to spawn child agents. Your current directory is a scratch workspace you may clone into. This is a preset review job - only take the PR-review actions described below, nothing else.
 
-ALREADY DONE, before you started: each PR above has been approved for you - a bodyless approving review, submitted directly, not by you. Do NOT run \`gh pr review --approve\` yourself; it is done. Take the approval as a given and start at step 1.
+${approvalState(prUrls, approved)}
 
 For EACH PR, follow this workflow exactly, in order:
 
@@ -64,7 +93,7 @@ For EACH PR, follow this workflow exactly, in order:
        gh pr comment <url> --body "<your review>"
 
    FLOW B - high risk found. Two actions, in exactly this order, then this PR is done:
-       a) reverse the standing approval (this supersedes and discards the approve that was submitted before you started). The body is a fixed marker, exactly this and nothing else - no findings, no list, no explanation:
+       a) request changes. The body is a fixed marker, exactly this and nothing else - no findings, no list, no explanation:
             gh pr review <url> --request-changes --body "${REQUEST_CHANGES_BODY}"
        b) then the review comment, which carries everything - lead with what is blocking and why, then the rest of the review:
             gh pr comment <url> --body "<your review>"
@@ -74,7 +103,7 @@ For EACH PR, follow this workflow exactly, in order:
 
 4. How to write the review. Write it as ${who}, an engineer leaving a quick review in chat - the comment is posted from that account, so it is that person's voice, first person, not a bot's.
 
-   The PR already carries an approving review${account} - you submitted it a second ago, before you started reading. Ignore it completely: never mention it, never call it "an existing approval", never treat it as anyone else's sign-off. Approvals and change requests from OTHER reviewers DO count - respect them, and do not repeat points they have already raised.
+   ${ownApprovalNote(approved.length > 0, account)} Approvals and change requests from OTHER reviewers DO count - respect them, and do not repeat points they have already raised.
 
    Short conversational prose, one or two paragraphs, assertive, straight at the implementation: the concrete changes, the coding style, real bugs, security, correctness, design risk. Say where you land - good to merge, or what is blocking. Call out failing CI. If the PR is already merged or closed, review it exactly as you would an open one and note plainly that it has already landed. Never fabricate: only flag what you actually verified.
 
@@ -96,5 +125,5 @@ For EACH PR, follow this workflow exactly, in order:
 
 5. Close out in Slack. Every body you post is relayed into the thread as it lands, in full, so it is already there - do not paste it again. Your final reply is a short wrap-up only: one line per PR with the url, what you did (approved / requested changes), whether it is open, merged or closed, and the single headline finding. End the whole message with exactly this line: just a cozy little glance from me and my claude ;))
 
-You DO have write access for this task and are expected to comment / request-changes on the PR (the approve is already in). Do not modify files in any real repo, push, or take any action beyond these PR-review commands.`;
+You DO have write access for this task and are expected to comment / request-changes on the PR. Approving is never yours to do. Do not modify files in any real repo, push, or take any action beyond these PR-review commands.`;
 };

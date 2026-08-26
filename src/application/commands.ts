@@ -13,6 +13,13 @@
 import { buildSystemPrompt, DEFAULT_BOT_NAME } from "../domain/personality.ts";
 import { validateRemoval, validateRoleChange } from "../domain/access.ts";
 import { reviewPrompt } from "../domain/reviewPrompt.ts";
+import {
+  asReviewPolicy,
+  DEFAULT_REVIEW_POLICY,
+  repoOf,
+  repoRefOf,
+  type ReviewPolicy,
+} from "../domain/reviewPolicy.ts";
 import { BOMB_SIZE, DEFAULT_CATEGORY, parseCategories, pickBomb, renderCategories } from "../domain/emoji.ts";
 import { mentionedId } from "../domain/mentions.ts";
 import { parseMessageLink } from "../domain/slackLinks.ts";
@@ -31,7 +38,7 @@ import type { LearningsRepo } from "../infrastructure/db/learningsRepo.ts";
 import type { CommandLogRepo } from "../infrastructure/db/commandLogRepo.ts";
 import type { WorkflowRepo } from "../infrastructure/db/workflowRepo.ts";
 import type { CommandApprovalRepo } from "../infrastructure/db/commandApprovalRepo.ts";
-import { modelKey, type SettingsRepo } from "../infrastructure/db/settingsRepo.ts";
+import { modelKey, reviewPolicyKey, type SettingsRepo } from "../infrastructure/db/settingsRepo.ts";
 
 /** Neutral fallbacks; the real prefix/slash come from config (see index.ts). */
 export const DEFAULT_COMMAND_PREFIX = "//bot";
@@ -137,6 +144,13 @@ const slackIdOf = (token?: string): string | undefined => mentionedId(token);
 
 const roleOf = (token?: string): UserRole | undefined =>
   token === "owner" || token === "admin" || token === "executer" || token === "pal" ? token : undefined;
+
+/** The policy a PR's repository is on, defaulting when nothing is configured. */
+const reviewPolicyOf = (deps: CommandDeps, prUrl: string): ReviewPolicy => {
+  const repo = repoOf(prUrl);
+  if (!repo) return DEFAULT_REVIEW_POLICY;
+  return asReviewPolicy(deps.settings?.get(reviewPolicyKey(repo))) ?? DEFAULT_REVIEW_POLICY;
+};
 
 const botNameOf = (deps: CommandDeps): string =>
   deps.botInfo?.().botName ?? deps.promptContext?.().botName ?? DEFAULT_BOT_NAME;
@@ -417,17 +431,24 @@ export const COMMANDS: readonly CommandDef[] = [
       // step, not a judgement call, so it must not wait ~30s for the model to read
       // the PR. `seen` carries the lines forward so the brain cannot repeat them.
       const seen = new Set<string>();
-      const approved: string[] = [];
+      const announcements: string[] = [];
+      const approvedUpFront: string[] = [];
+      // Repositories on `approve-after` are left alone until the review is in.
+      const afterReview = urls.filter((u) => reviewPolicyOf(deps, u) === "approve-after");
       for (const url of urls) {
+        if (afterReview.includes(url)) continue;
         const res = await deps.github?.approve(url);
         if (!res) break; // no gh wired up - leave it to the brain
         const line = res.ok ? `✅ approved ${url}` : `⚠️ could not approve ${url} - ${res.error}`;
-        if (res.ok) seen.add(line);
-        approved.push(line);
+        if (res.ok) {
+          seen.add(line);
+          approvedUpFront.push(url);
+        }
+        announcements.push(line);
       }
 
       const params = {
-        system: reviewPrompt(targets, name, await account),
+        system: reviewPrompt(targets, name, await account, approvedUpFront),
         messages: [{ role: "user" as const, content: `review ${targets.join(" ")}` }],
         assistantName: name,
         policy,
@@ -442,7 +463,7 @@ export const COMMANDS: readonly CommandDef[] = [
       // Live: post progress as each PR action lands, then the review itself. The
       // destination is chosen by the transport - thread for a message command, DM
       // for a slash command - so nothing is hidden in an ephemeral reply.
-      for (const line of approved) await reply(line);
+      for (const line of announcements) await reply(line);
       await reply(`🔍 reviewing ${targets.join(" ")}`);
 
       let out = "";
@@ -483,7 +504,73 @@ export const COMMANDS: readonly CommandDef[] = [
       }
 
       await reply(out.trim() || "I could not put a review together for that one.");
+
+      // Held back until now: approve only what the review left unblocked, and
+      // ask GitHub rather than inferring it from what the review seemed to say.
+      for (const url of afterReview) {
+        const decision = (await deps.github?.reviewDecision(url))?.toUpperCase();
+        if (decision === "CHANGES_REQUESTED") {
+          await reply(`🚫 not approving ${url} - changes are requested`);
+          continue;
+        }
+        const res = await deps.github?.approve(url);
+        if (!res) continue;
+        await reply(res.ok ? `✅ approved ${url} - the review came back clean` : `⚠️ could not approve ${url} - ${res.error}`);
+      }
       return ""; // already delivered to the thread / DM
+    },
+  },
+  {
+    name: "review-policy",
+    aliases: ["rvpolicy", "repo-policy"],
+    minRole: "pal",
+    usage: "[owner/repo] [first|after|default]",
+    summary: "how a repo gets approved: up front, or only after a clean review",
+    run: (ctx) => {
+      const { deps, actor, args, prefix } = ctx;
+      const describe = (p: ReviewPolicy) =>
+        p === "approve-after"
+          ? "approved *only after* the review, and only if nothing is blocking"
+          : "approved *up front*, reversed if the review finds a blocker";
+
+      if (args.length === 0) {
+        // Configuration only says who differs; the rest are on the default.
+        const configured = deps.settings
+          ? deps.settings
+              .list?.()
+              ?.filter((e) => e.key.startsWith("review_policy:") && asReviewPolicy(e.value))
+              .map((e) => `- \`${e.key.slice("review_policy:".length)}\`: ${asReviewPolicy(e.value)}`)
+          : undefined;
+        const list = configured && configured.length > 0 ? `\n${configured.join("\n")}` : "\nNothing configured - every repo is on the default.";
+        return `Default: *${DEFAULT_REVIEW_POLICY}* - ${describe(DEFAULT_REVIEW_POLICY)}.${list}`;
+      }
+
+      const repo = repoRefOf(args[0] ?? "");
+      if (!repo) return `Which repo? \`${prefix} review-policy owner/repo [first|after|default]\``;
+      if (args.length === 1) {
+        const own = asReviewPolicy(deps.settings?.get(reviewPolicyKey(repo)));
+        return own
+          ? `\`${repo}\` is on *${own}* - ${describe(own)}.`
+          : `\`${repo}\` uses the default, *${DEFAULT_REVIEW_POLICY}* - ${describe(DEFAULT_REVIEW_POLICY)}.`;
+      }
+
+      if (RANK[actor.role] < RANK.admin) return "Only admins can change a review policy.";
+      const want = (args[1] ?? "").toLowerCase();
+      if (want === "default" || want === "reset") {
+        deps.settings?.set(reviewPolicyKey(repo), "");
+        return `\`${repo}\` is back on the default, *${DEFAULT_REVIEW_POLICY}*.`;
+      }
+      const policy: ReviewPolicy | undefined =
+        want === "after" || want === "approve-after"
+          ? "approve-after"
+          : want === "first" || want === "approve-first"
+            ? "approve-first"
+            : undefined;
+      if (!policy || args.length > 2) {
+        return `First or after? \`${prefix} review-policy ${repo} <first|after|default>\``;
+      }
+      deps.settings?.set(reviewPolicyKey(repo), policy);
+      return `\`${repo}\` is now *${policy}* - ${describe(policy)}.`;
     },
   },
   {
