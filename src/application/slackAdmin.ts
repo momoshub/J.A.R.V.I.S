@@ -91,6 +91,8 @@ export type SlackAdminPort = {
   settleInteractive: (channel: string, ts: string, text: string) => Promise<void>;
   /** Add reactions to a message (tolerant of already-reacted / invalid names). Returns how many landed. */
   addReactions: (channel: string, ts: string, names: readonly string[]) => Promise<number>;
+  /** The bot's own Slack user id, so it can recognise itself being tagged. */
+  botUserId: () => Promise<string | undefined>;
   /** Resolve Slack display names for a set of user ids (cached, best-effort). */
   resolveNames: (ids: readonly string[]) => Promise<Record<string, string>>;
 };

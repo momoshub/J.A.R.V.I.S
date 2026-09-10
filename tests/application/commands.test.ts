@@ -83,6 +83,7 @@ const fakeSlack = (calls: SlackCalls, thread: SlackMessage[] = []): SlackAdminPo
     calls.reactions.push(...names);
     return names.length;
   },
+  botUserId: async () => "UBOT",
   resolveNames: async () => ({}),
 });
 

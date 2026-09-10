@@ -37,6 +37,7 @@ const build = () => {
       settled.push(text);
     },
     addReactions: async () => 0,
+    botUserId: async () => "UBOT",
     resolveNames: async () => ({}),
   };
   const deps: {

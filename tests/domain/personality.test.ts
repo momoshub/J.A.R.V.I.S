@@ -180,6 +180,19 @@ describe("buildSystemPrompt", () => {
     expect(p).not.toContain("slack-file.sh"); // no downloader, no instructions for one
   });
 
+  test("it knows which tag is itself", () => {
+    const p = buildSystemPrompt({ botName: "Jarvis", botUserId: "U0BOT000001" });
+    expect(p).toContain("Your own Slack tag is <@U0BOT000001>. That tag is YOU");
+    expect(p).toContain("Never treat <@U0BOT000001> as a third party");
+    expect(p).toContain("never tag yourself in your own reply");
+  });
+
+  test("no self-tag rule when the id could not be resolved", () => {
+    const p = buildSystemPrompt({ botName: "Jarvis" });
+    expect(p).toContain("You are Jarvis, and only Jarvis");
+    expect(p).not.toContain("That tag is YOU");
+  });
+
   test("omits the roster block when there are no participants", () => {
     expect(buildSystemPrompt({ learnings: [], participants: [] })).not.toContain(
       "mention or reply to them with their Slack tag",

@@ -147,6 +147,8 @@ export const handleMessage = async (
     now,
   );
 
+  // Its own id, so a mention of itself is recognised as itself.
+  const botUserId = await deps.slack?.botUserId().catch(() => undefined);
   const window = deps.contextWindow ?? DEFAULT_CONTEXT_WINDOW;
   // The thread itself is the context, read from Slack: the whole of this thread
   // and nothing from the ones beside it. Stored memory is only the fallback -
@@ -167,6 +169,7 @@ export const handleMessage = async (
     reactable: reactableMessages(history),
     reactScript: deps.reactScript,
     fileScript: deps.fileScript,
+    botUserId,
     // ... and keep a durable fact, but only when talking to someone who could
     // have taught it one by hand. Learnings apply to everyone, everywhere.
     learnUrl: canTeach(decision.user.role) ? deps.learnUrl : undefined,

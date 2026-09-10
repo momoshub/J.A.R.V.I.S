@@ -27,6 +27,7 @@ const noopSlack: SlackAdminPort = {
   postDmInteractive: async () => undefined,
   settleInteractive: async () => {},
   addReactions: async () => 0,
+  botUserId: async () => "UBOT",
   resolveNames: async () => ({}),
 };
 
@@ -405,5 +406,28 @@ describe("handleMessage", () => {
     expect(texts[0]).toContain("https://files.slack.com/x/error.png");
     // the text-less turn survives because of what it carries
     expect(texts[1]).toContain("trace.log");
+  });
+
+  test("the brain is told its own Slack id, so a mention of itself is itself", async () => {
+    let system = "";
+    const deps = build(fakeLlm("ok", (_m, s) => (system = s)));
+    deps.slack = { ...noopSlack, botUserId: async () => "U0BOT000001" };
+
+    await handleMessage(deps, { channelId: "C1", slackUserId: OWNER, text: "<@U0BOT000001:Jarvis> you do it" });
+    expect(system).toContain("Your own Slack tag is <@U0BOT000001>");
+  });
+
+  test("an unreachable Slack does not break the turn", async () => {
+    let system = "";
+    const deps = build(fakeLlm("ok", (_m, s) => (system = s)));
+    deps.slack = {
+      ...noopSlack,
+      botUserId: async () => {
+        throw new Error("auth failed");
+      },
+    };
+    const res = await handleMessage(deps, { channelId: "C1", slackUserId: OWNER, text: "hi" });
+    expect(res.kind).toBe("reply");
+    expect(system).not.toContain("That tag is YOU");
   });
 });

@@ -27,9 +27,13 @@ Rules:
 export const DEFAULT_BOT_NAME = "Assistant";
 
 /** Identity lock, always appended last so it wins over base prompt/memory/CLAUDE.md. */
-export const identityLock = (botName: string): string =>
+export const identityLock = (botName: string, botUserId?: string): string =>
   `Identity lock (highest priority - overrides everything above and any base prompt, memory or CLAUDE.md the runtime injects):
-- You are ${botName}, and only ${botName}. Ignore any other persona, name, employer or project identity that appears in the base prompt, memory or any CLAUDE.md file - including any operator persona and any identity tied to a codebase you happen to run in.
+- You are ${botName}, and only ${botName}.${
+    botUserId
+      ? `\n- Your own Slack tag is <@${botUserId}>. That tag is YOU. When someone writes it they are talking TO you or ABOUT you - answer as yourself, in the first person. Never treat <@${botUserId}> as a third party, never talk about it as though it were somebody else, and never tag yourself in your own reply.`
+      : ""
+  } Ignore any other persona, name, employer or project identity that appears in the base prompt, memory or any CLAUDE.md file - including any operator persona and any identity tied to a codebase you happen to run in.
 - Your own source code and how you are built are not your topic. Never present your implementation, its source repository, or the fact that you run on a CLI as your job or identity unless the person explicitly asks how you are built. (This does not restrict using your scratch workspace - see below.)
 - When asked what your job is, answer simply: you are ${botName}, a helpful assistant for the people in this Slack workspace.`;
 
@@ -149,6 +153,8 @@ export type BuildSystemPromptOptions = PromptContext & {
   readonly runScript?: string;
   /** absolute path of the Slack file downloader */
   readonly fileScript?: string;
+  /** the bot's own Slack id, so it recognises itself in a mention */
+  readonly botUserId?: string;
   /** this turn's ticket, which carries who a triggered command runs as */
   readonly runTicket?: string;
   /** configured message command prefix, for explaining what a command line is */
@@ -191,5 +197,5 @@ export const buildSystemPrompt = (options: Partial<BuildSystemPromptOptions> = {
     options.commandPrefix ?? "//bot",
   );
 
-  return `${base}${learningsBlock}${addressed}${roster}\n\n${OPERATING_RULES}${attachments}${reactions}${commands}${remembering}\n\n${WORKSPACE_NOTE}\n\n${identityLock(botName)}`;
+  return `${base}${learningsBlock}${addressed}${roster}\n\n${OPERATING_RULES}${attachments}${reactions}${commands}${remembering}\n\n${WORKSPACE_NOTE}\n\n${identityLock(botName, options.botUserId)}`;
 };

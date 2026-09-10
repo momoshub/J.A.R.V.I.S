@@ -121,6 +121,14 @@ export const createSlackAdmin = (client: WebClient): SlackAdminPort => {
   };
 
   return {
+    botUserId: async () => {
+      try {
+        return (await getBotUserId()) || undefined;
+      } catch {
+        return undefined;
+      }
+    },
+
     listConversations: async () => {
       // users.conversations returns only conversations the bot is a MEMBER of
       // (joined channels, private groups, DMs, group DMs) - not every public channel.

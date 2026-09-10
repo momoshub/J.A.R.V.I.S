@@ -45,6 +45,7 @@ type Deps = RespondDeps & {
 export type SlackClient = {
   users: { info: (a: { user: string }) => Promise<unknown> };
   chatStream: (args: Record<string, unknown>) => Streamer;
+  chat: { update: (a: Record<string, unknown>) => Promise<unknown> };
 };
 
 /** A raw Slack message payload, enough to decide whether to handle it. */
@@ -106,8 +107,19 @@ export type Incoming = {
   /** ts of this message itself, so the bot can react to it later. */
   messageTs: string;
   client: SlackClient;
-  say: (msg: { text: string; thread_ts?: string }) => Promise<unknown>;
+  say: (msg: { text: string; thread_ts?: string; reply_broadcast?: boolean }) => Promise<unknown>;
 };
+
+/**
+ * Whether the reply should also show up in the channel, not just the thread.
+ *
+ * The bot always answers in a thread (streaming needs a ts to anchor to), so a
+ * question asked at top level would otherwise get an answer nobody sees without
+ * opening the thread. When the bot is the one who opened that thread, broadcast.
+ * Inside an existing thread everyone is already looking, so stay quiet there.
+ */
+export const shouldBroadcast = (m: { threadTs: string; messageTs: string }): boolean =>
+  m.threadTs === m.messageTs;
 
 /**
  * Build the transport-agnostic message handler. Exported so it can be tested
@@ -176,7 +188,18 @@ export const createHandler =
       // An empty reply means the command already delivered itself into the thread
       // (e.g. review posts progress + result directly), so post nothing more.
       const streamed = stream?.started ? await stream.finish() : false;
-      if (!streamed && result.text.trim()) await msg.say({ text: result.text, thread_ts: msg.threadTs });
+      const broadcast = shouldBroadcast(msg);
+      if (streamed) {
+        // chat.startStream takes no reply_broadcast, so promote the finished
+        // message instead. Sending no content leaves the streamed blocks intact.
+        if (broadcast && stream?.ts) {
+          await msg.client.chat
+            .update({ channel: msg.channelId, ts: stream.ts, reply_broadcast: true })
+            .catch((e: unknown) => log(`broadcast failed: ${e instanceof Error ? e.message : String(e)}`));
+        }
+      } else if (result.text.trim()) {
+        await msg.say({ text: result.text, thread_ts: msg.threadTs, ...(broadcast ? { reply_broadcast: true } : {}) });
+      }
     } catch (err) {
       log(`respond failed: ${err instanceof Error ? err.message : String(err)}`);
       if (stream?.started) await stream.finish().catch(() => undefined);

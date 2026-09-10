@@ -20,6 +20,8 @@ import type { LlmStreamEvent, LlmStreamSink } from "../../application/ports.ts";
 export type Streamer = {
   append: (args: { markdown_text?: string; chunks?: TaskUpdateChunk[] }) => Promise<unknown>;
   stop: (args?: { markdown_text?: string }) => Promise<unknown>;
+  /** ts of the streamed message; undefined until the first flush opens it. */
+  readonly ts?: string;
 };
 
 /** How long a turn may stay silent before a "thinking" card is worth showing. */
@@ -36,6 +38,8 @@ export type SlackStream = {
   showThinkingAfter: (title: string, delayMs?: number) => void;
   /** True once the underlying stream has been opened. */
   readonly started: boolean;
+  /** ts of the streamed message, once Slack has assigned one. */
+  readonly ts: string | undefined;
   /** Await pending appends and close the stream. False if it broke or showed no content. */
   finish: () => Promise<boolean>;
 };
@@ -134,6 +138,9 @@ export const createSlackStream = (
     showThinkingAfter,
     get started() {
       return streamer !== undefined;
+    },
+    get ts() {
+      return streamer?.ts;
     },
     finish: async () => {
       cancelPending();

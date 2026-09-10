@@ -52,6 +52,7 @@ const fakeStreamer = (rec: Recorded): Streamer => ({
     if (rec.stopThrows) throw new Error("stop boom");
     rec.stops += 1;
   },
+  ts: "222.2",
 });
 
 const build = (opts: {
@@ -83,23 +84,30 @@ const build = (opts: {
     slashCommand: "/bot",
     thinkingAfterMs: opts.thinkingAfterMs ?? 5,
   };
-  const said: { text: string }[] = [];
+  const said: { text: string; reply_broadcast?: boolean }[] = [];
+  const updates: Record<string, unknown>[] = [];
   const rec = opts.rec ?? { appends: [], stops: 0, stopThrows: false, appendThrows: false };
   const client: SlackClient = {
     users: { info: async () => ({ user: { profile: { display_name: "Kai" } } }) },
     chatStream: () => fakeStreamer(rec),
+    chat: {
+      update: async (a) => {
+        updates.push(a);
+        return {};
+      },
+    },
   };
   const handle = createHandler(config, deps, () => {});
-  const msg = (text: string): Incoming => ({
+  const msg = (text: string, threadTs = "111.1"): Incoming => ({
     channelId: "C1",
     userId: OWNER,
     text,
-    threadTs: "111.1",
+    threadTs,
     messageTs: "111.1",
     client,
-    say: async (m) => said.push({ text: m.text }),
+    say: async (m) => said.push({ text: m.text, ...(m.reply_broadcast ? { reply_broadcast: true } : {}) }),
   });
-  return { handle, msg, said, rec, messages };
+  return { handle, msg, said, updates, rec, messages };
 };
 
 const streamingLlm = (final: string, events: LlmStreamEvent[] = []): LlmPort => ({
@@ -130,7 +138,7 @@ describe("createHandler streaming truth table", () => {
       rec,
     });
     await handle(msg("hi"));
-    expect(said).toEqual([{ text: "full reply" }]);
+    expect(said).toEqual([{ text: "full reply", reply_broadcast: true }]);
   });
 
   test("posts once when streaming is disabled", async () => {
@@ -139,8 +147,33 @@ describe("createHandler streaming truth table", () => {
       streamUpdates: false,
     });
     await handle(msg("hi"));
-    expect(said).toEqual([{ text: "plain post" }]);
+    expect(said).toEqual([{ text: "plain post", reply_broadcast: true }]);
     expect(rec.stops).toBe(0);
+  });
+
+  test("a thread the bot opened gets broadcast to the channel", async () => {
+    const { handle, msg, updates } = build({
+      llm: streamingLlm("hello there", [{ type: "text", delta: "hello there" }]),
+      streamUpdates: true,
+    });
+    await handle(msg("hi"));
+    expect(updates).toEqual([{ channel: "C1", ts: "222.2", reply_broadcast: true }]);
+  });
+
+  test("a reply inside an existing thread stays in the thread", async () => {
+    const { handle, msg, updates, said } = build({
+      llm: streamingLlm("hello there", [{ type: "text", delta: "hello there" }]),
+      streamUpdates: true,
+    });
+    await handle(msg("hi", "000.9"));
+    expect(updates).toHaveLength(0);
+    expect(said).toHaveLength(0);
+  });
+
+  test("no broadcast when the reply is a plain post inside an existing thread", async () => {
+    const { handle, msg, said } = build({ llm: streamingLlm("plain post"), streamUpdates: false });
+    await handle(msg("hi", "000.9"));
+    expect(said).toEqual([{ text: "plain post" }]);
   });
 
   const thinkingCard = (appends: unknown[]) =>
