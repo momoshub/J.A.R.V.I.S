@@ -10,6 +10,13 @@
  * pays for is their business, not something to bake into an open codebase.
  */
 
+/**
+ * Placeholder for the read-only Grafana helper's path, substituted when the
+ * rules are built. The script is GET-only, so a sandboxed role can read through
+ * a datasource proxy without being handed `gcx api`, which can also write.
+ */
+const GRAFANA_GET_SCRIPT = "{grafanaGet}";
+
 /** A log/metric/trace backend the bot may be pointed at. */
 export type LogSource = {
   /** Key used in configuration, e.g. `grafana`. */
@@ -18,11 +25,25 @@ export type LogSource = {
   readonly how: string;
 };
 
-/** Backends the bot knows how to reach, keyed by their configuration id. */
+/**
+ * Backends the bot knows how to reach, keyed by their configuration id.
+ *
+ * The Grafana guidance deliberately starts with discovery rather than naming a
+ * datasource or a query language. Which ones a Grafana has is that instance's
+ * business, and assuming is how you get "datasource is type
+ * victoriametrics-logs-datasource, not loki" instead of an answer.
+ */
 export const LOG_SOURCES: Record<string, LogSource> = {
   grafana: {
     id: "grafana",
-    how: "the `gcx` CLI - `gcx logs query '<logql>'` for Loki, `gcx metrics query` for Prometheus, `gcx traces` for Tempo. Run `gcx logs labels` first if you do not know the stream labels. `gcx datasources list` shows what is connected. Before a real investigation run `gcx agent skills list` and load `debug-with-grafana`: it is the vendor's own workflow for triage and root-cause work, and it is better than improvising.",
+    how: `the \`gcx\` CLI. ALWAYS start with \`gcx datasources list\` - it gives you the uid AND the type of each one, and the type decides how you query it. Never assume which is there.
+   - a \`loki\` datasource: \`gcx logs query -d <uid> '<logql>'\`, and \`gcx logs labels -d <uid>\` when you do not know the labels yet
+   - a \`prometheus\` datasource: \`gcx metrics query -d <uid> '<promql>'\`
+   - a \`tempo\` datasource: \`gcx traces query -d <uid> ...\`
+   - ANY OTHER type - VictoriaLogs, Elasticsearch, ClickHouse and so on - \`gcx logs\` will refuse it. Go through the datasource proxy instead, with that backend's own query language and API path:
+       ${GRAFANA_GET_SCRIPT} '/api/datasources/proxy/uid/<uid>/<the backend's query path>'
+     e.g. VictoriaLogs takes LogsQL at \`/select/logsql/query?query=<logsql>&limit=50\`. If you do not know a backend's API, look it up before guessing at it.
+   Before a real investigation run \`gcx agent skills list\` and load \`debug-with-grafana\`: it is the vendor's own workflow for triage and root-cause work, and better than improvising.`,
   },
   datadog: {
     id: "datadog",
@@ -58,8 +79,17 @@ export const logSourceOrder = (raw?: string): string[] => {
  * The investigation block. Empty when no backend is configured - claiming a
  * source the bot cannot reach is worse than saying nothing.
  */
-export const investigationRules = (order: readonly string[]): string => {
-  const sources = order.map((id) => LOG_SOURCES[id]).filter((s): s is LogSource => !!s);
+export const investigationRules = (order: readonly string[], grafanaGetScript?: string): string => {
+  const sources = order
+    .map((id) => LOG_SOURCES[id])
+    .filter((s): s is LogSource => !!s)
+    // Without the helper there is no way to reach a non-Loki datasource, so do
+    // not describe a route the bot cannot take.
+    .map((s) =>
+      s.how.includes(GRAFANA_GET_SCRIPT)
+        ? { ...s, how: grafanaGetScript ? s.how.replaceAll(GRAFANA_GET_SCRIPT, grafanaGetScript) : s.how.replace(/\n   - ANY OTHER type[\s\S]*?guessing at it\.\n/, "\n") }
+        : s,
+    );
   if (sources.length === 0) return "";
 
   const steps = sources.map((s, i) => `${i + 1}. *${s.id}* - ${s.how}`).join("\n");

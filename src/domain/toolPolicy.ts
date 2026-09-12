@@ -88,6 +88,12 @@ export type ToolPolicyOptions = {
    * table stakes, so every role gets it - it can only reach files.slack.com. */
   readonly fileScript?: string;
   /**
+   * Absolute path of the read-only Grafana helper. Granted to every role: `gcx
+   * api` can write, this cannot, so it is the only way a sandboxed role reaches
+   * a datasource that `gcx logs` refuses.
+   */
+  readonly grafanaGetScript?: string;
+  /**
    * Model per role, for roles that should not be spending the expensive one on
    * ordinary chat. Absent means the adapter's default.
    */
@@ -110,6 +116,7 @@ const withHelpers = (tools: readonly string[], opts: ToolPolicyOptions): readonl
   ...(opts.reactScript ? [`Bash(${opts.reactScript}:*)`] : []),
   ...(opts.runScript ? [`Bash(${opts.runScript}:*)`] : []),
   ...(opts.fileScript ? [`Bash(${opts.fileScript}:*)`] : []),
+  ...(opts.grafanaGetScript ? [`Bash(${opts.grafanaGetScript}:*)`] : []),
 ];
 
 /** Channel beats role beats the adapter default. */

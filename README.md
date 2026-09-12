@@ -150,9 +150,13 @@ rather than the slash command - a slash command has no thread to bind to.
 Asked what went wrong, the bot looks for logs, metrics and traces in a stated
 order rather than reaching for whichever backend it noticed first:
 
-1. **Grafana**, via the [`gcx`](https://grafana.com/docs/) CLI - `gcx logs query`
-   for Loki, `gcx metrics query` for Prometheus, `gcx traces` for Tempo. For a
-   real investigation it loads `gcx`'s own bundled `debug-with-grafana` skill.
+1. **Grafana**, via the [`gcx`](https://grafana.com/docs/) CLI. It starts with
+   `gcx datasources list` and lets the *type* decide how to query: `gcx logs`
+   for Loki, `gcx metrics` for Prometheus, `gcx traces` for Tempo, and the
+   datasource proxy for anything else - `gcx logs` refuses a non-Loki
+   datasource, so VictoriaLogs, Elasticsearch and friends go through
+   `bin/grafana-get.sh`. For a real investigation it loads `gcx`'s own bundled
+   `debug-with-grafana` skill.
 2. **Datadog**, via the Datadog MCP tools, and only when Grafana genuinely has
    nothing - no such datasource, or the data does not reach back far enough. An
    empty result is an answer, not a reason to try the next one.
@@ -171,9 +175,14 @@ The order is configuration:
 //bot logsource default            back to grafana,datadog
 ```
 
-It requires `gcx` on PATH and a logged-in context (`gcx login`); the bot runs as
-the same user, so it inherits that login. Until then a query fails with `gcx`'s
-own "run gcx login" message, which it relays rather than silently moving on.
+It requires `gcx` on PATH and a logged-in stack (`gcx login`). Note `gcx` reads
+`~/.config/gcx/config.yaml` by default, which is *not* where `gcx login` always
+leaves the stack - point `GCX_CONFIG` at the file that actually has it (the
+launchd plist sets this) or every query fails with "context references no stack".
+
+`bin/grafana-get.sh` is GET-only by construction and refuses any path outside
+the read surface, so a sandboxed role can read through a datasource proxy
+without being handed `gcx api`, which can also POST, PUT and DELETE.
 
 ## Model per role and per channel
 

@@ -124,6 +124,7 @@ const main = async () => {
   const reactScript = join(import.meta.dir, "..", "bin", "slack-react.sh");
   const runScript = join(import.meta.dir, "..", "bin", "jarvis-run.sh");
   const fileScript = join(import.meta.dir, "..", "bin", "slack-file.sh");
+  const grafanaGetScript = join(import.meta.dir, "..", "bin", "grafana-get.sh");
   // Model per role: a dashboard/command override wins, otherwise the env value,
   // otherwise the adapter default. Read per call so a change needs no restart.
   const modelsForRoles = () => {
@@ -143,6 +144,7 @@ const main = async () => {
       reactScript,
       runScript,
       fileScript,
+      grafanaGetScript,
       models: modelsForRoles(),
       executerTools: (settings.get(SETTING_KEYS.executerTools) ?? "")
         .split(/[,\n]/)
@@ -191,6 +193,7 @@ const main = async () => {
     logSources: () => logSourceOrder(settings.get(SETTING_KEYS.logSources)),
     reactScript,
     fileScript,
+    grafanaGetScript,
     draft,
     toolPolicy,
     // The dashboard API is loopback-only, so the brain can save a learning the

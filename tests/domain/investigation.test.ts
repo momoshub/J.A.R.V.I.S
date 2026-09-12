@@ -40,6 +40,28 @@ describe("investigationRules", () => {
     expect(r).toContain("Only move on to datadog");
   });
 
+  test("discovers the datasources rather than assuming loki", () => {
+    const r = investigationRules(["grafana"], "/bin/grafana-get.sh");
+    expect(r).toContain("ALWAYS start with `gcx datasources list`");
+    expect(r).toContain("the type decides how you query it");
+    expect(r).toContain("Never assume which is there");
+  });
+
+  test("a non-loki datasource is routed through the proxy helper", () => {
+    const r = investigationRules(["grafana"], "/bin/grafana-get.sh");
+    // gcx logs refuses anything that is not loki, so the escape hatch must be there
+    expect(r).toContain("`gcx logs` will refuse it");
+    expect(r).toContain("/bin/grafana-get.sh '/api/datasources/proxy/uid/");
+    expect(r).toContain("VictoriaLogs takes LogsQL");
+  });
+
+  test("without the helper the proxy route is not offered at all", () => {
+    const r = investigationRules(["grafana"]);
+    expect(r).toContain("gcx datasources list"); // discovery still applies
+    expect(r).not.toContain("ANY OTHER type");
+    expect(r).not.toContain("{grafanaGet}"); // and no placeholder leaks out
+  });
+
   test("points at the vendor's own investigation skill", () => {
     expect(investigationRules(["grafana"])).toContain("debug-with-grafana");
   });

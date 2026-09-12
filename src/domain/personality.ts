@@ -158,6 +158,8 @@ export type BuildSystemPromptOptions = PromptContext & {
   readonly botUserId?: string;
   /** observability backends, in the order they should be tried */
   readonly logSources?: readonly string[];
+  /** absolute path of the read-only Grafana helper */
+  readonly grafanaGetScript?: string;
   /** this turn's ticket, which carries who a triggered command runs as */
   readonly runTicket?: string;
   /** configured message command prefix, for explaining what a command line is */
@@ -193,7 +195,7 @@ export const buildSystemPrompt = (options: Partial<BuildSystemPromptOptions> = {
   const reactions = reactionRules(options.channelId ?? "", options.reactable ?? [], options.reactScript);
   const remembering = learningRules(options.learnUrl ?? "");
   const attachments = attachmentRules(options.fileScript);
-  const investigating = investigationRules(options.logSources ?? []);
+  const investigating = investigationRules(options.logSources ?? [], options.grafanaGetScript);
   const commands = commandRules(
     options.runScript ?? "",
     options.runUrl ?? "",

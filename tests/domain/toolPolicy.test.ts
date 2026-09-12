@@ -35,6 +35,16 @@ describe("toolPolicyFor", () => {
     expect(tools.some((t) => /gcx (dev|resources|setup|cloud|alert)/.test(t))).toBe(false);
   });
 
+  test("a sandboxed role reads grafana through the helper, never `gcx api`", () => {
+    const withHelper = { ...opts, grafanaGetScript: "/opt/jarvis/bin/grafana-get.sh" };
+    for (const role of ["pal", "executer"] as const) {
+      const tools = toolPolicyFor(role, withHelper).allowedTools ?? [];
+      expect(tools).toContain("Bash(/opt/jarvis/bin/grafana-get.sh:*)");
+      // `gcx api` can POST/PUT/DELETE, so it is never granted
+      expect(tools).not.toContain("Bash(gcx api:*)");
+    }
+  });
+
   test("cloudwatch is denied to sandboxed roles - it bills per query", () => {
     for (const role of ["pal", "executer"] as const) {
       const denied = toolPolicyFor(role, opts).disallowedTools ?? [];
