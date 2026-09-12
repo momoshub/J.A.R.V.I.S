@@ -430,4 +430,22 @@ describe("handleMessage", () => {
     expect(res.kind).toBe("reply");
     expect(system).not.toContain("That tag is YOU");
   });
+
+  test("the configured log sources reach the brain", async () => {
+    let system = "";
+    const deps = build(fakeLlm("ok", (_m, s) => (system = s)));
+    deps.logSources = () => ["datadog", "grafana"];
+
+    await handleMessage(deps, { channelId: "C1", slackUserId: OWNER, text: "why was checkout slow" });
+    expect(system).toContain("1. *datadog*");
+    expect(system).toContain("2. *grafana*");
+    expect(system).toContain("NEVER query cloudwatch");
+  });
+
+  test("no sources configured means no investigation block", async () => {
+    let system = "";
+    const deps = build(fakeLlm("ok", (_m, s) => (system = s)));
+    await handleMessage(deps, { channelId: "C1", slackUserId: OWNER, text: "hi" });
+    expect(system).not.toContain("Looking things up when something is wrong");
+  });
 });

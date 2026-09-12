@@ -94,6 +94,7 @@ Every command has two interfaces - use whichever you like. Both triggers are con
 | `model` | anyone | show the brain and current model |
 | `ask <question>` | anyone | one-shot question to the brain |
 | `model [role\|here\|#channel] [name\|default]` | anyone (setting: admins) | show the brain; admins pin a model per role or channel |
+| `logsource [grafana,datadog\|default]` | anyone (setting: admins) | where it looks for logs - see [Investigating](#investigating) |
 | `forget` | anyone | wipe the bot's memory of this channel |
 | `users` | admins | list the allowlist |
 | `add @user [pal\|executer\|admin]` | admins (admin role: owner only) | grant access |
@@ -143,6 +144,36 @@ it got to; `workflow stop` ends it and the thread goes back to normal chat.
 
 Because it lives in a thread, start it with the message form (`//bot workflow ...`)
 rather than the slash command - a slash command has no thread to bind to.
+
+## Investigating
+
+Asked what went wrong, the bot looks for logs, metrics and traces in a stated
+order rather than reaching for whichever backend it noticed first:
+
+1. **Grafana**, via the [`gcx`](https://grafana.com/docs/) CLI - `gcx logs query`
+   for Loki, `gcx metrics query` for Prometheus, `gcx traces` for Tempo. For a
+   real investigation it loads `gcx`'s own bundled `debug-with-grafana` skill.
+2. **Datadog**, via the Datadog MCP tools, and only when Grafana genuinely has
+   nothing - no such datasource, or the data does not reach back far enough. An
+   empty result is an answer, not a reason to try the next one.
+
+**CloudWatch is never queried.** It bills per GB scanned, so an idle look there
+has an invoice attached. Sandboxed roles are denied `aws logs` and
+`aws cloudwatch` outright; full-access roles are held to it by the prompt, since
+nothing can be denied to them. If an answer only exists there, it says so and
+lets a person decide.
+
+The order is configuration:
+
+```
+//bot logsource                    where I look, in order
+//bot logsource datadog,grafana    reorder  (admins)
+//bot logsource default            back to grafana,datadog
+```
+
+It requires `gcx` on PATH and a logged-in context (`gcx login`); the bot runs as
+the same user, so it inherits that login. Until then a query fails with `gcx`'s
+own "run gcx login" message, which it relays rather than silently moving on.
 
 ## Model per role and per channel
 

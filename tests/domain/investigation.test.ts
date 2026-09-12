@@ -1,0 +1,73 @@
+import { describe, expect, test } from "bun:test";
+import {
+  DEFAULT_LOG_SOURCES,
+  DENIED_LOG_SOURCES,
+  investigationRules,
+  logSourceOrder,
+  parseLogSources,
+} from "../../src/domain/investigation.ts";
+
+describe("logSourceOrder", () => {
+  test("grafana first, then datadog, when nothing is configured", () => {
+    expect(logSourceOrder()).toEqual(["grafana", "datadog"]);
+    expect(logSourceOrder("")).toEqual([...DEFAULT_LOG_SOURCES]);
+  });
+
+  test("configuration decides the order", () => {
+    expect(logSourceOrder("datadog,grafana")).toEqual(["datadog", "grafana"]);
+    expect(logSourceOrder("grafana")).toEqual(["grafana"]);
+  });
+
+  test("tolerates spacing, casing and repeats", () => {
+    expect(logSourceOrder(" Grafana , datadog , grafana ")).toEqual(["grafana", "datadog"]);
+  });
+
+  test("a backend we cannot reach is never promised", () => {
+    expect(parseLogSources("cloudwatch")).toEqual([]);
+    expect(parseLogSources("splunk,grafana")).toEqual(["grafana"]);
+    // a list of nothing we know falls back rather than leaving the bot sourceless
+    expect(logSourceOrder("cloudwatch,splunk")).toEqual([...DEFAULT_LOG_SOURCES]);
+  });
+});
+
+describe("investigationRules", () => {
+  test("states the order and names the tool for each", () => {
+    const r = investigationRules(["grafana", "datadog"]);
+    expect(r).toContain("1. *grafana*");
+    expect(r).toContain("2. *datadog*");
+    expect(r).toContain("gcx logs query");
+    expect(r).toContain("Start with *grafana*");
+    expect(r).toContain("Only move on to datadog");
+  });
+
+  test("points at the vendor's own investigation skill", () => {
+    expect(investigationRules(["grafana"])).toContain("debug-with-grafana");
+  });
+
+  test("cloudwatch is refused whatever the order is", () => {
+    for (const order of [["grafana"], ["datadog"], ["datadog", "grafana"]]) {
+      const r = investigationRules(order);
+      for (const denied of DENIED_LOG_SOURCES) expect(r).toContain(`NEVER query ${denied}`);
+      expect(r).toContain("bills per GB scanned");
+      expect(r).toContain("let a person decide");
+    }
+  });
+
+  test("an empty result is not a reason to try the next one", () => {
+    expect(investigationRules(["grafana", "datadog"])).toContain("an empty result is an answer");
+  });
+
+  test("unreachable and empty must not be reported the same way", () => {
+    expect(investigationRules(["grafana"])).toContain("Say which source answered you");
+  });
+
+  test("nothing configured says nothing at all", () => {
+    expect(investigationRules([])).toBe("");
+  });
+
+  test("a single source offers no fallback it cannot make", () => {
+    const r = investigationRules(["grafana"]);
+    expect(r).toContain("Start with *grafana*");
+    expect(r).not.toContain("Only move on to");
+  });
+});

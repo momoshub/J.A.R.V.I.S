@@ -29,6 +29,7 @@ import { createSlackAdmin } from "./infrastructure/slack/adminClient.ts";
 import { createGhCli } from "./infrastructure/github/ghCli.ts";
 import { createDraftReply } from "./application/draftReply.ts";
 import { toolPolicyFor } from "./domain/toolPolicy.ts";
+import { logSourceOrder } from "./domain/investigation.ts";
 import { createDashboard } from "./infrastructure/dashboard/server.ts";
 import { dispatchCommand } from "./application/commands.ts";
 import { createCommandTickets } from "./application/commandTickets.ts";
@@ -186,6 +187,8 @@ const main = async () => {
     commandApprovals,
     // Per-person allowances live here, set with the `limit` command.
     settings,
+    // Where to look for logs, in order. Read per call so a change needs no restart.
+    logSources: () => logSourceOrder(settings.get(SETTING_KEYS.logSources)),
     reactScript,
     fileScript,
     draft,

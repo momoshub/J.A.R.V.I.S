@@ -49,12 +49,20 @@ export const PAL_TOOLS: readonly string[] = [
   "Bash(git log:*)", "Bash(git show:*)", "Bash(git diff:*)", "Bash(git status:*)",
   "Bash(git branch:*)", "Bash(git blame:*)", "Bash(git grep:*)",
   "Bash(aws:*)",
+  // grafana, read only. `gcx logs adaptive` and `gcx dev` write, so the query
+  // subcommands are listed one by one rather than the whole `gcx logs` family.
+  "Bash(gcx logs query:*)", "Bash(gcx logs labels:*)", "Bash(gcx logs series:*)",
+  "Bash(gcx logs metrics:*)", "Bash(gcx metrics query:*)", "Bash(gcx traces query:*)",
+  "Bash(gcx datasources list:*)", "Bash(gcx dashboards list:*)", "Bash(gcx agent skills:*)",
 ];
 
-/** Never allowed for sandboxed roles: writes and secret reads. */
+/** Never allowed for sandboxed roles: writes, secret reads, and metered queries. */
 export const SANDBOX_DISALLOW: readonly string[] = [
   "Write", "Edit", "MultiEdit", "NotebookEdit",
   "Bash(aws secretsmanager:*)", "Bash(aws ssm get-parameter:*)", "Bash(aws kms:*)",
+  // CloudWatch bills per GB scanned; logs live in Grafana. A full-access role is
+  // held to this by the prompt, since nothing can be denied to one.
+  "Bash(aws logs:*)", "Bash(aws cloudwatch:*)",
 ];
 
 export type ToolPolicyOptions = {

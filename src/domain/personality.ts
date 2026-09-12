@@ -6,6 +6,7 @@
  * learnings) lives in the database and is passed in; `DEFAULT_PERSONALITY` is a
  * neutral fallback and the dashboard "reset" target.
  */
+import { investigationRules } from "./investigation.ts";
 import type { Participant, PromptContext, Reactable } from "./types.ts";
 
 /** Neutral fallback persona used when no custom one is configured. */
@@ -155,6 +156,8 @@ export type BuildSystemPromptOptions = PromptContext & {
   readonly fileScript?: string;
   /** the bot's own Slack id, so it recognises itself in a mention */
   readonly botUserId?: string;
+  /** observability backends, in the order they should be tried */
+  readonly logSources?: readonly string[];
   /** this turn's ticket, which carries who a triggered command runs as */
   readonly runTicket?: string;
   /** configured message command prefix, for explaining what a command line is */
@@ -190,6 +193,7 @@ export const buildSystemPrompt = (options: Partial<BuildSystemPromptOptions> = {
   const reactions = reactionRules(options.channelId ?? "", options.reactable ?? [], options.reactScript);
   const remembering = learningRules(options.learnUrl ?? "");
   const attachments = attachmentRules(options.fileScript);
+  const investigating = investigationRules(options.logSources ?? []);
   const commands = commandRules(
     options.runScript ?? "",
     options.runUrl ?? "",
@@ -197,5 +201,5 @@ export const buildSystemPrompt = (options: Partial<BuildSystemPromptOptions> = {
     options.commandPrefix ?? "//bot",
   );
 
-  return `${base}${learningsBlock}${addressed}${roster}\n\n${OPERATING_RULES}${attachments}${reactions}${commands}${remembering}\n\n${WORKSPACE_NOTE}\n\n${identityLock(botName, options.botUserId)}`;
+  return `${base}${learningsBlock}${addressed}${roster}\n\n${OPERATING_RULES}${attachments}${investigating}${reactions}${commands}${remembering}\n\n${WORKSPACE_NOTE}\n\n${identityLock(botName, options.botUserId)}`;
 };

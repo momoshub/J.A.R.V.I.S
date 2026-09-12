@@ -22,6 +22,27 @@ describe("toolPolicyFor", () => {
     expect(p.allowedTools).not.toContain("Write");
   });
 
+  test("pal can query grafana, read only", () => {
+    const tools = toolPolicyFor("pal", opts).allowedTools ?? [];
+    expect(tools).toContain("Bash(gcx logs query:*)");
+    expect(tools).toContain("Bash(gcx logs labels:*)");
+    expect(tools).toContain("Bash(gcx metrics query:*)");
+    expect(tools).toContain("Bash(gcx datasources list:*)");
+    expect(tools).toContain("Bash(gcx agent skills:*)"); // so it can load the investigation skill
+    // `gcx logs adaptive` and `gcx dev` write, so the family is never granted wholesale
+    expect(tools).not.toContain("Bash(gcx:*)");
+    expect(tools).not.toContain("Bash(gcx logs:*)");
+    expect(tools.some((t) => /gcx (dev|resources|setup|cloud|alert)/.test(t))).toBe(false);
+  });
+
+  test("cloudwatch is denied to sandboxed roles - it bills per query", () => {
+    for (const role of ["pal", "executer"] as const) {
+      const denied = toolPolicyFor(role, opts).disallowedTools ?? [];
+      expect(denied).toContain("Bash(aws logs:*)");
+      expect(denied).toContain("Bash(aws cloudwatch:*)");
+    }
+  });
+
   test("pal can read github, notion and the web", () => {
     const tools = toolPolicyFor("pal", opts).allowedTools ?? [];
     // github

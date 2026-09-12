@@ -12,6 +12,8 @@ export const SETTING_KEYS = {
   thinkingDoneLabel: "thinking_done_label",
   disabledCommands: "disabled_commands",
   executerTools: "executer_tools",
+  /** Ordered csv of observability backends, e.g. `grafana,datadog`. */
+  logSources: "log_sources",
 } as const;
 
 /** Model override for one role, e.g. `model:pal`. Empty means "use the default". */

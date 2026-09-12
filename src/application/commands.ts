@@ -14,6 +14,12 @@ import { buildSystemPrompt, DEFAULT_BOT_NAME } from "../domain/personality.ts";
 import { validateRemoval, validateRoleChange } from "../domain/access.ts";
 import { reviewPrompt } from "../domain/reviewPrompt.ts";
 import {
+  DENIED_LOG_SOURCES,
+  LOG_SOURCES,
+  logSourceOrder,
+  parseLogSources,
+} from "../domain/investigation.ts";
+import {
   asReviewPolicy,
   DEFAULT_REVIEW_POLICY,
   repoOf,
@@ -38,7 +44,7 @@ import type { LearningsRepo } from "../infrastructure/db/learningsRepo.ts";
 import type { CommandLogRepo } from "../infrastructure/db/commandLogRepo.ts";
 import type { WorkflowRepo } from "../infrastructure/db/workflowRepo.ts";
 import type { CommandApprovalRepo } from "../infrastructure/db/commandApprovalRepo.ts";
-import { modelKey, reviewPolicyKey, type SettingsRepo } from "../infrastructure/db/settingsRepo.ts";
+import { modelKey, reviewPolicyKey, SETTING_KEYS, type SettingsRepo } from "../infrastructure/db/settingsRepo.ts";
 
 /** Neutral fallbacks; the real prefix/slash come from config (see index.ts). */
 export const DEFAULT_COMMAND_PREFIX = "//bot";
@@ -518,6 +524,37 @@ export const COMMANDS: readonly CommandDef[] = [
         await reply(res.ok ? `✅ approved ${url} - the review came back clean` : `⚠️ could not approve ${url} - ${res.error}`);
       }
       return ""; // already delivered to the thread / DM
+    },
+  },
+  {
+    name: "logsource",
+    aliases: ["logsources"],
+    minRole: "pal",
+    usage: "[grafana,datadog|default]",
+    summary: "where I look for logs, in order",
+    run: (ctx) => {
+      const { deps, actor, rest, prefix } = ctx;
+      const describe = (order: readonly string[]) =>
+        `I look for logs in this order: ${order.map((s) => `*${s}*`).join(" → ")}.\nNever: ${DENIED_LOG_SOURCES.map((s) => `*${s}*`).join(", ")} - it bills per GB scanned.`;
+
+      const wanted = rest.trim().toLowerCase();
+      if (!wanted) return describe(logSourceOrder(deps.settings?.get(SETTING_KEYS.logSources)));
+
+      if (RANK[actor.role] < RANK.admin) return "Only admins can change where I look.";
+      if (wanted === "default" || wanted === "reset") {
+        deps.settings?.set(SETTING_KEYS.logSources, "");
+        return describe(logSourceOrder(undefined));
+      }
+      // Refuse a list that mentions something unreachable rather than silently
+      // dropping it - a half-applied order is worse than none.
+      const asked = wanted.split(",").map((s) => s.trim()).filter(Boolean);
+      const unknown = asked.filter((s) => !(s in LOG_SOURCES));
+      if (unknown.length > 0 || asked.length === 0) {
+        return `I do not know ${unknown.map((u) => `*${u}*`).join(", ") || "that"}. Pick from: ${Object.keys(LOG_SOURCES).join(", ")}.\n\`${prefix} logsource grafana,datadog\``;
+      }
+      const order = parseLogSources(asked.join(","));
+      deps.settings?.set(SETTING_KEYS.logSources, order.join(","));
+      return describe(order);
     },
   },
   {

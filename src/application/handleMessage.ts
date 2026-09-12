@@ -69,6 +69,8 @@ export type HandleMessageDeps = {
   commandApprovals?: CommandApprovalRepo;
   /** Settings, for per-person command allowances. */
   settings?: SettingsRepo;
+  /** Observability backends in preference order; empty means none configured. */
+  logSources?: () => readonly string[];
   /** Fresh CLI session id for a new workflow; injected for deterministic tests. */
   newSessionId?: () => string;
   /** Local endpoint the bot can POST a learning to, if the listener may teach. */
@@ -170,6 +172,7 @@ export const handleMessage = async (
     reactScript: deps.reactScript,
     fileScript: deps.fileScript,
     botUserId,
+    logSources: deps.logSources?.(),
     // ... and keep a durable fact, but only when talking to someone who could
     // have taught it one by hand. Learnings apply to everyone, everywhere.
     learnUrl: canTeach(decision.user.role) ? deps.learnUrl : undefined,

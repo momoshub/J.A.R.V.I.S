@@ -701,3 +701,49 @@ describe("per-repo review policy", () => {
   });
 });
 
+describe("logsource", () => {
+  const withSettings = () => {
+    const deps = build();
+    deps.settings = createSettingsRepo(db);
+    return deps;
+  };
+
+  test("anyone can see where I look, grafana first by default", async () => {
+    const deps = withSettings();
+    const pal = actor({ slackId: "U0PAL0001", role: "pal" });
+    const out = await dispatchCommand(deps, pal, "C1", "logsource");
+    expect(out).toContain("*grafana* → *datadog*");
+    expect(out).toContain("Never: *cloudwatch*");
+  });
+
+  test("an admin reorders it", async () => {
+    const deps = withSettings();
+    const out = await dispatchCommand(deps, actor(), "C1", "logsource datadog,grafana");
+    expect(out).toContain("*datadog* → *grafana*");
+    expect(deps.settings!.get("log_sources")).toBe("datadog,grafana");
+  });
+
+  test("default puts it back", async () => {
+    const deps = withSettings();
+    await dispatchCommand(deps, actor(), "C1", "logsource grafana");
+    await dispatchCommand(deps, actor(), "C1", "logsource default");
+    expect(deps.settings!.get("log_sources")).toBe("");
+    expect(await dispatchCommand(deps, actor(), "C1", "logsource")).toContain("*grafana* → *datadog*");
+  });
+
+  test("a backend I cannot reach is refused, not silently dropped", async () => {
+    const deps = withSettings();
+    const out = await dispatchCommand(deps, actor(), "C1", "logsource grafana,cloudwatch");
+    expect(out).toContain("*cloudwatch*");
+    expect(out).toContain("Pick from");
+    expect(deps.settings!.get("log_sources")).toBeUndefined(); // nothing half-applied
+  });
+
+  test("a pal cannot change it", async () => {
+    const deps = withSettings();
+    const pal = actor({ slackId: "U0PAL0001", role: "pal" });
+    expect(await dispatchCommand(deps, pal, "C1", "logsource datadog")).toContain("Only admins");
+    expect(deps.settings!.get("log_sources")).toBeUndefined();
+  });
+});
+
