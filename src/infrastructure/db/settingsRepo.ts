@@ -14,6 +14,14 @@ export const SETTING_KEYS = {
   executerTools: "executer_tools",
   /** Ordered csv of observability backends, e.g. `grafana,datadog`. */
   logSources: "log_sources",
+  /** Notion database new tickets are created in. */
+  ticketTracker: "ticket_tracker",
+  /** The team's "how to raise a ticket" SOP page. */
+  ticketSop: "ticket_sop",
+  /** The page describing which pod owns what. */
+  ticketPods: "ticket_pods",
+  /** Repos the bot may open a fix PR in, comma separated. */
+  ticketRepos: "ticket_repos",
 } as const;
 
 /** Model override for one role, e.g. `model:pal`. Empty means "use the default". */

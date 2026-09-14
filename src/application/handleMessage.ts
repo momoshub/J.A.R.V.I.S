@@ -73,6 +73,8 @@ export type HandleMessageDeps = {
   settings?: SettingsRepo;
   /** Observability backends in preference order; empty means none configured. */
   logSources?: () => readonly string[];
+  /** Whether a ticket tracker is configured, so chat bug reports can be raised. */
+  canRaiseTickets?: () => boolean;
   /** Fresh CLI session id for a new workflow; injected for deterministic tests. */
   newSessionId?: () => string;
   /** Local endpoint the bot can POST a learning to, if the listener may teach. */
@@ -175,6 +177,7 @@ export const handleMessage = async (
     fileScript: deps.fileScript,
     botUserId,
     logSources: deps.logSources?.(),
+    canRaiseTickets: deps.canRaiseTickets?.(),
     grafanaGetScript: deps.grafanaGetScript,
     // ... and keep a durable fact, but only when talking to someone who could
     // have taught it one by hand. Learnings apply to everyone, everywhere.

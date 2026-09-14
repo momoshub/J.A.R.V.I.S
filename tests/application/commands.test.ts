@@ -747,3 +747,67 @@ describe("logsource", () => {
   });
 });
 
+describe("ticket", () => {
+  const withSettings = () => {
+    const deps = build();
+    deps.settings = createSettingsRepo(db);
+    return deps;
+  };
+
+  test("refuses to raise one with nowhere to put it", async () => {
+    const deps = withSettings();
+    const out = await dispatchCommand(deps, actor(), "C1", "ticket the inbox will not load");
+    expect(out).toContain("No ticket tracker is configured");
+    expect(out).toContain("ticket config tracker");
+  });
+
+  test("an admin configures the sources; anyone can see them", async () => {
+    const deps = withSettings();
+    await dispatchCommand(deps, actor(), "C1", "ticket config tracker https://notion.so/roadmap");
+    await dispatchCommand(deps, actor(), "C1", "ticket config repos acme/acme-be, acme/adhoc");
+    expect(deps.settings!.get("ticket_tracker")).toBe("https://notion.so/roadmap");
+
+    const shown = await dispatchCommand(deps, actor(), "C1", "ticket config");
+    expect(shown).toContain("https://notion.so/roadmap");
+    expect(shown).toContain("acme/acme-be");
+  });
+
+  test("a pal can raise one but cannot reconfigure where they go", async () => {
+    const deps = withSettings();
+    const pal = actor({ slackId: "U0PAL0001", role: "pal" });
+    expect(await dispatchCommand(deps, pal, "C1", "ticket config tracker https://evil")).toContain("Only admins");
+    expect(deps.settings!.get("ticket_tracker")).toBeUndefined();
+  });
+
+  test("raising one runs full access whoever asked, and reads the configured sources", async () => {
+    const deps = withSettings();
+    await dispatchCommand(deps, actor(), "C1", "ticket config tracker https://notion.so/roadmap");
+    await dispatchCommand(deps, actor(), "C1", "ticket config pods https://notion.so/pods");
+
+    let system = "";
+    let policy: { skipPermissions?: boolean } | undefined;
+    deps.llm = {
+      complete: async (p) => {
+        system = p.system;
+        policy = p.policy;
+        return "raised it";
+      },
+    };
+    deps.toolPolicy = (role) => ({ skipPermissions: role === "owner" });
+
+    const pal = actor({ slackId: "U0PAL0001", role: "pal" });
+    const out = await dispatchCommand(deps, pal, "C1", "ticket surveys are not sending for Example Coffee");
+
+    expect(out).toBe("raised it");
+    expect(policy?.skipPermissions).toBe(true); // preset task, not the pal's sandbox
+    expect(system).toContain("surveys are not sending for Example Coffee");
+    expect(system).toContain("https://notion.so/pods");
+  });
+
+  test("needs to be told what is wrong", async () => {
+    const deps = withSettings();
+    await dispatchCommand(deps, actor(), "C1", "ticket config tracker https://notion.so/roadmap");
+    expect(await dispatchCommand(deps, actor(), "C1", "ticket")).toContain("What is wrong?");
+  });
+});
+

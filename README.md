@@ -102,6 +102,7 @@ Every command has two interfaces - use whichever you like. Both triggers are con
 | `learn <fact>` | admins | teach a durable fact |
 | `learnings` / `relearn <id> <text>` / `unlearn <id>` | admins | list, reword or delete learnings |
 | `review-policy [owner/repo] [first\|after\|default]` (alias `rvpolicy`) | anyone (setting: admins) | how a repo gets approved - see [Review policy per repo](#review-policy-per-repo) |
+| `ticket <what is wrong>` (aliases `bug`, `raise`) | anyone | raise a properly written, correctly routed ticket - see [Raising a ticket](#raising-a-ticket) |
 | `review <pr-url>` (alias `rv`) | pal+ | review a PR: approve first (even if it is already merged or closed), then post the review as a GitHub comment *and* back in the thread; request changes on high risk (big PRs are cloned + reviewed by child agents). Runs full-access. |
 | `bomb [categories] [count] <message-link>` (alias `br`) | admins | reaction-bomb a message. Combine categories with commas and set a count: `bomb money,face,negative 9 <link>`. Up to 23; `bomb help` lists every category |
 | `reply <message-link>` (alias `jrp`) | admins | draft and post an AI reply to a message |
@@ -206,6 +207,50 @@ changes what anyone is *allowed* to do - a cheaper model is sandboxed
 identically. Preset tasks that force a policy keep their own model: `review`
 runs full-access whoever asked and wherever it is asked, so a pal's review in a
 cheap channel is still done properly.
+
+## Raising a ticket
+
+```
+//bot ticket surveys are not sending for Example Coffee since this morning
+```
+
+Or just say it in chat - "the inbox will not load again" - and it raises one for
+you. It only does that for an actual defect: a question is not a ticket, a
+feature idea is not a bug, and it will not raise the same thing twice.
+
+The point of it is that **it reads rather than guesses**. Before writing
+anything it opens the team's own pages - the how-to-raise SOP, the pod ownership
+doc - and the tracker's live schema, so the naming format, the required fields,
+the priority criteria and the routing all come from the current source of truth
+rather than from something baked into this repo. Pod routing follows the
+document's stated exceptions too, which is exactly where a guess goes wrong. If
+two pods could own it, it says which it chose and why, in one line, so a human
+can correct it in seconds.
+
+It also goes and gets the evidence: the rest of the thread, the screenshots
+(opened and read), the logs, the code. A ticket that names the failing endpoint
+is worth ten that say "it is broken". Where it does not know something it leaves
+the field out and says so, rather than inventing an account id.
+
+For a **genuinely small fix** - a typo, a wrong label, an off-by-one, a missing
+null check, a contained CSS fix - it also opens a PR in a configured repo, runs
+whatever the repo runs, and requests a reviewer it can justify (CODEOWNERS for
+the touched files, else whoever actually worked on them recently, else the pod
+lead). Anything needing product judgement, or touching auth, money, schemas or
+behaviour, is not small: it raises the ticket and leaves the code alone.
+
+Configure it once (admins):
+
+```
+//bot ticket config                        what is set
+//bot ticket config tracker <notion url>   the database tickets go in
+//bot ticket config sop     <notion url>   how-to-raise: naming, fields, priority
+//bot ticket config pods    <notion url>   who owns what, for routing
+//bot ticket config repos   owner/a, owner/b   repos it may open a fix PR in
+```
+
+With no tracker set it refuses to raise anything, and with no repos set it never
+opens a PR. Nothing about any particular workspace lives in this codebase.
 
 ## Review policy per repo
 

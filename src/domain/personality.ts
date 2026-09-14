@@ -7,6 +7,7 @@
  * neutral fallback and the dashboard "reset" target.
  */
 import { investigationRules } from "./investigation.ts";
+import { ticketChatRules } from "./ticketPrompt.ts";
 import type { Participant, PromptContext, Reactable } from "./types.ts";
 
 /** Neutral fallback persona used when no custom one is configured. */
@@ -158,6 +159,8 @@ export type BuildSystemPromptOptions = PromptContext & {
   readonly botUserId?: string;
   /** observability backends, in the order they should be tried */
   readonly logSources?: readonly string[];
+  /** true when a ticket tracker is configured, so bug reports can be raised */
+  readonly canRaiseTickets?: boolean;
   /** absolute path of the read-only Grafana helper */
   readonly grafanaGetScript?: string;
   /** this turn's ticket, which carries who a triggered command runs as */
@@ -196,6 +199,7 @@ export const buildSystemPrompt = (options: Partial<BuildSystemPromptOptions> = {
   const remembering = learningRules(options.learnUrl ?? "");
   const attachments = attachmentRules(options.fileScript);
   const investigating = investigationRules(options.logSources ?? [], options.grafanaGetScript);
+  const tickets = ticketChatRules(options.commandPrefix ?? "//bot", options.canRaiseTickets === true);
   const commands = commandRules(
     options.runScript ?? "",
     options.runUrl ?? "",
@@ -203,5 +207,5 @@ export const buildSystemPrompt = (options: Partial<BuildSystemPromptOptions> = {
     options.commandPrefix ?? "//bot",
   );
 
-  return `${base}${learningsBlock}${addressed}${roster}\n\n${OPERATING_RULES}${attachments}${investigating}${reactions}${commands}${remembering}\n\n${WORKSPACE_NOTE}\n\n${identityLock(botName, options.botUserId)}`;
+  return `${base}${learningsBlock}${addressed}${roster}\n\n${OPERATING_RULES}${attachments}${investigating}${tickets}${reactions}${commands}${remembering}\n\n${WORKSPACE_NOTE}\n\n${identityLock(botName, options.botUserId)}`;
 };

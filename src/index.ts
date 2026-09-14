@@ -191,6 +191,8 @@ const main = async () => {
     settings,
     // Where to look for logs, in order. Read per call so a change needs no restart.
     logSources: () => logSourceOrder(settings.get(SETTING_KEYS.logSources)),
+    // A bug reported in chat becomes a ticket, but only once there is a tracker.
+    canRaiseTickets: () => !!settings.get(SETTING_KEYS.ticketTracker)?.trim(),
     reactScript,
     fileScript,
     grafanaGetScript,

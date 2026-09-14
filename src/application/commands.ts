@@ -13,6 +13,7 @@
 import { buildSystemPrompt, DEFAULT_BOT_NAME } from "../domain/personality.ts";
 import { validateRemoval, validateRoleChange } from "../domain/access.ts";
 import { reviewPrompt } from "../domain/reviewPrompt.ts";
+import { canRaiseTickets, ticketPrompt, type TicketSources } from "../domain/ticketPrompt.ts";
 import {
   DENIED_LOG_SOURCES,
   LOG_SOURCES,
@@ -86,6 +87,8 @@ const clip = (s: string): string =>
   s.length > RELAYED_BODY_CHARS ? `${s.slice(0, RELAYED_BODY_CHARS)}…\n(truncated - full text is on the PR)` : s;
 /** review clones + spawns child agents, so allow much longer than a chat reply. */
 const REVIEW_TIMEOUT_MS = 600_000;
+/** a ticket reads the SOP, the thread and the code, and may open a PR. */
+const TICKET_TIMEOUT_MS = 900_000;
 
 /** Public metadata for one command, for the dashboard. */
 export type CommandInfo = {
@@ -408,6 +411,88 @@ export const COMMANDS: readonly CommandDef[] = [
       if (!Number.isInteger(id)) return `Which one? \`${prefix} unlearn <id>\` (see \`${prefix} learnings\`)`;
       deps.learnings.remove(id);
       return `Forgotten learning #${id}.`;
+    },
+  },
+  {
+    name: "ticket",
+    aliases: ["bug", "raise"],
+    minRole: "pal",
+    usage: "<what is wrong> | config [key] [value]",
+    summary: "raise a properly written, correctly routed ticket",
+    run: async (ctx) => {
+      const { deps, actor, channelId, threadTs, args, rest, prefix, reply } = ctx;
+      const get = (k: string) => deps.settings?.get(k)?.trim() || undefined;
+      const sources: TicketSources = {
+        tracker: get(SETTING_KEYS.ticketTracker),
+        sop: get(SETTING_KEYS.ticketSop),
+        pods: get(SETTING_KEYS.ticketPods),
+        repos: (get(SETTING_KEYS.ticketRepos) ?? "").split(",").map((r) => r.trim()).filter(Boolean),
+      };
+
+      // `ticket config ...` - where the team keeps its own rules.
+      if ((args[0] ?? "").toLowerCase() === "config") {
+        const show = () =>
+          [
+            `tracker: ${sources.tracker ?? "*not set*"}`,
+            `sop:     ${sources.sop ?? "*not set*"}`,
+            `pods:    ${sources.pods ?? "*not set*"}`,
+            `repos:   ${sources.repos?.length ? sources.repos.join(", ") : "*none - no PRs will be opened*"}`,
+          ].join("\n");
+        if (args.length === 1) return show();
+        if (RANK[actor.role] < RANK.admin) return "Only admins can change the ticket configuration.";
+        const key = (args[1] ?? "").toLowerCase();
+        const value = rest.slice(rest.indexOf(args[1] ?? "") + (args[1] ?? "").length).trim();
+        const target = { tracker: SETTING_KEYS.ticketTracker, sop: SETTING_KEYS.ticketSop, pods: SETTING_KEYS.ticketPods, repos: SETTING_KEYS.ticketRepos }[key];
+        if (!target) return `Which one? \`${prefix} ticket config <tracker|sop|pods|repos> <value>\``;
+        deps.settings?.set(target, value === "default" || value === "none" ? "" : value);
+        return `Set *${key}*.\n${show().replace(value, value)}`;
+      }
+
+      const report = rest.trim();
+      if (!report) return `What is wrong? \`${prefix} ticket <what happened>\``;
+      if (!canRaiseTickets(sources)) {
+        return `No ticket tracker is configured, so I have nowhere to put it. An admin can set one: \`${prefix} ticket config tracker <notion url>\``;
+      }
+      if (!deps.llm) return "My brain is not wired up right now.";
+
+      // A preset task: full access regardless of who asked, and a long timeout -
+      // it reads the SOP, the thread, the code, and may open a PR.
+      const full = deps.toolPolicy?.("owner") ?? { skipPermissions: true };
+      const policy = { ...full, timeoutMs: TICKET_TIMEOUT_MS };
+      const name = botNameOf(deps);
+      const params = {
+        system: ticketPrompt(report, name, sources, { channelId, threadTs, reporter: actor.slackId }, await deps.github?.whoami()),
+        messages: [{ role: "user" as const, content: report }],
+        assistantName: name,
+        policy,
+      };
+
+      if (!reply) {
+        const out = await deps.llm.complete(params);
+        return out.trim() || "I could not raise that one.";
+      }
+
+      await reply(`🎫 raising a ticket for <@${actor.slackId}>`);
+      let out = "";
+      if (deps.llm.stream) {
+        const seen = new Set<string>();
+        const announce = (line: string) => {
+          if (seen.has(line)) return;
+          seen.add(line);
+          void reply(line);
+        };
+        out = await deps.llm.stream(params, (ev) => {
+          if (ev.type !== "tool" || ev.status !== "complete") return;
+          const ran = (ev.command ?? ev.title).toLowerCase();
+          if (/notion-create-pages/.test(ran)) announce("📝 created the ticket");
+          if (/gh pr create\b/.test(ran)) announce("🔧 opened a PR for it");
+          if (/gh pr edit[^\n]*--add-reviewer/.test(ran)) announce("👀 asked for a review");
+        });
+      } else {
+        out = await deps.llm.complete(params);
+      }
+      await reply(out.trim() || "I could not raise that one.");
+      return "";
     },
   },
   {
