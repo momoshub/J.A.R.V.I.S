@@ -193,6 +193,35 @@ describe("buildSystemPrompt", () => {
     expect(p).not.toContain("That tag is YOU");
   });
 
+  test("a named command is run, never reimplemented by hand", () => {
+    const p = buildSystemPrompt({
+      commandPrefix: "X/ev",
+      runScript: "/bin/jarvis-run.sh",
+      runUrl: "http://127.0.0.1:2002/api/commands/run",
+      runTicket: "tkt",
+    });
+    expect(p).toContain("that IS the command. Run it");
+    expect(p).toContain("Do NOT reimplement what it does");
+    // the reason matters: hand-rolling goes around the role gate and the audit log
+    expect(p).toContain("skips the role check, the allowance, the audit log");
+  });
+
+  test("it looks up a command rather than reading its own source", () => {
+    const p = buildSystemPrompt({
+      commandPrefix: "X/ev",
+      runScript: "/bin/jarvis-run.sh",
+      runUrl: "http://x/run",
+      runTicket: "tkt",
+    });
+    expect(p).toContain("X/ev help");
+    expect(p).toContain("NEVER read your own source code to work out what you can do");
+  });
+
+  test("and does not go rummaging in its own repo at all", () => {
+    const p = buildSystemPrompt({ botName: "Evie" });
+    expect(p).toContain("Do not go looking through your own repository to find out what you can do");
+  });
+
   test("omits the roster block when there are no participants", () => {
     expect(buildSystemPrompt({ learnings: [], participants: [] })).not.toContain(
       "mention or reply to them with their Slack tag",
