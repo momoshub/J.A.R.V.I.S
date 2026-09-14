@@ -71,8 +71,10 @@ describe("ticketPrompt", () => {
 
   test("reports back short, with the gaps admitted", () => {
     const p = ticketPrompt("x", "Evie", SOURCES);
-    expect(p).toContain("anything you could not fill in and why");
-    expect(p).toContain("an honest gap is fine, a confident invention is not");
+    expect(p).toContain("Keep it to three lines - this is a status, not the ticket again");
+    // a gap still gets said, it just does not get a paragraph
+    expect(p).toContain("a gap you could not fill");
+    expect(p).toContain("add one more line and stop");
   });
 });
 

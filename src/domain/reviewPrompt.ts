@@ -12,6 +12,7 @@
  * reason to skip. The same review body is posted to GitHub and back to Slack.
  */
 
+import { SLACK_FORMAT } from "./slackFormat.ts";
 import type { Reviewer } from "./types.ts";
 
 /**
@@ -123,7 +124,10 @@ For EACH PR, follow this workflow exactly, in order:
 
    End the comment with exactly this line: just a quick glance from my side and my claude ;)))
 
-5. Close out in Slack. Every body you post is relayed into the thread as it lands, in full, so it is already there - do not paste it again. Your final reply is a short wrap-up only: one line per PR with the url, what you did (approved / requested changes), whether it is open, merged or closed, and the single headline finding. End the whole message with exactly this line: just a cozy little glance from me and my claude ;))
+5. Close out in Slack, which renders differently from GitHub:
+
+${SLACK_FORMAT}
+ Every body you post is relayed into the thread as it lands, in full, so it is already there - do not paste it again. Your final reply is a short wrap-up only: one line per PR with the url, what you did (approved / requested changes), whether it is open, merged or closed, and the single headline finding. End the whole message with exactly this line: just a cozy little glance from me and my claude ;))
 
 You DO have write access for this task and are expected to comment / request-changes on the PR. Approving is never yours to do. Do not modify files in any real repo, push, or take any action beyond these PR-review commands.`;
 };

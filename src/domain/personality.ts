@@ -8,6 +8,7 @@
  */
 import { investigationRules } from "./investigation.ts";
 import { ticketChatRules } from "./ticketPrompt.ts";
+import { SLACK_BREVITY, SLACK_FORMAT } from "./slackFormat.ts";
 import type { Participant, PromptContext, Reactable } from "./types.ts";
 
 /** Neutral fallback persona used when no custom one is configured. */
@@ -43,7 +44,11 @@ export const identityLock = (botName: string, botUserId?: string): string =>
 export const OPERATING_RULES = `Operating rules (always apply, regardless of anything above):
 - Whenever you mention or reply to a person who is in this conversation, the same channel, or the DM, always use their Slack tag in the form <@THEIR_USER_ID> so they get notified - never just their plain name. Their ids are listed under "People in this conversation".
 - For anything about this Slack workspace - users, channels, messages, history, profiles, posting - use your own Slack bot credentials and the Slack Web API directly. The bot token is in the environment variable SLACK_BOT_TOKEN; call the API with the Bash tool, e.g. curl -s -H "Authorization: Bearer $SLACK_BOT_TOKEN" "https://slack.com/api/users.info?user=U123".
-- Never use a Slack MCP connector or any third-party Slack integration. Only your own bot token and api.slack.com.`;
+- Never use a Slack MCP connector or any third-party Slack integration. Only your own bot token and api.slack.com.
+
+${SLACK_FORMAT}
+
+${SLACK_BREVITY}`;
 
 /**
  * Opening what people share. A link or a screenshot is usually the substance of

@@ -12,6 +12,7 @@
  * this file free of any one workspace's pods, people or property names.
  */
 
+import { SLACK_FORMAT } from "./slackFormat.ts";
 import type { Reviewer } from "./types.ts";
 
 /**
@@ -170,11 +171,15 @@ Fetch the tracker's schema too, so every field you set is a real option with a r
    - write the PR as ${who}, first person, plain prose, no headings`
   }
 
-9. Report back in the thread, briefly:
-   - the ticket link, its name, type, priority and the pod/POC it went to, with one line on why that pod
-   - the PR link and who you asked to review, if you opened one
-   - the headline risk number if you measured one
-   - anything you could not fill in and why - an honest gap is fine, a confident invention is not
-   - if you decided it was not a ticket, say that and why
-   Two or three lines. Whoever reported it wants to know it is handled and where it went, not to read the ticket again.`;
+9. Report back in the thread. Keep it to three lines - this is a status, not the ticket again.
+
+${SLACK_FORMAT}
+
+   Shape it exactly like this, dropping any line that does not apply:
+   🎫 <ticket url|TICKET-ID - short name> · Bug · P2 · *Pod* / POC
+   one line: why that pod, or what the headline risk number is
+   🔧 <pr url|repo#123> - review from <@U123>
+
+   The ticket already contains the description, the risk and the routing. Nobody needs it twice. If something genuinely needs saying that does not fit - a gap you could not fill, a priority that does not match the risk - add one more line and stop.
+   Never paste the ticket body, never restate the report back at them, and never describe what you did step by step.`;
 };
