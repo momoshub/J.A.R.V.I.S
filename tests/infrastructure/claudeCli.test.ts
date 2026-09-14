@@ -109,6 +109,21 @@ describe("createClaudeCliLlm", () => {
     expect(out).toBe("haiku");
   });
 
+  test("a denial still reaches the CLI at full access", async () => {
+    // the bug: disallowedTools used to be passed only in the sandboxed branch,
+    // so a full-access role could reach a tool it was merely asked to avoid
+    const bin = fakeBin(
+      `#!/usr/bin/env bash\ncat > /dev/null\nARGS="$*"\nif [[ "$ARGS" == *"--disallowedTools"* && "$ARGS" == *"--dangerously-skip-permissions"* ]]; then R="both"; else R="$ARGS"; fi\necho "{\\"type\\":\\"result\\",\\"subtype\\":\\"success\\",\\"is_error\\":false,\\"result\\":\\"$R\\"}"`,
+    );
+    const llm = createClaudeCliLlm({ binPath: bin });
+    const out = await llm.complete({
+      system: "s",
+      messages: [{ role: "user", content: "hi" }],
+      policy: { skipPermissions: true, disallowedTools: ["mcp__claude_ai_Slack"] },
+    });
+    expect(out).toBe("both");
+  });
+
   test("summarizeTool renders a Bash command", () => {
     const out = summarizeTool("Bash", '{"command":"ls -la","description":"list"}');
     expect(out.title).toContain("ls -la");

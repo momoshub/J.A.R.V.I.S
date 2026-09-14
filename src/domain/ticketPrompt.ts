@@ -124,7 +124,14 @@ Fetch the tracker's schema too, so every field you set is a real option with a r
 
 3. Route it from the pod document, not from the name of the thing. Work out which pod genuinely owns the surface that is broken, and follow the exceptions the document states - they exist precisely because the obvious answer is wrong in those cases. If two pods could own it, say which you chose and why in one line, so a human can correct you quickly.
 
-4. Write it the way the SOP says, and write it well:
+4. Get the people fields right - this is where a ticket most often goes quietly wrong.
+   A tracker usually has several POC fields (product, engineering, ops, data, design). They are not interchangeable, and the SOP may only document some of them. Read the schema for the full list, then put each person in the field that matches what they actually do:
+   - the pod lead goes in the product/owner field the SOP names
+   - an engineer goes in the engineering field, never in the ops field
+   - whoever raised it goes in the field matching their own function, which is not automatically ops. Check who they are before deciding - their Slack profile title, or how they appear in the pod document - and if you cannot tell, leave it blank and say so.
+   Filing an engineer as the ops contact is not a small slip: it routes every later question to the wrong person, and they have to notice before anyone can fix it.
+
+5. Write it the way the SOP says, and write it well:
    - the name in the exact format the SOP gives
    - short. A ticket is read by someone deciding whether to pick it up: lead with what is broken, for whom, and how bad
    - concrete over vague: real numbers, real account names, real timestamps, the exact error. Never "sometimes", never "seems to"
@@ -132,7 +139,7 @@ Fetch the tracker's schema too, so every field you set is a real option with a r
    - never invent detail to fill a field. If you do not know the account id, leave it out and say it is unknown - a confident wrong id costs someone an afternoon
    - include what you verified and where you looked, so the next person does not redo it
 
-5. Add a short **Risk** section when it is not obviously trivial - anything touching data, money, auth, or more than one merchant. Skip it for a typo; nobody needs a risk assessment for a misspelled label.
+6. Add a short **Risk** section when it is not obviously trivial - anything touching data, money, auth, or more than one merchant. Skip it for a typo; nobody needs a risk assessment for a misspelled label.
    Measure it, do not adjectivise it. "Affects many merchants" is worthless; "47 accounts hit this in the last 24h, rising" is a decision someone can act on. You have the logs and the dashboards - go and count. If you genuinely cannot measure it, say what you could not measure rather than reaching for a vague word.
    Cover only what applies, in a line each:
    - blast radius: who and how many, measured, and whether it is spreading or steady
@@ -142,9 +149,10 @@ Fetch the tracker's schema too, so every field you set is a real option with a r
    - what happens if this is not picked up this week
    If the risk you find does not match the priority the SOP's criteria gave you, say so explicitly - that mismatch is the single most useful sentence in the ticket, and a human should see it rather than have it quietly resolved either way.
 
-6. Create it in the tracker with every field the SOP requires, at the status the SOP says a new ticket starts at.
+7. Create it in the tracker with every field the SOP requires, at the status the SOP says a new ticket starts at.
+   The moment it exists, post its link into the thread on its own - do not save it for the summary at the end. Whoever asked is waiting to know it landed, and a link two minutes later is two minutes of wondering whether anything happened. One line: the ticket name and its url.
 
-7. A small fix, and only a small fix, also gets a PR.${
+8. A small fix, and only a small fix, also gets a PR.${
     !canOpenPrs(scope)
       ? `\n   No repositories are configured for this, so do NOT open a PR. Raise the ticket and stop.`
       : `\n   You may open one in ${describeRepoScope(scope)} - and nowhere else.${
@@ -162,7 +170,7 @@ Fetch the tracker's schema too, so every field you set is a real option with a r
    - write the PR as ${who}, first person, plain prose, no headings`
   }
 
-8. Report back in the thread, briefly:
+9. Report back in the thread, briefly:
    - the ticket link, its name, type, priority and the pod/POC it went to, with one line on why that pod
    - the PR link and who you asked to review, if you opened one
    - the headline risk number if you measured one

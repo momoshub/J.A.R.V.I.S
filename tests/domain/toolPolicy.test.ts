@@ -10,7 +10,21 @@ describe("toolPolicyFor", () => {
       const p = toolPolicyFor(role, opts);
       expect(p.skipPermissions).toBe(true);
       expect(p.cwd).toBe("/work");
-      expect(p.allowedTools).toBeUndefined(); // no list needed, nothing is denied
+      expect(p.allowedTools).toBeUndefined(); // no allow-list: everything is permitted
+    }
+  });
+
+  test("some things are denied even at full access", () => {
+    // --disallowedTools is honoured alongside --dangerously-skip-permissions,
+    // so these are real denials rather than a request in the prompt
+    for (const role of ["owner", "admin", "executer", "pal"] as const) {
+      const denied = toolPolicyFor(role, opts).disallowedTools ?? [];
+      // a Slack connector posts as the human who authorised it, not as the bot
+      expect(denied).toContain("mcp__claude_ai_Slack");
+      expect(denied).toContain("mcp__slack");
+      // and CloudWatch bills per GB scanned
+      expect(denied).toContain("Bash(aws logs:*)");
+      expect(denied).toContain("Bash(aws cloudwatch:*)");
     }
   });
 

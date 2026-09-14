@@ -125,13 +125,14 @@ const buildArgs = (
   const skip = policy ? policy.skipPermissions : config.skipPermissions !== false;
   if (skip) {
     args.push("--dangerously-skip-permissions");
-  } else if (policy) {
-    if (policy.allowedTools && policy.allowedTools.length > 0) {
-      args.push("--allowedTools", ...policy.allowedTools);
-    }
-    if (policy.disallowedTools && policy.disallowedTools.length > 0) {
-      args.push("--disallowedTools", ...policy.disallowedTools);
-    }
+  } else if (policy?.allowedTools && policy.allowedTools.length > 0) {
+    args.push("--allowedTools", ...policy.allowedTools);
+  }
+  // Denials apply either way. `--disallowedTools` is honoured alongside
+  // `--dangerously-skip-permissions` (verified), so a full-access role can still
+  // be kept off a tool that is wrong for it rather than merely asked not to.
+  if (policy?.disallowedTools && policy.disallowedTools.length > 0) {
+    args.push("--disallowedTools", ...policy.disallowedTools);
   }
   return args;
 };

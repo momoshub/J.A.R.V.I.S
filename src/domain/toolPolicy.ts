@@ -56,13 +56,29 @@ export const PAL_TOOLS: readonly string[] = [
   "Bash(gcx datasources list:*)", "Bash(gcx dashboards list:*)", "Bash(gcx agent skills:*)",
 ];
 
-/** Never allowed for sandboxed roles: writes, secret reads, and metered queries. */
+/**
+ * Denied to EVERY role, full access included.
+ *
+ * `--disallowedTools` is honoured alongside `--dangerously-skip-permissions`, so
+ * these are real denials rather than requests. Both entries here are things that
+ * are never right, whoever is asking:
+ *
+ * - a Slack connector posts as whichever human authorised it, so the bot's reply
+ *   arrives under someone else's name. It has its own token; it must use it.
+ * - CloudWatch bills per GB scanned, and the logs live in Grafana anyway.
+ */
+export const ALWAYS_DISALLOW: readonly string[] = [
+  "mcp__claude_ai_Slack",
+  "mcp__slack",
+  "Bash(aws logs:*)",
+  "Bash(aws cloudwatch:*)",
+];
+
+/** Additionally denied to sandboxed roles: writes and secret reads. */
 export const SANDBOX_DISALLOW: readonly string[] = [
+  ...ALWAYS_DISALLOW,
   "Write", "Edit", "MultiEdit", "NotebookEdit",
   "Bash(aws secretsmanager:*)", "Bash(aws ssm get-parameter:*)", "Bash(aws kms:*)",
-  // CloudWatch bills per GB scanned; logs live in Grafana. A full-access role is
-  // held to this by the prompt, since nothing can be denied to one.
-  "Bash(aws logs:*)", "Bash(aws cloudwatch:*)",
 ];
 
 export type ToolPolicyOptions = {
@@ -127,7 +143,13 @@ export const toolPolicyFor = (role: UserRole, opts: ToolPolicyOptions): ToolPoli
   switch (role) {
     case "owner":
     case "admin":
-      return { skipPermissions: true, cwd: opts.fullCwd, model: modelOf(role, opts) };
+      return {
+        skipPermissions: true,
+        cwd: opts.fullCwd,
+        model: modelOf(role, opts),
+        // Full access still does not mean "post as a human" or "bill us per query".
+        disallowedTools: ALWAYS_DISALLOW,
+      };
     case "executer":
       return {
         skipPermissions: false,

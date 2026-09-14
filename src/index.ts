@@ -64,6 +64,13 @@ const buildLlm = (config: AppConfig, cwd: string): LlmPort =>
         model: config.anthropicModel,
       });
 
+/**
+ * How long a triggered command may run before the caller is released. Long
+ * enough that a quick command still answers inline, short enough that a slow
+ * one never outlives the chat turn waiting on it.
+ */
+const RUN_HANDOFF_MS = 20_000;
+
 const main = async () => {
   const config = loadConfig();
 
@@ -237,12 +244,30 @@ const main = async () => {
         if (!ctx) throw new Error("that ticket is not valid any more");
         const user = users.get(ctx.actor);
         if (!user) throw new Error("whoever asked is not on the access list");
-        return dispatchCommand(deps, user, ctx.channel, line, {
+        const run = dispatchCommand(deps, user, ctx.channel, line, {
           prefix: config.commandPrefix,
           slash: config.slashCommand,
           threadTs: ctx.threadTs,
           reply: (text: string) => slackAdmin.post(ctx.channel, text, ctx.threadTs),
         });
+
+        // Do not make the caller wait. The chat turn that triggers a command is
+        // itself a CLI process on a chat-length timeout, and a `review` or
+        // `ticket` runs for minutes - blocking here kills that turn with a
+        // SIGTERM and posts "I hit an error" over a command that is working
+        // perfectly. The command reports into the thread itself, so there is
+        // nothing for the caller to relay anyway.
+        const settled = await Promise.race([
+          run.then((text) => ({ done: true as const, text })),
+          new Promise<{ done: false }>((r) => setTimeout(() => r({ done: false }), RUN_HANDOFF_MS)),
+        ]);
+        if (settled.done) return settled.text;
+        run
+          .then((text) => {
+            if (text.trim()) return slackAdmin.post(ctx.channel, text, ctx.threadTs);
+          })
+          .catch((e) => activity.error("command_failed", { command: line, result: String(e) }));
+        return "started - it reports into the thread as it goes";
       },
     },
   );

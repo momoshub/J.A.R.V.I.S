@@ -76,6 +76,33 @@ describe("ticketPrompt", () => {
   });
 });
 
+describe("people fields", () => {
+  test("an engineer never lands in the ops field", () => {
+    const p = ticketPrompt("x", "Evie", SOURCES);
+    expect(p).toContain("an engineer goes in the engineering field, never in the ops field");
+    expect(p).toContain("They are not interchangeable");
+    expect(p).toContain("not automatically ops");
+  });
+
+  test("it checks who someone is rather than assuming", () => {
+    const p = ticketPrompt("x", "Evie", SOURCES);
+    expect(p).toContain("their Slack profile title");
+    expect(p).toContain("leave it blank and say so");
+  });
+
+  test("it reads the schema for the fields the SOP does not mention", () => {
+    expect(ticketPrompt("x", "Evie", SOURCES)).toContain("the SOP may only document some of them");
+  });
+});
+
+describe("the link", () => {
+  test("goes into the thread the moment the ticket exists", () => {
+    const p = ticketPrompt("x", "Evie", SOURCES);
+    expect(p).toContain("post its link into the thread on its own");
+    expect(p).toContain("do not save it for the summary at the end");
+  });
+});
+
 describe("repo scope", () => {
   test("a bare name is a whole org, a slashed one is a single repo", () => {
     expect(parseRepoScope("acme")).toEqual({ orgs: ["acme"], repos: [] });
