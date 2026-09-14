@@ -232,12 +232,20 @@ It also goes and gets the evidence: the rest of the thread, the screenshots
 is worth ten that say "it is broken". Where it does not know something it leaves
 the field out and says so, rather than inventing an account id.
 
+When the issue is not trivial it adds a short **Risk** section, and that section
+is *measured*: "47 accounts hit this in the last 24h, rising" rather than
+"affects many merchants". It has the logs and dashboards, so it counts. Blast
+radius, whether data is being lost, whether a workaround exists, what happens if
+nobody picks it up this week. If the measured risk contradicts the priority the
+SOP's criteria produced, it says so outright instead of quietly resolving the
+mismatch either way.
+
 For a **genuinely small fix** - a typo, a wrong label, an off-by-one, a missing
-null check, a contained CSS fix - it also opens a PR in a configured repo, runs
-whatever the repo runs, and requests a reviewer it can justify (CODEOWNERS for
-the touched files, else whoever actually worked on them recently, else the pod
-lead). Anything needing product judgement, or touching auth, money, schemas or
-behaviour, is not small: it raises the ticket and leaves the code alone.
+null check, a contained CSS fix - it also opens a PR, runs whatever the repo
+runs, and requests a reviewer it can justify (CODEOWNERS for the touched files,
+else whoever actually worked on them recently, else the pod lead). Anything
+needing product judgement, or touching auth, money, schemas or behaviour, is not
+small: it raises the ticket and leaves the code alone.
 
 Configure it once (admins):
 
@@ -246,8 +254,14 @@ Configure it once (admins):
 //bot ticket config tracker <notion url>   the database tickets go in
 //bot ticket config sop     <notion url>   how-to-raise: naming, fields, priority
 //bot ticket config pods    <notion url>   who owns what, for routing
-//bot ticket config repos   owner/a, owner/b   repos it may open a fix PR in
+//bot ticket config repos   my-org             every repo in that org
+//bot ticket config repos   my-org, other/repo an org, plus one specific repo
 ```
+
+`repos` takes whole organisations as well as single repositories. An org covers
+everything under it, including repos created later - so before pushing, the bot
+confirms with `gh repo view` that the repository really is under a listed org
+rather than trusting a similar-looking name.
 
 With no tracker set it refuses to raise anything, and with no repos set it never
 opens a PR. Nothing about any particular workspace lives in this codebase.

@@ -14,6 +14,49 @@
 
 import type { Reviewer } from "./types.ts";
 
+/**
+ * Which repositories a fix PR may be opened in.
+ *
+ * An entry is either one repository (`owner/repo`) or a whole organisation
+ * (`owner`), which covers everything under it - including repos that did not
+ * exist when this was configured. That is the point, and also the risk, so the
+ * prompt makes the bot confirm a repo really is under a listed org before it
+ * pushes anything to it.
+ */
+export type RepoScope = {
+  /** Whole organisations. */
+  readonly orgs: readonly string[];
+  /** Individual `owner/repo` entries. */
+  readonly repos: readonly string[];
+};
+
+const NAME = /^[A-Za-z0-9._-]+$/;
+
+/** Parse `acme, other/repo` into orgs and repos, dropping anything malformed. */
+export const parseRepoScope = (raw: string | undefined): RepoScope => {
+  const orgs: string[] = [];
+  const repos: string[] = [];
+  for (const entry of (raw ?? "").split(",").map((e) => e.trim()).filter(Boolean)) {
+    const cleaned = entry.replace(/^https?:\/\/github\.com\//i, "").replace(/\/+$/, "");
+    const parts = cleaned.split("/");
+    if (parts.length === 1 && NAME.test(parts[0] ?? "")) orgs.push((parts[0] as string).toLowerCase());
+    else if (parts.length === 2 && parts.every((x) => NAME.test(x))) repos.push(cleaned.toLowerCase());
+  }
+  return { orgs: [...new Set(orgs)], repos: [...new Set(repos)] };
+};
+
+/** True when a PR may be opened anywhere at all. */
+export const canOpenPrs = (scope: RepoScope): boolean => scope.orgs.length > 0 || scope.repos.length > 0;
+
+/** How the scope reads in the prompt and in `ticket config`. */
+export const describeRepoScope = (scope: RepoScope): string => {
+  const parts = [
+    ...scope.orgs.map((o) => `every repo in the *${o}* org`),
+    ...scope.repos.map((r) => `\`${r}\``),
+  ];
+  return parts.length > 0 ? parts.join(", ") : "*none - no PRs will be opened*";
+};
+
 /** Where the team keeps the things a ticket has to agree with. */
 export type TicketSources = {
   /** Database the ticket is created in. */
@@ -22,8 +65,8 @@ export type TicketSources = {
   readonly sop?: string;
   /** Pod ownership, for routing. */
   readonly pods?: string;
-  /** Repos the bot may open a fix PR in. Empty means: never open one. */
-  readonly repos?: readonly string[];
+  /** Where a fix PR may be opened. Empty means: never open one. */
+  readonly repoScope?: RepoScope;
 };
 
 /**
@@ -58,7 +101,7 @@ export const ticketPrompt = (
   context?: { channelId?: string; threadTs?: string; reporter?: string },
   reviewer?: Reviewer,
 ): string => {
-  const repos = sources.repos ?? [];
+  const scope = sources.repoScope ?? { orgs: [], repos: [] };
   const who = reviewer?.name?.trim() || reviewer?.login || botName;
 
   return `You are ${botName}, raising a ticket for a colleague and doing it properly.
@@ -89,12 +132,26 @@ Fetch the tracker's schema too, so every field you set is a real option with a r
    - never invent detail to fill a field. If you do not know the account id, leave it out and say it is unknown - a confident wrong id costs someone an afternoon
    - include what you verified and where you looked, so the next person does not redo it
 
-5. Create it in the tracker with every field the SOP requires, at the status the SOP says a new ticket starts at.
+5. Add a short **Risk** section when it is not obviously trivial - anything touching data, money, auth, or more than one merchant. Skip it for a typo; nobody needs a risk assessment for a misspelled label.
+   Measure it, do not adjectivise it. "Affects many merchants" is worthless; "47 accounts hit this in the last 24h, rising" is a decision someone can act on. You have the logs and the dashboards - go and count. If you genuinely cannot measure it, say what you could not measure rather than reaching for a vague word.
+   Cover only what applies, in a line each:
+   - blast radius: who and how many, measured, and whether it is spreading or steady
+   - whether data is being lost or corrupted while it is open, and whether that is recoverable
+   - security or money exposure, if any
+   - whether a workaround exists, and what it costs the person using it
+   - what happens if this is not picked up this week
+   If the risk you find does not match the priority the SOP's criteria gave you, say so explicitly - that mismatch is the single most useful sentence in the ticket, and a human should see it rather than have it quietly resolved either way.
 
-6. A small fix, and only a small fix, also gets a PR.${
-    repos.length === 0
+6. Create it in the tracker with every field the SOP requires, at the status the SOP says a new ticket starts at.
+
+7. A small fix, and only a small fix, also gets a PR.${
+    !canOpenPrs(scope)
       ? `\n   No repositories are configured for this, so do NOT open a PR. Raise the ticket and stop.`
-      : `\n   You may open one in: ${repos.join(", ")} - and nowhere else.
+      : `\n   You may open one in ${describeRepoScope(scope)} - and nowhere else.${
+          scope.orgs.length > 0
+            ? `\n   An organisation covers every repository under it, including ones created since this was configured. Before you push, confirm with \`gh repo view <owner>/<repo> --json owner\` that the repo really is under a listed org - a name that merely looks similar is not good enough.`
+            : ""
+        }
    SMALL means obvious and low risk: a typo, a wrong label or copy, an off-by-one, a missing null check, a wrong constant, a contained CSS or layout fix. If it needs product judgement, touches auth or money, changes a schema, changes behaviour anyone depends on, or you cannot fully see why it broke - it is not small. Raise the ticket and leave it. Guessing at a fix is worse than not fixing.
    When it is small:
    - reproduce it in the code first. If you cannot point at the line that causes it, it is not small
@@ -105,9 +162,10 @@ Fetch the tracker's schema too, so every field you set is a real option with a r
    - write the PR as ${who}, first person, plain prose, no headings`
   }
 
-7. Report back in the thread, briefly:
+8. Report back in the thread, briefly:
    - the ticket link, its name, type, priority and the pod/POC it went to, with one line on why that pod
    - the PR link and who you asked to review, if you opened one
+   - the headline risk number if you measured one
    - anything you could not fill in and why - an honest gap is fine, a confident invention is not
    - if you decided it was not a ticket, say that and why
    Two or three lines. Whoever reported it wants to know it is handled and where it went, not to read the ticket again.`;

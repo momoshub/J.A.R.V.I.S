@@ -13,7 +13,13 @@
 import { buildSystemPrompt, DEFAULT_BOT_NAME } from "../domain/personality.ts";
 import { validateRemoval, validateRoleChange } from "../domain/access.ts";
 import { reviewPrompt } from "../domain/reviewPrompt.ts";
-import { canRaiseTickets, ticketPrompt, type TicketSources } from "../domain/ticketPrompt.ts";
+import {
+  canRaiseTickets,
+  describeRepoScope,
+  parseRepoScope,
+  ticketPrompt,
+  type TicketSources,
+} from "../domain/ticketPrompt.ts";
 import {
   DENIED_LOG_SOURCES,
   LOG_SOURCES,
@@ -426,7 +432,7 @@ export const COMMANDS: readonly CommandDef[] = [
         tracker: get(SETTING_KEYS.ticketTracker),
         sop: get(SETTING_KEYS.ticketSop),
         pods: get(SETTING_KEYS.ticketPods),
-        repos: (get(SETTING_KEYS.ticketRepos) ?? "").split(",").map((r) => r.trim()).filter(Boolean),
+        repoScope: parseRepoScope(get(SETTING_KEYS.ticketRepos)),
       };
 
       // `ticket config ...` - where the team keeps its own rules.
@@ -436,7 +442,7 @@ export const COMMANDS: readonly CommandDef[] = [
             `tracker: ${sources.tracker ?? "*not set*"}`,
             `sop:     ${sources.sop ?? "*not set*"}`,
             `pods:    ${sources.pods ?? "*not set*"}`,
-            `repos:   ${sources.repos?.length ? sources.repos.join(", ") : "*none - no PRs will be opened*"}`,
+            `repos:   ${describeRepoScope(sources.repoScope ?? { orgs: [], repos: [] })}`,
           ].join("\n");
         if (args.length === 1) return show();
         if (RANK[actor.role] < RANK.admin) return "Only admins can change the ticket configuration.";

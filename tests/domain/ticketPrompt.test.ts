@@ -1,11 +1,18 @@
 import { describe, expect, test } from "bun:test";
-import { canRaiseTickets, ticketChatRules, ticketPrompt } from "../../src/domain/ticketPrompt.ts";
+import {
+  canOpenPrs,
+  canRaiseTickets,
+  describeRepoScope,
+  parseRepoScope,
+  ticketChatRules,
+  ticketPrompt,
+} from "../../src/domain/ticketPrompt.ts";
 
 const SOURCES = {
   tracker: "https://notion.so/tracker",
   sop: "https://notion.so/sop",
   pods: "https://notion.so/pods",
-  repos: ["acme/acme-be"],
+  repoScope: parseRepoScope("acme/acme-be"),
 };
 
 describe("canRaiseTickets", () => {
@@ -47,7 +54,7 @@ describe("ticketPrompt", () => {
 
   test("opens a PR only for a genuinely small fix, in a listed repo", () => {
     const p = ticketPrompt("x", "Evie", SOURCES);
-    expect(p).toContain("acme/acme-be - and nowhere else");
+    expect(p).toContain("`acme/acme-be` - and nowhere else");
     expect(p).toContain("SMALL means obvious and low risk");
     expect(p).toContain("it is not small");
     expect(p).toContain("Guessing at a fix is worse than not fixing");
@@ -57,7 +64,7 @@ describe("ticketPrompt", () => {
   });
 
   test("with no repos configured it must not open a PR at all", () => {
-    const p = ticketPrompt("x", "Evie", { ...SOURCES, repos: [] });
+    const p = ticketPrompt("x", "Evie", { ...SOURCES, repoScope: parseRepoScope("") });
     expect(p).toContain("do NOT open a PR");
     expect(p).not.toContain("SMALL means");
   });
@@ -66,6 +73,62 @@ describe("ticketPrompt", () => {
     const p = ticketPrompt("x", "Evie", SOURCES);
     expect(p).toContain("anything you could not fill in and why");
     expect(p).toContain("an honest gap is fine, a confident invention is not");
+  });
+});
+
+describe("repo scope", () => {
+  test("a bare name is a whole org, a slashed one is a single repo", () => {
+    expect(parseRepoScope("acme")).toEqual({ orgs: ["acme"], repos: [] });
+    expect(parseRepoScope("acme/adhoc")).toEqual({ orgs: [], repos: ["acme/adhoc"] });
+    expect(parseRepoScope("acme, other/repo")).toEqual({ orgs: ["acme"], repos: ["other/repo"] });
+  });
+
+  test("takes a github url and normalises case, without duplicates", () => {
+    expect(parseRepoScope("https://github.com/acme/Adhoc/")).toEqual({ orgs: [], repos: ["acme/adhoc"] });
+    expect(parseRepoScope("acme, acme")).toEqual({ orgs: ["acme"], repos: [] });
+  });
+
+  test("malformed entries are dropped, not half-accepted", () => {
+    expect(parseRepoScope("a/b/c, !!bad, , /")).toEqual({ orgs: [], repos: [] });
+    expect(canOpenPrs(parseRepoScope(""))).toBe(false);
+    expect(canOpenPrs(parseRepoScope("acme"))).toBe(true);
+  });
+
+  test("an org grant makes the bot verify the repo is really under it", () => {
+    const p = ticketPrompt("x", "Evie", { tracker: "t", repoScope: parseRepoScope("acme") });
+    expect(p).toContain("every repo in the *acme* org");
+    expect(p).toContain("gh repo view <owner>/<repo> --json owner");
+    expect(p).toContain("a name that merely looks similar is not good enough");
+  });
+
+  test("a plain repo list needs no such check", () => {
+    const p = ticketPrompt("x", "Evie", { tracker: "t", repoScope: parseRepoScope("acme/adhoc") });
+    expect(p).toContain("`acme/adhoc`");
+    expect(p).not.toContain("gh repo view <owner>/<repo> --json owner");
+  });
+
+  test("describes itself the same way everywhere", () => {
+    expect(describeRepoScope(parseRepoScope(""))).toContain("none");
+    expect(describeRepoScope(parseRepoScope("acme, a/b"))).toBe("every repo in the *acme* org, `a/b`");
+  });
+});
+
+describe("risk", () => {
+  test("is measured, not adjectivised", () => {
+    const p = ticketPrompt("x", "Evie", SOURCES);
+    expect(p).toContain("Measure it, do not adjectivise it");
+    expect(p).toContain("go and count");
+    expect(p).toContain("blast radius");
+  });
+
+  test("is skipped for something trivial", () => {
+    expect(ticketPrompt("x", "Evie", SOURCES)).toContain("Skip it for a typo");
+  });
+
+  test("a risk that contradicts the priority must be said out loud", () => {
+    const p = ticketPrompt("x", "Evie", SOURCES);
+    expect(p).toContain("does not match the priority");
+    expect(p).toContain("a human should see it");
   });
 });
 
