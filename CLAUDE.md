@@ -53,6 +53,8 @@ Always run `bun run typecheck` AND `bun test` before considering a change done. 
 
 ## Running instance / ops
 
+- **CLI auth is explicit**, not ambient: `CLAUDE_CODE_OAUTH_TOKEN` in `.env` (from `claude setup-token`) is loaded by Bun into `process.env` and inherited by the spawned `claude`. Before this the bot relied on whoever was interactively logged in on the host, which fails silently whenever that session lapses.
+
 - The bot runs under **launchd** (`~/Library/LaunchAgents/com.acme.jarvis.plist`), so it starts at login and is revived if it dies. Restart after a change with `launchctl kickstart -k gui/$UID/com.acme.jarvis`; `pkill` will NOT stop it (KeepAlive revives it in 15s) - use `launchctl bootout gui/$UID/com.acme.jarvis`. Output goes to `logs/jarvis.{out,err}.log`.
 - **Never restart while a turn is in flight**: check `pgrep -f "claude -p"` first, or a review/workflow mid-run is killed (exit 143).
 - Commit or push only when asked. Do not commit secrets (`.env` is gitignored).

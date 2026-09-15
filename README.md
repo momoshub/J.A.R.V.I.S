@@ -42,6 +42,7 @@ Required / notable env (see `.env.example`):
 | `SLACK_APP_TOKEN` | App-level token with `connections:write` (`xapp-...`) |
 | `SLACK_STREAM_UPDATES` | `true` (default) streams replies live; `false` posts once |
 | `LLM_PROVIDER` | `claude-cli` (default) or `anthropic` |
+| `CLAUDE_CODE_OAUTH_TOKEN` | long-lived CLI auth from `claude setup-token`; without it the bot borrows the machine's interactive login and dies when that expires |
 | `CLAUDE_BIN` / `CLAUDE_MODEL` | claude binary + model alias (claude-cli) |
 | `CLAUDE_MODEL_PAL` | model for `pal` chat (default `haiku`) - see [Model per role](#model-per-role) |
 | `CLAUDE_SKIP_PERMISSIONS` | `true` grants full tool access - see the security note (claude-cli) |
