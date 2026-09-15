@@ -160,7 +160,7 @@ describe("reviewPrompt", () => {
     const p = reviewPrompt(["https://github.com/o/r/pull/1"], "Evie");
     expect(p).toContain("EXACTLY ONE of the two flows");
     expect(p).toContain("Never both, never a mix");
-    expect(p).toContain("exactly one gh pr comment per PR, it is the only place the review is written");
+    expect(p).toContain("exactly one gh pr comment per PR, bar the late-finding rule above");
   });
 
   test("on the risky flow the change request is a static marker, then the comment", () => {

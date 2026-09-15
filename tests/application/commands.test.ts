@@ -652,6 +652,30 @@ describe("review fan-out cap", () => {
     expect(await dispatchCommand(deps, pal, "C1", "review-agents")).toContain("the default");
   });
 
+  test("a second comment is announced as a follow-up, not as the review again", async () => {
+    // the late-finding case: an agent reports back after the review is posted
+    const streamed: LlmPort = {
+      complete: async () => "unused",
+      stream: async (_p, sink) => {
+        const emit = (id: string, command: string) =>
+          sink({ type: "tool", id, title: command, command, status: "complete" });
+        emit("t1", `gh pr comment ${PR} --body "the review"`);
+        emit("t2", `gh pr comment ${PR} --body "one more thing, blocking"`);
+        return "done";
+      },
+    };
+    const deps = build();
+    deps.settings = createSettingsRepo(db);
+    const lines: string[] = [];
+    await dispatchCommand({ ...deps, llm: streamed }, actor(), "C1", `rv ${PR}`, {
+      reply: async (t: string) => {
+        lines.push(t);
+      },
+    });
+    expect(lines.some((l) => l.startsWith(`📝 posted the review on ${PR}`))).toBe(true);
+    expect(lines.some((l) => l.startsWith(`📝 posted a follow-up on ${PR}`))).toBe(true);
+  });
+
   test("a review cut off mid-run is reported as unfinished, not posted as the review", async () => {
     // the failure this exists for: the 10-minute timeout reaped a run whose
     // streamed narration then went out as if it were the finished review

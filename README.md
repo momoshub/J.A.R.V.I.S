@@ -312,6 +312,12 @@ review hostage. The cap is configurable:
 plainly and shows how far it got, instead of passing the fragment off as the
 review.
 
+Dropping an agent means its findings can land after the review is already on the
+PR. That case is settled in the prompt, not by asking: a late finding the brain
+verifies as blocking gets its own short follow-up comment (announced in the
+thread as a follow-up, not as the review again), and anything else gets one line
+in the wrap-up. A review runs unattended, so it never ends on a question.
+
 ## Command allowance
 
 A `pal` may run **10 commands per rolling 4 hours**. Past that a command is not

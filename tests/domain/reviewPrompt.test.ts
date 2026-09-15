@@ -47,6 +47,20 @@ describe("reviewPrompt fan-out", () => {
     expect(reviewPrompt([PR], "Bot")).toContain("drop it and post the review with what you have");
   });
 
+  test("a late agent's blocking finding is posted, never raised as a question", () => {
+    const p = reviewPrompt([PR], "Bot");
+    expect(p).toContain("LATE FINDING");
+    expect(p).toContain("post ONE short follow-up comment");
+    expect(p).toContain("Never hold a verified blocker back");
+  });
+
+  test("it decides instead of asking - nobody is there to answer", () => {
+    const p = reviewPrompt([PR], "Bot");
+    expect(p).toContain("Decide, never ask");
+    expect(p).toContain('Never end on "say the word"');
+    expect(p).toContain("never close on a question");
+  });
+
   test("no running commentary - the thread gets progress lines already", () => {
     const p = reviewPrompt([PR], "Bot");
     expect(p).toContain("Work quietly");

@@ -582,6 +582,8 @@ export const COMMANDS: readonly CommandDef[] = [
           seen.add(line);
           void reply(line);
         };
+        // Review comments posted so far, so a late follow-up is labelled as one.
+        let comments = 0;
         // The only PR url we can attribute an action to when the command itself
         // carries none (e.g. `gh pr review 2149 --repo ...`).
         const soleUrl = targets.length === 1 ? (targets[0]?.match(PR_URL)?.[0] ?? "") : "";
@@ -609,7 +611,11 @@ export const COMMANDS: readonly CommandDef[] = [
           if (/gh pr review[^\n]*--request-changes/.test(t)) announce(`⚠️ requested changes${on}`);
           if (/gh pr comment\b/.test(t)) {
             const body = postedBody(ran, "comment");
-            announce(`📝 posted the review${on}${body ? `\n\n${clip(body)}` : ""}`);
+            // A second comment is the late-finding case - an agent reporting back
+            // after the review went up. Say which it is rather than "the review"
+            // twice, which reads as the same thing posted again.
+            const what = comments++ === 0 ? "posted the review" : "posted a follow-up";
+            announce(`📝 ${what}${on}${body ? `\n\n${clip(body)}` : ""}`);
           }
         });
       } else {

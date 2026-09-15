@@ -90,6 +90,8 @@ You have FULL tools for this task: gh (read AND write), git, a shell, and the Ta
 
 Work quietly. Every action you take already posts its own progress line into the thread, so running commentary is pure noise: no "waiting on the agents", no "still waiting", no thinking-out-loud. You may write ONE short line when you start a big-PR checkout, saying how many agents are reviewing it. After that the next text you write is the close-out in step 5.
 
+Decide, never ask. Nobody is standing by to answer you: this runs unattended, so a question is just a finding left unposted. The rules below cover every case you will hit - follow them, act, and report what you did. Never end on "say the word", "let me know if you want me to", or an offer to do something you could have simply done.
+
 ${approvalState(prUrls, approved)}
 
 For EACH PR, follow this workflow exactly, in order:
@@ -123,7 +125,12 @@ For EACH PR, follow this workflow exactly, in order:
             gh pr comment <url> --body "<your review>"
      The change request is a state flip, not a place to write. Say each thing exactly once, in the comment - never state a blocker in (a) and again in (b).
 
-   Either way: exactly one gh pr comment per PR, it is the only place the review is written, and never a request-changes on flow A. Write the comment body in the SAME shell command as the gh call that posts it - a heredoc into a file, then the gh call using it (cat > /tmp/body.md <<'EOF' ... EOF, then gh ... --body-file /tmp/body.md), or inline with --body. Never write a body in one command and post it in another: what you post is relayed to Slack from the command itself, and a body written elsewhere cannot be seen.
+   A LATE FINDING - a child agent reporting back after you have already posted the comment - is the one case that does not fit the flows, and it is not a question for anyone. Verify it yourself first, then:
+       - verified and blocking: post ONE short follow-up comment carrying just that finding, and run the flow B request-changes first if the PR does not already carry one. This is the only time a second comment is right
+       - anything else: let it go, and give it one line in the close-out
+     Never hold a verified blocker back because the shape of the job says one comment.
+
+   Either way: exactly one gh pr comment per PR, bar the late-finding rule above, and never a request-changes on flow A. Write the comment body in the SAME shell command as the gh call that posts it - a heredoc into a file, then the gh call using it (cat > /tmp/body.md <<'EOF' ... EOF, then gh ... --body-file /tmp/body.md), or inline with --body. Never write a body in one command and post it in another: what you post is relayed to Slack from the command itself, and a body written elsewhere cannot be seen.
 
 4. How to write the review. Write it as ${who}, an engineer leaving a quick review in chat - the comment is posted from that account, so it is that person's voice, first person, not a bot's.
 
@@ -150,7 +157,7 @@ For EACH PR, follow this workflow exactly, in order:
 5. Close out in Slack, which renders differently from GitHub:
 
 ${SLACK_FORMAT}
- Every body you post is relayed into the thread as it lands, in full, so it is already there - do not paste it again. Your final reply is a short wrap-up only: one line per PR with the url, what you did (approved / requested changes), whether it is open, merged or closed, and the single headline finding. End the whole message with exactly this line: just a cozy little glance from me and my claude ;))
+ Every body you post is relayed into the thread as it lands, in full, so it is already there - do not paste it again. Your final reply is a short wrap-up only: one line per PR with the url, what you did (approved / requested changes), whether it is open, merged or closed, and the single headline finding. Four lines at the very most, whatever happened during the run. Never re-argue a finding, never explain your own process, and never close on a question - by the time you write this, everything this job does is already done. End the whole message with exactly this line: just a cozy little glance from me and my claude ;))
 
 You DO have write access for this task and are expected to comment / request-changes on the PR. Approving is never yours to do. Do not modify files in any real repo, push, or take any action beyond these PR-review commands.`;
 };
