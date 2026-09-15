@@ -605,6 +605,110 @@ describe("owner copy of slash commands", () => {
   });
 });
 
+describe("review fan-out cap", () => {
+  const PR = "https://github.com/o/r/pull/1";
+
+  const withBrain = () => {
+    const deps = build();
+    deps.settings = createSettingsRepo(db);
+    let system = "";
+    deps.llm = {
+      complete: async (p) => {
+        system = p.system;
+        return "the review";
+      },
+    };
+    return { deps, sys: () => system };
+  };
+
+  test("the default cap reaches the brain's prompt", async () => {
+    const { deps, sys } = withBrain();
+    await dispatchCommand(deps, actor(), "C1", `rv ${PR}`);
+    expect(sys()).toContain("at most 3 child agents");
+  });
+
+  test("a configured cap replaces it", async () => {
+    const { deps, sys } = withBrain();
+    await dispatchCommand(deps, actor(), "C1", "review-agents 5");
+    await dispatchCommand(deps, actor(), "C1", `rv ${PR}`);
+    expect(sys()).toContain("at most 5 child agents");
+  });
+
+  test("admins set it, anyone reads it, junk is refused", async () => {
+    const deps = build();
+    deps.settings = createSettingsRepo(db);
+    const pal = actor({ slackId: "U0PAL0002", role: "pal" });
+
+    expect(await dispatchCommand(deps, pal, "C1", "review-agents 2")).toContain("Only admins");
+    expect(await dispatchCommand(deps, actor(), "C1", "review-agents 0")).toContain("A number from 1");
+    expect(await dispatchCommand(deps, actor(), "C1", "review-agents 99")).toContain("A number from 1");
+    expect(await dispatchCommand(deps, actor(), "C1", "review-agents lots")).toContain("A number from 1");
+
+    expect(await dispatchCommand(deps, actor(), "C1", "review-agents 2")).toContain("at most *2* child agents");
+    expect(await dispatchCommand(deps, pal, "C1", "review-agents")).toContain("at most *2*");
+    expect(deps.settings.get("review_agents")).toBe("2");
+
+    await dispatchCommand(deps, actor(), "C1", "review-agents default");
+    expect(await dispatchCommand(deps, pal, "C1", "review-agents")).toContain("the default");
+  });
+
+  test("a review cut off mid-run is reported as unfinished, not posted as the review", async () => {
+    // the failure this exists for: the 10-minute timeout reaped a run whose
+    // streamed narration then went out as if it were the finished review
+    const streamed: LlmPort = {
+      complete: async () => "unused",
+      stream: async (_p, sink) => {
+        sink({ type: "aborted", reason: "it ran out of time" });
+        return "waiting on the agents";
+      },
+    };
+    const deps = build();
+    deps.settings = createSettingsRepo(db);
+    deps.github = {
+      whoami: async () => undefined,
+      reviewDecision: async () => undefined,
+      approve: async () => ({ ok: true }),
+    };
+    const lines: string[] = [];
+    await dispatchCommand({ ...deps, llm: streamed }, actor(), "C1", `rv ${PR}`, {
+      reply: async (t: string) => {
+        lines.push(t);
+      },
+    });
+    const last = lines[lines.length - 1] ?? "";
+    expect(last).toContain("did not finish");
+    expect(last).toContain("ran out of time");
+    expect(last).toContain("how far it got");
+  });
+
+  test("an approve-after repo is not approved when the run is cut off", async () => {
+    const streamed: LlmPort = {
+      complete: async () => "unused",
+      stream: async (_p, sink) => {
+        sink({ type: "aborted", reason: "it ran out of time" });
+        return "partial";
+      },
+    };
+    const deps = build();
+    deps.settings = createSettingsRepo(db);
+    const approved: string[] = [];
+    deps.github = {
+      whoami: async () => undefined,
+      reviewDecision: async () => undefined,
+      approve: async (url) => {
+        approved.push(url);
+        return { ok: true };
+      },
+    };
+    await dispatchCommand(deps, actor(), "C1", "review-agents default");
+    await dispatchCommand(deps, actor(), "C1", "review-policy o/r after");
+    await dispatchCommand({ ...deps, llm: streamed }, actor(), "C1", `rv ${PR}`, {
+      reply: async () => {},
+    });
+    expect(approved).toEqual([]); // no review came back, so nothing is clean
+  });
+});
+
 describe("per-repo review policy", () => {
   const PR = "https://github.com/acme/sql-runner/pull/905";
   const OTHER = "https://github.com/acme/acme-be/pull/1";

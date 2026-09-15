@@ -122,6 +122,9 @@ export const createSlackStream = (
       }
       return;
     }
+    // An aborted run is the caller's to narrate (it knows what was at stake);
+    // there is no card to draw for it.
+    if (event.type === "aborted") return;
     contentShown = true;
     task({
       type: "task_update",

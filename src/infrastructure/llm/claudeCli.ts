@@ -189,6 +189,14 @@ export const createClaudeCliLlm = (config: ClaudeCliConfig = {}): LlmPort => {
         const index = ev.index as number | undefined;
         if (ev.type === "content_block_start") {
           const block = (ev.content_block ?? {}) as Record<string, unknown>;
+          if (block.type === "text" && streamedText.trim() && !streamedText.endsWith("\n\n")) {
+            // A fresh text block is a new paragraph: the model wrote it after a
+            // tool call, not mid-sentence. Without this the deltas run together
+            // and the message reads as one mangled line.
+            const gap = streamedText.endsWith("\n") ? "\n" : "\n\n";
+            streamedText += gap;
+            sink({ type: "text", delta: gap });
+          }
           if (block.type === "tool_use" && typeof index === "number") {
             toolByIndex.set(index, {
               id: (block.id as string) ?? `t${index}`,
@@ -264,6 +272,15 @@ export const createClaudeCliLlm = (config: ClaudeCliConfig = {}): LlmPort => {
     if (exitCode !== 0 && !finished) {
       const stderr = await stderrPromise;
       throw new Error(`claude CLI exited with code ${exitCode}: ${stderr.trim() || "no output"}`);
+    }
+    // Killed after it had already said something. What we hold is a fragment of
+    // a run, not its answer - 143 is the timeout reaping it. Say so rather than
+    // letting a caller hand the fragment over as the finished work.
+    if (exitCode !== 0) {
+      sink({
+        type: "aborted",
+        reason: exitCode === 143 ? "it ran out of time" : `it exited with code ${exitCode}`,
+      });
     }
     return finished;
   };

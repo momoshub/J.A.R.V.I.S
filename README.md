@@ -103,6 +103,7 @@ Every command has two interfaces - use whichever you like. Both triggers are con
 | `learn <fact>` | admins | teach a durable fact |
 | `learnings` / `relearn <id> <text>` / `unlearn <id>` | admins | list, reword or delete learnings |
 | `review-policy [owner/repo] [first\|after\|default]` (alias `rvpolicy`) | anyone (setting: admins) | how a repo gets approved - see [Review policy per repo](#review-policy-per-repo) |
+| `review-agents [n\|default]` (alias `rvagents`) | anyone (setting: admins) | how many child agents one review may fan out to - see [How wide a review fans out](#how-wide-a-review-fans-out) |
 | `ticket <what is wrong>` (aliases `bug`, `raise`) | anyone | raise a properly written, correctly routed ticket - see [Raising a ticket](#raising-a-ticket) |
 | `review <pr-url>` (alias `rv`) | pal+ | review a PR: approve first (even if it is already merged or closed), then post the review as a GitHub comment *and* back in the thread; request changes on high risk (big PRs are cloned + reviewed by child agents). Runs full-access. |
 | `bomb [categories] [count] <message-link>` (alias `br`) | admins | reaction-bomb a message. Combine categories with commas and set a count: `bomb money,face,negative 9 <link>`. Up to 23; `bomb help` lists every category |
@@ -288,6 +289,28 @@ it says so in the thread.
 
 Policies are configuration, in the database: no repository is named anywhere in
 this codebase, which matters because it is open.
+
+## How wide a review fans out
+
+A big PR (more than 5 changed files, or 200+ lines either way) is cloned and
+reviewed by child agents rather than from the diff alone. Left unbounded, a
+review fans out as wide as the model feels like and then spends its whole
+wall-clock budget waiting on the slowest agent - which ends with the run being
+reaped by the timeout having posted nothing at all.
+
+So the fan-out is capped at **3** agents, spawned in one parallel batch, and the
+brain is told to drop an agent that has not reported rather than let it hold the
+review hostage. The cap is configurable:
+
+```
+//bot review-agents 5          up to five child agents per review
+//bot review-agents default    back to three
+//bot review-agents            what it is set to
+```
+
+1 to 8; anything else is refused. If a run is still cut off, the thread says so
+plainly and shows how far it got, instead of passing the fragment off as the
+review.
 
 ## Command allowance
 

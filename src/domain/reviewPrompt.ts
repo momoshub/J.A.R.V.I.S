@@ -53,12 +53,30 @@ const ownApprovalNote = (approvedUpFront: boolean, account: string): string =>
 export const BIG_PR_FILES = 5;
 export const BIG_PR_LINES = 200;
 
+/**
+ * How many child agents a big review may spawn. Left unbounded, a review fans
+ * out as wide as the model feels like and then burns its whole budget waiting
+ * on the slowest one, which is how a run hits the timeout with nothing posted.
+ * Configurable per instance (`review_agents`), never per repository.
+ */
+export const DEFAULT_REVIEW_AGENTS = 3;
+/** Nobody gets to configure their way back to an unbounded fan-out. */
+export const REVIEW_AGENT_CEILING = 8;
+
+/** Read a configured cap back, tolerating anything that is not a sane number. */
+export const asAgentCap = (value: string | undefined): number | undefined => {
+  const n = Number((value ?? "").trim());
+  return Number.isInteger(n) && n >= 1 && n <= REVIEW_AGENT_CEILING ? n : undefined;
+};
+
 export const reviewPrompt = (
   prUrls: readonly string[],
   botName: string,
   reviewer?: Reviewer,
   /** Which of `prUrls` were approved before the review started. */
   approved: readonly string[] = prUrls,
+  /** Ceiling on child agents for a big PR. */
+  maxAgents: number = DEFAULT_REVIEW_AGENTS,
 ): string => {
   const many = prUrls.length > 1;
   // The comment is posted by the gh account, so it is written in that person's
@@ -69,6 +87,8 @@ export const reviewPrompt = (
 ${prUrls.join("\n")}
 
 You have FULL tools for this task: gh (read AND write), git, a shell, and the Task tool to spawn child agents. Your current directory is a scratch workspace you may clone into. This is a preset review job - only take the PR-review actions described below, nothing else.
+
+Work quietly. Every action you take already posts its own progress line into the thread, so running commentary is pure noise: no "waiting on the agents", no "still waiting", no thinking-out-loud. You may write ONE short line when you start a big-PR checkout, saying how many agents are reviewing it. After that the next text you write is the close-out in step 5.
 
 ${approvalState(prUrls, approved)}
 
@@ -84,7 +104,10 @@ For EACH PR, follow this workflow exactly, in order:
 2. Decide if this is a BIG PR: changedFiles > ${BIG_PR_FILES} OR additions > ${BIG_PR_LINES} OR deletions > ${BIG_PR_LINES}.
    - BIG: do not trust the diff alone. Check out the PR and review the real code in context:
        gh repo clone <owner>/<repo>   (then cd into it)  and  gh pr checkout <number>
-     Then SPAWN child agents with the Task tool to review in parallel, split by concern or file group (e.g. correctness, security, tests, and separate agents per large area). Each child reads the actual files, not just the diff, and returns findings. Synthesise them.
+     Then SPAWN child agents with the Task tool to review in parallel, split by concern or file group (e.g. correctness, security, tests). Each child reads the actual files, not just the diff, and returns findings. Synthesise them.
+     HARD LIMIT: at most ${maxAgents} child ${maxAgents === 1 ? "agent" : "agents"} for the whole review, spawned in ONE batch - every Task call in a single message, so they run in parallel. Never a second round, never one agent at a time. Fewer is fine when the PR does not need ${maxAgents}.
+     While they run, do not re-review the same code yourself to fill the time - read the PR body and the surrounding code they are not covering, or just wait.
+     Never let an agent hold the review hostage: this run is on a wall-clock budget, so if one has not reported back by the time the others are done, drop it and post the review with what you have. A review missing one agent's findings beats a run that times out having posted nothing.
    - NOT big: the diff plus a few targeted file reads are enough.
 
 3. Judge risk, then run EXACTLY ONE of the two flows below. Never both, never a mix: one review comment per PR, and a request-changes only on the risky path.

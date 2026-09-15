@@ -22,6 +22,8 @@ export const SETTING_KEYS = {
   ticketPods: "ticket_pods",
   /** Repos the bot may open a fix PR in, comma separated. */
   ticketRepos: "ticket_repos",
+  /** Ceiling on child agents one review may spawn. */
+  reviewAgents: "review_agents",
 } as const;
 
 /** Model override for one role, e.g. `model:pal`. Empty means "use the default". */

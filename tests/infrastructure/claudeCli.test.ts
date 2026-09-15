@@ -216,6 +216,43 @@ describe("createClaudeCliLlm.stream", () => {
     expect(final).toBe("Hello world");
   });
 
+  test("separates consecutive text blocks so they do not run together", async () => {
+    // Two text blocks with a tool call between them: the deltas used to be
+    // concatenated, turning "...command." + "on it" into "...command.on it".
+    const events = [
+      { type: "stream_event", event: { type: "content_block_start", index: 0, content_block: { type: "text" } } },
+      { type: "stream_event", event: { type: "content_block_delta", index: 0, delta: { type: "text_delta", text: "first." } } },
+      { type: "stream_event", event: { type: "content_block_stop", index: 0 } },
+      { type: "stream_event", event: { type: "content_block_start", index: 0, content_block: { type: "text" } } },
+      { type: "stream_event", event: { type: "content_block_delta", index: 0, delta: { type: "text_delta", text: "second" } } },
+    ];
+    const llm = createClaudeCliLlm({ binPath: fakeStreamBin(events) });
+    const deltas: string[] = [];
+    const final = await llm.stream!({ system: "s", messages: [{ role: "user", content: "hi" }] }, (e) => {
+      if (e.type === "text") deltas.push(e.delta);
+    });
+    expect(deltas.join("")).toBe("first.\n\nsecond");
+    expect(final).toBe("first.\n\nsecond");
+  });
+
+  test("a run killed after it spoke is reported as aborted, not as an answer", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "ev-claude-abort-"));
+    const path = join(dir, "claude");
+    const line = JSON.stringify({
+      type: "stream_event",
+      event: { type: "content_block_delta", index: 0, delta: { type: "text_delta", text: "halfway there" } },
+    });
+    writeFileSync(path, `#!/usr/bin/env bash\ncat > /dev/null\necho '${line}'\nexit 143\n`);
+    chmodSync(path, 0o755);
+
+    const llm = createClaudeCliLlm({ binPath: path });
+    const seen: LlmStreamEvent[] = [];
+    const out = await llm.stream!({ system: "s", messages: [{ role: "user", content: "hi" }] }, (e) => seen.push(e));
+    expect(out).toBe("halfway there"); // the fragment is still handed back
+    const aborted = seen.find((e) => e.type === "aborted");
+    expect(aborted).toMatchObject({ type: "aborted", reason: "it ran out of time" });
+  });
+
   test("maps a failed tool_result to status error", async () => {
     const events = [
       { type: "stream_event", event: { type: "content_block_start", index: 0, content_block: { type: "tool_use", id: "t9", name: "Bash" } } },

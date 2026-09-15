@@ -12,7 +12,12 @@
  */
 import { buildSystemPrompt, DEFAULT_BOT_NAME } from "../domain/personality.ts";
 import { validateRemoval, validateRoleChange } from "../domain/access.ts";
-import { reviewPrompt } from "../domain/reviewPrompt.ts";
+import {
+  asAgentCap,
+  DEFAULT_REVIEW_AGENTS,
+  REVIEW_AGENT_CEILING,
+  reviewPrompt,
+} from "../domain/reviewPrompt.ts";
 import {
   canRaiseTickets,
   describeRepoScope,
@@ -92,7 +97,7 @@ const RELAYED_BODY_CHARS = 3000;
 const clip = (s: string): string =>
   s.length > RELAYED_BODY_CHARS ? `${s.slice(0, RELAYED_BODY_CHARS)}…\n(truncated - full text is on the PR)` : s;
 /** review clones + spawns child agents, so allow much longer than a chat reply. */
-const REVIEW_TIMEOUT_MS = 600_000;
+const REVIEW_TIMEOUT_MS = 900_000;
 /** a ticket reads the SOP, the thread and the code, and may open a PR. */
 const TICKET_TIMEOUT_MS = 900_000;
 
@@ -166,6 +171,10 @@ const reviewPolicyOf = (deps: CommandDeps, prUrl: string): ReviewPolicy => {
   if (!repo) return DEFAULT_REVIEW_POLICY;
   return asReviewPolicy(deps.settings?.get(reviewPolicyKey(repo))) ?? DEFAULT_REVIEW_POLICY;
 };
+
+/** How many child agents a review may fan out to, defaulting when unset. */
+const reviewAgentsOf = (deps: CommandDeps): number =>
+  asAgentCap(deps.settings?.get(SETTING_KEYS.reviewAgents)) ?? DEFAULT_REVIEW_AGENTS;
 
 const botNameOf = (deps: CommandDeps): string =>
   deps.botInfo?.().botName ?? deps.promptContext?.().botName ?? DEFAULT_BOT_NAME;
@@ -545,7 +554,7 @@ export const COMMANDS: readonly CommandDef[] = [
       }
 
       const params = {
-        system: reviewPrompt(targets, name, await account, approvedUpFront),
+        system: reviewPrompt(targets, name, await account, approvedUpFront, reviewAgentsOf(deps)),
         messages: [{ role: "user" as const, content: `review ${targets.join(" ")}` }],
         assistantName: name,
         policy,
@@ -564,6 +573,9 @@ export const COMMANDS: readonly CommandDef[] = [
       await reply(`🔍 reviewing ${targets.join(" ")}`);
 
       let out = "";
+      // Set when the run was killed mid-flight. What streamed is then a fragment
+      // of a review, never the review, and must not be presented as one.
+      let cutOff = "";
       if (deps.llm.stream) {
         const announce = (line: string): void => {
           if (seen.has(line)) return;
@@ -574,6 +586,10 @@ export const COMMANDS: readonly CommandDef[] = [
         // carries none (e.g. `gh pr review 2149 --repo ...`).
         const soleUrl = targets.length === 1 ? (targets[0]?.match(PR_URL)?.[0] ?? "") : "";
         out = await deps.llm.stream(params, (ev) => {
+          if (ev.type === "aborted") {
+            cutOff = ev.reason;
+            return;
+          }
           if (ev.type !== "tool" || ev.status !== "complete") return;
           // Match the command in full, never the card title: the title is clipped
           // at 200 chars, and a `gh pr review` written after a heredoc body sits
@@ -598,6 +614,16 @@ export const COMMANDS: readonly CommandDef[] = [
         });
       } else {
         out = await deps.llm.complete(params);
+      }
+
+      if (cutOff) {
+        // Say it plainly. Anything that did reach GitHub was announced above as
+        // it landed, so the thread already shows exactly how far this got.
+        const far = out.trim();
+        await reply(
+          `⏱️ the review did not finish - ${cutOff}${far ? `\n\nhow far it got:\n\n${clip(far)}` : ""}`,
+        );
+        return "";
       }
 
       await reply(out.trim() || "I could not put a review together for that one.");
@@ -699,6 +725,35 @@ export const COMMANDS: readonly CommandDef[] = [
       }
       deps.settings?.set(reviewPolicyKey(repo), policy);
       return `\`${repo}\` is now *${policy}* - ${describe(policy)}.`;
+    },
+  },
+  {
+    name: "review-agents",
+    aliases: ["rvagents"],
+    minRole: "pal",
+    usage: "[n|default]",
+    summary: "how many child agents one review may fan out to",
+    run: (ctx) => {
+      const { deps, actor, args, prefix } = ctx;
+      const current = reviewAgentsOf(deps);
+      const describe = (n: number) => `at most *${n}* child ${n === 1 ? "agent" : "agents"} per review`;
+      if (args.length === 0) {
+        const own = asAgentCap(deps.settings?.get(SETTING_KEYS.reviewAgents));
+        return own
+          ? `${describe(own)} (the default is ${DEFAULT_REVIEW_AGENTS}).`
+          : `${describe(current)} - the default.`;
+      }
+      if (RANK[actor.role] < RANK.admin) return "Only admins can change the review agent cap.";
+      const want = (args[0] ?? "").toLowerCase();
+      if (args.length > 1) return `How many? \`${prefix} review-agents <n|default>\``;
+      if (want === "default" || want === "reset") {
+        deps.settings?.remove(SETTING_KEYS.reviewAgents);
+        return `Back on the default, ${describe(DEFAULT_REVIEW_AGENTS)}.`;
+      }
+      const n = asAgentCap(want);
+      if (!n) return `A number from 1 to ${REVIEW_AGENT_CEILING}, or \`default\`.`;
+      deps.settings?.set(SETTING_KEYS.reviewAgents, String(n));
+      return `Reviews now spawn ${describe(n)}.`;
     },
   },
   {

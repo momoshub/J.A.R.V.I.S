@@ -23,7 +23,13 @@ export type LlmStreamEvent =
        */
       readonly command?: string;
       readonly status: "in_progress" | "complete" | "error";
-    };
+    }
+  /**
+   * The run was killed before it finished (timeout, or a crash after it had
+   * already produced text). Whatever was streamed is a fragment, not an answer -
+   * a consumer that would otherwise present it as the result must say so.
+   */
+  | { readonly type: "aborted"; readonly reason: string };
 
 /** Consumer of streaming events (e.g. the Slack streaming renderer). */
 export type LlmStreamSink = (event: LlmStreamEvent) => void;
