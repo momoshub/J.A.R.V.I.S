@@ -23,6 +23,14 @@ export type ClaudeTokenPort = {
   remove: (slackId: string) => void;
   /** How many users have one on file. Never who, and never which. */
   count: () => number;
+  /**
+   * Whether this person has already been asked for a token. Nobody gets the
+   * whole "here is how to mint one" ask twice - a second attempt gets a single
+   * line pointing at the box they already have.
+   */
+  asked: (slackId: string) => boolean;
+  /** Record that the ask went out. Cleared whenever a token is set or removed. */
+  markAsked: (slackId: string) => void;
 };
 
 /** Button on the "I need your token" message. Opens the modal. */

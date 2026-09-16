@@ -4,6 +4,7 @@ import { createUserRepo } from "../../src/infrastructure/db/userRepo.ts";
 import { createMessageRepo } from "../../src/infrastructure/db/messageRepo.ts";
 import { createLearningsRepo } from "../../src/infrastructure/db/learningsRepo.ts";
 import { createSettingsRepo } from "../../src/infrastructure/db/settingsRepo.ts";
+import type { ClaudeTokenPort } from "../../src/application/claudeTokens.ts";
 import { commandLineOf, dispatchCommand, type CommandDeps } from "../../src/application/commands.ts";
 import { respond, type RespondDeps } from "../../src/application/respond.ts";
 import type { AllowedUser } from "../../src/domain/types.ts";
@@ -104,6 +105,20 @@ const threadMsg = (text: string): SlackMessage => ({
   mentionsBot: false,
 });
 
+/**
+ * Everyone has a Claude token, so tests about review mechanics are not all
+ * about the token gate. The gate has its own describe block, with its own store.
+ */
+const everyoneHasToken = (): ClaudeTokenPort => ({
+  get: () => `sk-ant-oat01-${"t".repeat(48)}`,
+  has: () => true,
+  set: () => {},
+  remove: () => {},
+  count: () => 1,
+  asked: () => false,
+  markAsked: () => {},
+});
+
 const build = (thread: SlackMessage[] = [threadMsg("hi there")]): CommandDeps => {
   db = openDatabase(":memory:");
   slackCalls = { posts: [], reactions: [], removed: [], buttons: [], settled: [] };
@@ -118,6 +133,7 @@ const build = (thread: SlackMessage[] = [threadMsg("hi there")]): CommandDeps =>
     ownerSlackId: OWNER,
     slack: fakeSlack(slackCalls, thread),
     draft: async () => "an AI-drafted reply",
+    claudeTokens: everyoneHasToken(),
   };
 };
 
@@ -616,6 +632,7 @@ describe("reviews run on the caller's own Claude token", () => {
 
   const withTokens = (stored?: Record<string, string>) => {
     const map = new Map(Object.entries(stored ?? {}));
+    const asks = new Set<string>();
     const deps = build();
     deps.settings = createSettingsRepo(db);
     deps.claudeTokens = {
@@ -623,11 +640,17 @@ describe("reviews run on the caller's own Claude token", () => {
       has: (id) => map.has(id),
       set: (id, t) => {
         map.set(id, t);
+        asks.delete(id);
       },
       remove: (id) => {
         map.delete(id);
+        asks.delete(id);
       },
       count: () => map.size,
+      asked: (id) => asks.has(id),
+      markAsked: (id) => {
+        asks.add(id);
+      },
     };
     let seen: string | undefined;
     deps.llm = {
@@ -664,6 +687,33 @@ describe("reviews run on the caller's own Claude token", () => {
     const button = slackCalls.buttons[slackCalls.buttons.length - 1] ?? "";
     expect(button).toContain("claude_token_add");
     expect(button).toContain(PR);
+  });
+
+  test("nobody is asked twice - the second attempt points at the box they have", async () => {
+    const { deps } = withTokens();
+    const reply = async () => {};
+    await dispatchCommand(deps, actor(), "C1", `rv ${PR}`, { reply });
+    const asks = slackCalls.posts.filter((p) => p.text.includes("claude setup-token")).length;
+    expect(asks).toBe(1);
+
+    const again = await dispatchCommand(deps, actor(), "C1", `rv ${PR}`, { reply });
+    expect(again).toContain("still waiting");
+    // and no second walkthrough went into the channel
+    expect(slackCalls.posts.filter((p) => p.text.includes("claude setup-token")).length).toBe(1);
+
+    // answering resets it, so removing a token later earns a fresh ask
+    deps.claudeTokens!.set(OWNER, TOKEN);
+    deps.claudeTokens!.remove(OWNER);
+    await dispatchCommand(deps, actor(), "C1", `rv ${PR}`, { reply });
+    expect(slackCalls.posts.filter((p) => p.text.includes("claude setup-token")).length).toBe(2);
+  });
+
+  test("with no token store at all it refuses rather than using the bot's own", async () => {
+    const { deps, token } = withTokens();
+    deps.claudeTokens = undefined;
+    const out = await dispatchCommand(deps, actor(), "C1", `rv ${PR}`);
+    expect(out).toContain("only ever runs on the caller's own");
+    expect(token()).toBeUndefined(); // the brain never started
   });
 
   test("with no button to offer, the guidance is still returned in words", async () => {

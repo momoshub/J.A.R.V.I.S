@@ -388,6 +388,8 @@ describe("handleMessage", () => {
       set: () => {},
       remove: () => {},
       count: () => map.size,
+      asked: () => false,
+      markAsked: () => {},
     };
 
     await handleMessage(deps, { channelId: "D1", slackUserId: OWNER, text: "hi" });

@@ -58,16 +58,23 @@ describe("the request a button carries", () => {
 
 const memoryStore = (): ClaudeTokenPort => {
   const map = new Map<string, string>();
+  const asks = new Set<string>();
   return {
     get: (id) => map.get(id),
     has: (id) => map.has(id),
     set: (id, t) => {
       map.set(id, t);
+      asks.delete(id);
     },
     remove: (id) => {
       map.delete(id);
+      asks.delete(id);
     },
     count: () => map.size,
+    asked: (id) => asks.has(id),
+    markAsked: (id) => {
+      asks.add(id);
+    },
   };
 };
 
@@ -139,6 +146,18 @@ describe("the token repository", () => {
     const other = createClaudeTokenRepo(db, randomBytes(32));
     expect(other.get("U1")).toBeUndefined();
     expect(other.has("U1")).toBe(false);
+  });
+
+  test("an ask is remembered, and spent the moment it is answered", () => {
+    const { store } = repo();
+    expect(store.asked("U1")).toBe(false);
+    store.markAsked("U1");
+    expect(store.asked("U1")).toBe(true);
+    store.set("U1", TOKEN);
+    expect(store.asked("U1")).toBe(false); // answered, so the next gap asks afresh
+    store.markAsked("U1");
+    store.remove("U1");
+    expect(store.asked("U1")).toBe(false);
   });
 
   test("a replaced token overwrites, and remove forgets", () => {

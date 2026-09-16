@@ -186,13 +186,20 @@ const reviewPolicyOf = (deps: CommandDeps, prUrl: string): ReviewPolicy => {
  * modal. The token itself is never typed into Slack as a message: the button
  * carries only what command to resume once it is in.
  *
+ * Nobody is asked twice: once the full ask has gone out it is remembered, and a
+ * later attempt gets one line pointing back at the box rather than the whole
+ * walkthrough again. Answering (or clearing) a token resets that.
+ *
  * Returns "" when the ask was posted (the thread has it), or the text to show
  * when there is nowhere to put a button - a slash invocation, or no Slack wired
  * up at all. Either way the user is told exactly how to mint one.
  */
-const askForToken = async (ctx: Context, line: string): Promise<string> => {
+const askForToken = async (ctx: Context, line: string, force = false): Promise<string> => {
   const { deps, actor, channelId, threadTs, slash } = ctx;
   const ask = `🔑 <@${actor.slackId}> I need your own Claude Code token before I can run that - ${tokenWhy}\n\n${tokenGuide(slash)}`;
+  if (!force && deps.claudeTokens?.asked(actor.slackId)) {
+    return `🔑 still waiting on your Claude Code token - \`${slash} token\` opens the box, or use the one I sent you earlier`;
+  }
   if (ctx.reply && deps.slack?.postInteractive) {
     const posted = await deps.slack
       .postInteractive(
@@ -209,7 +216,10 @@ const askForToken = async (ctx: Context, line: string): Promise<string> => {
         threadTs,
       )
       .catch(() => undefined);
-    if (posted) return "";
+    if (posted) {
+      deps.claudeTokens?.markAsked(actor.slackId);
+      return "";
+    }
   }
   return `${ask}\n\nrun \`${slash} token\` and a box will open for it`;
 };
@@ -569,8 +579,10 @@ export const COMMANDS: readonly CommandDef[] = [
       // asked for it. No token, no review - but the ask carries the box to put
       // one in, and the command resumes itself once it lands.
       const oauthToken = tokenFor(deps, actor);
-      if (deps.claudeTokens && !oauthToken) {
-        return askForToken(ctx, `review ${args.join(" ")}`.trim());
+      if (!oauthToken) {
+        return deps.claudeTokens
+          ? askForToken(ctx, `review ${args.join(" ")}`.trim())
+          : "I have nowhere to keep a Claude Code token right now, and a review only ever runs on the caller's own. Ask an admin to check the token store.";
       }
       // Slack wraps links as <url|label>; hand the brain the bare urls.
       const urls = [...new Set(args.flatMap((a) => a.match(PR_URL) ?? []))];
@@ -821,7 +833,7 @@ export const COMMANDS: readonly CommandDef[] = [
       // Never accept a token as command text: a message is readable by everyone
       // in the channel, lands in the bot's memory, and outlives the turn. The
       // box the button opens is not a message.
-      const box = await askForToken(ctx, "");
+      const box = await askForToken(ctx, "", true);
       if (!mine) return box || "";
       return box
         ? `You already have a token on file (${tokenHint(mine)}).\n\n${box}`

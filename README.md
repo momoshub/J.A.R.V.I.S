@@ -315,6 +315,16 @@ burned and rotated.
 Submitting a token also resumes whatever it interrupted - the button carries the
 command, so the review you asked for runs the moment the token lands.
 
+**You are asked once.** The full walkthrough goes out one time per person; a
+later review with still no token gets a single line pointing back at the box
+rather than the whole thing again. Adding (or removing) a token resets that, so
+someone who clears theirs gets a proper ask next time.
+
+There is **no fallback to the bot's own credential** for a review. No token, no
+review - and when a caller's token is in play it *replaces* the bot's in the
+child process rather than being added alongside it, so the bot's token is not in
+that environment at all, including for anything the run spawns in turn.
+
 Once a token is on file it is used for **every** CLI turn that person drives:
 their chat, their commands, their workflow sessions. Everyone else keeps running
 on the bot's own credential, so nobody is locked out of chat by a credential they

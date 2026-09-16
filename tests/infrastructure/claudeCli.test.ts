@@ -131,15 +131,20 @@ describe("createClaudeCliLlm", () => {
       `#!/usr/bin/env bash\ncat > /dev/null\necho "{\\"type\\":\\"result\\",\\"subtype\\":\\"success\\",\\"is_error\\":false,\\"result\\":\\"$CLAUDE_CODE_OAUTH_TOKEN\\"}"`,
     );
     const llm = createClaudeCliLlm({ binPath: bin });
+    // the bot's own credential is in the environment, as it is in production
+    process.env.CLAUDE_CODE_OAUTH_TOKEN = "sk-ant-oat01-bots-own";
+
     const mine = await llm.complete({
       system: "s",
       messages: [{ role: "user", content: "hi" }],
       oauthToken: "sk-ant-oat01-theirs",
     });
+    // replaced, not merged: the bot's token is not in that child's environment at
+    // all, so nothing the run spawns in turn can reach it either
     expect(mine).toBe("sk-ant-oat01-theirs");
+    expect(mine).not.toContain("bots-own");
 
     // and without one the process keeps whatever the bot itself is running on
-    process.env.CLAUDE_CODE_OAUTH_TOKEN = "sk-ant-oat01-bots-own";
     const fallback = await llm.complete({ system: "s", messages: [{ role: "user", content: "hi" }] });
     expect(fallback).toBe("sk-ant-oat01-bots-own");
     delete process.env.CLAUDE_CODE_OAUTH_TOKEN;

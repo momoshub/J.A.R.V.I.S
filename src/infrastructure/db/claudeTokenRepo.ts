@@ -74,6 +74,12 @@ export const openTokenDatabase = (path: string): Database => {
     sealed     TEXT NOT NULL,
     updated_at INTEGER NOT NULL
   )`);
+  // Who has already been asked. Its own table: it is not a credential, and it
+  // outlives the absence of one - the whole point is not to ask twice.
+  db.run(`CREATE TABLE IF NOT EXISTS token_asks (
+    slack_id TEXT PRIMARY KEY,
+    asked_at INTEGER NOT NULL
+  )`);
   if (path !== ":memory:") chmodSync(path, 0o600);
   return db;
 };
@@ -92,6 +98,14 @@ export const createClaudeTokenRepo = (
   );
   const removeStmt = db.query("DELETE FROM claude_tokens WHERE slack_id = $id");
   const countStmt = db.query<{ n: number }, []>("SELECT COUNT(*) AS n FROM claude_tokens");
+  const askedStmt = db.query<{ slack_id: string }, [string]>(
+    "SELECT slack_id FROM token_asks WHERE slack_id = ?",
+  );
+  const markStmt = db.query(
+    `INSERT INTO token_asks (slack_id, asked_at) VALUES ($id, $at)
+     ON CONFLICT(slack_id) DO UPDATE SET asked_at = excluded.asked_at`,
+  );
+  const clearAskStmt = db.query("DELETE FROM token_asks WHERE slack_id = $id");
 
   const get = (slackId: string): string | undefined => {
     const row = getStmt.get(slackId);
@@ -103,10 +117,18 @@ export const createClaudeTokenRepo = (
     has: (slackId) => get(slackId) !== undefined,
     set: (slackId, token) => {
       setStmt.run({ $id: slackId, $sealed: seal(token.trim(), key), $at: now() });
+      // They answered, so the ask is spent. Removing a token later earns a fresh
+      // one rather than a reminder about a box that is no longer relevant.
+      clearAskStmt.run({ $id: slackId });
     },
     remove: (slackId) => {
       removeStmt.run({ $id: slackId });
+      clearAskStmt.run({ $id: slackId });
     },
     count: () => countStmt.get()?.n ?? 0,
+    asked: (slackId) => askedStmt.get(slackId) !== null,
+    markAsked: (slackId) => {
+      markStmt.run({ $id: slackId, $at: now() });
+    },
   };
 };
