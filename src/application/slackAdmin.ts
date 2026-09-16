@@ -87,6 +87,17 @@ export type SlackAdminPort = {
     text: string,
     actions: readonly InteractiveAction[],
   ) => Promise<PostedRef | undefined>;
+  /**
+   * Post a message with buttons into a channel or thread, rather than a DM.
+   * Used where the ask belongs in the conversation it came from - asking someone
+   * for their own Claude token in the thread they ran the command in.
+   */
+  postInteractive: (
+    channel: string,
+    text: string,
+    actions: readonly InteractiveAction[],
+    threadTs?: string,
+  ) => Promise<PostedRef | undefined>;
   /** Replace an interactive message's buttons with settled text. */
   settleInteractive: (channel: string, ts: string, text: string) => Promise<void>;
   /** Add reactions to a message (tolerant of already-reacted / invalid names). Returns how many landed. */

@@ -28,6 +28,7 @@ import type { CommandApprovalRepo } from "../infrastructure/db/commandApprovalRe
 import type { SettingsRepo } from "../infrastructure/db/settingsRepo.ts";
 import { requestAccess } from "./accessRequests.ts";
 import type { CommandTickets } from "./commandTickets.ts";
+import { tokenFor, type ClaudeTokenPort } from "./claudeTokens.ts";
 import type { SlackAdminPort, SlackMessage } from "./slackAdmin.ts";
 import type { GitHubPort } from "./github.ts";
 import type { DraftReply } from "./draftReply.ts";
@@ -57,6 +58,8 @@ export type HandleMessageDeps = {
   draft?: DraftReply;
   /** Per-role CLI tool policy (sandbox/allow-list) applied to the chat brain. */
   toolPolicy?: (role: UserRole, channelId?: string) => ToolPolicy;
+  /** Per-user Claude Code tokens: a speaker's own turns run on their credential. */
+  claudeTokens?: ClaudeTokenPort;
   /** Absolute path of the reaction helper, granted to every role. */
   reactScript?: string;
   /** Absolute path of the Slack file downloader, granted to every role. */
@@ -199,6 +202,9 @@ export const handleMessage = async (
     messages: buildContextWindow(history, window),
     assistantName: ctx.botName,
     policy: deps.toolPolicy?.(decision.user.role, inbound.channelId),
+    // Their own credential when they have registered one, so the turn is theirs
+    // in every sense; the bot's own when they have not.
+    oauthToken: tokenFor(deps, decision.user),
   };
   const reply = (
     sink && deps.llm.stream

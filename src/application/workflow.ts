@@ -9,6 +9,7 @@
  * The session id lives in the database, so a bot restart does not lose it.
  */
 import { workflowPrompt } from "../domain/workflowPrompt.ts";
+import { tokenFor, type ClaudeTokenPort } from "./claudeTokens.ts";
 import type { AllowedUser, UserRole, Workflow } from "../domain/types.ts";
 import type { ToolPolicy } from "../domain/toolPolicy.ts";
 import type { Clock, LlmPort, LlmStreamSink } from "./ports.ts";
@@ -28,6 +29,8 @@ export type WorkflowDeps = {
   botInfo?: () => { botName: string; model: string };
   /** Fresh session id; injected so tests are deterministic. */
   newSessionId?: () => string;
+  /** Per-user Claude Code tokens: the session runs on its driver's credential. */
+  claudeTokens?: ClaudeTokenPort;
 };
 
 const botNameOf = (deps: WorkflowDeps): string => deps.botInfo?.().botName ?? "Assistant";
@@ -54,6 +57,7 @@ export const runWorkflowTurn = async (
     assistantName: name,
     policy: { ...base, timeoutMs: WORKFLOW_TIMEOUT_MS },
     session: { id: workflow.sessionId, resume: !first },
+    oauthToken: tokenFor(deps, actor),
   };
 
   const out = (

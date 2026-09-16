@@ -44,6 +44,13 @@ import { parseMessageLink } from "../domain/slackLinks.ts";
 import { postedBody } from "../domain/ghCommand.ts";
 import { runWorkflowTurn, WORKFLOW_MIN_ROLE, type WorkflowDeps } from "./workflow.ts";
 import { allowanceFor, holdForApproval, limitFor, PAL_WINDOW_MS, setLimit, type CommandLimitDeps } from "./commandLimits.ts";
+import {
+  encodeRequest,
+  TOKEN_ACTION,
+  tokenFor,
+  type ClaudeTokenPort,
+} from "./claudeTokens.ts";
+import { tokenGuide, tokenHint, tokenWhy } from "../domain/claudeToken.ts";
 import type { AllowedUser, PromptContext, UserRole } from "../domain/types.ts";
 import type { ToolPolicy } from "../domain/toolPolicy.ts";
 import type { Clock, LlmPort } from "./ports.ts";
@@ -88,6 +95,8 @@ export type CommandDeps = {
   draft?: DraftReply;
   /** Per-role CLI tool policy (sandbox/allow-list), for ask + review. */
   toolPolicy?: (role: UserRole, channelId?: string) => ToolPolicy;
+  /** Per-user Claude Code tokens. `review` requires one; everything else prefers one. */
+  claudeTokens?: ClaudeTokenPort;
   clock: Clock;
   ownerSlackId: string;
 };
@@ -170,6 +179,39 @@ const reviewPolicyOf = (deps: CommandDeps, prUrl: string): ReviewPolicy => {
   const repo = repoOf(prUrl);
   if (!repo) return DEFAULT_REVIEW_POLICY;
   return asReviewPolicy(deps.settings?.get(reviewPolicyKey(repo))) ?? DEFAULT_REVIEW_POLICY;
+};
+
+/**
+ * Ask someone for their own Claude Code token, with the button that opens the
+ * modal. The token itself is never typed into Slack as a message: the button
+ * carries only what command to resume once it is in.
+ *
+ * Returns "" when the ask was posted (the thread has it), or the text to show
+ * when there is nowhere to put a button - a slash invocation, or no Slack wired
+ * up at all. Either way the user is told exactly how to mint one.
+ */
+const askForToken = async (ctx: Context, line: string): Promise<string> => {
+  const { deps, actor, channelId, threadTs, slash } = ctx;
+  const ask = `🔑 <@${actor.slackId}> I need your own Claude Code token before I can run that - ${tokenWhy}\n\n${tokenGuide(slash)}`;
+  if (ctx.reply && deps.slack?.postInteractive) {
+    const posted = await deps.slack
+      .postInteractive(
+        channelId,
+        ask,
+        [
+          {
+            actionId: TOKEN_ACTION,
+            label: "Paste my token",
+            value: encodeRequest({ channelId, threadTs, line }),
+            style: "primary",
+          },
+        ],
+        threadTs,
+      )
+      .catch(() => undefined);
+    if (posted) return "";
+  }
+  return `${ask}\n\nrun \`${slash} token\` and a box will open for it`;
 };
 
 /** How many child agents a review may fan out to, defaulting when unset. */
@@ -296,6 +338,7 @@ export const COMMANDS: readonly CommandDef[] = [
         messages: [{ role: "user", content: question }],
         assistantName: ctx.botName,
         policy: deps.toolPolicy?.(actor.role, channelId),
+        oauthToken: tokenFor(deps, actor),
       });
       return reply.trim() || "I do not have anything useful to add there.";
     },
@@ -480,6 +523,7 @@ export const COMMANDS: readonly CommandDef[] = [
         messages: [{ role: "user" as const, content: report }],
         assistantName: name,
         policy,
+        oauthToken: tokenFor(deps, actor),
       };
 
       if (!reply) {
@@ -516,9 +560,18 @@ export const COMMANDS: readonly CommandDef[] = [
     minRole: "pal",
     usage: "<pr-url> [pr-url...]",
     summary: "review a PR: approve it, then post the review to GitHub and here",
-    run: async ({ deps, args, prefix, reply }) => {
+    run: async (ctx) => {
+      const { deps, actor, args, prefix, reply } = ctx;
       if (args.length === 0) return `Which PR? \`${prefix} review <pr-url>\``;
       if (!deps.llm) return "My brain is not wired up right now.";
+      // A review runs on the caller's own Claude Code credential, never the
+      // bot's: it is the long, expensive job, and the usage belongs to whoever
+      // asked for it. No token, no review - but the ask carries the box to put
+      // one in, and the command resumes itself once it lands.
+      const oauthToken = tokenFor(deps, actor);
+      if (deps.claudeTokens && !oauthToken) {
+        return askForToken(ctx, `review ${args.join(" ")}`.trim());
+      }
       // Slack wraps links as <url|label>; hand the brain the bare urls.
       const urls = [...new Set(args.flatMap((a) => a.match(PR_URL) ?? []))];
       const targets = urls.length > 0 ? urls : args;
@@ -558,6 +611,7 @@ export const COMMANDS: readonly CommandDef[] = [
         messages: [{ role: "user" as const, content: `review ${targets.join(" ")}` }],
         assistantName: name,
         policy,
+        oauthToken,
       };
 
       // No live destination (tests / slack off): one-shot, return the text.
@@ -731,6 +785,47 @@ export const COMMANDS: readonly CommandDef[] = [
       }
       deps.settings?.set(reviewPolicyKey(repo), policy);
       return `\`${repo}\` is now *${policy}* - ${describe(policy)}.`;
+    },
+  },
+  {
+    name: "token",
+    aliases: ["claude-token"],
+    minRole: "pal",
+    usage: "[remove|who]",
+    summary: "your own Claude Code token, which your reviews run on",
+    run: async (ctx) => {
+      const { deps, actor, args, slash } = ctx;
+      if (!deps.claudeTokens) return "Token storage is not wired up here.";
+      const want = (args[0] ?? "").toLowerCase();
+
+      if (want === "remove" || want === "forget" || want === "delete") {
+        const had = deps.claudeTokens.get(actor.slackId);
+        deps.claudeTokens.remove(actor.slackId);
+        return had
+          ? `Forgotten your token (${tokenHint(had)}). Your reviews will ask for a new one.`
+          : "I did not have a token for you anyway.";
+      }
+      if (args.length > 0 && want !== "add" && want !== "set") {
+        return `\`${slash} token\` to add or replace one, \`${slash} token remove\` to forget it.`;
+      }
+
+      if (want === "who" || want === "count") {
+        if (RANK[actor.role] < RANK.admin) return "Only admins can see that.";
+        const n = deps.claudeTokens.count();
+        return n === 0
+          ? "Nobody has a token on file yet."
+          : `${n} ${n === 1 ? "person has" : "people have"} a token on file. I never show one, not even to you.`;
+      }
+
+      const mine = deps.claudeTokens.get(actor.slackId);
+      // Never accept a token as command text: a message is readable by everyone
+      // in the channel, lands in the bot's memory, and outlives the turn. The
+      // box the button opens is not a message.
+      const box = await askForToken(ctx, "");
+      if (!mine) return box || "";
+      return box
+        ? `You already have a token on file (${tokenHint(mine)}).\n\n${box}`
+        : `You already have a token on file (${tokenHint(mine)}) - the box above replaces it.`;
     },
   },
   {

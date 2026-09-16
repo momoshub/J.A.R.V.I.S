@@ -104,6 +104,7 @@ Every command has two interfaces - use whichever you like. Both triggers are con
 | `learnings` / `relearn <id> <text>` / `unlearn <id>` | admins | list, reword or delete learnings |
 | `review-policy [owner/repo] [first\|after\|default]` (alias `rvpolicy`) | anyone (setting: admins) | how a repo gets approved - see [Review policy per repo](#review-policy-per-repo) |
 | `review-agents [n\|default]` (alias `rvagents`) | anyone (setting: admins) | how many child agents one review may fan out to - see [How wide a review fans out](#how-wide-a-review-fans-out) |
+| `token [remove\|who]` (alias `claude-token`) | anyone | add, replace or forget your own Claude Code token - see [Your own Claude token](#your-own-claude-token) |
 | `ticket <what is wrong>` (aliases `bug`, `raise`) | anyone | raise a properly written, correctly routed ticket - see [Raising a ticket](#raising-a-ticket) |
 | `review <pr-url>` (alias `rv`) | pal+ | review a PR: approve first (even if it is already merged or closed), then post the review as a GitHub comment *and* back in the thread; request changes on high risk (big PRs are cloned + reviewed by child agents). Runs full-access. |
 | `bomb [categories] [count] <message-link>` (alias `br`) | admins | reaction-bomb a message. Combine categories with commas and set a count: `bomb money,face,negative 9 <link>`. Up to 23; `bomb help` lists every category |
@@ -289,6 +290,47 @@ it says so in the thread.
 
 Policies are configuration, in the database: no repository is named anywhere in
 this codebase, which matters because it is open.
+
+## Your own Claude token
+
+`review` runs the Claude Code CLI, and the CLI bills whoever's token it is
+holding. Running every review on the bot's credential puts the whole team's
+usage on one account, so a review runs on **the caller's own token** instead,
+and refuses to start without one.
+
+Mint one with the Claude Code CLI:
+
+```
+claude setup-token
+```
+
+It opens a browser, logs you in, and prints a token starting with
+`sk-ant-oat01-`. Paste it into the box the bot opens - the button on its "I need
+your token" message, or `/<slash> token` any time. **Never type a token as a
+Slack message**: the bot only ever accepts one through a modal, whose input is
+not a message, is not in anyone's history or search, and never reaches the bot's
+own conversation memory. A token pasted into a channel should be treated as
+burned and rotated.
+
+Submitting a token also resumes whatever it interrupted - the button carries the
+command, so the review you asked for runs the moment the token lands.
+
+Once a token is on file it is used for **every** CLI turn that person drives:
+their chat, their commands, their workflow sessions. Everyone else keeps running
+on the bot's own credential, so nobody is locked out of chat by a credential they
+never set up. Only `review` insists.
+
+```
+/<slash> token           add or replace yours (opens the box)
+/<slash> token remove    forget it; your next review will ask again
+/<slash> token who       admins: how many people have one (never who, never which)
+```
+
+Tokens live in their own database (`TOKEN_DATABASE_PATH`, default
+`data/tokens.db`), encrypted with AES-256-GCM under a key in `TOKEN_KEY_PATH`
+(default `data/tokens.key`). The database is committed like the main one; **the
+key is gitignored**, so what lands in git is ciphertext and a copy taken from
+anywhere but the host opens nothing.
 
 ## How wide a review fans out
 

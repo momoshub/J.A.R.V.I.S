@@ -76,6 +76,11 @@ const fakeSlack = (calls: SlackCalls, thread: SlackMessage[] = []): SlackAdminPo
     calls.buttons.push(...actions.map((a) => `${a.actionId}:${a.value}`));
     return { channel: userId, ts: `notice-${calls.posts.length}` };
   },
+  postInteractive: async (channel, text, actions, threadTs) => {
+    calls.posts.push({ channel, text, threadTs });
+    calls.buttons.push(...actions.map((a) => `${a.actionId}:${a.value}`));
+    return { channel, ts: `interactive-${calls.posts.length}` };
+  },
   settleInteractive: async (channel, ts, text) => {
     calls.settled.push({ channel, ts, text });
   },
@@ -602,6 +607,93 @@ describe("owner copy of slash commands", () => {
     };
     const res = await slashFrom(deps, "Upal", "ask what is 2+2");
     expect(res).toEqual({ kind: "reply", text: "drafted answer" });
+  });
+});
+
+describe("reviews run on the caller's own Claude token", () => {
+  const PR = "https://github.com/o/r/pull/1";
+  const TOKEN = `sk-ant-oat01-${"a".repeat(48)}`;
+
+  const withTokens = (stored?: Record<string, string>) => {
+    const map = new Map(Object.entries(stored ?? {}));
+    const deps = build();
+    deps.settings = createSettingsRepo(db);
+    deps.claudeTokens = {
+      get: (id) => map.get(id),
+      has: (id) => map.has(id),
+      set: (id, t) => {
+        map.set(id, t);
+      },
+      remove: (id) => {
+        map.delete(id);
+      },
+      count: () => map.size,
+    };
+    let seen: string | undefined;
+    deps.llm = {
+      complete: async (p) => {
+        seen = p.oauthToken;
+        return "the review";
+      },
+    };
+    return { deps, map, token: () => seen };
+  };
+
+  test("with a token on file, the review runs on it", async () => {
+    const { deps, token } = withTokens({ [OWNER]: TOKEN });
+    await dispatchCommand(deps, actor(), "C1", `rv ${PR}`);
+    expect(token()).toBe(TOKEN);
+  });
+
+  test("without one the review does not run - the ask goes out with a button", async () => {
+    const { deps, token } = withTokens();
+    const lines: string[] = [];
+    const out = await dispatchCommand(deps, actor(), "C1", `rv ${PR}`, {
+      reply: async (t: string) => {
+        lines.push(t);
+      },
+      threadTs: "111.1",
+    });
+
+    expect(out).toBe(""); // posted into the thread, not returned
+    expect(token()).toBeUndefined(); // the brain never started
+    const ask = slackCalls.posts[slackCalls.posts.length - 1];
+    expect(ask?.text).toContain("claude setup-token");
+    expect(ask?.threadTs).toBe("111.1");
+    // the button carries the command, so submitting a token resumes it
+    const button = slackCalls.buttons[slackCalls.buttons.length - 1] ?? "";
+    expect(button).toContain("claude_token_add");
+    expect(button).toContain(PR);
+  });
+
+  test("with no button to offer, the guidance is still returned in words", async () => {
+    const { deps } = withTokens();
+    deps.slack = undefined;
+    const out = await dispatchCommand(deps, actor(), "C1", `rv ${PR}`);
+    expect(out).toContain("claude setup-token");
+    expect(out).toContain("token");
+  });
+
+  test("a chat turn of theirs uses it too, and someone else's does not", async () => {
+    const { deps, token } = withTokens({ [OWNER]: TOKEN });
+    await dispatchCommand(deps, actor(), "C1", "ask hello");
+    expect(token()).toBe(TOKEN);
+
+    const pal = actor({ slackId: "U0PAL0003", role: "pal" });
+    deps.users.upsert(pal);
+    await dispatchCommand(deps, pal, "C1", "ask hello");
+    expect(token()).toBeUndefined(); // falls back to the bot's own credential
+  });
+
+  test("token reports what is on file and forgets it on request", async () => {
+    const { deps } = withTokens({ [OWNER]: TOKEN });
+    expect(await dispatchCommand(deps, actor(), "C1", "token")).toContain("…aaaa");
+    expect(await dispatchCommand(deps, actor(), "C1", "token remove")).toContain("Forgotten");
+    expect(await dispatchCommand(deps, actor(), "C1", "token remove")).toContain("did not have");
+    // and it never asks anyone to type one into a channel
+    const asked = await dispatchCommand(deps, actor(), "C1", "token");
+    expect(asked).toContain("claude setup-token");
+    expect(asked).not.toContain("token <");
   });
 });
 

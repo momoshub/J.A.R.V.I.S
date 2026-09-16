@@ -211,6 +211,28 @@ export const createSlackAdmin = (client: WebClient): SlackAdminPort => {
       return posted.ts ? { channel, ts: posted.ts } : undefined;
     },
 
+    postInteractive: async (channel, text, actions, threadTs) => {
+      const posted = (await client.chat.postMessage({
+        channel,
+        text,
+        ...(threadTs ? { thread_ts: threadTs } : {}),
+        blocks: [
+          { type: "section", text: { type: "mrkdwn", text } },
+          {
+            type: "actions",
+            elements: actions.map((a) => ({
+              type: "button",
+              action_id: a.actionId,
+              text: { type: "plain_text", text: a.label },
+              value: a.value,
+              ...(a.style ? { style: a.style } : {}),
+            })),
+          },
+        ],
+      })) as { ts?: string };
+      return posted.ts ? { channel, ts: posted.ts } : undefined;
+    },
+
     settleInteractive: async (channel, ts, text) => {
       // Drop the buttons so a decided request cannot be clicked again.
       await client.chat.update({ channel, ts, text, blocks: [{ type: "section", text: { type: "mrkdwn", text } }] });

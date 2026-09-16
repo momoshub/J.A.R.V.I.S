@@ -25,6 +25,7 @@ const noopSlack: SlackAdminPort = {
   post: async () => {},
   postDm: async () => undefined,
   postDmInteractive: async () => undefined,
+  postInteractive: async () => undefined,
   settleInteractive: async () => {},
   addReactions: async () => 0,
   botUserId: async () => "UBOT",
@@ -369,6 +370,33 @@ describe("handleMessage", () => {
 
     await handleMessage(deps, { channelId: "C-cheap", slackUserId: OWNER, text: "hi" });
     expect(policy?.model).toBe("haiku"); // the channel decided, not the role
+  });
+
+  test("a speaker's own Claude token runs their chat turn", async () => {
+    let token: string | undefined;
+    const deps = build({
+      complete: async (p) => {
+        token = p.oauthToken;
+        return "ok";
+      },
+    });
+    const mine = `sk-ant-oat01-${"a".repeat(48)}`;
+    const map = new Map([[OWNER, mine]]);
+    deps.claudeTokens = {
+      get: (id) => map.get(id),
+      has: (id) => map.has(id),
+      set: () => {},
+      remove: () => {},
+      count: () => map.size,
+    };
+
+    await handleMessage(deps, { channelId: "D1", slackUserId: OWNER, text: "hi" });
+    expect(token).toBe(mine);
+
+    // someone without one still gets an answer, on the bot's own credential
+    deps.users.upsert({ slackId: "U0NOTOK", role: "pal", displayName: "P", addedBy: OWNER, createdAt: 0 });
+    await handleMessage(deps, { channelId: "D1", slackUserId: "U0NOTOK", text: "hi" });
+    expect(token).toBeUndefined();
   });
 
   test("attachments are shown to the brain, with a url it can fetch", async () => {

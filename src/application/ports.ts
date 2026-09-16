@@ -52,6 +52,13 @@ export type LlmCompleteParams = {
   readonly assistantName?: string;
   /** Per-call tool/sandbox policy (CLI adapter only); overrides adapter defaults. */
   readonly policy?: ToolPolicy;
+  /**
+   * Run this turn on someone else's Claude Code credential (CLI adapter only).
+   * `CLAUDE_CODE_OAUTH_TOKEN` overrides whatever login the host is holding
+   * (verified: a bogus value 401s even with a valid interactive session), so
+   * this genuinely bills the person who asked, not the machine.
+   */
+  readonly oauthToken?: string;
   /** Continue a durable session instead of a one-shot call (CLI adapter only). */
   readonly session?: LlmSession;
 };

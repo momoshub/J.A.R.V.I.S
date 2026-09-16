@@ -53,6 +53,11 @@ const schema = z
     // are always allowed.
     DASHBOARD_ALLOWED_ORIGINS: z.string().optional(),
     DATABASE_PATH: z.string().default("data/bot.db"),
+    // Per-user Claude Code tokens live in their OWN database, never the one that
+    // gets committed, and are encrypted under a key kept beside it. Both paths
+    // are gitignored; set them elsewhere if the data directory is shared.
+    TOKEN_DATABASE_PATH: z.string().default("data/tokens.db"),
+    TOKEN_KEY_PATH: z.string().default("data/tokens.key"),
     // Folder for the activity/error logs (one JSON line per event).
     LOG_DIR: z.string().default("logs"),
   })
@@ -85,6 +90,8 @@ export type AppConfig = {
   dashboardPort: number;
   dashboardAllowedOrigins: string[];
   databasePath: string;
+  tokenDatabasePath: string;
+  tokenKeyPath: string;
   logDir: string;
 };
 
@@ -127,6 +134,8 @@ export const loadConfig = (source: Record<string, string | undefined> = process.
       .map((o) => o.trim())
       .filter(Boolean),
     databasePath: env.DATABASE_PATH,
+    tokenDatabasePath: env.TOKEN_DATABASE_PATH,
+    tokenKeyPath: env.TOKEN_KEY_PATH,
     logDir: env.LOG_DIR,
   };
 };

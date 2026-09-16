@@ -14,6 +14,11 @@ web/dist/
 data/*.db-shm
 data/*.db-wal
 
+# the key that opens the token database. the database itself is committed like
+# the main one, but it holds ciphertext - this file is what makes it readable,
+# so it stays on the host and out of git.
+data/tokens.key
+
 # bun
 .bun/
 

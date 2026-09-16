@@ -12,6 +12,15 @@ import type { WebClient } from "@slack/web-api";
 import { respond, type RespondDeps } from "../../application/respond.ts";
 import { decideAccessRequest } from "../../application/accessRequests.ts";
 import { APPROVE_ACTION, decideCommandApproval, REJECT_ACTION } from "../../application/commandLimits.ts";
+import {
+  decodeRequest,
+  submitClaudeToken,
+  TOKEN_ACTION,
+  TOKEN_BLOCK,
+  TOKEN_INPUT,
+  TOKEN_VIEW,
+} from "../../application/claudeTokens.ts";
+import { tokenGuide, tokenHint, TOKEN_PREFIX } from "../../domain/claudeToken.ts";
 import { commandLineOf, dispatchCommand } from "../../application/commands.ts";
 import { annotateMentions, extractMentionIds } from "../../domain/mentions.ts";
 import { createSlackStream, type Streamer } from "./stream.ts";
@@ -85,16 +94,46 @@ const fetchDisplayName = async (client: SlackClient, userId: string): Promise<st
 
 /** The slice of Bolt's slash-command listener args we use. */
 type SlashArgs = {
-  command: { channel_id: string; user_id: string; user_name?: string; text?: string };
+  command: {
+    channel_id: string;
+    user_id: string;
+    user_name?: string;
+    text?: string;
+    /** Only a slash command and a button click carry one, and a modal needs it. */
+    trigger_id?: string;
+  };
   ack: () => Promise<unknown>;
   respond: (msg: { response_type?: "ephemeral" | "in_channel"; text: string }) => Promise<unknown>;
+  /** Bolt's WebClient. Narrowed at the one call site that needs views.open. */
+  client: unknown;
 };
+
+/** The one WebClient method used outside the streaming seam. */
+type ViewOpener = { views: { open: (a: Record<string, unknown>) => Promise<unknown> } };
 
 /** The slice of Bolt's action payload we use (kept minimal for testing). */
 export type ApprovalArgs = {
   ack: () => Promise<unknown>;
   body: { user?: { id?: string }; channel?: { id?: string }; message?: { ts?: string } };
   action: { action_id?: string; value?: string };
+};
+
+/** The slice of a block-actions payload needed to open a modal from a button. */
+type ModalButtonArgs = {
+  ack: () => Promise<unknown>;
+  body: { user?: { id?: string }; trigger_id?: string };
+  action: { value?: string };
+  client: ViewOpener;
+};
+
+/** The slice of a view_submission payload we use. */
+type ViewArgs = {
+  ack: (res?: Record<string, unknown>) => Promise<unknown>;
+  body: { user?: { id?: string } };
+  view: {
+    private_metadata?: string;
+    state?: { values?: Record<string, Record<string, { value?: string | null }>> };
+  };
 };
 
 export type Incoming = {
@@ -270,6 +309,85 @@ export const createSlackApp = (config: SlackAppConfig, deps: Deps) => {
   app.action({ action_id: APPROVE_ACTION }, onApprovalButton as never);
   app.action({ action_id: REJECT_ACTION }, onApprovalButton as never);
 
+  // A token never travels as a Slack message: the button opens a modal, and a
+  // modal's input is not posted, not searchable, and not in the bot's memory.
+  const tokenModal = (metadata: string) => ({
+    type: "modal",
+    callback_id: TOKEN_VIEW,
+    private_metadata: metadata,
+    title: { type: "plain_text", text: "Claude Code token" },
+    submit: { type: "plain_text", text: "Save" },
+    close: { type: "plain_text", text: "Cancel" },
+    blocks: [
+      { type: "section", text: { type: "mrkdwn", text: tokenGuide(config.slashCommand) } },
+      {
+        type: "input",
+        block_id: TOKEN_BLOCK,
+        label: { type: "plain_text", text: "Your token" },
+        hint: {
+          type: "plain_text",
+          text: `starts with ${TOKEN_PREFIX} - stored encrypted, never shown in a channel`,
+        },
+        element: {
+          type: "plain_text_input",
+          action_id: TOKEN_INPUT,
+          placeholder: { type: "plain_text", text: `${TOKEN_PREFIX}...` },
+        },
+      },
+    ],
+  });
+
+  app.action({ action_id: TOKEN_ACTION }, (async ({ ack, body, action, client }: ModalButtonArgs) => {
+    await ack();
+    if (!body.trigger_id) return;
+    try {
+      await client.views.open({ trigger_id: body.trigger_id, view: tokenModal(action.value ?? "") });
+    } catch (err) {
+      log(`token modal failed: ${err instanceof Error ? err.message : String(err)}`);
+    }
+  }) as never);
+
+  app.view(TOKEN_VIEW, (async ({ ack, body, view }: ViewArgs) => {
+    const userId = body.user?.id;
+    const token = view.state?.values?.[TOKEN_BLOCK]?.[TOKEN_INPUT]?.value ?? "";
+    const outcome = submitClaudeToken(deps, {
+      slackUserId: userId ?? "",
+      token,
+      request: decodeRequest(view.private_metadata),
+    });
+    if (outcome.kind !== "saved") {
+      // Keep the modal open with the reason on the field, so a mistyped paste is
+      // fixed where it happened rather than re-explained in a channel.
+      const error =
+        outcome.kind === "invalid" ? outcome.error.replace(/`/g, "") : "I have nowhere to store that right now";
+      await ack({ response_action: "errors", errors: { [TOKEN_BLOCK]: error } });
+      return;
+    }
+    await ack();
+    if (!userId) return;
+
+    const req = outcome.request;
+    const channel = req?.channelId;
+    const saved = `🔐 got it, token ${tokenHint(token)} saved for <@${userId}>`;
+    try {
+      if (channel) await deps.slack?.post(channel, saved, req?.threadTs);
+      else await deps.slack?.postDm(userId, saved);
+      log(`claude token saved for ${userId}`);
+      // Resume whatever was blocked on it, so nobody has to type it twice.
+      const actor = deps.users.get(userId);
+      if (req?.line && channel && actor) {
+        await dispatchCommand(deps, actor, channel, req.line, {
+          prefix: config.commandPrefix,
+          slash: config.slashCommand,
+          threadTs: req.threadTs,
+          reply: deps.slack ? (text: string) => deps.slack!.post(channel, text, req.threadTs) : undefined,
+        });
+      }
+    } catch (err) {
+      log(`token follow-up failed: ${err instanceof Error ? err.message : String(err)}`);
+    }
+  }) as never);
+
   // The owner reacting on an access-request notice decides it.
   app.event("reaction_added", async ({ event }) => {
     const e = event as {
@@ -314,9 +432,24 @@ export const createSlackApp = (config: SlackAppConfig, deps: Deps) => {
   // the general dispatcher; /rv, /br, /jrp are shortcuts to those commands.
   const runSlash =
     (sub: string) =>
-    async ({ command, ack, respond: reply }: SlashArgs) => {
+    async ({ command, ack, respond: reply, client }: SlashArgs) => {
       await ack();
       const line = `${sub} ${command.text ?? ""}`.trim();
+      // `token` is the one command whose input must not be a message, and a
+      // slash command is the only place a trigger_id exists to open a box with.
+      // Anyone off the allowlist gets the ordinary path, which turns them away.
+      if (/^token(\s+(add|set))?$/i.test(line) && command.trigger_id && deps.users.get(command.user_id)) {
+        try {
+          await (client as ViewOpener).views.open({
+            trigger_id: command.trigger_id,
+            view: tokenModal(JSON.stringify({ channelId: command.channel_id })),
+          });
+          await reply({ response_type: "ephemeral", text: "opening a box for it 🔐" });
+          return;
+        } catch (err) {
+          log(`token modal failed: ${err instanceof Error ? err.message : String(err)}`);
+        }
+      }
       const result = await respond(deps, {
         channelId: command.channel_id,
         slackUserId: command.user_id,

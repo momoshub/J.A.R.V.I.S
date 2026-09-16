@@ -124,6 +124,27 @@ describe("createClaudeCliLlm", () => {
     expect(out).toBe("both");
   });
 
+  test("a caller's own token replaces the bot's in the spawned CLI", async () => {
+    // the whole point of per-user tokens: the CLI honours CLAUDE_CODE_OAUTH_TOKEN
+    // over whatever login the host holds, so the turn is billed to the caller
+    const bin = fakeBin(
+      `#!/usr/bin/env bash\ncat > /dev/null\necho "{\\"type\\":\\"result\\",\\"subtype\\":\\"success\\",\\"is_error\\":false,\\"result\\":\\"$CLAUDE_CODE_OAUTH_TOKEN\\"}"`,
+    );
+    const llm = createClaudeCliLlm({ binPath: bin });
+    const mine = await llm.complete({
+      system: "s",
+      messages: [{ role: "user", content: "hi" }],
+      oauthToken: "sk-ant-oat01-theirs",
+    });
+    expect(mine).toBe("sk-ant-oat01-theirs");
+
+    // and without one the process keeps whatever the bot itself is running on
+    process.env.CLAUDE_CODE_OAUTH_TOKEN = "sk-ant-oat01-bots-own";
+    const fallback = await llm.complete({ system: "s", messages: [{ role: "user", content: "hi" }] });
+    expect(fallback).toBe("sk-ant-oat01-bots-own");
+    delete process.env.CLAUDE_CODE_OAUTH_TOKEN;
+  });
+
   test("summarizeTool renders a Bash command", () => {
     const out = summarizeTool("Bash", '{"command":"ls -la","description":"list"}');
     expect(out.title).toContain("ls -la");

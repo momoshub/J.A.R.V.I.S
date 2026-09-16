@@ -55,6 +55,11 @@ const build = () => {
       buttons.push(...actions);
       return { channel: userId, ts: "notice" };
     },
+    postInteractive: async (channel, text, actions) => {
+      posts.push({ channel, text });
+      buttons.push(...actions);
+      return { channel, ts: "notice" };
+    },
     settleInteractive: async (_c, _ts, text) => {
       settled.push(text);
     },

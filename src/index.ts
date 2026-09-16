@@ -11,6 +11,11 @@ import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { loadConfig, modelLabel, type AppConfig } from "./config/env.ts";
 import { openDatabase } from "./infrastructure/db/client.ts";
+import {
+  createClaudeTokenRepo,
+  loadOrCreateKey,
+  openTokenDatabase,
+} from "./infrastructure/db/claudeTokenRepo.ts";
 import { createUserRepo } from "./infrastructure/db/userRepo.ts";
 import { createMessageRepo } from "./infrastructure/db/messageRepo.ts";
 import { createLearningsRepo } from "./infrastructure/db/learningsRepo.ts";
@@ -79,6 +84,12 @@ const main = async () => {
   const messages = createMessageRepo(db);
   const learnings = createLearningsRepo(db);
   const settings = createSettingsRepo(db);
+  // Separate database on purpose: the main one is committed, and user tokens
+  // must never be able to reach git. Encrypted under a key kept beside it.
+  const claudeTokens = createClaudeTokenRepo(
+    openTokenDatabase(config.tokenDatabasePath),
+    loadOrCreateKey(config.tokenKeyPath),
+  );
   // Activity log to the logs/ folder: every command (and message) is recorded,
   // failed commands additionally land in errors.log.
   const activity = createActivityLog(config.logDir);
@@ -205,6 +216,9 @@ const main = async () => {
     grafanaGetScript,
     draft,
     toolPolicy,
+    // A person's own Claude Code credential: required by `review`, used by every
+    // other turn of theirs when they have one on file.
+    claudeTokens,
     // The dashboard API is loopback-only, so the brain can save a learning the
     // same way the dashboard does - offered to admins/owner conversations only.
     learnUrl: `http://127.0.0.1:${config.dashboardPort}/api/learnings`,
