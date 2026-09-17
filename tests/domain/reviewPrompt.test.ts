@@ -36,9 +36,17 @@ describe("reviewPrompt fan-out", () => {
     expect(p).toContain("Never a second round");
   });
 
-  test("a configured cap replaces it, and reads naturally at one", () => {
+  test("a configured cap replaces it", () => {
     expect(reviewPrompt([PR], "Bot", undefined, [PR], 5)).toContain("at most 5 child agents");
-    expect(reviewPrompt([PR], "Bot", undefined, [PR], 1)).toContain("at most 1 child agent");
+  });
+
+  test("a cap of one does not tell the brain to avoid one agent at a time", () => {
+    // the plural wording contradicts itself at 1: "at most 1 agent, in one
+    // parallel batch, never one agent at a time"
+    const p = reviewPrompt([PR], "Bot", undefined, [PR], 1);
+    expect(p).toContain("exactly ONE child agent");
+    expect(p).not.toContain("one agent at a time");
+    expect(p).not.toContain("in parallel. Never a second round");
   });
 
   test("an unfinished agent never holds the review hostage", () => {

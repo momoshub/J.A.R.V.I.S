@@ -14,6 +14,7 @@
  */
 import type { TaskUpdateChunk } from "@slack/types";
 import { isHiddenAction } from "../../domain/toolVisibility.ts";
+import { createFenceNormalizer } from "./fences.ts";
 import type { LlmStreamEvent, LlmStreamSink } from "../../application/ports.ts";
 
 /** The slice of Slack's ChatStreamer we depend on (kept minimal for testing). */
@@ -61,6 +62,7 @@ export const createSlackStream = (
   let thinkingDone = false;
   let contentShown = false;
   let pending: ReturnType<typeof setTimeout> | undefined;
+  const fences = createFenceNormalizer();
 
   const cancelPending = (): void => {
     if (pending === undefined) return;
@@ -117,8 +119,11 @@ export const createSlackStream = (
     if (event.type === "text") {
       if (event.delta) {
         contentShown = true;
-        const s = ensure();
-        enqueue(() => s.append({ markdown_text: event.delta }));
+        const text = fences.push(event.delta);
+        if (text) {
+          const s = ensure();
+          enqueue(() => s.append({ markdown_text: text }));
+        }
       }
       return;
     }
@@ -148,6 +153,11 @@ export const createSlackStream = (
     finish: async () => {
       cancelPending();
       completeThinking();
+      const tail = fences.flush();
+      if (tail) {
+        const s = ensure();
+        enqueue(() => s.append({ markdown_text: tail }));
+      }
       try {
         await chain;
       } catch {

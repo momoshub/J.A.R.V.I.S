@@ -107,7 +107,11 @@ For EACH PR, follow this workflow exactly, in order:
    - BIG: do not trust the diff alone. Check out the PR and review the real code in context:
        gh repo clone <owner>/<repo>   (then cd into it)  and  gh pr checkout <number>
      Then SPAWN child agents with the Task tool to review in parallel, split by concern or file group (e.g. correctness, security, tests). Each child reads the actual files, not just the diff, and returns findings. Synthesise them.
-     HARD LIMIT: at most ${maxAgents} child ${maxAgents === 1 ? "agent" : "agents"} for the whole review, spawned in ONE batch - every Task call in a single message, so they run in parallel. Never a second round, never one agent at a time. Fewer is fine when the PR does not need ${maxAgents}.
+     HARD LIMIT: ${
+       maxAgents === 1
+         ? "exactly ONE child agent for the whole review, and only if the PR genuinely needs a second pair of eyes. Never a second one, not after it reports and not to cover something it missed - what it missed is yours to check yourself"
+         : `at most ${maxAgents} child agents for the whole review, spawned in ONE batch - every Task call in a single message, so they run in parallel. Never a second round, never one agent at a time. Fewer is fine when the PR does not need ${maxAgents}`
+     }.
      While they run, do not re-review the same code yourself to fill the time - read the PR body and the surrounding code they are not covering, or just wait.
      Never let an agent hold the review hostage: this run is on a wall-clock budget, so if one has not reported back by the time the others are done, drop it and post the review with what you have. A review missing one agent's findings beats a run that times out having posted nothing.
    - NOT big: the diff plus a few targeted file reads are enough.
