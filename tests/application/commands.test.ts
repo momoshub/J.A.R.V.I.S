@@ -769,6 +769,27 @@ describe("review fan-out cap", () => {
     expect(sys()).toContain("at most 3 child agents");
   });
 
+  test("words typed next to the url become guidance, not a review target", async () => {
+    const { deps, sys } = withBrain();
+    const lines: string[] = [];
+    await dispatchCommand(deps, actor(), "C1", `rv ${PR} focus on the sql migration`, {
+      reply: async (t: string) => {
+        lines.push(t);
+      },
+    });
+    expect(sys()).toContain("focus on the sql migration");
+    expect(sys()).toContain("What the person asking wants you to look at");
+    // the note is not mistaken for a second PR
+    expect(sys()).toContain(PR);
+    expect(lines.some((l) => l.includes("_looking at: focus on the sql migration_"))).toBe(true);
+  });
+
+  test("no note, no guidance section", async () => {
+    const { deps, sys } = withBrain();
+    await dispatchCommand(deps, actor(), "C1", `rv ${PR}`);
+    expect(sys()).not.toContain("in their words");
+  });
+
   test("a configured cap replaces it", async () => {
     const { deps, sys } = withBrain();
     await dispatchCommand(deps, actor(), "C1", "review-agents 5");

@@ -106,7 +106,7 @@ Every command has two interfaces - use whichever you like. Both triggers are con
 | `review-agents [n\|default]` (alias `rvagents`) | anyone (setting: admins) | how many child agents one review may fan out to - see [How wide a review fans out](#how-wide-a-review-fans-out) |
 | `token [remove\|who]` (alias `claude-token`) | anyone | add, replace or forget your own Claude Code token - see [Your own Claude token](#your-own-claude-token) |
 | `ticket <what is wrong>` (aliases `bug`, `raise`) | anyone | raise a properly written, correctly routed ticket - see [Raising a ticket](#raising-a-ticket) |
-| `review <pr-url>` (alias `rv`) | pal+ | review a PR: approve first (even if it is already merged or closed), then post the review as a GitHub comment *and* back in the thread; request changes on high risk (big PRs are cloned + reviewed by child agents). Runs full-access. |
+| `review <pr-url> [what to look at]` (alias `rv`) | pal+ | review a PR: approve first (even if it is already merged or closed), then post the review as a GitHub comment *and* back in the thread; request changes on high risk (big PRs are cloned + reviewed by child agents). Runs full-access. |
 | `bomb [categories] [count] <message-link>` (alias `br`) | admins | reaction-bomb a message. Combine categories with commas and set a count: `bomb money,face,negative 9 <link>`. Up to 23; `bomb help` lists every category |
 | `reply <message-link>` (alias `jrp`) | admins | draft and post an AI reply to a message |
 | `rm-msg <message-link>` (aliases `rmmsg`, `unsend`) | admins | delete a message the bot posted (a bot token cannot delete anyone else's) |
@@ -341,6 +341,26 @@ Tokens live in their own database (`TOKEN_DATABASE_PATH`, default
 (default `data/tokens.key`). The database is committed like the main one; **the
 key is gitignored**, so what lands in git is ciphertext and a copy taken from
 anywhere but the host opens nothing.
+
+## Steering a review
+
+Anything typed next to the url is guidance, not a second target:
+
+```
+//bot review <pr-url> the migration is the risky bit
+//bot review <pr-url> hotfix, only care about data loss on the delete path
+//bot review <pr-url> check it against GEN-1234
+```
+
+It points the review at what you already suspect, which is usually faster and
+better aimed than a cold read: the review starts there, weights it, and says
+what it found about that specifically.
+
+The note is quoted into the prompt, never merged into the instructions. It can
+aim attention and nothing else - it cannot skip a PR, waive the approve/request
+flows, invent an approval, change the house style, or have something called
+clean that is not. A note asking for something outside a PR review is ignored,
+and the review says so in its wrap-up rather than quietly doing it.
 
 ## How wide a review fans out
 

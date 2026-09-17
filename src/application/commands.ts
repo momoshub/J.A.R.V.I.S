@@ -568,7 +568,7 @@ export const COMMANDS: readonly CommandDef[] = [
     name: "review",
     aliases: ["rv"],
     minRole: "pal",
-    usage: "<pr-url> [pr-url...]",
+    usage: "<pr-url> [pr-url...] [what to look at]",
     summary: "review a PR: approve it, then post the review to GitHub and here",
     run: async (ctx) => {
       const { deps, actor, args, prefix, reply } = ctx;
@@ -587,6 +587,10 @@ export const COMMANDS: readonly CommandDef[] = [
       // Slack wraps links as <url|label>; hand the brain the bare urls.
       const urls = [...new Set(args.flatMap((a) => a.match(PR_URL) ?? []))];
       const targets = urls.length > 0 ? urls : args;
+      // Anything typed alongside the urls is guidance: "the migration is the
+      // risky bit", "hotfix, correctness only". It aims the review; the prompt
+      // is what keeps it from doing anything more than that.
+      const note = urls.length > 0 ? args.filter((a) => !PR_URL.test(a)).join(" ").trim() : "";
       // A preset, tightly-scoped task: always run FULL access (it comments and
       // requests changes on GitHub, clones, and spawns child agents) with a long
       // timeout, regardless of the caller's role.
@@ -619,8 +623,8 @@ export const COMMANDS: readonly CommandDef[] = [
       }
 
       const params = {
-        system: reviewPrompt(targets, name, await account, approvedUpFront, reviewAgentsOf(deps)),
-        messages: [{ role: "user" as const, content: `review ${targets.join(" ")}` }],
+        system: reviewPrompt(targets, name, await account, approvedUpFront, reviewAgentsOf(deps), note),
+        messages: [{ role: "user" as const, content: `review ${targets.join(" ")}${note ? `\n\n${note}` : ""}` }],
         assistantName: name,
         policy,
         oauthToken,
@@ -636,7 +640,7 @@ export const COMMANDS: readonly CommandDef[] = [
       // destination is chosen by the transport - thread for a message command, DM
       // for a slash command - so nothing is hidden in an ephemeral reply.
       for (const line of announcements) await reply(line);
-      await reply(`🔍 reviewing ${targets.join(" ")}`);
+      await reply(`🔍 reviewing ${targets.join(" ")}${note ? `\n_looking at: ${note}_` : ""}`);
 
       let out = "";
       // Set when the run was killed mid-flight. What streamed is then a fragment
