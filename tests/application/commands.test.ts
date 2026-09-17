@@ -5,6 +5,7 @@ import { createMessageRepo } from "../../src/infrastructure/db/messageRepo.ts";
 import { createLearningsRepo } from "../../src/infrastructure/db/learningsRepo.ts";
 import { createSettingsRepo } from "../../src/infrastructure/db/settingsRepo.ts";
 import type { ClaudeTokenPort } from "../../src/application/claudeTokens.ts";
+import { createThreadSessionRepo } from "../../src/infrastructure/db/threadSessionRepo.ts";
 import { commandLineOf, dispatchCommand, type CommandDeps } from "../../src/application/commands.ts";
 import { respond, type RespondDeps } from "../../src/application/respond.ts";
 import type { AllowedUser } from "../../src/domain/types.ts";
@@ -623,6 +624,41 @@ describe("owner copy of slash commands", () => {
     };
     const res = await slashFrom(deps, "Upal", "ask what is 2+2");
     expect(res).toEqual({ kind: "reply", text: "drafted answer" });
+  });
+});
+
+describe("session command", () => {
+  test("reports, resets, and is only switchable by admins", async () => {
+    const deps = build();
+    deps.settings = createSettingsRepo(db);
+    deps.threadSessions = createThreadSessionRepo(db);
+    deps.threadSessionsOn = () => deps.settings!.get("thread_sessions") !== "off";
+    const pal = actor({ slackId: "U0PAL0004", role: "pal" });
+    deps.users.upsert(pal);
+
+    const inThread = { threadTs: "900.1" };
+    expect(await dispatchCommand(deps, actor(), "C1", "session", inThread)).toContain("No session bound");
+
+    deps.threadSessions.claim("C1", "900.1", "sandbox", "sess-1", "900.1", 1);
+    expect(await dispatchCommand(deps, pal, "C1", "session", inThread)).toContain("1 turn in");
+
+    expect(await dispatchCommand(deps, pal, "C1", "session reset", inThread)).toContain("Dropped it");
+    expect(deps.threadSessions.find("C1", "900.1", "sandbox")).toBeUndefined();
+
+    expect(await dispatchCommand(deps, pal, "C1", "session off", inThread)).toContain("Only admins");
+    expect(await dispatchCommand(deps, actor(), "C1", "session off", inThread)).toContain("off");
+    expect(deps.settings.get("thread_sessions")).toBe("off");
+    expect(await dispatchCommand(deps, actor(), "C1", "session", inThread)).toContain("off");
+
+    await dispatchCommand(deps, actor(), "C1", "session on", inThread);
+    expect(deps.settings.get("thread_sessions")).toBe("");
+  });
+
+  test("outside a thread there is nothing to report", async () => {
+    const deps = build();
+    deps.settings = createSettingsRepo(db);
+    deps.threadSessions = createThreadSessionRepo(db);
+    expect(await dispatchCommand(deps, actor(), "C1", "session")).toContain("inside a thread");
   });
 });
 

@@ -105,6 +105,7 @@ Every command has two interfaces - use whichever you like. Both triggers are con
 | `review-policy [owner/repo] [first\|after\|default]` (alias `rvpolicy`) | anyone (setting: admins) | how a repo gets approved - see [Review policy per repo](#review-policy-per-repo) |
 | `review-agents [n\|default]` (alias `rvagents`) | anyone (setting: admins) | how many child agents one review may fan out to - see [How wide a review fans out](#how-wide-a-review-fans-out) |
 | `token [remove\|who]` (alias `claude-token`) | anyone | add, replace or forget your own Claude Code token - see [Your own Claude token](#your-own-claude-token) |
+| `session [reset\|on\|off]` (alias `sess`) | anyone (on/off: admins) | the CLI session this thread is talking to - see [One session per thread](#one-session-per-thread) |
 | `ticket <what is wrong>` (aliases `bug`, `raise`) | anyone | raise a properly written, correctly routed ticket - see [Raising a ticket](#raising-a-ticket) |
 | `review <pr-url> [what to look at]` (alias `rv`) | pal+ | review a PR: approve first (even if it is already merged or closed), then post the review as a GitHub comment *and* back in the thread; request changes on high risk (big PRs are cloned + reviewed by child agents). Runs full-access. |
 | `bomb [categories] [count] <message-link>` (alias `br`) | admins | reaction-bomb a message. Combine categories with commas and set a count: `bomb money,face,negative 9 <link>`. Up to 23; `bomb help` lists every category |
@@ -290,6 +291,36 @@ it says so in the thread.
 
 Policies are configuration, in the database: no repository is named anywhere in
 this codebase, which matters because it is open.
+
+## One session per thread
+
+A Slack thread is one conversation, so it gets **one Claude Code CLI session**.
+The first message in a thread opens it (`--session-id`), every later one resumes
+it (`--resume`), and the model keeps its context, its reasoning and its files
+between turns instead of starting cold and being handed a transcript each time.
+
+A resumed turn is given only what it has not seen: everything said in the thread
+since its last turn, including messages the bot was not addressed in. The bot's
+own SQLite memory still records every turn - it is the fallback when a session
+is gone, and what the dashboard reads.
+
+Sessions are keyed by **thread and access tier**, not thread alone. Full-access
+(owner/admin) and sandboxed (pal/executer) roles run the CLI in different
+working directories, and the CLI files a session under the directory it ran in -
+so they could not share one in any case, and sharing would hand a sandboxed user
+whatever a full-access session had read.
+
+A session that will not resume is not an error anyone sees: the CLI prunes its
+own history and a committed database outlives the machine it was written on, so
+`No conversation found with session ID` means "start a fresh one and read the
+thread back in", silently. A genuine failure still surfaces.
+
+```
+//bot session          what this thread is on
+//bot session reset    drop it; the next message starts fresh
+//bot session off      admins: back to a cold call per turn
+//bot session on       admins: back on
+```
 
 ## Your own Claude token
 

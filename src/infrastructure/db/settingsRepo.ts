@@ -24,6 +24,8 @@ export const SETTING_KEYS = {
   ticketRepos: "ticket_repos",
   /** Ceiling on child agents one review may spawn. */
   reviewAgents: "review_agents",
+  /** "off" turns one-session-per-thread back into a cold call per turn. */
+  threadSessions: "thread_sessions",
 } as const;
 
 /** Model override for one role, e.g. `model:pal`. Empty means "use the default". */

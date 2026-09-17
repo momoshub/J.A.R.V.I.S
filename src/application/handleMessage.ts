@@ -29,6 +29,8 @@ import type { SettingsRepo } from "../infrastructure/db/settingsRepo.ts";
 import { requestAccess } from "./accessRequests.ts";
 import type { CommandTickets } from "./commandTickets.ts";
 import { tokenFor, type ClaudeTokenPort } from "./claudeTokens.ts";
+import { isMissingSession, tierOf, unseenTurns } from "../domain/threadSession.ts";
+import type { ThreadSessionRepo } from "../infrastructure/db/threadSessionRepo.ts";
 import type { SlackAdminPort, SlackMessage } from "./slackAdmin.ts";
 import type { GitHubPort } from "./github.ts";
 import type { DraftReply } from "./draftReply.ts";
@@ -60,6 +62,10 @@ export type HandleMessageDeps = {
   toolPolicy?: (role: UserRole, channelId?: string) => ToolPolicy;
   /** Per-user Claude Code tokens: a speaker's own turns run on their credential. */
   claudeTokens?: ClaudeTokenPort;
+  /** One CLI session per thread, so a follow-up costs a follow-up. */
+  threadSessions?: ThreadSessionRepo;
+  /** Whether thread sessions are switched on. Read per turn, so it needs no restart. */
+  threadSessionsOn?: () => boolean;
   /** Absolute path of the reaction helper, granted to every role. */
   reactScript?: string;
   /** Absolute path of the Slack file downloader, granted to every role. */
@@ -78,7 +84,7 @@ export type HandleMessageDeps = {
   logSources?: () => readonly string[];
   /** Whether a ticket tracker is configured, so chat bug reports can be raised. */
   canRaiseTickets?: () => boolean;
-  /** Fresh CLI session id for a new workflow; injected for deterministic tests. */
+  /** Fresh CLI session id for a workflow or a thread session; injected for tests. */
   newSessionId?: () => string;
   /** Local endpoint the bot can POST a learning to, if the listener may teach. */
   learnUrl?: string;
@@ -197,20 +203,52 @@ export const handleMessage = async (
     commandPrefix: deps.commandPrefix,
   });
 
-  const params = {
+  const policy = deps.toolPolicy?.(decision.user.role, inbound.channelId);
+  // One CLI session per thread, per access tier: the model keeps its own context
+  // between turns, so it is handed only what it has not seen rather than the
+  // whole thread replayed into a memory that already holds it.
+  const tier = tierOf(policy);
+  const sessions = deps.threadSessionsOn?.() === false ? undefined : deps.threadSessions;
+  const key = sessions && inbound.threadTs ? { channelId: inbound.channelId, threadTs: inbound.threadTs } : undefined;
+  const bound = key ? sessions?.find(key.channelId, key.threadTs, tier) : undefined;
+  const cold = () => buildContextWindow(history, window);
+  const newestTs = history[history.length - 1]?.slackTs ?? inbound.messageTs ?? "";
+
+  const base = {
     system,
-    messages: buildContextWindow(history, window),
     assistantName: ctx.botName,
-    policy: deps.toolPolicy?.(decision.user.role, inbound.channelId),
+    policy,
     // Their own credential when they have registered one, so the turn is theirs
     // in every sense; the bot's own when they have not.
     oauthToken: tokenFor(deps, decision.user),
   };
-  const reply = (
-    sink && deps.llm.stream
-      ? await deps.llm.stream(params, sink)
-      : await deps.llm.complete(params)
-  ).trim();
+  const run = (p: Parameters<typeof deps.llm.complete>[0]) =>
+    sink && deps.llm.stream ? deps.llm.stream(p, sink) : deps.llm.complete(p);
+
+  let sessionId = bound?.sessionId ?? deps.newSessionId?.() ?? crypto.randomUUID();
+  let resumed = !!bound;
+  let raw: string;
+  try {
+    raw = await run({
+      ...base,
+      messages: bound ? buildContextWindow(unseenTurns(history, bound.lastTs), window) : cold(),
+      ...(key ? { session: { id: sessionId, resume: resumed } } : {}),
+    });
+  } catch (err) {
+    // The CLI prunes its own history and a database outlives the machine it was
+    // written on, so a session that will not resume is expected, not an error to
+    // put in front of anyone: start a new one and hand it the thread cold.
+    if (!bound || !isMissingSession(err)) throw err;
+    sessionId = deps.newSessionId?.() ?? crypto.randomUUID();
+    resumed = false;
+    raw = await run({ ...base, messages: cold(), session: { id: sessionId, resume: false } });
+  }
+  const reply = raw.trim();
+
+  if (key) {
+    if (resumed) sessions?.touch(key.channelId, key.threadTs, tier, newestTs, deps.clock());
+    else sessions?.claim(key.channelId, key.threadTs, tier, sessionId, newestTs, deps.clock());
+  }
 
   const safeReply = reply.length > 0 ? reply : "I do not have anything useful to add there.";
 

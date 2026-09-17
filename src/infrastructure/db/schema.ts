@@ -80,6 +80,38 @@ export const migrate = (db: Database): void => {
   migrateAccessRequests(db);
   migrateCommandApprovals(db);
   migrateAccessNotices(db);
+  migrateThreadSessions(db);
+};
+
+/**
+ * Migration v9: one CLI session per Slack thread.
+ *
+ * A thread is one conversation, so it gets one session that the model keeps its
+ * context and its files in, instead of a cold start replayed from the bot's own
+ * transcript every turn.
+ *
+ * Keyed by tier as well as thread, and not by accident: full-access and
+ * sandboxed roles run the CLI in different working directories, and the CLI
+ * stores a session under the directory it ran in - so a sandboxed turn could
+ * not resume a full-access session even if we wanted it to, and wanting it to
+ * would hand a pal whatever an admin's session had read.
+ */
+const migrateThreadSessions = (db: Database): void => {
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS thread_sessions (
+      channel_id TEXT NOT NULL,
+      thread_ts  TEXT NOT NULL,
+      tier       TEXT NOT NULL,
+      session_id TEXT NOT NULL,
+      last_ts    TEXT NOT NULL DEFAULT '',
+      turns      INTEGER NOT NULL DEFAULT 0,
+      created_at INTEGER NOT NULL,
+      used_at    INTEGER NOT NULL,
+      PRIMARY KEY (channel_id, thread_ts, tier)
+    );
+  `);
+  db.exec("CREATE INDEX IF NOT EXISTS idx_thread_sessions_used ON thread_sessions (used_at DESC);");
+  db.exec("PRAGMA user_version = 9;");
 };
 
 /**

@@ -11,6 +11,7 @@ import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { loadConfig, modelLabel, type AppConfig } from "./config/env.ts";
 import { openDatabase } from "./infrastructure/db/client.ts";
+import { createThreadSessionRepo } from "./infrastructure/db/threadSessionRepo.ts";
 import {
   createClaudeTokenRepo,
   loadOrCreateKey,
@@ -94,6 +95,9 @@ const main = async () => {
   // failed commands additionally land in errors.log.
   const activity = createActivityLog(config.logDir);
   const workflows = createWorkflowRepo(db);
+  // One CLI session per Slack thread, so a follow-up keeps the context the last
+  // turn built instead of starting the conversation over.
+  const threadSessions = createThreadSessionRepo(db);
   const accessRequests = createAccessRequestRepo(db);
   const commandApprovals = createCommandApprovalRepo(db);
   const commandTickets = createCommandTickets(() => Date.now());
@@ -201,6 +205,8 @@ const main = async () => {
     github: createGhCli(),
     // Long tasks driven from a thread, each holding its own CLI session.
     workflows,
+    threadSessions,
+    threadSessionsOn: () => settings.get(SETTING_KEYS.threadSessions)?.trim().toLowerCase() !== "off",
     // A stranger is put to the owner for a ✅ / ❌ rather than refused outright.
     accessRequests,
     // A pal out of allowance has their command parked for approval.

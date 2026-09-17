@@ -6,6 +6,8 @@ import { handleMessage, type HandleMessageDeps } from "../../src/application/han
 import type { LlmPort } from "../../src/application/ports.ts";
 import type { PromptMessage } from "../../src/domain/types.ts";
 import type { SlackAdminPort, SlackMessage } from "../../src/application/slackAdmin.ts";
+import { createThreadSessionRepo } from "../../src/infrastructure/db/threadSessionRepo.ts";
+import type { LlmCompleteParams } from "../../src/application/ports.ts";
 
 const slackMsg = (over: Partial<SlackMessage> & { ts: string; userId: string; text: string }): SlackMessage => ({
   userName: "",
@@ -370,6 +372,104 @@ describe("handleMessage", () => {
 
     await handleMessage(deps, { channelId: "C-cheap", slackUserId: OWNER, text: "hi" });
     expect(policy?.model).toBe("haiku"); // the channel decided, not the role
+  });
+
+  test("a thread keeps one session, and later turns only carry what is new", async () => {
+    const seen: LlmCompleteParams[] = [];
+    const deps = build({
+      complete: async (p) => {
+        seen.push(p);
+        return "ok";
+      },
+    });
+    deps.threadSessions = createThreadSessionRepo(db);
+    let n = 0;
+    deps.newSessionId = () => `sess-${++n}`;
+    deps.slack = {
+      ...noopSlack,
+      replies: async () => [
+        slackMsg({ ts: "100.1", userId: OWNER, text: "first" }),
+        ...(seen.length > 0 ? [slackMsg({ ts: "100.2", userId: OWNER, text: "second" })] : []),
+      ],
+    };
+
+    await handleMessage(deps, { channelId: "C1", slackUserId: OWNER, text: "first", threadTs: "100.1", messageTs: "100.1" });
+    expect(seen[0]?.session).toEqual({ id: "sess-1", resume: false });
+    expect(seen[0]?.messages).toHaveLength(1); // cold start: the thread so far
+
+    await handleMessage(deps, { channelId: "C1", slackUserId: OWNER, text: "second", threadTs: "100.1", messageTs: "100.2" });
+    // same session, resumed - and only the new turn, not the thread again
+    expect(seen[1]?.session).toEqual({ id: "sess-1", resume: true });
+    expect(seen[1]?.messages.map((m) => m.content)).toEqual(["second"]);
+  });
+
+  test("a session the CLI no longer has is replaced, not surfaced as an error", async () => {
+    let calls = 0;
+    const deps = build({
+      complete: async () => {
+        calls += 1;
+        if (calls === 2) throw new Error("No conversation found with session ID sess-1");
+        return "ok";
+      },
+    });
+    deps.threadSessions = createThreadSessionRepo(db);
+    let n = 0;
+    deps.newSessionId = () => `sess-${++n}`;
+
+    const inbound = { channelId: "C1", slackUserId: OWNER, text: "hi", threadTs: "200.1", messageTs: "200.1" };
+    await handleMessage(deps, inbound);
+    const res = await handleMessage(deps, { ...inbound, messageTs: "200.2" });
+
+    expect(res.kind).toBe("reply"); // the user never sees the resume failure
+    expect(calls).toBe(3); // cold, failed resume, cold retry
+    expect(deps.threadSessions.find("C1", "200.1", "sandbox")?.sessionId).toBe("sess-2");
+  });
+
+  test("a real failure is not swallowed as a missing session", async () => {
+    let calls = 0;
+    const deps = build({
+      complete: async () => {
+        calls += 1;
+        if (calls === 2) throw new Error("claude CLI exited with code 1: rate limited");
+        return "ok";
+      },
+    });
+    deps.threadSessions = createThreadSessionRepo(db);
+    deps.newSessionId = () => "sess-x";
+
+    const inbound = { channelId: "C1", slackUserId: OWNER, text: "hi", threadTs: "300.1", messageTs: "300.1" };
+    await handleMessage(deps, inbound);
+    await expect(handleMessage(deps, { ...inbound, messageTs: "300.2" })).rejects.toThrow("rate limited");
+    expect(calls).toBe(2); // no blind retry
+  });
+
+  test("switched off, every turn is a cold call again", async () => {
+    const seen: LlmCompleteParams[] = [];
+    const deps = build({
+      complete: async (p) => {
+        seen.push(p);
+        return "ok";
+      },
+    });
+    deps.threadSessions = createThreadSessionRepo(db);
+    deps.threadSessionsOn = () => false;
+
+    await handleMessage(deps, { channelId: "C1", slackUserId: OWNER, text: "hi", threadTs: "400.1", messageTs: "400.1" });
+    expect(seen[0]?.session).toBeUndefined();
+    expect(deps.threadSessions.find("C1", "400.1", "sandbox")).toBeUndefined();
+  });
+
+  test("a DM outside any thread still works, with no session bound", async () => {
+    const seen: LlmCompleteParams[] = [];
+    const deps = build({
+      complete: async (p) => {
+        seen.push(p);
+        return "ok";
+      },
+    });
+    deps.threadSessions = createThreadSessionRepo(db);
+    await handleMessage(deps, { channelId: "D1", slackUserId: OWNER, text: "hi" });
+    expect(seen[0]?.session).toBeUndefined();
   });
 
   test("a speaker's own Claude token runs their chat turn", async () => {

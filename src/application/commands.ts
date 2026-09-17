@@ -51,6 +51,8 @@ import {
   type ClaudeTokenPort,
 } from "./claudeTokens.ts";
 import { tokenGuide, tokenHint, tokenWhy } from "../domain/claudeToken.ts";
+import { tierOf } from "../domain/threadSession.ts";
+import type { ThreadSessionRepo } from "../infrastructure/db/threadSessionRepo.ts";
 import type { AllowedUser, PromptContext, UserRole } from "../domain/types.ts";
 import type { ToolPolicy } from "../domain/toolPolicy.ts";
 import type { Clock, LlmPort } from "./ports.ts";
@@ -97,6 +99,9 @@ export type CommandDeps = {
   toolPolicy?: (role: UserRole, channelId?: string) => ToolPolicy;
   /** Per-user Claude Code tokens. `review` requires one; everything else prefers one. */
   claudeTokens?: ClaudeTokenPort;
+  /** One CLI session per thread, for the `session` command to inspect and reset. */
+  threadSessions?: ThreadSessionRepo;
+  threadSessionsOn?: () => boolean;
   clock: Clock;
   ownerSlackId: string;
 };
@@ -801,6 +806,44 @@ export const COMMANDS: readonly CommandDef[] = [
       }
       deps.settings?.set(reviewPolicyKey(repo), policy);
       return `\`${repo}\` is now *${policy}* - ${describe(policy)}.`;
+    },
+  },
+  {
+    name: "session",
+    aliases: ["sess"],
+    minRole: "pal",
+    usage: "[reset|on|off]",
+    summary: "the CLI session this thread is talking to",
+    run: ({ deps, actor, channelId, threadTs, args, prefix }) => {
+      const on = deps.threadSessionsOn?.() !== false;
+      const want = (args[0] ?? "").toLowerCase();
+
+      if (want === "on" || want === "off") {
+        if (RANK[actor.role] < RANK.admin) return "Only admins can switch thread sessions.";
+        deps.settings?.set(SETTING_KEYS.threadSessions, want === "off" ? "off" : "");
+        return want === "off"
+          ? "Thread sessions *off* - every turn is a cold call again, with the thread replayed into it."
+          : "Thread sessions *on* - each thread keeps one session between turns.";
+      }
+      if (args.length > 0 && want !== "reset" && want !== "new") {
+        return `\`${prefix} session [reset|on|off]\``;
+      }
+      if (!deps.threadSessions) return "Thread sessions are not wired up here.";
+      if (!on) return "Thread sessions are *off* right now, so every turn starts cold.";
+      if (!threadTs) return "That only means something inside a thread.";
+
+      // Your own tier: what you would resume, not what someone else would.
+      const tier = tierOf(deps.toolPolicy?.(actor.role, channelId));
+      const bound = deps.threadSessions.find(channelId, threadTs, tier);
+      if (want === "reset" || want === "new") {
+        deps.threadSessions.drop(channelId, threadTs);
+        return bound
+          ? "Dropped it - the next message in this thread starts a fresh session with the thread read back in."
+          : "Nothing bound here anyway, so the next message starts fresh.";
+      }
+      return bound
+        ? `This thread is on one session, ${bound.turns} ${bound.turns === 1 ? "turn" : "turns"} in. \`${prefix} session reset\` starts it over.`
+        : "No session bound yet - the next message in this thread opens one.";
     },
   },
   {
