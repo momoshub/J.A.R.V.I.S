@@ -364,7 +364,7 @@ never set up. Only `review` insists.
 ```
 /<slash> token           add or replace yours (opens the box)
 /<slash> token remove    forget it; your next review will ask again
-/<slash> token who       admins: how many people have one (never who, never which)
+/<slash> token who       admins: who has given me one (never the token itself)
 ```
 
 Tokens live in their own database (`TOKEN_DATABASE_PATH`, default

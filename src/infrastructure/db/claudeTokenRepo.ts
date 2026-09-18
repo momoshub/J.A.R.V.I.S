@@ -98,6 +98,11 @@ export const createClaudeTokenRepo = (
   );
   const removeStmt = db.query("DELETE FROM claude_tokens WHERE slack_id = $id");
   const countStmt = db.query<{ n: number }, []>("SELECT COUNT(*) AS n FROM claude_tokens");
+  // Ids and timestamps only. Nothing here returns a sealed value, so no caller
+  // can accidentally render someone's credential into a channel.
+  const listStmt = db.query<{ slack_id: string; updated_at: number }, []>(
+    "SELECT slack_id, updated_at FROM claude_tokens ORDER BY updated_at DESC",
+  );
   const askedStmt = db.query<{ slack_id: string }, [string]>(
     "SELECT slack_id FROM token_asks WHERE slack_id = ?",
   );
@@ -126,6 +131,7 @@ export const createClaudeTokenRepo = (
       clearAskStmt.run({ $id: slackId });
     },
     count: () => countStmt.get()?.n ?? 0,
+    list: () => listStmt.all().map((r) => ({ slackId: r.slack_id, updatedAt: r.updated_at })),
     asked: (slackId) => askedStmt.get(slackId) !== null,
     markAsked: (slackId) => {
       markStmt.run({ $id: slackId, $at: now() });

@@ -116,6 +116,7 @@ const everyoneHasToken = (): ClaudeTokenPort => ({
   set: () => {},
   remove: () => {},
   count: () => 1,
+  list: () => [],
   asked: () => false,
   markAsked: () => {},
 });
@@ -683,6 +684,7 @@ describe("reviews run on the caller's own Claude token", () => {
         asks.delete(id);
       },
       count: () => map.size,
+      list: () => [...map.keys()].map((slackId) => ({ slackId, updatedAt: 0 })),
       asked: (id) => asks.has(id),
       markAsked: (id) => {
         asks.add(id);
@@ -769,6 +771,27 @@ describe("reviews run on the caller's own Claude token", () => {
     deps.users.upsert(pal);
     await dispatchCommand(deps, pal, "C1", "ask hello");
     expect(token()).toBeUndefined(); // falls back to the bot's own credential
+  });
+
+  test("token who lists the people who gave me one, and is admin-only", async () => {
+    // it used to answer with the usage line: the catch-all sat above this branch
+    const { deps } = withTokens({ [OWNER]: TOKEN });
+    const out = await dispatchCommand(deps, actor(), "C1", "token who");
+    expect(out).toContain(`<@${OWNER}>`);
+    expect(out).toContain("1 person has");
+    expect(out).not.toContain("to add or replace one");
+    expect(out).not.toContain(TOKEN);
+
+    const pal = actor({ slackId: "U0PAL0005", role: "pal" });
+    deps.users.upsert(pal);
+    expect(await dispatchCommand(deps, pal, "C1", "token who")).toContain("Only admins");
+  });
+
+  test("token who says plainly when nobody has one", async () => {
+    const { deps } = withTokens();
+    const out = await dispatchCommand(deps, actor(), "C1", "token list");
+    expect(out).toContain("Nobody has given me a token yet");
+    expect(out).toContain("nobody can run a review");
   });
 
   test("token reports what is on file and forgets it on request", async () => {

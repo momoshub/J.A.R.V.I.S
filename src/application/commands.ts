@@ -229,6 +229,16 @@ const askForToken = async (ctx: Context, line: string, force = false): Promise<s
   return `${ask}\n\nrun \`${slash} token\` and a box will open for it`;
 };
 
+/** Rough age of something, for a list nobody reads timestamps out of. */
+const since = (ms: number): string => {
+  const mins = Math.max(0, Math.round(ms / 60_000));
+  if (mins < 60) return mins <= 1 ? "just now" : `${mins}m ago`;
+  const hrs = Math.round(mins / 60);
+  if (hrs < 24) return `${hrs}h ago`;
+  const days = Math.round(hrs / 24);
+  return `${days}d ago`;
+};
+
 /** How many child agents a review may fan out to, defaulting when unset. */
 const reviewAgentsOf = (deps: CommandDeps): number =>
   asAgentCap(deps.settings?.get(SETTING_KEYS.reviewAgents)) ?? DEFAULT_REVIEW_AGENTS;
@@ -864,16 +874,22 @@ export const COMMANDS: readonly CommandDef[] = [
           ? `Forgotten your token (${tokenHint(had)}). Your reviews will ask for a new one.`
           : "I did not have a token for you anyway.";
       }
+      // Before the catch-all below, or it is never reached - which is exactly
+      // what happened: `token who` answered with the usage line instead.
+      if (want === "who" || want === "count" || want === "list" || want === "users") {
+        if (RANK[actor.role] < RANK.admin) return "Only admins can see that.";
+        const held = deps.claudeTokens.list();
+        if (held.length === 0) {
+          return `Nobody has given me a token yet, so nobody can run a review. \`${slash} token\` opens the box.`;
+        }
+        const lines = held.map((h) => {
+          const name = deps.users.get(h.slackId)?.displayName;
+          return `- <@${h.slackId}>${name ? ` (${name})` : ""}, added ${since(deps.clock() - h.updatedAt)}`;
+        });
+        return `${held.length} ${held.length === 1 ? "person has" : "people have"} given me a token. I never show one, not even to you.\n${lines.join("\n")}`;
+      }
       if (args.length > 0 && want !== "add" && want !== "set") {
         return `\`${slash} token\` to add or replace one, \`${slash} token remove\` to forget it.`;
-      }
-
-      if (want === "who" || want === "count") {
-        if (RANK[actor.role] < RANK.admin) return "Only admins can see that.";
-        const n = deps.claudeTokens.count();
-        return n === 0
-          ? "Nobody has a token on file yet."
-          : `${n} ${n === 1 ? "person has" : "people have"} a token on file. I never show one, not even to you.`;
       }
 
       const mine = deps.claudeTokens.get(actor.slackId);

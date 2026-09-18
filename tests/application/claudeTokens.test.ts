@@ -71,6 +71,7 @@ const memoryStore = (): ClaudeTokenPort => {
       asks.delete(id);
     },
     count: () => map.size,
+    list: () => [...map.keys()].map((slackId) => ({ slackId, updatedAt: 0 })),
     asked: (id) => asks.has(id),
     markAsked: (id) => {
       asks.add(id);
@@ -158,6 +159,22 @@ describe("the token repository", () => {
     store.markAsked("U1");
     store.remove("U1");
     expect(store.asked("U1")).toBe(false);
+  });
+
+  test("list says who has one, newest first, and never what it is", () => {
+    const db = openTokenDatabase(":memory:");
+    let t = 100;
+    const store = createClaudeTokenRepo(db, randomBytes(32), () => (t += 100));
+    store.set("U1", TOKEN);
+    store.set("U2", `${TOKEN_PREFIX}${"b".repeat(48)}`);
+
+    const held = store.list();
+    expect(held.map((h) => h.slackId)).toEqual(["U2", "U1"]); // newest first
+    expect(held[0]?.updatedAt).toBeGreaterThan(held[1]!.updatedAt);
+    expect(JSON.stringify(held)).not.toContain(TOKEN_PREFIX);
+
+    store.remove("U1");
+    expect(store.list().map((h) => h.slackId)).toEqual(["U2"]);
   });
 
   test("a replaced token overwrites, and remove forgets", () => {

@@ -21,8 +21,10 @@ export type ClaudeTokenPort = {
   has: (slackId: string) => boolean;
   set: (slackId: string, token: string) => void;
   remove: (slackId: string) => void;
-  /** How many users have one on file. Never who, and never which. */
+  /** How many users have one on file. */
   count: () => number;
+  /** Who has one, newest first. The token itself is never part of this. */
+  list: () => { slackId: string; updatedAt: number }[];
   /**
    * Whether this person has already been asked for a token. Nobody gets the
    * whole "here is how to mint one" ask twice - a second attempt gets a single

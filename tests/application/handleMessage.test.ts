@@ -488,6 +488,7 @@ describe("handleMessage", () => {
       set: () => {},
       remove: () => {},
       count: () => map.size,
+      list: () => [],
       asked: () => false,
       markAsked: () => {},
     };
