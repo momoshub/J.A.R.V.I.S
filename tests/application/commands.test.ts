@@ -1041,6 +1041,25 @@ describe("per-repo review policy", () => {
     expect(calls).toEqual([OTHER]); // approved after the review, not before
   });
 
+  test("several PRs share the run's policy, and the note is not eaten", async () => {
+    const { deps, calls, lines, reply, sys } = withPolicy(undefined);
+    const second = "https://github.com/acme/acme-be/pull/2";
+    await dispatchCommand(deps, actor(), "C1", `rv ${OTHER} --policy after ${second} check the migration`, {
+      reply,
+    });
+    expect(calls).toEqual([OTHER, second]); // both approved only after the review
+    expect(lines[0]).toContain(OTHER);
+    expect(lines[0]).toContain(second);
+    expect(sys()).toContain("check the migration");
+  });
+
+  test("a note that merely looks like the flag does not stop the review", async () => {
+    const { deps, sys, lines, reply } = withPolicy(undefined);
+    await dispatchCommand(deps, actor(), "C1", `rv ${OTHER} check the policy:handler code`, { reply });
+    expect(sys()).toContain("check the policy:handler code");
+    expect(lines.some((l) => l.includes("is not a policy"))).toBe(false);
+  });
+
   test("a policy that is not one is refused rather than quietly ignored", async () => {
     const { deps } = withPolicy(undefined);
     expect(await dispatchCommand(deps, actor(), "C1", `rv ${PR} --policy sometimes`)).toContain(

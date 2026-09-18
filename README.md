@@ -308,6 +308,13 @@ review - overrules an admin's decision, so it takes an admin. A value that is
 not a policy is refused rather than quietly ignored, since a review that ran on
 a policy you did not ask for is worse than one that did not run.
 
+It does not collide with the free text. `--policy` and `--policy=x` are flags
+wherever they appear and are taken out before the note is built; `policy:x`
+counts only when `x` really is a policy, so "check the `policy:handler` code"
+stays a note rather than refusing the command. Bare words are just words -
+"approve after CI is green" asks for nothing. With several PRs the flag applies
+to the whole run whatever order it was typed in.
+
 ## One session per thread
 
 A Slack thread is one conversation, so it gets **one Claude Code CLI session**.

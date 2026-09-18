@@ -67,16 +67,28 @@ export const parsePolicyArg = (args: readonly string[]): PolicyArg => {
   for (let i = 0; i < args.length; i++) {
     const arg = args[i] ?? "";
     const lower = arg.toLowerCase();
-    // `--policy=after` and `policy:after` carry their value; `--policy after`
-    // takes the next argument, which is how people type it without thinking.
-    const inline = /^(?:--policy=|policy:)(.*)$/i.exec(arg);
-    if (inline) {
-      const found = policyWord(inline[1] ?? "");
+    // `--policy=after` says plainly what it is, so a value that is not a policy
+    // is a mistake worth reporting. `policy:after` is a word away from ordinary
+    // prose - "check the policy:handler code" - so it only counts when it does
+    // name a policy, and otherwise stays in the note where it was typed.
+    const explicit = /^--policy=(.*)$/i.exec(arg);
+    if (explicit) {
+      const found = policyWord(explicit[1] ?? "");
       if (found) asked = found;
-      else bad = inline[1] || "";
+      else bad = explicit[1] || "";
       continue;
     }
-    if (lower === "--policy" || lower === "-p") {
+    const loose = /^policy:(.*)$/i.exec(arg);
+    if (loose) {
+      const found = policyWord(loose[1] ?? "");
+      if (found) {
+        asked = found;
+        continue;
+      }
+      rest.push(arg); // prose, not a flag
+      continue;
+    }
+    if (lower === "--policy") {
       const value = args[i + 1] ?? "";
       const found = policyWord(value);
       if (found) {

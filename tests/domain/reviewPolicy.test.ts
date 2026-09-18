@@ -65,6 +65,26 @@ describe("parsePolicyArg", () => {
     expect(parsePolicyArg([PR, "--first", "check", "perf"]).rest).toEqual([PR, "check", "perf"]);
   });
 
+  test("prose that merely looks like the flag is left where it was typed", () => {
+    // "check the policy:handler code" used to refuse the whole command with
+    // "`handler` is not a policy", which is a review that never ran
+    const { asked, bad, rest } = parsePolicyArg([PR, "check", "the", "policy:handler", "code"]);
+    expect(asked).toBeUndefined();
+    expect(bad).toBeUndefined();
+    expect(rest).toEqual([PR, "check", "the", "policy:handler", "code"]);
+
+    // and the bare words are ordinary English, not instructions
+    expect(parsePolicyArg([PR, "the", "RLS", "policy", "after", "the", "migration"]).asked).toBeUndefined();
+    expect(parsePolicyArg([PR, "approve", "after", "CI", "is", "green"]).asked).toBeUndefined();
+  });
+
+  test("the flag applies to every PR in the run, wherever it was typed", () => {
+    const other = "https://github.com/o/r2/pull/2";
+    const { asked, rest } = parsePolicyArg([PR, "--policy", "after", other, "focus", "on", "the", "migration"]);
+    expect(asked).toBe("approve-after");
+    expect(rest).toEqual([PR, other, "focus", "on", "the", "migration"]);
+  });
+
   test("a value that is not a policy is reported, not silently ignored", () => {
     // the failure mode to avoid: "--policy sometimes" quietly reviewing on the
     // repo's own policy while the asker believes they changed it
