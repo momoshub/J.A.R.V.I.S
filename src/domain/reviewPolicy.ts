@@ -33,3 +33,68 @@ export const repoRefOf = (token: string): string | undefined => {
 /** Read a stored value back, tolerating anything that is not a known policy. */
 export const asReviewPolicy = (value: string | undefined): ReviewPolicy | undefined =>
   value === "approve-after" || value === "approve-first" ? value : undefined;
+
+/**
+ * A policy asked for on the command itself: `--policy after`, `--policy=first`,
+ * `--policy default`. One run only - nothing is written down, so the repo's own
+ * setting is untouched and the next review is back on it.
+ *
+ * Returns the remaining arguments too, so the flag never reaches the url parser
+ * or gets mistaken for the free-text note that steers the review.
+ */
+export type PolicyArg = {
+  /** Undefined when nothing was asked for; `default` means the built-in one. */
+  asked?: ReviewPolicy | "default";
+  /** Everything that was not part of the flag, in order. */
+  rest: string[];
+  /** Set when a flag was given but its value is not a policy. */
+  bad?: string;
+};
+
+const policyWord = (word: string): ReviewPolicy | "default" | undefined => {
+  const w = word.toLowerCase();
+  if (w === "first" || w === "approve-first") return "approve-first";
+  if (w === "after" || w === "approve-after") return "approve-after";
+  if (w === "default" || w === "reset") return "default";
+  return undefined;
+};
+
+export const parsePolicyArg = (args: readonly string[]): PolicyArg => {
+  const rest: string[] = [];
+  let asked: ReviewPolicy | "default" | undefined;
+  let bad: string | undefined;
+
+  for (let i = 0; i < args.length; i++) {
+    const arg = args[i] ?? "";
+    const lower = arg.toLowerCase();
+    // `--policy=after` and `policy:after` carry their value; `--policy after`
+    // takes the next argument, which is how people type it without thinking.
+    const inline = /^(?:--policy=|policy:)(.*)$/i.exec(arg);
+    if (inline) {
+      const found = policyWord(inline[1] ?? "");
+      if (found) asked = found;
+      else bad = inline[1] || "";
+      continue;
+    }
+    if (lower === "--policy" || lower === "-p") {
+      const value = args[i + 1] ?? "";
+      const found = policyWord(value);
+      if (found) {
+        asked = found;
+        i += 1;
+      } else {
+        bad = value;
+        if (value) i += 1;
+      }
+      continue;
+    }
+    // the shorthands, because they are what gets typed in a hurry
+    if (lower === "--first" || lower === "--after") {
+      asked = lower === "--first" ? "approve-first" : "approve-after";
+      continue;
+    }
+    rest.push(arg);
+  }
+
+  return { asked, rest, ...(bad !== undefined ? { bad } : {}) };
+};

@@ -107,7 +107,7 @@ Every command has two interfaces - use whichever you like. Both triggers are con
 | `token [remove\|who]` (alias `claude-token`) | anyone | add, replace or forget your own Claude Code token - see [Your own Claude token](#your-own-claude-token) |
 | `session [reset\|on\|off]` (alias `sess`) | anyone (on/off: admins) | the CLI session this thread is talking to - see [One session per thread](#one-session-per-thread) |
 | `ticket <what is wrong>` (aliases `bug`, `raise`) | anyone | raise a properly written, correctly routed ticket - see [Raising a ticket](#raising-a-ticket) |
-| `review <pr-url> [what to look at]` (alias `rv`) | pal+ | review a PR: approve first (even if it is already merged or closed), then post the review as a GitHub comment *and* back in the thread; request changes on high risk (big PRs are cloned + reviewed by child agents). Runs full-access. |
+| `review <pr-url> [--policy first\|after] [what to look at]` (alias `rv`) | pal+ | review a PR: approve first (even if it is already merged or closed), then post the review as a GitHub comment *and* back in the thread; request changes on high risk (big PRs are cloned + reviewed by child agents). Runs full-access. |
 | `bomb [categories] [count] <message-link>` (alias `br`) | admins | reaction-bomb a message. Combine categories with commas and set a count: `bomb money,face,negative 9 <link>`. Up to 23; `bomb help` lists every category |
 | `reply <message-link>` (alias `jrp`) | admins | draft and post an AI reply to a message |
 | `rm-msg <message-link>` (aliases `rmmsg`, `unsend`) | admins | delete a message the bot posted (a bot token cannot delete anyone else's) |
@@ -292,6 +292,22 @@ it says so in the thread.
 Policies are configuration, in the database: no repository is named anywhere in
 this codebase, which matters because it is open.
 
+One run can ask for a different policy without changing anything:
+
+```
+//bot review <pr-url> --policy after     hold the approval back, this run only
+//bot review <pr-url> --policy first     approve up front, this run only
+//bot review <pr-url> --policy default   the built-in default, this run only
+//bot review <pr-url> --after            the same, shorter
+```
+
+Nothing is written down, so the repository stays on its own policy for the next
+review. Asking for the **stricter** run is anyone's call. Asking for the looser
+one - approving up front on a repository that deliberately waits for a clean
+review - overrules an admin's decision, so it takes an admin. A value that is
+not a policy is refused rather than quietly ignored, since a review that ran on
+a policy you did not ask for is worse than one that did not run.
+
 ## One session per thread
 
 A Slack thread is one conversation, so it gets **one Claude Code CLI session**.
@@ -332,6 +348,11 @@ asker's own credential rather than being free.
 This matters beyond convenience: only the command can offer the box that takes a
 Claude token, so a spoken request used to get a description of the token instead
 of the button that accepts one.
+
+Flags carry through (`@bot review <url> --policy after`); the rest of the
+sentence does not. "can you please" is not guidance, and guessing which half of
+a sentence was meant as an instruction is worse than not trying - typed with the
+prefix, the free text is the steering note.
 
 ## Your own Claude token
 

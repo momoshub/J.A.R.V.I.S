@@ -26,4 +26,12 @@ describe("reviewRequestIn", () => {
     expect(reviewRequestIn(`<@U1> who is the reviewer on ${PR}`)).toBeUndefined(); // reviewer != review
     expect(reviewRequestIn("")).toBeUndefined();
   });
+
+  test("a flag said out loud carries through, prose does not", () => {
+    expect(reviewRequestIn(`<@U1> review ${PR} --policy after`)).toBe(`review ${PR} --policy after`);
+    expect(reviewRequestIn(`<@U1> review ${PR} --after`)).toBe(`review ${PR} --after`);
+    // "can you please" is not guidance, and guessing which half of a sentence
+    // was meant as one is worse than not trying
+    expect(reviewRequestIn(`<@U1> can you please review ${PR} when free`)).toBe(`review ${PR}`);
+  });
 });

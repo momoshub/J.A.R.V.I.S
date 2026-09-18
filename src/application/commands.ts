@@ -34,6 +34,7 @@ import {
 import {
   asReviewPolicy,
   DEFAULT_REVIEW_POLICY,
+  parsePolicyArg,
   repoOf,
   repoRefOf,
   type ReviewPolicy,
@@ -583,7 +584,7 @@ export const COMMANDS: readonly CommandDef[] = [
     name: "review",
     aliases: ["rv"],
     minRole: "pal",
-    usage: "<pr-url> [pr-url...] [what to look at]",
+    usage: "<pr-url> [pr-url...] [--policy first|after] [what to look at]",
     summary: "review a PR: approve it, then post the review to GitHub and here",
     run: async (ctx) => {
       const { deps, actor, args, prefix, reply } = ctx;
@@ -599,13 +600,20 @@ export const COMMANDS: readonly CommandDef[] = [
           ? askForToken(ctx, `review ${args.join(" ")}`.trim())
           : "I have nowhere to keep a Claude Code token right now, and a review only ever runs on the caller's own. Ask an admin to check the token store.";
       }
+      // A policy asked for on the line itself, for this run only. Pulled out
+      // first so it reaches neither the url parser nor the free-text note.
+      const { asked, rest, bad } = parsePolicyArg(args);
+      if (bad !== undefined) {
+        return `\`${bad}\` is not a policy. \`--policy first\`, \`--policy after\`, or \`--policy default\`.`;
+      }
       // Slack wraps links as <url|label>; hand the brain the bare urls.
-      const urls = [...new Set(args.flatMap((a) => a.match(PR_URL) ?? []))];
-      const targets = urls.length > 0 ? urls : args;
+      const urls = [...new Set(rest.flatMap((a) => a.match(PR_URL) ?? []))];
+      const targets = urls.length > 0 ? urls : rest;
+      if (targets.length === 0) return `Which PR? \`${prefix} review <pr-url>\``;
       // Anything typed alongside the urls is guidance: "the migration is the
       // risky bit", "hotfix, correctness only". It aims the review; the prompt
       // is what keeps it from doing anything more than that.
-      const note = urls.length > 0 ? args.filter((a) => !PR_URL.test(a)).join(" ").trim() : "";
+      const note = urls.length > 0 ? rest.filter((a) => !PR_URL.test(a)).join(" ").trim() : "";
       // A preset, tightly-scoped task: always run FULL access (it comments and
       // requests changes on GitHub, clones, and spawns child agents) with a long
       // timeout, regardless of the caller's role.
@@ -623,8 +631,20 @@ export const COMMANDS: readonly CommandDef[] = [
       const seen = new Set<string>();
       const announcements: string[] = [];
       const approvedUpFront: string[] = [];
+      // What each PR is on for this run: the flag if one was given, otherwise
+      // whatever the repository is configured for.
+      const override: ReviewPolicy | undefined =
+        asked === "default" ? DEFAULT_REVIEW_POLICY : asked;
+      // Asking for a stricter run is anyone's call. Asking for a looser one -
+      // approving up front on a repository that deliberately waits for a clean
+      // review - is overruling an admin's decision, so it takes one.
+      const loosened = override === "approve-first" && urls.some((u) => reviewPolicyOf(deps, u) === "approve-after");
+      if (loosened && RANK[actor.role] < RANK.admin) {
+        return "That repo is set to approve only after a clean review, and only an admin can override that for a run.";
+      }
+      const policyFor = (url: string): ReviewPolicy => override ?? reviewPolicyOf(deps, url);
       // Repositories on `approve-after` are left alone until the review is in.
-      const afterReview = urls.filter((u) => reviewPolicyOf(deps, u) === "approve-after");
+      const afterReview = urls.filter((u) => policyFor(u) === "approve-after");
       for (const url of urls) {
         if (afterReview.includes(url)) continue;
         const res = await deps.github?.approve(url);
@@ -655,7 +675,11 @@ export const COMMANDS: readonly CommandDef[] = [
       // destination is chosen by the transport - thread for a message command, DM
       // for a slash command - so nothing is hidden in an ephemeral reply.
       for (const line of announcements) await reply(line);
-      await reply(`🔍 reviewing ${targets.join(" ")}${note ? `\n_looking at: ${note}_` : ""}`);
+      await reply(
+        `🔍 reviewing ${targets.join(" ")}` +
+          (override ? `\n_${override}, for this run only_` : "") +
+          (note ? `\n_looking at: ${note}_` : ""),
+      );
 
       let out = "";
       // Set when the run was killed mid-flight. What streamed is then a fragment

@@ -16,6 +16,8 @@
 const PR_URL = /https?:\/\/github\.com\/[\w.-]+\/[\w.-]+\/pull\/\d+/g;
 /** "review", "reviews", "reviewing", "reviewed", "re-review". Not "reviewer". */
 const ASKS = /\b(re-?)?review(s|ing|ed)?\b/i;
+/** Command flags said out loud, e.g. "@bot review <url> --policy after". */
+const FLAGS = /--policy[= ][\w-]+|policy:[\w-]+|--first\b|--after\b/gi;
 
 /**
  * The command line this message is really asking for, or undefined when it is
@@ -25,5 +27,10 @@ const ASKS = /\b(re-?)?review(s|ing|ed)?\b/i;
 export const reviewRequestIn = (text: string): string | undefined => {
   if (!text || !ASKS.test(text)) return undefined;
   const urls = [...new Set(text.match(PR_URL) ?? [])];
-  return urls.length > 0 ? `review ${urls.join(" ")}` : undefined;
+  if (urls.length === 0) return undefined;
+  // Flags carry through, so a spoken request can still say how to run: the rest
+  // of the sentence does not, because "can you please" is not guidance and
+  // guessing which half of a sentence was meant as instruction is worse than
+  // not trying. Typed with the prefix, the free text is the steering note.
+  return `review ${[...urls, ...(text.match(FLAGS) ?? [])].join(" ")}`;
 };

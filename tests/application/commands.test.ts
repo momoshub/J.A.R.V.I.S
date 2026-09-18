@@ -1005,6 +1005,49 @@ describe("per-repo review policy", () => {
     expect(lines[lines.length - 1]).toContain("the review came back clean");
   });
 
+  test("--policy after holds the approval back for one run, without writing it down", async () => {
+    const { deps, calls, lines, reply } = withPolicy(undefined);
+    await dispatchCommand(deps, actor(), "C1", `rv ${OTHER} --policy after`, { reply });
+
+    expect(lines[0]).toContain("reviewing"); // no approval up front
+    expect(lines[0]).toContain("approve-after");
+    expect(lines[lines.length - 1]).toContain("the review came back clean");
+    expect(calls).toEqual([OTHER]); // approved only after
+    // and the repo is still on its own policy for the next one
+    expect(deps.settings!.get("review_policy:acme/acme-be")).toBeUndefined();
+  });
+
+  test("the flag is not mistaken for a PR or for the steering note", async () => {
+    const { deps, lines, reply, sys } = withPolicy(undefined);
+    await dispatchCommand(deps, actor(), "C1", `rv ${OTHER} --policy after check the migration`, { reply });
+    expect(sys()).toContain("check the migration");
+    expect(sys()).not.toContain("--policy");
+    expect(lines.some((l) => l.includes("_looking at: check the migration_"))).toBe(true);
+  });
+
+  test("loosening an approve-after repo takes an admin; tightening does not", async () => {
+    const { deps, calls, reply } = withPolicy(undefined);
+    await dispatchCommand(deps, actor(), "C1", "review-policy acme/sql-runner after");
+    const pal = actor({ slackId: "U0PAL0006", role: "pal" });
+    deps.users.upsert(pal);
+
+    // a pal cannot overrule the admin decision that this repo waits for a review
+    const refused = await dispatchCommand(deps, pal, "C1", `rv ${PR} --policy first`, { reply });
+    expect(refused).toContain("only an admin");
+    expect(calls).toEqual([]); // nothing approved
+
+    // but anyone may ask for the stricter run
+    await dispatchCommand(deps, pal, "C1", `rv ${OTHER} --policy after`, { reply });
+    expect(calls).toEqual([OTHER]); // approved after the review, not before
+  });
+
+  test("a policy that is not one is refused rather than quietly ignored", async () => {
+    const { deps } = withPolicy(undefined);
+    expect(await dispatchCommand(deps, actor(), "C1", `rv ${PR} --policy sometimes`)).toContain(
+      "is not a policy",
+    );
+  });
+
   test("a blocked review is not approved at all", async () => {
     const { deps, calls, lines, reply } = withPolicy("CHANGES_REQUESTED");
     await dispatchCommand(deps, actor(), "C1", "review-policy acme/sql-runner after");
