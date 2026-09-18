@@ -44,6 +44,40 @@ describe("respond", () => {
     expect(res.kind).toBe("denied");
   });
 
+  test("asking for a review in words runs the command, not a chat reply", async () => {
+    // the gap this closes: `@bot review <url>` reached the chat brain, which
+    // talked about the review - and about the token - instead of running one
+    // and offering the box that takes it
+    let asked: string | undefined;
+    const deps = build({
+      complete: async (p) => {
+        asked = p.system;
+        return "I would love to review that for you";
+      },
+    });
+    const res = await respond(deps, {
+      channelId: "C1",
+      slackUserId: OWNER,
+      text: "<@UBOT> review https://github.com/o/r/pull/1",
+    });
+
+    expect(asked).toBeUndefined(); // the chat brain never ran
+    if (res.kind === "reply") {
+      // the review command answered: no token store wired here, so it refuses
+      expect(res.text).toContain("caller's own");
+    }
+  });
+
+  test("talking about a PR is still just talking", async () => {
+    const deps = build(llm("it looked fine to me"));
+    const res = await respond(deps, {
+      channelId: "C1",
+      slackUserId: OWNER,
+      text: "<@UBOT> what did you make of https://github.com/o/r/pull/1",
+    });
+    expect(res).toEqual({ kind: "reply", text: "it looked fine to me" });
+  });
+
   test("owner can add a member via command end to end", async () => {
     const deps = build(llm("x"));
     await respond(deps, { channelId: "C1", slackUserId: OWNER, text: "!add <@UNEW> member" });

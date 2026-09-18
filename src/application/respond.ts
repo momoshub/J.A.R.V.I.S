@@ -9,6 +9,7 @@ import { cleanInboundText } from "../domain/conversation.ts";
 import { commandLineOf, dispatchCommand, notifiesOwner } from "./commands.ts";
 import { runWorkflowTurn, WORKFLOW_MIN_ROLE } from "./workflow.ts";
 import { requestAccess } from "./accessRequests.ts";
+import { reviewRequestIn } from "../domain/reviewRequest.ts";
 import type { UserRole } from "../domain/types.ts";
 import type { PostedRef } from "./slackAdmin.ts";
 import { handleMessage, type HandleMessageDeps, type HandleResult, type InboundMessage } from "./handleMessage.ts";
@@ -39,6 +40,14 @@ export const respond = async (
         return { kind: "reply", text: await runWorkflowTurn(deps, workflow, who.user, text, false, sink) };
       }
     }
+    // "@bot review <pr url>" is the command, not a conversation about it. Said
+    // in words it used to reach the chat brain, which would describe a review
+    // rather than run one - and describe the token rather than offer the box
+    // that takes it. Same words, same path, whichever way it was typed.
+    const asked = reviewRequestIn(inbound.text);
+    // `!` is the legacy trigger and needs no configured prefix, so this works
+    // the same whether or not the instance set one.
+    if (asked) return respond(deps, { ...inbound, text: `!${asked}` }, sink);
     return handleMessage(deps, inbound, sink);
   }
 

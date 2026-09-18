@@ -322,6 +322,17 @@ thread back in", silently. A genuine failure still surfaces.
 //bot session on       admins: back on
 ```
 
+## Asking for a review in words
+
+`@bot review <pr-url>` runs the review command, the same as typing it with the
+prefix. It has to be a mention carrying a real pull request url and actually say
+"review" - anything vaguer stays a conversation, because a review spends the
+asker's own credential rather than being free.
+
+This matters beyond convenience: only the command can offer the box that takes a
+Claude token, so a spoken request used to get a description of the token instead
+of the button that accepts one.
+
 ## Your own Claude token
 
 `review` runs the Claude Code CLI, and the CLI bills whoever's token it is
