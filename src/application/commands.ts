@@ -52,6 +52,12 @@ import {
   type ClaudeTokenPort,
 } from "./claudeTokens.ts";
 import { tokenGuide, tokenHint, tokenWhy } from "../domain/claudeToken.ts";
+import {
+  encodeTotpRequest,
+  TOTP_ACTION,
+  type TotpPort,
+} from "./totp.ts";
+import { normaliseLabel, secondsLeft, totpCode } from "../domain/totp.ts";
 import { tierOf } from "../domain/threadSession.ts";
 import type { ThreadSessionRepo } from "../infrastructure/db/threadSessionRepo.ts";
 import type { AllowedUser, PromptContext, UserRole } from "../domain/types.ts";
@@ -100,6 +106,8 @@ export type CommandDeps = {
   toolPolicy?: (role: UserRole, channelId?: string) => ToolPolicy;
   /** Per-user Claude Code tokens. `review` requires one; everything else prefers one. */
   claudeTokens?: ClaudeTokenPort;
+  /** Shared 2FA setup keys, for the `2fa` command. */
+  totp?: TotpPort;
   /** One CLI session per thread, for the `session` command to inspect and reset. */
   threadSessions?: ThreadSessionRepo;
   threadSessionsOn?: () => boolean;
@@ -228,6 +236,44 @@ const askForToken = async (ctx: Context, line: string, force = false): Promise<s
     }
   }
   return `${ask}\n\nrun \`${slash} token\` and a box will open for it`;
+};
+
+/**
+ * A code with only a moment left is a code that fails while it is being typed,
+ * so under this many seconds the next one is handed over instead.
+ */
+const MIN_CODE_SECONDS = 5;
+
+/**
+ * Ask for a 2FA setup key, with the button that opens the modal. Same shape as
+ * the token ask and for the same reason: the key itself is never typed into a
+ * channel, and the button carries only the label it will be filed under.
+ *
+ * Returns "" when the button was posted (the thread has it), or the text to show
+ * when there is nowhere to put one - a slash invocation, or no Slack wired up.
+ */
+const askForSecret = async (ctx: Context, label: string): Promise<string> => {
+  const { deps, channelId, threadTs, slash } = ctx;
+  const ask = `🔐 paste the setup key for \`${label}\` - the \`otpauth://\` link the QR code encodes, or the base32 key printed beside it`;
+  if (ctx.reply && deps.slack?.postInteractive) {
+    const posted = await deps.slack
+      .postInteractive(
+        channelId,
+        ask,
+        [
+          {
+            actionId: TOTP_ACTION,
+            label: "Paste the setup key",
+            value: encodeTotpRequest({ channelId, threadTs, label }),
+            style: "primary",
+          },
+        ],
+        threadTs,
+      )
+      .catch(() => undefined);
+    if (posted) return "";
+  }
+  return `${ask}\n\nrun \`${slash} 2fa add ${label}\` in a channel I am in and a box will open for it`;
 };
 
 /** Rough age of something, for a list nobody reads timestamps out of. */
@@ -925,6 +971,68 @@ export const COMMANDS: readonly CommandDef[] = [
       return box
         ? `You already have a token on file (${tokenHint(mine)}).\n\n${box}`
         : `You already have a token on file (${tokenHint(mine)}) - the box above replaces it.`;
+    },
+  },
+  {
+    name: "2fa",
+    aliases: ["totp", "otp"],
+    minRole: "executer",
+    usage: "<label> | list | add <label> | remove <label>",
+    summary: "a 2FA code for a shared login I hold the setup key for",
+    run: async (ctx) => {
+      const { deps, actor, args, slash } = ctx;
+      if (!deps.totp) return "2FA storage is not wired up here.";
+      const sub = (args[0] ?? "").toLowerCase();
+
+      if (args.length === 0 || sub === "list" || sub === "ls") {
+        const held = deps.totp.list();
+        if (held.length === 0) {
+          return `I hold no setup keys yet. An admin adds one with \`${slash} 2fa add <name>\`.`;
+        }
+        const lines = held.map(
+          (h) => `- \`${h.label}\`${h.account ? ` - ${h.account}` : ""}, added by <@${h.addedBy}> ${since(deps.clock() - h.updatedAt)}`,
+        );
+        return `${held.length} shared ${held.length === 1 ? "login" : "logins"}. \`${slash} 2fa <name>\` for a code.\n${lines.join("\n")}`;
+      }
+
+      if (sub === "add" || sub === "set") {
+        if (RANK[actor.role] < RANK.admin) return "Only admins can add a setup key.";
+        const label = normaliseLabel(args.slice(1).join(" "));
+        if (!label) return `Name it: \`${slash} 2fa add <name>\` - that name is how you ask for a code later.`;
+        // Never accept a setup key as command text: a message is readable by
+        // everyone in the channel, lands in my memory, and outlives the turn.
+        // The box the button opens is not a message.
+        const box = await askForSecret(ctx, label);
+        const replacing = deps.totp.has(label) ? `\`${label}\` already has a key - this replaces it.\n\n` : "";
+        return box ? `${replacing}${box}` : "";
+      }
+
+      if (sub === "remove" || sub === "forget" || sub === "delete") {
+        if (RANK[actor.role] < RANK.admin) return "Only admins can remove a setup key.";
+        const label = normaliseLabel(args.slice(1).join(" "));
+        if (!label) return `Which one? \`${slash} 2fa remove <name>\`.`;
+        return deps.totp.remove(label)
+          ? `Forgotten the setup key for \`${label}\`. Nobody gets a code for it from me now.`
+          : `I had no setup key for \`${label}\` anyway.`;
+      }
+
+      const label = normaliseLabel(args.join(" "));
+      const cfg = deps.totp.get(label);
+      if (!cfg) {
+        const known = deps.totp.list().map((h) => `\`${h.label}\``);
+        return known.length
+          ? `No setup key for \`${label}\`. I have ${known.join(", ")}.`
+          : `No setup key for \`${label}\`, and I hold none at all yet.`;
+      }
+      const now = deps.clock();
+      const left = secondsLeft(cfg, now);
+      // A code with a couple of seconds on it is a code that fails while you are
+      // still typing it, so hand over the next one rather than that.
+      if (left <= MIN_CODE_SECONDS) {
+        const next = totpCode(cfg, now + left * 1000);
+        return `\`${next}\` for \`${label}\` - the one on screen right now expires in ${left}s, so this is the next one. Give it ${left}s.`;
+      }
+      return `\`${totpCode(cfg, now)}\` for \`${label}\`${cfg.account ? ` (${cfg.account})` : ""} - ${left}s left.`;
     },
   },
   {

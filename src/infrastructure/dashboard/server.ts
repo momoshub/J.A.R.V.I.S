@@ -7,6 +7,7 @@
  * user action. Mutations still refuse to touch the owner record.
  */
 import { join, normalize } from "node:path";
+import { describeConnection, isListening, type ConnectionHealth } from "../../domain/connectionHealth.ts";
 import type { UserRole } from "../../domain/types.ts";
 import { DEFAULT_PERSONALITY } from "../../domain/personality.ts";
 import type { BotProfile } from "../../application/botProfile.ts";
@@ -47,6 +48,12 @@ export type DashboardDeps = {
   draft?: DraftReply;
   /** Command execution audit log. */
   commandLog?: CommandLogRepo;
+  /**
+   * Whether the bot can currently hear Slack. Read through a getter because the
+   * Slack app is built after this server; "deaf" must be visible from outside
+   * the process, since from inside it looks exactly like a quiet afternoon.
+   */
+  slackHealth?: () => ConnectionHealth | undefined;
   /**
    * Run one of the bot's own commands on someone's behalf. Wired in the
    * composition root, where the full command dependencies live; the brain
@@ -375,7 +382,22 @@ export const createDashboard = (config: DashboardConfig, deps: DashboardDeps) =>
   };
 
   const route = async (req: Request, url: URL): Promise<Response> => {
-    if (url.pathname === "/health") return Response.json({ ok: true });
+    if (url.pathname === "/health") {
+      const health = deps.slackHealth?.();
+      // `ok` means "can do its job", not "the process is up" - a bot that
+      // cannot hear Slack is down however well this endpoint answers.
+      return Response.json(
+        health
+          ? {
+              ok: isListening(health.state),
+              slack: describeConnection(health, deps.clock()),
+              state: health.state,
+              since: health.since,
+            }
+          : { ok: true },
+        { status: health && !isListening(health.state) ? 503 : 200 },
+      );
+    }
     if (url.pathname === "/api" || url.pathname.startsWith("/api/")) return api(req, url);
     if (req.method === "GET") return serveStatic(url.pathname);
     return new Response("Not found", { status: 404 });

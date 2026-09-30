@@ -20,10 +20,25 @@ import {
   TOKEN_INPUT,
   TOKEN_VIEW,
 } from "../../application/claudeTokens.ts";
+import {
+  decodeTotpRequest,
+  submitTotpSecret,
+  TOTP_ACTION,
+  TOTP_BLOCK,
+  TOTP_INPUT,
+  TOTP_VIEW,
+} from "../../application/totp.ts";
 import { tokenGuide, tokenHint, TOKEN_PREFIX } from "../../domain/claudeToken.ts";
 import { commandLineOf, dispatchCommand } from "../../application/commands.ts";
 import { annotateMentions, extractMentionIds } from "../../domain/mentions.ts";
 import { createSlackStream, type Streamer } from "./stream.ts";
+import {
+  CONNECTION_GRACE_MS,
+  describeConnection,
+  shouldGiveUp,
+  type ConnectionHealth,
+  type ConnectionState,
+} from "../../domain/connectionHealth.ts";
 
 /** Messages longer than this get a "thinking" step before content streams. */
 
@@ -43,6 +58,18 @@ export type SlackAppConfig = {
   /** Message command prefix (e.g. "X/ev") and the Slack slash command name. */
   commandPrefix: string;
   slashCommand: string;
+  /**
+   * How long the socket may stay down before the process gives up on itself.
+   * Exposed for tests; production wants the default.
+   */
+  connectionGraceMs?: number;
+  /** How often to check. */
+  connectionCheckMs?: number;
+  /**
+   * What to do when the socket is gone for good. Defaults to exiting, so the
+   * supervisor restarts into a fresh connection; tests pass their own.
+   */
+  onConnectionLost?: (health: ConnectionHealth) => void;
 };
 
 type Deps = RespondDeps & {
@@ -252,6 +279,41 @@ export const createHandler =
 export const createSlackApp = (config: SlackAppConfig, deps: Deps) => {
   const log = deps.log ?? ((m: string) => console.log(`[slack] ${m}`));
   const app = new App({ token: config.botToken, appToken: config.appToken, socketMode: true });
+
+  // Socket Mode goes deaf silently: the process lives, the supervisor sees it
+  // running, and nothing distinguishes "nobody is talking to me" from "I cannot
+  // hear anyone". Watch the connection itself and exit if it does not come
+  // back, which is the only way KeepAlive can do its job.
+  const health: ConnectionHealth = { state: "unknown", since: Date.now() };
+  const enter = (state: ConnectionState): void => {
+    if (health.state === state) return;
+    health.state = state;
+    health.since = Date.now();
+    log(`socket ${state}`);
+  };
+  const socket = (app as unknown as { receiver?: { client?: { on?: (e: string, f: () => void) => void } } })
+    .receiver?.client;
+  if (socket?.on) {
+    socket.on("connected", () => enter("connected"));
+    socket.on("connecting", () => enter("connecting"));
+    socket.on("reconnecting", () => enter("reconnecting"));
+    socket.on("disconnecting", () => enter("disconnected"));
+    socket.on("disconnected", () => enter("disconnected"));
+    // Any traffic at all proves the socket is carrying events, whatever the
+    // state machine believes about itself.
+    socket.on("slack_event", () => enter("connected"));
+  } else {
+    log("socket state is not observable on this Bolt build - the watchdog is off");
+  }
+
+  const graceMs = config.connectionGraceMs ?? CONNECTION_GRACE_MS;
+  const giveUp =
+    config.onConnectionLost ??
+    ((h: ConnectionHealth) => {
+      log(`giving up: ${describeConnection(h, Date.now())}. Exiting so the supervisor restarts me.`);
+      process.exit(1);
+    });
+  let watchdog: ReturnType<typeof setInterval> | undefined;
   const handle = createHandler(config, deps, log);
   // The real WebClient is a superset of the minimal SlackClient seam.
   const asClient = (client: WebClient) => client as unknown as SlackClient;
@@ -388,6 +450,86 @@ export const createSlackApp = (config: SlackAppConfig, deps: Deps) => {
     }
   }) as never);
 
+  // A 2FA setup key travels the same way a token does, and for the same reason:
+  // a modal's input is not a message, so it is not in history, not searchable,
+  // and not in the bot's memory. The label rides along in private_metadata.
+  const totpModal = (metadata: string) => {
+    const label = decodeTotpRequest(metadata)?.label ?? "this login";
+    return {
+      type: "modal",
+      callback_id: TOTP_VIEW,
+      private_metadata: metadata,
+      title: { type: "plain_text", text: "2FA setup key" },
+      submit: { type: "plain_text", text: "Save" },
+      close: { type: "plain_text", text: "Cancel" },
+      blocks: [
+        {
+          type: "section",
+          text: {
+            type: "mrkdwn",
+            text: `Filed under \`${label}\`. Paste the \`otpauth://\` link the QR code encodes, or the base32 key printed beside it.`,
+          },
+        },
+        {
+          type: "input",
+          block_id: TOTP_BLOCK,
+          label: { type: "plain_text", text: "Setup key" },
+          hint: {
+            type: "plain_text",
+            text: "stored encrypted, never shown in a channel - only the six digits come back out",
+          },
+          element: {
+            type: "plain_text_input",
+            action_id: TOTP_INPUT,
+            placeholder: { type: "plain_text", text: "otpauth://totp/..." },
+          },
+        },
+      ],
+    };
+  };
+
+  app.action({ action_id: TOTP_ACTION }, (async ({ ack, body, action, client }: ModalButtonArgs) => {
+    await ack();
+    if (!body.trigger_id) return;
+    try {
+      await client.views.open({ trigger_id: body.trigger_id, view: totpModal(action.value ?? "") });
+    } catch (err) {
+      log(`2fa modal failed: ${err instanceof Error ? err.message : String(err)}`);
+    }
+  }) as never);
+
+  app.view(TOTP_VIEW, (async ({ ack, body, view }: ViewArgs) => {
+    const userId = body.user?.id;
+    const secret = view.state?.values?.[TOTP_BLOCK]?.[TOTP_INPUT]?.value ?? "";
+    const outcome = submitTotpSecret(deps, {
+      slackUserId: userId ?? "",
+      secret,
+      request: decodeTotpRequest(view.private_metadata),
+    });
+    if (outcome.kind !== "saved") {
+      // Keep the modal open with the reason on the field, so a bad paste is
+      // fixed where it happened rather than re-explained in a channel.
+      const error =
+        outcome.kind === "invalid" ? outcome.error.replace(/`/g, "") : "I have nowhere to store that right now";
+      await ack({ response_action: "errors", errors: { [TOTP_BLOCK]: error } });
+      return;
+    }
+    await ack();
+    if (!userId) return;
+
+    const req = outcome.request;
+    const channel = req?.channelId;
+    // The key itself is never echoed - only what it is called and who it is for.
+    const saved = `🔐 setup key saved as \`${outcome.label}\`${outcome.account ? ` (${outcome.account})` : ""}. \`${config.slashCommand} 2fa ${outcome.label}\` for a code.`;
+    try {
+      if (channel) await deps.slack?.post(channel, saved, req?.threadTs);
+      else await deps.slack?.postDm(userId, saved);
+      log(`totp secret saved as ${outcome.label} by ${userId}`);
+    } catch (err) {
+      log(`2fa follow-up failed: ${err instanceof Error ? err.message : String(err)}`);
+    }
+  }) as never);
+
   // The owner reacting on an access-request notice decides it.
   app.event("reaction_added", async ({ event }) => {
     const e = event as {
@@ -473,10 +615,23 @@ export const createSlackApp = (config: SlackAppConfig, deps: Deps) => {
   return {
     start: async () => {
       await app.start();
+      // `start()` resolving means the socket opened, even if the event did not
+      // reach us before this point.
+      if (health.state === "unknown") enter("connected");
+      if (socket?.on) {
+        watchdog = setInterval(() => {
+          if (shouldGiveUp(health, Date.now(), graceMs)) giveUp(health);
+        }, config.connectionCheckMs ?? 30_000);
+        // A watchdog is not a reason to keep an otherwise-finished process alive.
+        watchdog.unref?.();
+      }
       log(`${config.botName} is online via Socket Mode.${config.streamUpdates ? " streaming on." : ""}`);
     },
     stop: async () => {
+      if (watchdog) clearInterval(watchdog);
       await app.stop();
     },
+    /** Whether the bot can currently hear Slack, for the dashboard. */
+    health: () => ({ ...health }),
   };
 };

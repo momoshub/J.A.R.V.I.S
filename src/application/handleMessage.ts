@@ -29,6 +29,7 @@ import type { SettingsRepo } from "../infrastructure/db/settingsRepo.ts";
 import { requestAccess } from "./accessRequests.ts";
 import type { CommandTickets } from "./commandTickets.ts";
 import { tokenFor, type ClaudeTokenPort } from "./claudeTokens.ts";
+import type { TotpPort } from "./totp.ts";
 import { isMissingSession, tierOf, unseenTurns } from "../domain/threadSession.ts";
 import type { ThreadSessionRepo } from "../infrastructure/db/threadSessionRepo.ts";
 import type { SlackAdminPort, SlackMessage } from "./slackAdmin.ts";
@@ -62,6 +63,8 @@ export type HandleMessageDeps = {
   toolPolicy?: (role: UserRole, channelId?: string) => ToolPolicy;
   /** Per-user Claude Code tokens: a speaker's own turns run on their credential. */
   claudeTokens?: ClaudeTokenPort;
+  /** Shared 2FA setup keys, for the `2fa` command. */
+  totp?: TotpPort;
   /** One CLI session per thread, so a follow-up costs a follow-up. */
   threadSessions?: ThreadSessionRepo;
   /** Whether thread sessions are switched on. Read per turn, so it needs no restart. */

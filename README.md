@@ -315,6 +315,29 @@ stays a note rather than refusing the command. Bare words are just words -
 "approve after CI is green" asks for nothing. With several PRs the flag applies
 to the whole run whatever order it was typed in.
 
+## Staying online
+
+Socket Mode fails in a way that looks like health from every angle: the process
+stays up, the supervisor reports it running, the dashboard answers, and the logs
+go quiet - which is indistinguishable from a quiet afternoon. Twice that has
+been a multi-hour outage nobody could see, because `KeepAlive` only revives a
+process that has actually **exited**.
+
+So the connection watches itself. If the socket is not connected and has not
+come back within three minutes - including a client stuck reconnecting forever,
+which is what both outages actually were - the process exits and the supervisor
+starts a fresh one. A blip that heals in seconds is left alone.
+
+`GET /health` reports whether the bot can **hear Slack**, not whether it is
+running:
+
+```json
+{ "ok": false, "slack": "NOT listening - reconnecting for 14m", "state": "reconnecting" }
+```
+
+It answers `503` when deaf, so an uptime check sees an outage instead of a
+process that happens to be alive.
+
 ## One session per thread
 
 A Slack thread is one conversation, so it gets **one Claude Code CLI session**.

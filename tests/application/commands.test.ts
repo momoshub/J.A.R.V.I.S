@@ -13,6 +13,8 @@ import type { LlmPort } from "../../src/application/ports.ts";
 import type { SlackAdminPort, SlackMessage } from "../../src/application/slackAdmin.ts";
 import type { GitHubPort } from "../../src/application/github.ts";
 import { BOMB_SIZE } from "../../src/domain/emoji.ts";
+import type { TotpPort } from "../../src/application/totp.ts";
+import { parseTotpInput, totpCode } from "../../src/domain/totp.ts";
 
 const OWNER = "U0OWNER0001";
 
@@ -1223,3 +1225,129 @@ describe("ticket", () => {
   });
 });
 
+
+describe("2fa", () => {
+  /** RFC 6238's seed, so an expected code can be written down rather than guessed. */
+  const SEED = "otpauth://totp/acme:demo%40acme.io?secret=GEZDGNBVGY3TQOJQGEZDGNBVGY3TQOJQ&issuer=acme";
+
+  const fakeTotp = (): TotpPort => {
+    const rows = new Map<string, { uri: string; account?: string; addedBy: string; updatedAt: number }>();
+    return {
+      get: (label) => {
+        const row = rows.get(label);
+        return row ? parseTotpInput(row.uri) : undefined;
+      },
+      has: (label) => rows.has(label),
+      set: (label, uri, addedBy, account) => {
+        rows.set(label, { uri, account, addedBy, updatedAt: 0 });
+      },
+      remove: (label) => rows.delete(label),
+      list: () =>
+        [...rows.entries()].map(([label, r]) => ({
+          label,
+          account: r.account,
+          addedBy: r.addedBy,
+          updatedAt: r.updatedAt,
+        })),
+    };
+  };
+
+  const withTotp = (at: number): CommandDeps & { totp: TotpPort } => {
+    const deps = { ...build(), totp: fakeTotp(), clock: () => at };
+    return deps as CommandDeps & { totp: TotpPort };
+  };
+
+  test("says so plainly when there is no store wired up", async () => {
+    const deps = build();
+    expect(await dispatchCommand(deps, actor(), "C1", "2fa demo")).toContain("not wired up");
+  });
+
+  test("a pal cannot reach it at all", async () => {
+    const deps = withTotp(0);
+    const out = await dispatchCommand(deps, actor({ slackId: "U3", role: "pal" }), "C1", "2fa demo");
+    expect(out).not.toContain("not wired up");
+    expect(out.toLowerCase()).toContain("executer");
+  });
+
+  test("an empty store points at add rather than at nothing", async () => {
+    const deps = withTotp(0);
+    expect(await dispatchCommand(deps, actor(), "C1", "2fa")).toContain("2fa add");
+  });
+
+  test("only an admin may add a key", async () => {
+    const deps = withTotp(0);
+    const out = await dispatchCommand(deps, actor({ slackId: "U3", role: "executer" }), "C1", "2fa add demo");
+    expect(out).toContain("Only admins");
+    expect(deps.totp.list()).toHaveLength(0);
+  });
+
+  test("add never takes the key as command text - it offers the box", async () => {
+    const deps = withTotp(0);
+    const out = await dispatchCommand(deps, actor(), "C1", `2fa add demo ${SEED}`);
+    expect(out).toContain("setup key");
+    expect(out).not.toContain("GEZDGNBV");
+    expect(deps.totp.list()).toHaveLength(0);
+  });
+
+  test("a code, with the account and the time left", async () => {
+    const deps = withTotp(45_000);
+    deps.totp.set("demo", SEED, OWNER, "demo@acme.io");
+    const out = await dispatchCommand(deps, actor(), "C1", "2fa demo");
+    const expected = totpCode(parseTotpInput(SEED)!, 45_000);
+    expect(out).toContain(expected);
+    expect(out).toContain("demo@acme.io");
+    expect(out).toContain("15s");
+  });
+
+  test("hands over the next code when this one is about to expire", async () => {
+    const deps = withTotp(58_000);
+    deps.totp.set("demo", SEED, OWNER);
+    const out = await dispatchCommand(deps, actor(), "C1", "2fa demo");
+    expect(out).toContain(totpCode(parseTotpInput(SEED)!, 60_000));
+    expect(out).toContain("next one");
+  });
+
+  test("the label is matched however it was typed", async () => {
+    const deps = withTotp(45_000);
+    deps.totp.set("shared-demo", SEED, OWNER);
+    expect(await dispatchCommand(deps, actor(), "C1", "2fa  Shared Demo ")).toContain(
+      totpCode(parseTotpInput(SEED)!, 45_000),
+    );
+  });
+
+  test("an unknown label says what is actually held", async () => {
+    const deps = withTotp(0);
+    deps.totp.set("demo", SEED, OWNER);
+    const out = await dispatchCommand(deps, actor(), "C1", "2fa nope");
+    expect(out).toContain("No setup key");
+    expect(out).toContain("demo");
+  });
+
+  test("list shows who added each one, and never the secret", async () => {
+    const deps = withTotp(0);
+    deps.totp.set("demo", SEED, OWNER, "demo@acme.io");
+    const out = await dispatchCommand(deps, actor(), "C1", "2fa list");
+    expect(out).toContain("demo");
+    expect(out).toContain(OWNER);
+    expect(out).not.toContain("GEZDGNBV");
+  });
+
+  test("remove is admin-only, and says when there was nothing to forget", async () => {
+    const deps = withTotp(0);
+    deps.totp.set("demo", SEED, OWNER);
+    expect(await dispatchCommand(deps, actor({ slackId: "U3", role: "executer" }), "C1", "2fa remove demo")).toContain(
+      "Only admins",
+    );
+    expect(deps.totp.has("demo")).toBe(true);
+    expect(await dispatchCommand(deps, actor(), "C1", "2fa remove demo")).toContain("Forgotten");
+    expect(await dispatchCommand(deps, actor(), "C1", "2fa remove demo")).toContain("had no setup key");
+  });
+
+  test("otp and totp reach the same command", async () => {
+    const deps = withTotp(45_000);
+    deps.totp.set("demo", SEED, OWNER);
+    const expected = totpCode(parseTotpInput(SEED)!, 45_000);
+    expect(await dispatchCommand(deps, actor(), "C1", "otp demo")).toContain(expected);
+    expect(await dispatchCommand(deps, actor(), "C1", "totp demo")).toContain(expected);
+  });
+});

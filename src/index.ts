@@ -12,6 +12,7 @@ import { tmpdir } from "node:os";
 import { loadConfig, modelLabel, type AppConfig } from "./config/env.ts";
 import { openDatabase } from "./infrastructure/db/client.ts";
 import { createThreadSessionRepo } from "./infrastructure/db/threadSessionRepo.ts";
+import { createTotpRepo } from "./infrastructure/db/totpRepo.ts";
 import {
   createClaudeTokenRepo,
   loadOrCreateKey,
@@ -31,6 +32,7 @@ import { createAnthropicLlm } from "./infrastructure/llm/anthropic.ts";
 import { createClaudeCliLlm } from "./infrastructure/llm/claudeCli.ts";
 import { WebClient } from "@slack/web-api";
 import { createSlackApp } from "./infrastructure/slack/app.ts";
+import type { ConnectionHealth } from "./domain/connectionHealth.ts";
 import { createSlackAdmin } from "./infrastructure/slack/adminClient.ts";
 import { createGhCli } from "./infrastructure/github/ghCli.ts";
 import { createDraftReply } from "./application/draftReply.ts";
@@ -87,10 +89,12 @@ const main = async () => {
   const settings = createSettingsRepo(db);
   // Separate database on purpose: the main one is committed, and user tokens
   // must never be able to reach git. Encrypted under a key kept beside it.
-  const claudeTokens = createClaudeTokenRepo(
-    openTokenDatabase(config.tokenDatabasePath),
-    loadOrCreateKey(config.tokenKeyPath),
-  );
+  const tokenDb = openTokenDatabase(config.tokenDatabasePath);
+  const tokenKey = loadOrCreateKey(config.tokenKeyPath);
+  const claudeTokens = createClaudeTokenRepo(tokenDb, tokenKey);
+  // Shared 2FA seeds live beside the tokens, under the same key: a seed is a
+  // credential, so it gets the credential database rather than the committed one.
+  const totp = createTotpRepo(tokenDb, tokenKey);
   // Activity log to the logs/ folder: every command (and message) is recorded,
   // failed commands additionally land in errors.log.
   const activity = createActivityLog(config.logDir);
@@ -225,6 +229,7 @@ const main = async () => {
     // A person's own Claude Code credential: required by `review`, used by every
     // other turn of theirs when they have one on file.
     claudeTokens,
+    totp,
     // The dashboard API is loopback-only, so the brain can save a learning the
     // same way the dashboard does - offered to admins/owner conversations only.
     learnUrl: `http://127.0.0.1:${config.dashboardPort}/api/learnings`,
@@ -235,6 +240,9 @@ const main = async () => {
     slashCommand: config.slashCommand,
   };
 
+  // Filled in once the Slack app exists, so /health can report the socket from
+  // the moment it does and never trips over the order things are built in.
+  let slackApp: { health: () => ConnectionHealth } | undefined;
   const dashboard = createDashboard(
     {
       port: config.dashboardPort,
@@ -246,6 +254,9 @@ const main = async () => {
       allowedOrigins: config.dashboardAllowedOrigins,
     },
     {
+      // Read through a getter: the Slack app is built after this server, and a
+      // bot that cannot hear Slack is down however well /health answers.
+      slackHealth: () => slackApp?.health(),
       users,
       messages,
       learnings,
@@ -306,6 +317,7 @@ const main = async () => {
     },
     { ...deps, log: activity.line },
   );
+  slackApp = slack;
   await slack.start();
 
   const shutdown = async () => {

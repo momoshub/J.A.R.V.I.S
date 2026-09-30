@@ -5,11 +5,11 @@ import { createMessageRepo } from "../../src/infrastructure/db/messageRepo.ts";
 import { createLearningsRepo } from "../../src/infrastructure/db/learningsRepo.ts";
 import { createSettingsRepo, SETTING_KEYS } from "../../src/infrastructure/db/settingsRepo.ts";
 import { loadBotProfile } from "../../src/application/botProfile.ts";
-import { createDashboard } from "../../src/infrastructure/dashboard/server.ts";
+import { createDashboard, type DashboardDeps } from "../../src/infrastructure/dashboard/server.ts";
 
 const OWNER = "U0OWNER0001";
 
-const build = () => {
+const build = (extra: Partial<DashboardDeps> = {}) => {
   const db = openDatabase(":memory:");
   const users = createUserRepo(db);
   const messages = createMessageRepo(db);
@@ -20,7 +20,7 @@ const build = () => {
     loadBotProfile(settings, { name: "TestBot", thinkingLabel: "thinking...", thinkingDoneLabel: "✅" });
   const dash = createDashboard(
     { port: 0, ownerSlackId: OWNER, model: "claude-opus-4-8", distDir: "/nonexistent", commandPrefix: "//bot", slashCommand: "/bot" },
-    { users, messages, learnings, settings, clock: () => 99, profile },
+    { users, messages, learnings, settings, clock: () => 99, profile, ...extra },
   );
   return { dash, users, messages, learnings, settings };
 };
@@ -41,6 +41,22 @@ describe("dashboard static + api", () => {
     const res = await build().dash.handle(api("/health"));
     expect(res.status).toBe(200);
     expect(((await res.json()) as { ok: boolean }).ok).toBe(true);
+  });
+
+  test("health reports whether the bot can hear Slack, not whether it is running", async () => {
+    // the failure this exists for: twice the process was up and this endpoint
+    // answered while the bot had not heard a word for hours
+    const deaf = build({ slackHealth: () => ({ state: "reconnecting", since: 0 }) });
+    const res = await deaf.dash.handle(api("/health"));
+    expect(res.status).toBe(503);
+    const body = (await res.json()) as { ok: boolean; slack: string };
+    expect(body.ok).toBe(false);
+    expect(body.slack).toContain("NOT listening");
+
+    const live = build({ slackHealth: () => ({ state: "connected", since: 0 }) });
+    const good = await live.dash.handle(api("/health"));
+    expect(good.status).toBe(200);
+    expect(((await good.json()) as { ok: boolean }).ok).toBe(true);
   });
 
   test("static falls back to a 500 hint when the build is missing", async () => {
