@@ -61,3 +61,16 @@ export const unseenTurns = (
   const after = history.slice(at + 1);
   return after.length > 0 ? after : history.slice(-1);
 };
+
+/**
+ * Did this run get killed for taking too long? SIGTERM is how the adapter's own
+ * timeout reaps a turn, so 143 means "out of time", not "broken".
+ *
+ * Worth telling apart: a turn that ran out of time while genuinely working -
+ * reading logs, walking a repo - should say so, because "I hit an error" reads
+ * as a bug and invites the same question again rather than a narrower one.
+ */
+export const isTimeout = (err: unknown): boolean => {
+  const msg = err instanceof Error ? err.message : String(err ?? "");
+  return /exited with code 143\b/.test(msg);
+};

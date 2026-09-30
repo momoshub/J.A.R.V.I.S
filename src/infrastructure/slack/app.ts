@@ -31,6 +31,7 @@ import {
 import { tokenGuide, tokenHint, TOKEN_PREFIX } from "../../domain/claudeToken.ts";
 import { commandLineOf, dispatchCommand } from "../../application/commands.ts";
 import { annotateMentions, extractMentionIds } from "../../domain/mentions.ts";
+import { isTimeout } from "../../domain/threadSession.ts";
 import { createSlackStream, type Streamer } from "./stream.ts";
 import {
   CONNECTION_GRACE_MS,
@@ -269,8 +270,13 @@ export const createHandler =
     } catch (err) {
       log(`respond failed: ${err instanceof Error ? err.message : String(err)}`);
       if (stream?.started) await stream.finish().catch(() => undefined);
+      // A turn reaped for running long is not a bug, and saying "I hit an error"
+      // invites the same question again rather than a narrower one.
+      const text = isTimeout(err)
+        ? "that one ran past my time limit for a single turn, so I lost it. it usually means I was digging through a lot - ask me again with a narrower scope, or run it as a `workflow` which has no such limit"
+        : "Sorry, I hit an error handling that. Please try again in a moment.";
       await msg
-        .say({ text: "Sorry, I hit an error handling that. Please try again in a moment.", thread_ts: msg.threadTs })
+        .say({ text, thread_ts: msg.threadTs })
         .catch(() => undefined);
     }
   };

@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { isMissingSession, tierOf, unseenTurns } from "../../src/domain/threadSession.ts";
+import { isMissingSession, isTimeout, tierOf, unseenTurns } from "../../src/domain/threadSession.ts";
 import type { StoredMessage } from "../../src/domain/types.ts";
 
 const turn = (ts: string, content = ts): StoredMessage => ({
@@ -62,5 +62,17 @@ describe("isMissingSession", () => {
     expect(isMissingSession(new Error("claude CLI exited with code 1: rate limited"))).toBe(false);
     expect(isMissingSession(new Error("boom"))).toBe(false);
     expect(isMissingSession(undefined)).toBe(false);
+  });
+});
+
+describe("isTimeout", () => {
+  test("143 is the adapter's own timeout reaping the turn", () => {
+    expect(isTimeout(new Error("claude CLI exited with code 143: no output"))).toBe(true);
+  });
+
+  test("any other failure is a failure, and must not be excused as slowness", () => {
+    expect(isTimeout(new Error("claude CLI exited with code 1: rate limited"))).toBe(false);
+    expect(isTimeout(new Error("No conversation found with session ID x"))).toBe(false);
+    expect(isTimeout(undefined)).toBe(false);
   });
 });
