@@ -230,6 +230,12 @@ export const handleMessage = async (
 
   let sessionId = bound?.sessionId ?? deps.newSessionId?.() ?? crypto.randomUUID();
   let resumed = !!bound;
+  // Bind BEFORE the run, not after. A turn that dies - and a turn that dies is
+  // usually the long, expensive one - would otherwise leave nothing bound, so
+  // the retry starts cold and repeats the same expensive discovery that ran it
+  // out of time in the first place. The CLI writes its session as it goes, so
+  // resuming a killed one picks up everything it had already done.
+  if (key && !bound) sessions?.claim(key.channelId, key.threadTs, tier, sessionId, newestTs, deps.clock());
   let raw: string;
   try {
     raw = await run({
@@ -244,14 +250,14 @@ export const handleMessage = async (
     if (!bound || !isMissingSession(err)) throw err;
     sessionId = deps.newSessionId?.() ?? crypto.randomUUID();
     resumed = false;
+    if (key) sessions?.claim(key.channelId, key.threadTs, tier, sessionId, newestTs, deps.clock());
     raw = await run({ ...base, messages: cold(), session: { id: sessionId, resume: false } });
   }
   const reply = raw.trim();
 
-  if (key) {
-    if (resumed) sessions?.touch(key.channelId, key.threadTs, tier, newestTs, deps.clock());
-    else sessions?.claim(key.channelId, key.threadTs, tier, sessionId, newestTs, deps.clock());
-  }
+  // Already bound above; this only records that the turn landed and how far the
+  // session has now been shown.
+  if (key) sessions?.touch(key.channelId, key.threadTs, tier, newestTs, deps.clock());
 
   const safeReply = reply.length > 0 ? reply : "I do not have anything useful to add there.";
 

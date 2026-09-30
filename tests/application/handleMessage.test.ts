@@ -403,6 +403,34 @@ describe("handleMessage", () => {
     expect(seen[1]?.messages.map((m) => m.content)).toEqual(["second"]);
   });
 
+  test("a turn that dies still leaves its session bound, so the retry resumes it", async () => {
+    // the failure this exists for: every turn of a long investigation timed out,
+    // nothing was ever bound, and each retry started cold and repeated the same
+    // expensive discovery that ran it out of time
+    let calls = 0;
+    const seen: LlmCompleteParams[] = [];
+    const deps = build({
+      complete: async (p) => {
+        calls += 1;
+        seen.push(p);
+        if (calls === 1) throw new Error("claude CLI exited with code 143: no output");
+        return "ok";
+      },
+    });
+    deps.threadSessions = createThreadSessionRepo(db);
+    let n = 0;
+    deps.newSessionId = () => `sess-${++n}`;
+
+    const inbound = { channelId: "C1", slackUserId: OWNER, text: "investigate", threadTs: "500.1", messageTs: "500.1" };
+    await expect(handleMessage(deps, inbound)).rejects.toThrow("143");
+    // bound despite the failure
+    expect(deps.threadSessions.find("C1", "500.1", "sandbox")?.sessionId).toBe("sess-1");
+
+    await handleMessage(deps, { ...inbound, text: "try again", messageTs: "500.2" });
+    // the retry resumed the dead turn's session rather than opening a new one
+    expect(seen[1]?.session).toEqual({ id: "sess-1", resume: true });
+  });
+
   test("a session the CLI no longer has is replaced, not surfaced as an error", async () => {
     let calls = 0;
     const deps = build({
