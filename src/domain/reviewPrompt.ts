@@ -190,3 +190,41 @@ ${SLACK_FORMAT}
 
 You DO have write access for this task and are expected to comment / request-changes on the PR. Approving is never yours to do. Do not modify files in any real repo, push, or take any action beyond these PR-review commands.`;
 };
+
+/**
+ * How the review works, in words, for someone asking rather than requesting one.
+ *
+ * It exists because the question used to cost a review: asked to explain itself,
+ * the bot ran `review help` and spent minutes reviewing a pull request named
+ * "help" on the asker's own credential.
+ *
+ * `full` prints the real system prompt instead of the summary. It is not a
+ * secret - it is in this repository - and seeing it is the honest answer to
+ * "show me how you review".
+ */
+export const reviewHelp = (
+  prefix: string,
+  full: boolean,
+  maxAgents: number,
+  botName: string,
+  sampleUrl = "https://github.com/owner/repo/pull/123",
+): string => {
+  if (full) return reviewPrompt([sampleUrl], botName, undefined, [], maxAgents);
+  return [
+    `*How I review a PR* - \`${prefix} review <pr-url>\``,
+    "",
+    "*1.* I gather it: `gh pr view`, the diff, and the checks. a merged or closed PR gets the same treatment as an open one, never skipped",
+    `*2.* big PR (more than ${BIG_PR_FILES} files, or ${BIG_PR_LINES}+ lines either way) and I clone it and review the real code in context, with up to ${maxAgents} child ${maxAgents === 1 ? "agent" : "agents"} rather than trusting the diff`,
+    "*3.* then exactly one of two flows, never a mix:",
+    "    - nothing blocking: one review comment, done",
+    "    - something blocking: request changes with a fixed marker, then one comment carrying everything",
+    "*4.* the comment is written as the GitHub account it posts from, in first person, short prose, no headings, people tagged as `@login`",
+    "*5.* a short wrap-up lands back in the thread with what I did and the headline finding",
+    "",
+    "*approval* is decided by the repo's policy - up front and reversed if I find a blocker, or only after a clean review. `--policy first|after` changes it for one run",
+    "*steering*: anything typed next to the url aims the review, e.g. `review <url> the migration is the risky bit`",
+    `*cost*: it runs on *your own* Claude token, never mine - \`${prefix} token\` adds one`,
+    "",
+    `\`${prefix} review prompt\` prints the actual system prompt I run on`,
+  ].join("\n");
+};

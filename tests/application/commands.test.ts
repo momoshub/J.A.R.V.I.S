@@ -693,13 +693,15 @@ describe("reviews run on the caller's own Claude token", () => {
       },
     };
     let seen: string | undefined;
+    let system = "";
     deps.llm = {
       complete: async (p) => {
         seen = p.oauthToken;
+        system = p.system;
         return "the review";
       },
     };
-    return { deps, map, token: () => seen };
+    return { deps, map, token: () => seen, sys: () => system };
   };
 
   test("with a token on file, the review runs on it", async () => {
@@ -773,6 +775,34 @@ describe("reviews run on the caller's own Claude token", () => {
     deps.users.upsert(pal);
     await dispatchCommand(deps, pal, "C1", "ask hello");
     expect(token()).toBeUndefined(); // falls back to the bot's own credential
+  });
+
+  test("a word that is not a PR never reaches the brain", async () => {
+    // the bug: `review help` ran a full review of a pull request called "help"
+    const { deps, token } = withTokens({ [OWNER]: TOKEN });
+    for (const line of ["rv the", "rv acme-be", "rv please have a look"]) {
+      const out = await dispatchCommand(deps, actor(), "C1", line);
+      expect(out).toContain("Which PR?");
+    }
+    expect(token()).toBeUndefined(); // nothing expensive was spawned
+  });
+
+  test("review help explains itself instead of reviewing something called help", async () => {
+    const { deps, token } = withTokens({ [OWNER]: TOKEN });
+    const out = await dispatchCommand(deps, actor(), "C1", "rv help");
+    expect(out).toContain("How I review a PR");
+    expect(out).toContain("your own");
+    expect(token()).toBeUndefined();
+
+    const prompt = await dispatchCommand(deps, actor(), "C1", "rv prompt");
+    expect(prompt).toContain("doing a real code review");
+    expect(token()).toBeUndefined();
+  });
+
+  test("a shorthand the brain can resolve is still allowed through", async () => {
+    const { deps, sys } = withTokens({ [OWNER]: TOKEN });
+    await dispatchCommand(deps, actor(), "C1", "rv acme/acme-be#13600");
+    expect(sys()).toContain("acme/acme-be#13600");
   });
 
   test("token who lists the people who gave me one, and is admin-only", async () => {

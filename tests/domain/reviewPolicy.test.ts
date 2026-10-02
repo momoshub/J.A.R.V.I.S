@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { asReviewPolicy, DEFAULT_REVIEW_POLICY, parsePolicyArg, repoOf, repoRefOf } from "../../src/domain/reviewPolicy.ts";
+import { asReviewPolicy, DEFAULT_REVIEW_POLICY, looksLikePrRef, parsePolicyArg, repoOf, repoRefOf } from "../../src/domain/reviewPolicy.ts";
 
 describe("repoOf", () => {
   test("reads owner/repo out of a PR url", () => {
@@ -98,5 +98,25 @@ describe("parsePolicyArg", () => {
     expect(out.asked).toBeUndefined();
     expect(out.bad).toBeUndefined();
     expect(out.rest).toEqual([PR, "focus on the sql"]);
+  });
+});
+
+describe("looksLikePrRef", () => {
+  test("accepts what people actually type for a PR", () => {
+    expect(looksLikePrRef("https://github.com/o/r/pull/1")).toBe(true);
+    expect(looksLikePrRef("<https://github.com/o/r/pull/1>")).toBe(true);
+    expect(looksLikePrRef("acme/acme-be#13600")).toBe(true);
+    expect(looksLikePrRef("o/r/pull/7")).toBe(true);
+    expect(looksLikePrRef("#2149")).toBe(true);
+    expect(looksLikePrRef("2149")).toBe(true);
+  });
+
+  test("refuses a stray word, which used to cost a whole review", () => {
+    // `review help` spawned a full review of a PR named "help", on the asker's
+    // own credential, to answer a question about how reviewing works
+    expect(looksLikePrRef("help")).toBe(false);
+    expect(looksLikePrRef("the")).toBe(false);
+    expect(looksLikePrRef("acme-be")).toBe(false);
+    expect(looksLikePrRef("")).toBe(false);
   });
 });

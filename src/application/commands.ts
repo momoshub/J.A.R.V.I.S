@@ -16,6 +16,7 @@ import {
   asAgentCap,
   DEFAULT_REVIEW_AGENTS,
   REVIEW_AGENT_CEILING,
+  reviewHelp,
   reviewPrompt,
 } from "../domain/reviewPrompt.ts";
 import {
@@ -34,6 +35,7 @@ import {
 import {
   asReviewPolicy,
   DEFAULT_REVIEW_POLICY,
+  looksLikePrRef,
   parsePolicyArg,
   repoOf,
   repoRefOf,
@@ -652,10 +654,24 @@ export const COMMANDS: readonly CommandDef[] = [
       if (bad !== undefined) {
         return `\`${bad}\` is not a policy. \`--policy first\`, \`--policy after\`, or \`--policy default\`.`;
       }
+      // What the review is actually about, before anything expensive happens.
+      if (rest.length === 1 && /^(help|\?|--help|prompt|how)$/i.test(rest[0] ?? "")) {
+        const wantPrompt = /^prompt$/i.test(rest[0] ?? "");
+        const text = reviewHelp(prefix, wantPrompt, reviewAgentsOf(deps), botNameOf(deps));
+        // The real prompt is longer than one Slack message, and a post that is
+        // too long simply fails to land - which looks like being ignored.
+        return wantPrompt ? clip(text) : text;
+      }
       // Slack wraps links as <url|label>; hand the brain the bare urls.
       const urls = [...new Set(rest.flatMap((a) => a.match(PR_URL) ?? []))];
-      const targets = urls.length > 0 ? urls : rest;
-      if (targets.length === 0) return `Which PR? \`${prefix} review <pr-url>\``;
+      // A shorthand the brain can resolve is fine; a stray word is not. Without
+      // this, `review help` spawned a full review of a PR named "help" - minutes
+      // of work on the asker's own credential, to answer a question.
+      const shorthand = urls.length === 0 ? rest.filter(looksLikePrRef) : [];
+      const targets = urls.length > 0 ? urls : shorthand;
+      if (targets.length === 0) {
+        return `Which PR? \`${prefix} review <pr-url>\` - or \`${prefix} review help\` for how I do it.`;
+      }
       // Anything typed alongside the urls is guidance: "the migration is the
       // risky bit", "hotfix, correctness only". It aims the review; the prompt
       // is what keeps it from doing anything more than that.

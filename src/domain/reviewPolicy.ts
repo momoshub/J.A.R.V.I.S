@@ -110,3 +110,21 @@ export const parsePolicyArg = (args: readonly string[]): PolicyArg => {
 
   return { asked, rest, ...(bad !== undefined ? { bad } : {}) };
 };
+
+/**
+ * Could this argument name a pull request?
+ *
+ * A review that is not given a url is still allowed to run on a shorthand the
+ * brain can resolve - `owner/repo#123`, `#123`, a bare number beside a repo -
+ * because people type those. What it must never do is treat any stray word as
+ * a target: `review help` once spawned a full review of a pull request called
+ * "help", on the asker's own credential, to answer a question about reviewing.
+ */
+export const looksLikePrRef = (token: string): boolean => {
+  const t = token.replace(/^<|>$/g, "").trim();
+  if (!t) return false;
+  if (repoOf(t)) return true; // a full PR url
+  if (/^[\w.-]+\/[\w.-]+(#|\/pull\/)\d+$/.test(t)) return true; // owner/repo#123
+  if (/^#?\d+$/.test(t)) return true; // #123, or a bare number
+  return false;
+};

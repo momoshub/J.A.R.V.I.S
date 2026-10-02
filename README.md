@@ -107,7 +107,7 @@ Every command has two interfaces - use whichever you like. Both triggers are con
 | `token [remove\|who]` (alias `claude-token`) | anyone | add, replace or forget your own Claude Code token - see [Your own Claude token](#your-own-claude-token) |
 | `session [reset\|on\|off]` (alias `sess`) | anyone (on/off: admins) | the CLI session this thread is talking to - see [One session per thread](#one-session-per-thread) |
 | `ticket <what is wrong>` (aliases `bug`, `raise`) | anyone | raise a properly written, correctly routed ticket - see [Raising a ticket](#raising-a-ticket) |
-| `review <pr-url> [--policy first\|after] [what to look at]` (alias `rv`) | pal+ | review a PR: approve first (even if it is already merged or closed), then post the review as a GitHub comment *and* back in the thread; request changes on high risk (big PRs are cloned + reviewed by child agents). Runs full-access. |
+| `review <pr-url\|help\|prompt> [--policy first\|after] [what to look at]` (alias `rv`) | pal+ | review a PR: approve first (even if it is already merged or closed), then post the review as a GitHub comment *and* back in the thread; request changes on high risk (big PRs are cloned + reviewed by child agents). Runs full-access. |
 | `bomb [categories] [count] <message-link>` (alias `br`) | admins | reaction-bomb a message. Combine categories with commas and set a count: `bomb money,face,negative 9 <link>`. Up to 23; `bomb help` lists every category |
 | `reply <message-link>` (alias `jrp`) | admins | draft and post an AI reply to a message |
 | `rm-msg <message-link>` (aliases `rmmsg`, `unsend`) | admins | delete a message the bot posted (a bot token cannot delete anyone else's) |
@@ -434,6 +434,17 @@ Tokens live in their own database (`TOKEN_DATABASE_PATH`, default
 (default `data/tokens.key`). The database is committed like the main one; **the
 key is gitignored**, so what lands in git is ciphertext and a copy taken from
 anywhere but the host opens nothing.
+
+## Explaining a review
+
+`review help` describes the flow in a few lines; `review prompt` prints the
+actual system prompt it runs on, which is no secret - it is in this repository.
+
+Both exist because the question used to cost a review: asked to explain itself,
+the bot ran `review help`, took the word "help" as a target, and spent minutes
+reviewing a pull request by that name on the asker's own credential. An argument
+now has to look like a pull request - a url, `owner/repo#123`, or a bare number -
+before anything expensive starts.
 
 ## Steering a review
 
