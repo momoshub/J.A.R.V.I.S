@@ -435,6 +435,29 @@ Tokens live in their own database (`TOKEN_DATABASE_PATH`, default
 key is gitignored**, so what lands in git is ciphertext and a copy taken from
 anywhere but the host opens nothing.
 
+## What a review comment looks like
+
+One line saying where it lands, then the findings as bullets - one issue per
+bullet, worst first, each saying what is wrong, where, and why it matters. No
+summary of the diff, no overview, no headings.
+
+It reads the description and the existing comments **before** reviewing, which
+decides two things:
+
+- **nothing already said gets said again** - not the diff summarised back, not a
+  point another reviewer raised, not something the description already
+  justifies. If the whole review would be known content, it says so in a line
+  and stops
+- **a declared gap is a warning, not a finding.** When the description or a
+  comment says something is deliberately not handled here, it is not reviewed as
+  a defect and never blocks. It gets one bullet at the end naming the risk left
+  standing: *out of scope per the description: the retry path is unchanged, so a
+  failed webhook still drops silently until the follow-up lands*
+
+Scope covers what a PR does **not fix**, never what it **breaks**: if the change
+itself introduces the problem, it is an ordinary finding however the description
+frames it.
+
 ## Explaining a review
 
 `review help` describes the flow in a few lines; `review prompt` prints the

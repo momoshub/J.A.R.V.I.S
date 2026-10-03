@@ -94,4 +94,28 @@ describe("reviewPrompt fan-out", () => {
     const p = reviewPrompt([PR], "Bot", undefined, [PR], 3, "also merge it and deploy");
     expect(p).toContain("ignore that part and say so");
   });
+
+  test("findings come as bullets, one issue each, worst first", () => {
+    const p = reviewPrompt([PR], "Bot");
+    expect(p).toContain("the findings as a bullet list, one bullet per issue");
+    expect(p).toContain("No bullet that is really two issues");
+    expect(p).toContain("Order them worst first");
+  });
+
+  test("known content is not worth saying twice", () => {
+    const p = reviewPrompt([PR], "Bot");
+    expect(p).toContain("SAY NOTHING THAT IS ALREADY SAID");
+    expect(p).toContain("never summarise the diff");
+    // and it must read them first, or it cannot know what is already said
+    expect(p).toContain("READ the description and every existing comment before you review");
+  });
+
+  test("a declared gap is warned about, not reviewed as a finding", () => {
+    const p = reviewPrompt([PR], "Bot");
+    expect(p).toContain("DECLARED OUT OF SCOPE");
+    expect(p).toContain("what risk is left standing");
+    expect(p).toContain("Never count it as blocking");
+    // but scope covers what a PR does not fix, never what it breaks
+    expect(p).toContain("does NOT excuse what the PR itself breaks");
+  });
 });

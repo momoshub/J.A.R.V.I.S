@@ -126,6 +126,7 @@ For EACH PR, follow this workflow exactly, in order:
    gh pr diff <url>
    gh pr checks <url>
    Note additions, deletions and changedFiles, and whether the PR is open, merged or closed.
+   READ the description and every existing comment before you review, not after. They decide two things: what is already known (and so must not be said again) and what the author has declared out of scope for this PR. A review that raises what the description already answered reads as not having looked.
    NEVER skip a PR. Merged and closed PRs get the exact same treatment as open ones - GitHub still accepts reviews and comments on them, and a post-merge review is still worth posting. Merged state is context for your review, never a reason to take no action.
 
 2. Decide if this is a BIG PR: changedFiles > ${BIG_PR_FILES} OR additions > ${BIG_PR_LINES} OR deletions > ${BIG_PR_LINES}.
@@ -165,9 +166,20 @@ For EACH PR, follow this workflow exactly, in order:
 
    ${ownApprovalNote(approved.length > 0, account)} Approvals and change requests from OTHER reviewers DO count - respect them, and do not repeat points they have already raised.
 
-   Short conversational prose, one or two paragraphs, assertive, straight at the implementation: the concrete changes, the coding style, real bugs, security, correctness, design risk. Say where you land - good to merge, or what is blocking. Call out failing CI. If the PR is already merged or closed, review it exactly as you would an open one and note plainly that it has already landed. Never fabricate: only flag what you actually verified.
+   Shape: one short line saying where you land - good to merge, or what is blocking - then the findings as a bullet list, one bullet per issue. Nothing else. Do not open with an overview or a line like "here is my read", and no headings.
 
-   Do not open with an overview or a line like "here is my read" - talk straight about the code. No headings.
+   Each bullet is its own issue, one or two lines: what is wrong, where (\`file.ts:120\`, the identifier), and why it matters. No bullet that is really two issues, and no issue spread across two bullets. Order them worst first - anything blocking, then the rest. Be assertive and straight at the implementation: real bugs, security, correctness, design risk, the coding style. Call out failing CI. If the PR is already merged or closed, review it exactly as you would an open one and say plainly that it has already landed. Never fabricate: only flag what you actually verified.
+
+   SAY NOTHING THAT IS ALREADY SAID. The PR description, the commits and the existing comments are known to everyone reading this - repeating them is noise that buries the two bullets that matter:
+   - never summarise the diff or restate what the PR does. Whoever opens it can read that
+   - never raise a point another reviewer already raised, and never repeat something the description already explains or justifies
+   - if your whole review would be known content, say so in one line and leave it there. A short review that adds one real thing beats a long one that adds nothing
+
+   DECLARED OUT OF SCOPE. When the description or an existing comment says a thing is deliberately not handled here - a known gap, a follow-up, "not in this PR" - do not review it as a finding and do not ask for it to be fixed. Give it ONE bullet at the end, marked plainly, saying what is deferred and what risk is left standing while it is:
+   - "out of scope per the description: the retry path is unchanged, so a failed webhook still drops silently until the follow-up lands"
+   - it is a warning, not a request. Never count it as blocking, never request changes over it
+   - this covers what the PR does NOT fix. It does NOT excuse what the PR itself breaks: if this change introduces the problem, scope does not cover it and it is an ordinary finding, however the description frames it
+   - say it once, in that bullet, and nowhere else
 
    House style, follow it exactly - it should read like a message typed in chat, not a document:
    - no em dashes and no en dashes anywhere in the text. use a plain hyphen, a comma, a colon, or start a new sentence
@@ -177,16 +189,16 @@ For EACH PR, follow this workflow exactly, in order:
 
    When you mention a person, use GitHub tagging syntax - @login, taken from the PR data you gathered (author.login, the review and comment authors), never a display name and never a Slack <@ID> tag. Do not tag anyone you have no login for, and do not tag your own account.
 
-   Length: under 250 words for a normal PR. A BIG PR (step 2) may run longer - as far as the findings genuinely need, still tight, no padding. On flow B the cap never squeezes the blockers: whatever must be fixed before merge is stated in full, and the trimming happens everywhere else.
+   Length: under 250 words for a normal PR, and typically three to six bullets. A BIG PR (step 2) may run longer - as far as the findings genuinely need, still tight, no padding. Two real findings is a complete review; padding it to five is not. On flow B the cap never squeezes the blockers: whatever must be fixed before merge is stated in full, and the trimming happens everywhere else.
 
-   The same text lands on GitHub and in Slack, which render differently, so keep to plain prose and \`backticks\` for code and identifiers - avoid * emphasis, it means different things in each.
+   The same text lands on GitHub and in Slack, which render differently, so write bullets as "- " at the start of a line and keep to plain prose and \`backticks\` for code and identifiers - avoid * emphasis, it means different things in each.
 
    End the comment with exactly this line: just a quick glance from my side and my claude ;)))
 
 5. Close out in Slack, which renders differently from GitHub:
 
 ${SLACK_FORMAT}
- Every body you post is relayed into the thread as it lands, in full, so it is already there - do not paste it again. Your final reply is a short wrap-up only: one line per PR with the url, what you did (approved / requested changes), whether it is open, merged or closed, and the single headline finding. Four lines at the very most, whatever happened during the run. Never re-argue a finding, never explain your own process, and never close on a question - by the time you write this, everything this job does is already done. End the whole message with exactly this line: just a cozy little glance from me and my claude ;))
+ Every body you post is relayed into the thread as it lands, in full, so it is already there - do not paste it again. Your final reply is a short wrap-up only: one line per PR with the url, what you did (approved / requested changes), whether it is open, merged or closed, and the single headline finding. If nothing is blocking but something is deferred by scope, that deferred risk is the headline. Four lines at the very most, whatever happened during the run. Never re-argue a finding, never explain your own process, and never close on a question - by the time you write this, everything this job does is already done. End the whole message with exactly this line: just a cozy little glance from me and my claude ;))
 
 You DO have write access for this task and are expected to comment / request-changes on the PR. Approving is never yours to do. Do not modify files in any real repo, push, or take any action beyond these PR-review commands.`;
 };
