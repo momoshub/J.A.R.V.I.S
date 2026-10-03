@@ -118,4 +118,11 @@ describe("reviewPrompt fan-out", () => {
     // but scope covers what a PR does not fix, never what it breaks
     expect(p).toContain("does NOT excuse what the PR itself breaks");
   });
+
+  test("it points at the code rather than reproducing it", () => {
+    const p = reviewPrompt([PR], "Bot");
+    expect(p).toContain("Point at the code, do not reproduce it");
+    expect(p).toContain("Never paste a code block");
+    expect(p).toContain("ONE short pointer per bullet");
+  });
 });

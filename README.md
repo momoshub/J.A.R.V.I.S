@@ -441,6 +441,11 @@ One line saying where it lands, then the findings as bullets - one issue per
 bullet, worst first, each saying what is wrong, where, and why it matters. No
 summary of the diff, no overview, no headings.
 
+It points at code rather than reproducing it: one short pointer per bullet, a
+`file.ts:120` or an identifier, never both and never a code block, a diff hunk
+or a line quoted back at the person who wrote it. The author has the code open;
+what they need is the reasoning they cannot see.
+
 It reads the description and the existing comments **before** reviewing, which
 decides two things:
 
