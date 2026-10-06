@@ -338,6 +338,23 @@ running:
 It answers `503` when deaf, so an uptime check sees an outage instead of a
 process that happens to be alive.
 
+## One turn at a time
+
+A thread's turns run one after another, never beside each other. Two messages a
+few minutes apart used to spawn two independent runs that each did the whole
+task: two branches, two implementations, two pull requests, neither aware of the
+other.
+
+It is also what the session model requires - a thread holds one CLI session, and
+two `--resume` processes on one session id are two conversations overwriting
+each other's history. Queued this way, the second message runs with the first's
+result already in the session, which is what makes a follow-up mean "and the
+rest" rather than "again, from scratch".
+
+If something is already running, the thread is told so rather than going quiet.
+Commands are deliberately not queued: a review is its own process with its own
+session, and holding one behind a long chat turn would make it look dead.
+
 ## One session per thread
 
 A Slack thread is one conversation, so it gets **one Claude Code CLI session**.

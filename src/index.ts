@@ -12,6 +12,7 @@ import { tmpdir } from "node:os";
 import { loadConfig, modelLabel, type AppConfig } from "./config/env.ts";
 import { openDatabase } from "./infrastructure/db/client.ts";
 import { createThreadSessionRepo } from "./infrastructure/db/threadSessionRepo.ts";
+import { createThreadQueue } from "./application/threadQueue.ts";
 import { createTotpRepo } from "./infrastructure/db/totpRepo.ts";
 import {
   createClaudeTokenRepo,
@@ -210,6 +211,10 @@ const main = async () => {
     // Long tasks driven from a thread, each holding its own CLI session.
     workflows,
     threadSessions,
+    // One turn at a time per thread. Two messages a few minutes apart used to
+    // run at once, doing the same work twice - two branches, two PRs - and
+    // resuming the same CLI session from two processes while they did it.
+    threadQueue: createThreadQueue(),
     threadSessionsOn: () => settings.get(SETTING_KEYS.threadSessions)?.trim().toLowerCase() !== "off",
     // A stranger is put to the owner for a ✅ / ❌ rather than refused outright.
     accessRequests,

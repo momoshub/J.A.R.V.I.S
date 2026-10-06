@@ -3,6 +3,7 @@ import { openDatabase } from "../../src/infrastructure/db/client.ts";
 import { createUserRepo } from "../../src/infrastructure/db/userRepo.ts";
 import { createMessageRepo } from "../../src/infrastructure/db/messageRepo.ts";
 import { respond, type RespondDeps } from "../../src/application/respond.ts";
+import { createThreadQueue } from "../../src/application/threadQueue.ts";
 import type { LlmPort } from "../../src/application/ports.ts";
 
 const OWNER = "U0OWNER0001";
@@ -76,6 +77,48 @@ describe("respond", () => {
       text: "<@UBOT> what did you make of https://github.com/o/r/pull/1",
     });
     expect(res).toEqual({ kind: "reply", text: "it looked fine to me" });
+  });
+
+  test("two messages in one thread take turns, instead of doing the work twice", async () => {
+    // the failure this exists for: "create a PR" and "do all" three minutes
+    // apart ran at once and opened two pull requests for the same task
+    let running = 0;
+    let overlapped = false;
+    const deps = build({
+      complete: async () => {
+        running += 1;
+        if (running > 1) overlapped = true;
+        await new Promise((r) => setTimeout(r, 10));
+        running -= 1;
+        return "ok";
+      },
+    });
+    deps.threadQueue = createThreadQueue();
+
+    const inbound = { channelId: "C1", slackUserId: OWNER, threadTs: "100.1" };
+    await Promise.all([
+      respond(deps, { ...inbound, text: "add it and create a PR", messageTs: "100.1" }),
+      respond(deps, { ...inbound, text: "do all", messageTs: "100.2" }),
+    ]);
+
+    expect(overlapped).toBe(false);
+  });
+
+  test("a second thread is not held up by the first", async () => {
+    const deps = build({
+      complete: async (p) => {
+        if (p.messages.some((m) => m.content.includes("slow"))) {
+          await new Promise((r) => setTimeout(r, 40));
+        }
+        return "ok";
+      },
+    });
+    deps.threadQueue = createThreadQueue();
+
+    const slow = respond(deps, { channelId: "C1", slackUserId: OWNER, text: "slow one", threadTs: "1.1", messageTs: "1.1" });
+    const other = await respond(deps, { channelId: "C1", slackUserId: OWNER, text: "quick", threadTs: "2.1", messageTs: "2.1" });
+    expect(other).toEqual({ kind: "reply", text: "ok" });
+    await slow;
   });
 
   test("owner can add a member via command end to end", async () => {
