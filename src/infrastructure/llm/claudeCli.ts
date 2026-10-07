@@ -145,6 +145,7 @@ const spawnClaude = (
   oauthToken?: string,
   useHostLogin?: boolean,
   signal?: AbortSignal,
+  runTicket?: string,
 ) => {
   const proc = Bun.spawn({
     cmd: [config.binPath ?? "claude", ...args],
@@ -158,7 +159,7 @@ const spawnClaude = (
     // A caller's own token replaces the bot's for this spawn only: the CLI honours
     // CLAUDE_CODE_OAUTH_TOKEN over any login on the host, so the turn is billed to
     // them and runs with their account's access.
-    env: hostLoginEnv(oauthToken, useHostLogin),
+    env: { ...hostLoginEnv(oauthToken, useHostLogin), ...(runTicket ? { JARVIS_RUN_TICKET: runTicket } : {}) },
   });
   // Stopping is the same kill the timeout uses, so a stopped run surfaces as
   // exit 143 like any reaped one. The caller holds the controller, so it is the
@@ -188,8 +189,8 @@ const hostLoginEnv = (oauthToken?: string, useHostLogin?: boolean): Record<strin
 };
 
 export const createClaudeCliLlm = (config: ClaudeCliConfig = {}): LlmPort => {
-  const complete = async ({ system, messages, assistantName, policy, session, oauthToken, useHostLogin, signal }: LlmCompleteParams) => {
-    const proc = spawnClaude(config, [...buildArgs(config, false, policy, session), "--append-system-prompt", system], renderPrompt(messages, assistantName), policy, oauthToken, useHostLogin, signal);
+  const complete = async ({ system, messages, assistantName, policy, session, oauthToken, useHostLogin, signal, runTicket }: LlmCompleteParams) => {
+    const proc = spawnClaude(config, [...buildArgs(config, false, policy, session), "--append-system-prompt", system], renderPrompt(messages, assistantName), policy, oauthToken, useHostLogin, signal, runTicket);
     const [stdout, stderr, exitCode] = await Promise.all([
       new Response(proc.stdout).text(),
       new Response(proc.stderr).text(),
@@ -210,8 +211,8 @@ export const createClaudeCliLlm = (config: ClaudeCliConfig = {}): LlmPort => {
     return (parsed.result ?? "").trim();
   };
 
-  const stream = async ({ system, messages, assistantName, policy, session, oauthToken, useHostLogin, signal }: LlmCompleteParams, sink: LlmStreamSink) => {
-    const proc = spawnClaude(config, [...buildArgs(config, true, policy, session), "--append-system-prompt", system], renderPrompt(messages, assistantName), policy, oauthToken, useHostLogin, signal);
+  const stream = async ({ system, messages, assistantName, policy, session, oauthToken, useHostLogin, signal, runTicket }: LlmCompleteParams, sink: LlmStreamSink) => {
+    const proc = spawnClaude(config, [...buildArgs(config, true, policy, session), "--append-system-prompt", system], renderPrompt(messages, assistantName), policy, oauthToken, useHostLogin, signal, runTicket);
     const stderrPromise = new Response(proc.stderr).text();
 
     // index -> in-flight tool_use block; id -> resolved card, replayed on the result.

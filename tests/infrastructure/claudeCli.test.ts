@@ -180,6 +180,28 @@ describe("createClaudeCliLlm", () => {
     delete process.env.CLAUDE_CODE_OAUTH_TOKEN;
   });
 
+  test("this turn's command ticket travels in the environment, not the prompt", async () => {
+    // a thread holds one long-lived session, so a ticket written into the prompt
+    // is one the model eventually retypes from memory - dead by then, and
+    // belonging to whoever was speaking at the time. An environment cannot be
+    // stale: it was set when this turn began.
+    const bin = fakeBin(
+      `#!/usr/bin/env bash\ncat > /dev/null\necho "{\\"type\\":\\"result\\",\\"subtype\\":\\"success\\",\\"is_error\\":false,\\"result\\":\\"[$JARVIS_RUN_TICKET]\\"}"`,
+    );
+    const llm = createClaudeCliLlm({ binPath: bin });
+
+    const withTicket = await llm.complete({
+      system: "s",
+      messages: [{ role: "user", content: "hi" }],
+      runTicket: "tkt-this-turn",
+    });
+    expect(withTicket).toBe("[tkt-this-turn]");
+
+    // and a turn that may not run commands hands down nothing at all
+    const without = await llm.complete({ system: "s", messages: [{ role: "user", content: "hi" }] });
+    expect(without).toBe("[]");
+  });
+
   test("summarizeTool renders a Bash command", () => {
     const out = summarizeTool("Bash", '{"command":"ls -la","description":"list"}');
     expect(out.title).toContain("ls -la");

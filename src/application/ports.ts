@@ -76,6 +76,16 @@ export type LlmCompleteParams = {
    * there has to be a way to stop one that is going the wrong way.
    */
   readonly signal?: AbortSignal;
+  /**
+   * This turn's command ticket, placed in the spawned CLI's environment rather
+   * than written into its prompt (CLI adapter only).
+   *
+   * A thread holds one long-lived session, so the model's context accumulates
+   * every prompt it has been handed. A ticket printed there is one the model
+   * will eventually retype from memory - dead by then, and belonging to
+   * whoever was speaking at the time. A process environment cannot be stale.
+   */
+  readonly runTicket?: string;
   /** Continue a durable session instead of a one-shot call (CLI adapter only). */
   readonly session?: LlmSession;
 };

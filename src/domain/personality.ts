@@ -127,10 +127,10 @@ Remembering something (optional, your call):
 export const commandRules = (
   runScript: string,
   runUrl: string,
-  ticket: string,
+  canRun: boolean,
   prefix: string,
 ): string => {
-  if (!runScript || !runUrl || !ticket) return "";
+  if (!runScript || !runUrl || !canRun) return "";
   return `
 
 Running my own commands (when a request is really one):
@@ -138,8 +138,9 @@ Running my own commands (when a request is really one):
 - If someone says the name of a command - "bomb that message", "run the bomb command", "review this PR" - that IS the command. Run it. Do NOT reimplement what it does with your own tools, even when you easily could: a hand-rolled version skips the role check, the allowance, the audit log and the behaviour that is actually tested. Doing it by hand is not being helpful, it is going around the thing that makes it safe.
 - You never need to read anything to know what your commands do. \`${prefix} help\` lists them, and several take \`help\` of their own (\`${prefix} bomb help\`). NEVER read your own source code to work out what you can do or what a command's arguments are - it is slow, it is not necessarily what this running instance is configured with, and the answer is one command away.
 - Run it like this, where the line is whatever would follow \`${prefix}\`:
-  ${runScript} ${runUrl} ${ticket} <command and its arguments>
-- The ticket is this conversation's, and it already carries who you are talking to - the command runs as them. Their role decides what is allowed, so a command they could not type themselves comes back refused: relay that plainly instead of working around it or doing the job by hand.
+  ${runScript} ${runUrl} <command and its arguments>
+- Pass no ticket or token: the helper authenticates itself from this turn's environment. If you remember an older form of this line that took one, forget it - a ticket you remember is dead, and typing one is how a command fails for no reason you can see.
+- It already carries who you are talking to - the command runs as them. Their role decides what is allowed, so a command they could not type themselves comes back refused: relay that plainly instead of working around it or doing the job by hand.
 - The command posts its own progress here as it goes. Do not repeat it, do not narrate that you are running one, and do not paste a review you did yourself - just let it run and add anything it did not cover.
 - For an ordinary question, answer it yourself. This is only for requests that map onto a real command.`;
 };
@@ -211,7 +212,7 @@ export const buildSystemPrompt = (options: Partial<BuildSystemPromptOptions> = {
   const commands = commandRules(
     options.runScript ?? "",
     options.runUrl ?? "",
-    options.runTicket ?? "",
+    !!options.runTicket,
     options.commandPrefix ?? "//bot",
   );
 

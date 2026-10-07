@@ -169,6 +169,14 @@ export const handleMessage = async (
 
   // Its own id, so a mention of itself is recognised as itself.
   const botUserId = await deps.slack?.botUserId().catch(() => undefined);
+  // Minted once for this turn. It reaches the CLI through its environment, not
+  // its prompt: a thread's session remembers every prompt it was ever handed,
+  // and a remembered ticket is both dead and somebody else's.
+  const runTicket = deps.commandTickets?.issue({
+    actor: decision.user.slackId,
+    channel: inbound.channelId,
+    threadTs: inbound.threadTs,
+  });
   const window = deps.contextWindow ?? DEFAULT_CONTEXT_WINDOW;
   // The thread itself is the context, read from Slack: the whole of this thread
   // and nothing from the ones beside it. Stored memory is only the fallback -
@@ -200,11 +208,7 @@ export const handleMessage = async (
     // runs, so asking in words can never do more than typing it would.
     runUrl: deps.runUrl,
     runScript: deps.runScript,
-    runTicket: deps.commandTickets?.issue({
-      actor: decision.user.slackId,
-      channel: inbound.channelId,
-      threadTs: inbound.threadTs,
-    }),
+    runTicket,
     commandPrefix: deps.commandPrefix,
   });
 
@@ -227,6 +231,7 @@ export const handleMessage = async (
     // in every sense; the bot's own when they have not.
     oauthToken: tokenFor(deps, decision.user),
     signal,
+    runTicket,
   };
   const run = (p: Parameters<typeof deps.llm.complete>[0]) =>
     sink && deps.llm.stream ? deps.llm.stream(p, sink) : deps.llm.complete(p);

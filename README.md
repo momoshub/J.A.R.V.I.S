@@ -356,6 +356,26 @@ running:
 It answers `503` when deaf, so an uptime check sees an outage instead of a
 process that happens to be alive.
 
+## How the brain runs a command
+
+The brain can run the bot's own commands for whoever it is talking to. It never
+names the actor - the bot mints a one-turn **ticket** bound to the current
+speaker, and the command runs as them.
+
+The ticket lives in the spawned CLI's **environment**, not its prompt. That is
+not a detail: a thread holds one long-lived session, so every system prompt it
+was ever handed is still in its context. A ticket printed there is one the model
+will eventually retype from memory - expired by then, since tickets have a TTL,
+a use count, and die with a restart. When that happens every command in the
+thread comes back `that ticket is not valid any more` and nothing said inside
+the conversation can fix it.
+
+It also closed a worse door. A remembered ticket belonged to whoever was
+speaking when it was issued, so reusing one would have run a command as somebody
+else - exactly the escalation the ticket exists to prevent.
+
+A process environment cannot be stale: it was set when the turn began.
+
 ## Stopping a turn
 
 A chat turn can run for the better part of an hour, so there is a way to end one

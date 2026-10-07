@@ -148,9 +148,23 @@ describe("buildSystemPrompt", () => {
   test("offers to run a real command when a chat request is one", () => {
     const p = buildSystemPrompt(runOpts);
     expect(p).toContain("Running my own commands");
-    expect(p).toContain("/bin/jarvis-run.sh http://127.0.0.1:2002/api/commands/run tkt123");
+    expect(p).toContain("/bin/jarvis-run.sh http://127.0.0.1:2002/api/commands/run <command and its arguments>");
     expect(p).toContain("X/ev");
-    expect(p).toContain("it already carries who you are talking to");
+    expect(p).toContain("It already carries who you are talking to");
+  });
+
+  test("the ticket itself never appears in the prompt", () => {
+    // a thread holds one long-lived session, so every prompt it was handed is
+    // still in context. A ticket printed there is one the model will eventually
+    // retype from memory - dead by then, and belonging to whoever was speaking
+    // at the time. It travels in the spawn environment instead.
+    const p = buildSystemPrompt(runOpts);
+    expect(p).not.toContain("tkt123");
+    expect(p).toContain("Pass no ticket or token");
+  });
+
+  test("no ticket for this turn, no offer to run anything", () => {
+    expect(buildSystemPrompt({ ...runOpts, runTicket: undefined })).not.toContain("Running my own commands");
   });
 
   test("the brain never names the actor - the ticket does", () => {
