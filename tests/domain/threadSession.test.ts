@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { isMissingSession, isTimeout, tierOf, unseenTurns } from "../../src/domain/threadSession.ts";
+import { isAuthFailure, isMissingSession, isTimeout, tierOf, unseenTurns } from "../../src/domain/threadSession.ts";
 import type { StoredMessage } from "../../src/domain/types.ts";
 
 const turn = (ts: string, content = ts): StoredMessage => ({
@@ -74,5 +74,18 @@ describe("isTimeout", () => {
     expect(isTimeout(new Error("claude CLI exited with code 1: rate limited"))).toBe(false);
     expect(isTimeout(new Error("No conversation found with session ID x"))).toBe(false);
     expect(isTimeout(undefined)).toBe(false);
+  });
+});
+
+describe("isAuthFailure", () => {
+  test("recognises a credential that will not authenticate", () => {
+    expect(isAuthFailure(new Error("Failed to authenticate. API Error: 401 OAuth access token is invalid."))).toBe(true);
+    expect(isAuthFailure(new Error("claude CLI exited with code 1: OAuth token is invalid"))).toBe(true);
+  });
+
+  test("does not excuse an ordinary failure as a lapsed login", () => {
+    expect(isAuthFailure(new Error("claude CLI exited with code 143: no output"))).toBe(false);
+    expect(isAuthFailure(new Error("rate limited"))).toBe(false);
+    expect(isAuthFailure(undefined)).toBe(false);
   });
 });

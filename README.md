@@ -212,6 +212,24 @@ identically. Preset tasks that force a policy keep their own model: `review`
 runs full-access whoever asked and wherever it is asked, so a pal's review in a
 cheap channel is still done properly.
 
+### Why tickets use the host's login
+
+A ticket is the one task that needs a claude.ai connector (Notion), and a
+`claude setup-token` credential carries **no connector authorisation at all** -
+under one the CLI loads zero `mcp__` tools. That applies to the bot's own token
+and to every per-user token alike, so a ticket cannot run on either.
+
+With no Notion credential of our own, the ticket spawn removes
+`CLAUDE_CODE_OAUTH_TOKEN` from the child environment and runs on whatever
+interactive login the host holds, which does have the connectors. Removing it
+matters: merely leaving it out is not enough, since the bot's own token is in
+the environment already and would win.
+
+The trade is deliberate and narrow. That usage bills whoever is signed in on the
+machine, and if their session lapses the ticket says so by name - "the login on
+my host has lapsed" - rather than failing as though the ticket itself was the
+problem. Everything else still runs on an explicit token.
+
 ## Raising a ticket
 
 ```

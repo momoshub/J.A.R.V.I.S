@@ -60,7 +60,7 @@ import {
   type TotpPort,
 } from "./totp.ts";
 import { normaliseLabel, secondsLeft, totpCode } from "../domain/totp.ts";
-import { tierOf } from "../domain/threadSession.ts";
+import { isAuthFailure, tierOf } from "../domain/threadSession.ts";
 import type { ThreadSessionRepo } from "../infrastructure/db/threadSessionRepo.ts";
 import type { AllowedUser, PromptContext, UserRole } from "../domain/types.ts";
 import type { ToolPolicy } from "../domain/toolPolicy.ts";
@@ -597,7 +597,11 @@ export const COMMANDS: readonly CommandDef[] = [
         messages: [{ role: "user" as const, content: report }],
         assistantName: name,
         policy,
-        oauthToken: tokenFor(deps, actor),
+        // Not the caller's token, and not the bot's: a ticket has to read Notion,
+        // and a `claude setup-token` credential carries no claude.ai connector
+        // authorisation at all (verified: zero mcp__ tools under one). Only the
+        // host's interactive login has the connectors, so this one task uses it.
+        useHostLogin: true,
       };
 
       if (!reply) {
@@ -607,22 +611,32 @@ export const COMMANDS: readonly CommandDef[] = [
 
       await reply(`🎫 raising a ticket for <@${actor.slackId}>`);
       let out = "";
-      if (deps.llm.stream) {
-        const seen = new Set<string>();
-        const announce = (line: string) => {
-          if (seen.has(line)) return;
-          seen.add(line);
-          void reply(line);
-        };
-        out = await deps.llm.stream(params, (ev) => {
-          if (ev.type !== "tool" || ev.status !== "complete") return;
-          const ran = (ev.command ?? ev.title).toLowerCase();
-          if (/notion-create-pages/.test(ran)) announce("📝 created the ticket");
-          if (/gh pr create\b/.test(ran)) announce("🔧 opened a PR for it");
-          if (/gh pr edit[^\n]*--add-reviewer/.test(ran)) announce("👀 asked for a review");
-        });
-      } else {
-        out = await deps.llm.complete(params);
+      try {
+        if (deps.llm.stream) {
+          const seen = new Set<string>();
+          const announce = (line: string) => {
+            if (seen.has(line)) return;
+            seen.add(line);
+            void reply(line);
+          };
+          out = await deps.llm.stream(params, (ev) => {
+            if (ev.type !== "tool" || ev.status !== "complete") return;
+            const ran = (ev.command ?? ev.title).toLowerCase();
+            if (/notion-create-pages/.test(ran)) announce("📝 created the ticket");
+            if (/gh pr create\b/.test(ran)) announce("🔧 opened a PR for it");
+            if (/gh pr edit[^\n]*--add-reviewer/.test(ran)) announce("👀 asked for a review");
+          });
+        } else {
+          out = await deps.llm.complete(params);
+        }
+      } catch (err) {
+        // The known failure mode of running on the host session: it lapsed. Say
+        // that, because nothing in the thread would otherwise suggest a login.
+        if (!isAuthFailure(err)) throw err;
+        await reply(
+          "🔑 I could not raise that one - the login on my host has lapsed, and a ticket needs it for Notion. Someone with access to the machine needs to run `claude` there and sign in again.",
+        );
+        return "";
       }
       await reply(out.trim() || "I could not raise that one.");
       return "";

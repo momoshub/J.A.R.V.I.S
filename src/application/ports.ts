@@ -59,6 +59,17 @@ export type LlmCompleteParams = {
    * this genuinely bills the person who asked, not the machine.
    */
   readonly oauthToken?: string;
+  /**
+   * Run on whatever interactive login the host holds, rather than on any setup
+   * token (CLI adapter only).
+   *
+   * A `claude setup-token` credential carries NO claude.ai connector
+   * authorisation - under one the CLI loads zero `mcp__` tools, verified - so a
+   * task that genuinely needs a connector cannot run on one. Tickets need
+   * Notion, and there is no Notion credential of our own to give them, so they
+   * run on the host session instead. Everything else keeps the explicit token.
+   */
+  readonly useHostLogin?: boolean;
   /** Continue a durable session instead of a one-shot call (CLI adapter only). */
   readonly session?: LlmSession;
 };

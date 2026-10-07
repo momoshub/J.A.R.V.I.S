@@ -74,3 +74,21 @@ export const isTimeout = (err: unknown): boolean => {
   const msg = err instanceof Error ? err.message : String(err ?? "");
   return /exited with code 143\b/.test(msg);
 };
+
+/**
+ * Did this run fail because the credential it used will not authenticate?
+ *
+ * The one task that runs on the host's interactive login (tickets, which need a
+ * connector no setup token carries) fails this way when that session lapses -
+ * silently, from the bot's point of view. Telling it apart lets the thread say
+ * what to do about it instead of "I could not raise that one".
+ */
+export const isAuthFailure = (err: unknown): boolean => {
+  const msg = (err instanceof Error ? err.message : String(err ?? "")).toLowerCase();
+  return (
+    msg.includes("oauth token is invalid") ||
+    msg.includes("failed to authenticate") ||
+    msg.includes("invalid api key") ||
+    (msg.includes("401") && msg.includes("auth"))
+  );
+};

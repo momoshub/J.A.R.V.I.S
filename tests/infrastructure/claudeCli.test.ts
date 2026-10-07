@@ -150,6 +150,36 @@ describe("createClaudeCliLlm", () => {
     delete process.env.CLAUDE_CODE_OAUTH_TOKEN;
   });
 
+  test("a connector task runs on the host login, with the bot's token removed", async () => {
+    // a `claude setup-token` credential carries no claude.ai connector
+    // authorisation - zero mcp__ tools under one - so the one task that needs a
+    // connector has to run on the host session. Omitting the token is not
+    // enough: the bot's own is in process.env and would still win.
+    const bin = fakeBin(
+      `#!/usr/bin/env bash\ncat > /dev/null\necho "{\\"type\\":\\"result\\",\\"subtype\\":\\"success\\",\\"is_error\\":false,\\"result\\":\\"[$CLAUDE_CODE_OAUTH_TOKEN]\\"}"`,
+    );
+    const llm = createClaudeCliLlm({ binPath: bin });
+    process.env.CLAUDE_CODE_OAUTH_TOKEN = "sk-ant-oat01-bots-own";
+
+    const host = await llm.complete({
+      system: "s",
+      messages: [{ role: "user", content: "hi" }],
+      useHostLogin: true,
+    });
+    expect(host).toBe("[]"); // nothing in the child's environment
+
+    // and it wins over a caller's token too - a per-user token is also a setup
+    // token, so it has no connectors either
+    const overridden = await llm.complete({
+      system: "s",
+      messages: [{ role: "user", content: "hi" }],
+      oauthToken: "sk-ant-oat01-theirs",
+      useHostLogin: true,
+    });
+    expect(overridden).toBe("[]");
+    delete process.env.CLAUDE_CODE_OAUTH_TOKEN;
+  });
+
   test("summarizeTool renders a Bash command", () => {
     const out = summarizeTool("Bash", '{"command":"ls -la","description":"list"}');
     expect(out.title).toContain("ls -la");

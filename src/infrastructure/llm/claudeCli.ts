@@ -143,6 +143,7 @@ const spawnClaude = (
   prompt: string,
   policy?: ToolPolicy,
   oauthToken?: string,
+  useHostLogin?: boolean,
 ) =>
   Bun.spawn({
     cmd: [config.binPath ?? "claude", ...args],
@@ -156,16 +157,29 @@ const spawnClaude = (
     // A caller's own token replaces the bot's for this spawn only: the CLI honours
     // CLAUDE_CODE_OAUTH_TOKEN over any login on the host, so the turn is billed to
     // them and runs with their account's access.
-    env: {
-      ...process.env,
-      IS_SANDBOX: "1",
-      ...(oauthToken ? { CLAUDE_CODE_OAUTH_TOKEN: oauthToken } : {}),
-    },
+    env: hostLoginEnv(oauthToken, useHostLogin),
   });
 
+/**
+ * The environment the CLI is spawned with.
+ *
+ * `useHostLogin` REMOVES the token rather than merely omitting it: the bot's own
+ * credential is in `process.env`, so leaving it there would win and the run
+ * would once again have no connectors.
+ */
+const hostLoginEnv = (oauthToken?: string, useHostLogin?: boolean): Record<string, string | undefined> => {
+  const env: Record<string, string | undefined> = { ...process.env, IS_SANDBOX: "1" };
+  if (useHostLogin) {
+    delete env.CLAUDE_CODE_OAUTH_TOKEN;
+    return env;
+  }
+  if (oauthToken) env.CLAUDE_CODE_OAUTH_TOKEN = oauthToken;
+  return env;
+};
+
 export const createClaudeCliLlm = (config: ClaudeCliConfig = {}): LlmPort => {
-  const complete = async ({ system, messages, assistantName, policy, session, oauthToken }: LlmCompleteParams) => {
-    const proc = spawnClaude(config, [...buildArgs(config, false, policy, session), "--append-system-prompt", system], renderPrompt(messages, assistantName), policy, oauthToken);
+  const complete = async ({ system, messages, assistantName, policy, session, oauthToken, useHostLogin }: LlmCompleteParams) => {
+    const proc = spawnClaude(config, [...buildArgs(config, false, policy, session), "--append-system-prompt", system], renderPrompt(messages, assistantName), policy, oauthToken, useHostLogin);
     const [stdout, stderr, exitCode] = await Promise.all([
       new Response(proc.stdout).text(),
       new Response(proc.stderr).text(),
@@ -186,8 +200,8 @@ export const createClaudeCliLlm = (config: ClaudeCliConfig = {}): LlmPort => {
     return (parsed.result ?? "").trim();
   };
 
-  const stream = async ({ system, messages, assistantName, policy, session, oauthToken }: LlmCompleteParams, sink: LlmStreamSink) => {
-    const proc = spawnClaude(config, [...buildArgs(config, true, policy, session), "--append-system-prompt", system], renderPrompt(messages, assistantName), policy, oauthToken);
+  const stream = async ({ system, messages, assistantName, policy, session, oauthToken, useHostLogin }: LlmCompleteParams, sink: LlmStreamSink) => {
+    const proc = spawnClaude(config, [...buildArgs(config, true, policy, session), "--append-system-prompt", system], renderPrompt(messages, assistantName), policy, oauthToken, useHostLogin);
     const stderrPromise = new Response(proc.stderr).text();
 
     // index -> in-flight tool_use block; id -> resolved card, replayed on the result.

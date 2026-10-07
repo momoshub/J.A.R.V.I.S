@@ -777,6 +777,42 @@ describe("reviews run on the caller's own Claude token", () => {
     expect(token()).toBeUndefined(); // falls back to the bot's own credential
   });
 
+  test("a ticket runs on the host login, never on a setup token", async () => {
+    // tickets need Notion, and no setup token - the bot's or a caller's - carries
+    // any claude.ai connector authorisation
+    const { deps } = withTokens({ [OWNER]: TOKEN });
+    deps.settings!.set("ticket_tracker", "https://notion.so/tracker");
+    let seen: { oauthToken?: string; useHostLogin?: boolean } = {};
+    deps.llm = {
+      complete: async (p) => {
+        seen = { oauthToken: p.oauthToken, useHostLogin: p.useHostLogin };
+        return "raised";
+      },
+    };
+    await dispatchCommand(deps, actor(), "C1", "ticket the webhook retries are dropping");
+    expect(seen.useHostLogin).toBe(true);
+    expect(seen.oauthToken).toBeUndefined();
+  });
+
+  test("a lapsed host login is named, not reported as a failed ticket", async () => {
+    const { deps } = withTokens({ [OWNER]: TOKEN });
+    deps.settings!.set("ticket_tracker", "https://notion.so/tracker");
+    deps.llm = {
+      complete: async () => {
+        throw new Error("Failed to authenticate. API Error: 401 OAuth access token is invalid.");
+      },
+    };
+    const lines: string[] = [];
+    await dispatchCommand(deps, actor(), "C1", "ticket something broke", {
+      reply: async (t: string) => {
+        lines.push(t);
+      },
+    });
+    const last = lines[lines.length - 1] ?? "";
+    expect(last).toContain("login on my host has lapsed");
+    expect(last).toContain("sign in again");
+  });
+
   test("a word that is not a PR never reaches the brain", async () => {
     // the bug: `review help` ran a full review of a pull request called "help"
     const { deps, token } = withTokens({ [OWNER]: TOKEN });
