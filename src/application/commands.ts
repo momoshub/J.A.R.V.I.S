@@ -61,6 +61,8 @@ import {
 } from "./totp.ts";
 import { normaliseLabel, secondsLeft, totpCode } from "../domain/totp.ts";
 import { isAuthFailure, tierOf } from "../domain/threadSession.ts";
+import { forHowLong, stoppedNotice } from "../domain/runControl.ts";
+import type { RunRegistry } from "./runRegistry.ts";
 import type { ThreadSessionRepo } from "../infrastructure/db/threadSessionRepo.ts";
 import type { AllowedUser, PromptContext, UserRole } from "../domain/types.ts";
 import type { ToolPolicy } from "../domain/toolPolicy.ts";
@@ -110,6 +112,8 @@ export type CommandDeps = {
   claudeTokens?: ClaudeTokenPort;
   /** Shared 2FA setup keys, for the `2fa` command. */
   totp?: TotpPort;
+  /** In-flight turns, so `stop` can end one without waiting it out. */
+  runs?: RunRegistry;
   /** One CLI session per thread, for the `session` command to inspect and reset. */
   threadSessions?: ThreadSessionRepo;
   threadSessionsOn?: () => boolean;
@@ -916,6 +920,34 @@ export const COMMANDS: readonly CommandDef[] = [
       }
       deps.settings?.set(reviewPolicyKey(repo), policy);
       return `\`${repo}\` is now *${policy}* - ${describe(policy)}.`;
+    },
+  },
+  {
+    name: "stop",
+    aliases: ["cancel", "abort"],
+    minRole: "pal",
+    usage: "",
+    summary: "stop the turn running in this thread",
+    run: ({ deps, actor, channelId, threadTs }) => {
+      if (!deps.runs) return "I cannot stop anything right now.";
+      if (!threadTs) return "That only means something inside a thread.";
+      const key = `${channelId}:${threadTs}`;
+      const running = deps.runs.current(key);
+      if (!running) {
+        // Said plainly: "nothing is running" and "I could not stop it" are very
+        // different things to read when you are watching something misbehave.
+        const waiting = deps.runs.inThread(key).length;
+        return waiting > 0
+          ? `Nothing is running yet - ${waiting} ${waiting === 1 ? "turn is" : "turns are"} waiting. Use the buttons on my notice to drop one.`
+          : "Nothing is running in this thread.";
+      }
+      // Your own turn is yours to stop; someone else's takes an admin, since a
+      // turn is their work and often their money.
+      if (running.actor !== actor.slackId && RANK[actor.role] < RANK.admin) {
+        return `That one is <@${running.actor}>'s, and it has been going ${forHowLong(deps.clock() - running.startedAt)}. Only they or an admin can stop it.`;
+      }
+      deps.runs.stop(running.id, actor.slackId);
+      return stoppedNotice(running, actor.slackId, deps.clock());
     },
   },
   {

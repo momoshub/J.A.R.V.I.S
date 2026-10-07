@@ -6,6 +6,7 @@ import { createLearningsRepo } from "../../src/infrastructure/db/learningsRepo.t
 import { createSettingsRepo } from "../../src/infrastructure/db/settingsRepo.ts";
 import type { ClaudeTokenPort } from "../../src/application/claudeTokens.ts";
 import { createThreadSessionRepo } from "../../src/infrastructure/db/threadSessionRepo.ts";
+import { createRunRegistry } from "../../src/application/runRegistry.ts";
 import { commandLineOf, dispatchCommand, type CommandDeps } from "../../src/application/commands.ts";
 import { respond, type RespondDeps } from "../../src/application/respond.ts";
 import type { AllowedUser } from "../../src/domain/types.ts";
@@ -627,6 +628,66 @@ describe("owner copy of slash commands", () => {
     };
     const res = await slashFrom(deps, "Upal", "ask what is 2+2");
     expect(res).toEqual({ kind: "reply", text: "drafted answer" });
+  });
+});
+
+describe("stop command", () => {
+  const tracked = (runs: ReturnType<typeof createRunRegistry>, over: Record<string, unknown> = {}) =>
+    runs.track({
+      id: "r1",
+      key: "C1:900.1",
+      channelId: "C1",
+      threadTs: "900.1",
+      actor: OWNER,
+      what: "the long one",
+      startedAt: 0,
+      ...over,
+    });
+
+  test("stops the turn running in this thread", async () => {
+    const deps = build();
+    const runs = createRunRegistry();
+    deps.runs = runs;
+    const t = tracked(runs);
+    t.running();
+
+    const out = await dispatchCommand(deps, actor(), "C1", "stop", { threadTs: "900.1" });
+    expect(out).toContain("stopped");
+    expect(out).toContain("the long one");
+    expect(t.signal.aborted).toBe(true);
+  });
+
+  test("says plainly when there is nothing to stop", async () => {
+    // "nothing is running" and "I could not stop it" read very differently when
+    // you are watching something misbehave
+    const deps = build();
+    deps.runs = createRunRegistry();
+    expect(await dispatchCommand(deps, actor(), "C1", "stop", { threadTs: "900.1" })).toContain(
+      "Nothing is running",
+    );
+  });
+
+  test("someone else's turn takes an admin", async () => {
+    const deps = build();
+    const runs = createRunRegistry();
+    deps.runs = runs;
+    const t = tracked(runs, { actor: "U-other" });
+    t.running();
+
+    const pal = actor({ slackId: "U0PAL0007", role: "pal" });
+    deps.users.upsert(pal);
+    const refused = await dispatchCommand(deps, pal, "C1", "stop", { threadTs: "900.1" });
+    expect(refused).toContain("Only they or an admin");
+    expect(t.signal.aborted).toBe(false);
+
+    await dispatchCommand(deps, actor(), "C1", "stop", { threadTs: "900.1" });
+    expect(t.signal.aborted).toBe(true);
+  });
+
+  test("outside a thread there is nothing it could mean", async () => {
+    const deps = build();
+    deps.runs = createRunRegistry();
+    expect(await dispatchCommand(deps, actor(), "C1", "stop")).toContain("inside a thread");
   });
 });
 

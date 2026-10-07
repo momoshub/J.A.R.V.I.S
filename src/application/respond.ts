@@ -10,6 +10,8 @@ import { commandLineOf, dispatchCommand, notifiesOwner } from "./commands.ts";
 import { runWorkflowTurn, WORKFLOW_MIN_ROLE } from "./workflow.ts";
 import { requestAccess } from "./accessRequests.ts";
 import { reviewRequestIn } from "../domain/reviewRequest.ts";
+import { busyNotice, nameOfRequest } from "../domain/runControl.ts";
+import { DROP_ACTION, STOP_ACTION, type RunRegistry } from "./runRegistry.ts";
 import type { ThreadQueue } from "./threadQueue.ts";
 import type { UserRole } from "../domain/types.ts";
 import type { PostedRef } from "./slackAdmin.ts";
@@ -23,9 +25,44 @@ export type RespondDeps = HandleMessageDeps & {
    * CLI session from two processes.
    */
   threadQueue?: ThreadQueue;
+  /** In-flight turns, so one can be stopped from a button or a command. */
+  runs?: RunRegistry;
 };
 
 const RANK: Record<UserRole, number> = { pal: 0, executer: 1, admin: 2, owner: 3 };
+
+/**
+ * Tell a thread it is busy, with the two ways out on the message.
+ *
+ * Falls back to plain text when there are no buttons to be had (no Slack wired
+ * up, or interactivity off), because the sentence is the part that matters.
+ */
+const announceBusy = async (
+  deps: RespondDeps,
+  inbound: InboundMessage,
+  key: string,
+  queuedId?: string,
+): Promise<void> => {
+  const running = deps.runs?.current(key);
+  const text = running
+    ? busyNotice(running, deps.clock())
+    : "⏳ still on the one before this, I will pick it up next";
+  const actions = [
+    ...(running
+      ? [{ actionId: STOP_ACTION, label: "Stop that one", value: running.id, style: "danger" as const }]
+      : []),
+    ...(queuedId ? [{ actionId: DROP_ACTION, label: "Never mind", value: queuedId }] : []),
+  ];
+  try {
+    if (actions.length > 0 && deps.slack?.postInteractive) {
+      const posted = await deps.slack.postInteractive(inbound.channelId, text, actions, inbound.threadTs);
+      if (posted) return;
+    }
+    await deps.slack?.post(inbound.channelId, text, inbound.threadTs);
+  } catch {
+    // A notice that cannot be posted must not take the turn down with it.
+  }
+};
 
 export const respond = async (
   deps: RespondDeps,
@@ -43,22 +80,53 @@ export const respond = async (
     const asked = reviewRequestIn(inbound.text);
     if (asked) return respond(deps, { ...inbound, text: `!${asked}` }, sink);
 
+    const key = `${inbound.channelId}:${inbound.threadTs ?? inbound.messageTs ?? ""}`;
+    const what = nameOfRequest(inbound.text);
+    // Track the turn so it can be stopped: a chat turn may run for the better
+    // part of an hour, and waiting one out is not a way to correct course.
+    const runId = `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
+    const tracked = deps.runs?.track({
+      id: runId,
+      key,
+      channelId: inbound.channelId,
+      threadTs: inbound.threadTs,
+      actor: inbound.slackUserId,
+      what,
+      startedAt: deps.clock(),
+    });
+
     const chatTurn = async (): Promise<HandleResult> => {
-      // A thread driving a workflow keeps talking to that session, not to the
-      // ordinary chat brain - the session is the one holding the task.
-      const workflow = inbound.threadTs
-        ? deps.workflows?.activeFor(inbound.channelId, inbound.threadTs)
-        : undefined;
-      if (workflow) {
-        const who = decideAccess(inbound.slackUserId, deps.ownerSlackId, deps.users.get);
-        // Anyone below the workflow role can still chat in the thread; they just
-        // do not get to steer the task.
-        if (who.allowed && RANK[who.user.role] >= RANK[WORKFLOW_MIN_ROLE]) {
-          const text = cleanInboundText(inbound.text);
-          return { kind: "reply", text: await runWorkflowTurn(deps, workflow, who.user, text, false, sink) };
+      // Called off while it waited its turn, so it never spawns anything.
+      if (tracked?.signal.aborted) return { kind: "ignored" };
+      tracked?.running();
+      try {
+        // A thread driving a workflow keeps talking to that session, not to the
+        // ordinary chat brain - the session is the one holding the task.
+        const workflow = inbound.threadTs
+          ? deps.workflows?.activeFor(inbound.channelId, inbound.threadTs)
+          : undefined;
+        if (workflow) {
+          const who = decideAccess(inbound.slackUserId, deps.ownerSlackId, deps.users.get);
+          // Anyone below the workflow role can still chat in the thread; they just
+          // do not get to steer the task.
+          if (who.allowed && RANK[who.user.role] >= RANK[WORKFLOW_MIN_ROLE]) {
+            const text = cleanInboundText(inbound.text);
+            return {
+              kind: "reply",
+              text: await runWorkflowTurn(deps, workflow, who.user, text, false, sink, tracked?.signal),
+            };
+          }
         }
+        return await handleMessage(deps, inbound, sink, tracked?.signal);
+      } catch (err) {
+        // A stopped run is killed exactly as the timeout kills one, so without
+        // this it would be reported as a turn that ran out of time. The thread
+        // has already been told it was stopped, by whoever stopped it.
+        if (tracked?.signal.aborted) return { kind: "ignored" };
+        throw err;
+      } finally {
+        tracked?.done();
       }
-      return handleMessage(deps, inbound, sink);
     };
 
     // Chat and workflow turns share the thread's one session, so they take it
@@ -66,13 +134,12 @@ export const respond = async (
     // queueing one behind a long chat turn would make it look dead.
     const queue = deps.threadQueue;
     if (!queue) return chatTurn();
-    const key = `${inbound.channelId}:${inbound.threadTs ?? inbound.messageTs ?? ""}`;
     if (queue.depth(key) > 0) {
-      // Say so rather than going quiet: the turn ahead may run for a while, and
-      // silence is what makes someone send the same thing again.
-      await deps.slack
-        ?.post(inbound.channelId, "⏳ still on the one before this, I will pick it up next", inbound.threadTs)
-        .catch(() => undefined);
+      // Say so rather than going quiet, and offer the two things a person who
+      // just sent a follow-up actually wants: end the one in the way, or take
+      // this one back. Doing nothing still queues it, which is the old
+      // behaviour and the right default.
+      await announceBusy(deps, inbound, key, tracked ? runId : undefined);
     }
     return queue.run(key, chatTurn);
   }

@@ -46,6 +46,8 @@ export const runWorkflowTurn = async (
   message: string,
   first: boolean,
   sink?: LlmStreamSink,
+  /** Ends the turn when aborted, so a long one can be stopped. */
+  signal?: AbortSignal,
 ): Promise<string> => {
   if (!deps.llm) return "My brain is not wired up right now.";
   const name = botNameOf(deps);
@@ -58,6 +60,7 @@ export const runWorkflowTurn = async (
     policy: { ...base, timeoutMs: WORKFLOW_TIMEOUT_MS },
     session: { id: workflow.sessionId, resume: !first },
     oauthToken: tokenFor(deps, actor),
+    signal,
   };
 
   const out = (

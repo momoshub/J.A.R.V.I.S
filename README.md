@@ -356,6 +356,38 @@ running:
 It answers `503` when deaf, so an uptime check sees an outage instead of a
 process that happens to be alive.
 
+## Stopping a turn
+
+A chat turn can run for the better part of an hour, so there is a way to end one
+that is going the wrong way instead of waiting it out.
+
+Send anything while a turn is running and the busy notice carries the two things
+a person sending a follow-up actually wants:
+
+```
+⏳ still working on *the escalation plans* (3m so far) - yours is next
+   [ Stop that one ]  [ Never mind ]
+```
+
+- **Stop that one** kills the running turn. The CLI child is killed exactly as
+  the timeout kills one, and the queued message then runs as normal.
+- **Never mind** takes the message you just sent back off the queue, before it
+  has spawned anything.
+- Clicking neither still queues it, which is the old behaviour and the right
+  default.
+
+`//bot stop` does the same from a thread without needing a new message, which is
+the case buttons cannot cover: a turn going wrong while you have nothing to add.
+
+Your own turn is yours to stop. Stopping someone else's takes an admin, because
+a turn is their work and - with per-user tokens - their money. A button that
+outlived its run says so rather than failing: it sat in the channel while the
+work finished on its own.
+
+A stopped turn is **not** reported as a failure. It is killed the same way a
+timeout kills one, so without care it would come back as "ran past my time
+limit"; whoever stopped it already knows, and the thread has been told.
+
 ## One turn at a time
 
 A thread's turns run one after another, never beside each other. Two messages a

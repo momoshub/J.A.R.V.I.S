@@ -12,6 +12,8 @@ import type { WebClient } from "@slack/web-api";
 import { respond, type RespondDeps } from "../../application/respond.ts";
 import { decideAccessRequest } from "../../application/accessRequests.ts";
 import { APPROVE_ACTION, decideCommandApproval, REJECT_ACTION } from "../../application/commandLimits.ts";
+import { decideRunPress, DROP_ACTION, STOP_ACTION } from "../../application/runRegistry.ts";
+import { droppedNotice, stoppedNotice } from "../../domain/runControl.ts";
 import {
   decodeRequest,
   submitClaudeToken,
@@ -282,6 +284,9 @@ export const createHandler =
   };
 };
 
+/** admin or owner, for the one rule the transport has to apply itself. */
+const RANK_ADMIN = (role?: string): boolean => role === "admin" || role === "owner";
+
 export const createSlackApp = (config: SlackAppConfig, deps: Deps) => {
   const log = deps.log ?? ((m: string) => console.log(`[slack] ${m}`));
   const app = new App({ token: config.botToken, appToken: config.appToken, socketMode: true });
@@ -535,6 +540,38 @@ export const createSlackApp = (config: SlackAppConfig, deps: Deps) => {
       log(`2fa follow-up failed: ${err instanceof Error ? err.message : String(err)}`);
     }
   }) as never);
+
+  // Stop / never mind, on the "still busy" notice. The turn is killed the same
+  // way the timeout kills one; the thread is told which one went and why.
+  const onRunButton = async ({ ack, body, action }: ApprovalArgs) => {
+    await ack();
+    const by = body.user?.id;
+    const value = action?.value;
+    if (!by || !value || !deps.runs) return;
+    const outcome = decideRunPress(deps.runs, {
+      actionId: action.action_id ?? "",
+      value,
+      by,
+      isAdmin: RANK_ADMIN(deps.users.get(by)?.role),
+    });
+    if (outcome.kind === "ignored") return;
+
+    const settled =
+      outcome.kind === "stopped"
+        ? stoppedNotice(outcome.run, by, Date.now())
+        : outcome.kind === "dropped"
+          ? droppedNotice(outcome.run.what, by)
+          : outcome.kind === "refused"
+            ? "that one is not yours to stop - ask an admin, or whoever started it"
+            : "that one had already finished";
+    log(`run button ${outcome.kind}`);
+    // Replace the buttons so a settled notice cannot be clicked twice.
+    if (body.channel?.id && body.message?.ts) {
+      await deps.slack?.settleInteractive(body.channel.id, body.message.ts, settled).catch(() => undefined);
+    }
+  };
+  app.action({ action_id: STOP_ACTION }, onRunButton as never);
+  app.action({ action_id: DROP_ACTION }, onRunButton as never);
 
   // The owner reacting on an access-request notice decides it.
   app.event("reaction_added", async ({ event }) => {

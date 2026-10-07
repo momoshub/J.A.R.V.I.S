@@ -70,6 +70,12 @@ export type LlmCompleteParams = {
    * run on the host session instead. Everything else keeps the explicit token.
    */
   readonly useHostLogin?: boolean;
+  /**
+   * Ends the run when aborted (CLI adapter only): the child process is killed,
+   * exactly as the timeout does. A turn can last the better part of an hour, so
+   * there has to be a way to stop one that is going the wrong way.
+   */
+  readonly signal?: AbortSignal;
   /** Continue a durable session instead of a one-shot call (CLI adapter only). */
   readonly session?: LlmSession;
 };

@@ -128,6 +128,8 @@ export const handleMessage = async (
   deps: HandleMessageDeps,
   inbound: InboundMessage,
   sink?: LlmStreamSink,
+  /** Ends the turn when aborted, so a long one can be stopped. */
+  signal?: AbortSignal,
 ): Promise<HandleResult> => {
   const text = cleanInboundText(inbound.text);
   if (!hasContent(text)) return { kind: "ignored" };
@@ -224,6 +226,7 @@ export const handleMessage = async (
     // Their own credential when they have registered one, so the turn is theirs
     // in every sense; the bot's own when they have not.
     oauthToken: tokenFor(deps, decision.user),
+    signal,
   };
   const run = (p: Parameters<typeof deps.llm.complete>[0]) =>
     sink && deps.llm.stream ? deps.llm.stream(p, sink) : deps.llm.complete(p);

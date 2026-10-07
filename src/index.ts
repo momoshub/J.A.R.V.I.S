@@ -13,6 +13,7 @@ import { loadConfig, modelLabel, type AppConfig } from "./config/env.ts";
 import { openDatabase } from "./infrastructure/db/client.ts";
 import { createThreadSessionRepo } from "./infrastructure/db/threadSessionRepo.ts";
 import { createThreadQueue } from "./application/threadQueue.ts";
+import { createRunRegistry } from "./application/runRegistry.ts";
 import { createTotpRepo } from "./infrastructure/db/totpRepo.ts";
 import {
   createClaudeTokenRepo,
@@ -215,6 +216,9 @@ const main = async () => {
     // run at once, doing the same work twice - two branches, two PRs - and
     // resuming the same CLI session from two processes while they did it.
     threadQueue: createThreadQueue(),
+    // Handles on the turns in flight, so one can be stopped from a button or
+    // `stop` instead of being waited out.
+    runs: createRunRegistry(),
     threadSessionsOn: () => settings.get(SETTING_KEYS.threadSessions)?.trim().toLowerCase() !== "off",
     // A stranger is put to the owner for a ✅ / ❌ rather than refused outright.
     accessRequests,
