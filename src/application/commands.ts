@@ -32,6 +32,7 @@ import {
   logSourceOrder,
   parseLogSources,
 } from "../domain/investigation.ts";
+import { investigatePrompt } from "../domain/investigatePrompt.ts";
 import {
   asReviewPolicy,
   DEFAULT_REVIEW_POLICY,
@@ -114,6 +115,8 @@ export type CommandDeps = {
   totp?: TotpPort;
   /** In-flight turns, so `stop` can end one without waiting it out. */
   runs?: RunRegistry;
+  /** Read-only Grafana helper, so an investigation can reach a non-Loki datasource. */
+  grafanaGetScript?: string;
   /** One CLI session per thread, for the `session` command to inspect and reset. */
   threadSessions?: ThreadSessionRepo;
   threadSessionsOn?: () => boolean;
@@ -129,6 +132,8 @@ const clip = (s: string): string =>
 const REVIEW_TIMEOUT_MS = 900_000;
 /** a ticket reads the SOP, the thread and the code, and may open a PR. */
 const TICKET_TIMEOUT_MS = 900_000;
+/** an investigation walks logs, RUM and traces across environments. */
+const INVESTIGATE_TIMEOUT_MS = 900_000;
 
 /** Public metadata for one command, for the dashboard. */
 export type CommandInfo = {
@@ -547,6 +552,80 @@ export const COMMANDS: readonly CommandDef[] = [
       if (!Number.isInteger(id)) return `Which one? \`${prefix} unlearn <id>\` (see \`${prefix} learnings\`)`;
       deps.learnings.remove(id);
       return `Forgotten learning #${id}.`;
+    },
+  },
+  {
+    name: "investigate",
+    aliases: ["inv", "rca"],
+    minRole: "pal",
+    usage: "<what to look into>",
+    summary: "dig through logs, RUM and traces for the cause - runs with the connectors loaded",
+    run: async (ctx) => {
+      const { deps, actor, channelId, threadTs, rest, prefix, reply } = ctx;
+      const question = rest.trim();
+      if (!question) return `What should I look into? \`${prefix} investigate <what happened>\``;
+      if (!deps.llm) return "My brain is not wired up right now.";
+
+      const order = logSourceOrder(deps.settings?.get(SETTING_KEYS.logSources));
+      if (order.length === 0) {
+        return `No log sources are configured, so there is nowhere for me to look. An admin can set them: \`${prefix} logsource grafana,datadog\``;
+      }
+
+      // A preset full-access task, and - like a ticket - one that runs on the
+      // HOST login rather than any setup token. Datadog (and RUM in particular)
+      // is reachable only through the account's connectors, which a setup token
+      // carries none of; that credential split is the whole reason this is its
+      // own command instead of something chat does inline.
+      const full = deps.toolPolicy?.("owner") ?? { skipPermissions: true };
+      const name = botNameOf(deps);
+      const params = {
+        system: investigatePrompt(question, name, order, deps.grafanaGetScript, {
+          channelId,
+          threadTs,
+          askedBy: actor.slackId,
+        }),
+        messages: [{ role: "user" as const, content: question }],
+        assistantName: name,
+        policy: { ...full, timeoutMs: INVESTIGATE_TIMEOUT_MS },
+        useHostLogin: true,
+      };
+
+      if (!reply) {
+        const out = await deps.llm.complete(params);
+        return out.trim() || "I could not get to the bottom of that one.";
+      }
+
+      await reply(`🔎 investigating for <@${actor.slackId}>`);
+      let out = "";
+      try {
+        if (deps.llm.stream) {
+          const seen = new Set<string>();
+          const announce = (line: string) => {
+            if (seen.has(line)) return;
+            seen.add(line);
+            void reply(line);
+          };
+          out = await deps.llm.stream(params, (ev) => {
+            if (ev.type !== "tool" || ev.status !== "complete") return;
+            const ran = (ev.command ?? ev.title).toLowerCase();
+            // Which source actually answered is the thing people most want to
+            // know mid-run, and the thing a report most often blurs.
+            if (/mcp__.*datadog.*rum/.test(ran)) announce("📊 reading RUM in Datadog");
+            else if (/mcp__.*datadog/.test(ran)) announce("🐶 querying Datadog");
+            if (/gcx |grafana-get\.sh/.test(ran)) announce("📈 querying Grafana");
+          });
+        } else {
+          out = await deps.llm.complete(params);
+        }
+      } catch (err) {
+        if (!isAuthFailure(err)) throw err;
+        await reply(
+          "🔑 I could not investigate - the login on my host has lapsed, and the connectors come with it. Someone with access to the machine needs to run `claude` there and sign in again.",
+        );
+        return "";
+      }
+      await reply(out.trim() || "I could not get to the bottom of that one.");
+      return "";
     },
   },
   {

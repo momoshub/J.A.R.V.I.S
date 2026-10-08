@@ -207,7 +207,11 @@ export const buildSystemPrompt = (options: Partial<BuildSystemPromptOptions> = {
   const reactions = reactionRules(options.channelId ?? "", options.reactable ?? [], options.reactScript);
   const remembering = learningRules(options.learnUrl ?? "");
   const attachments = attachmentRules(options.fileScript);
-  const investigating = investigationRules(options.logSources ?? [], options.grafanaGetScript);
+  const investigating = investigationRules(
+    options.logSources ?? [],
+    options.grafanaGetScript,
+    options.commandPrefix,
+  );
   const tickets = ticketChatRules(options.commandPrefix ?? "//bot", options.canRaiseTickets === true);
   const commands = commandRules(
     options.runScript ?? "",

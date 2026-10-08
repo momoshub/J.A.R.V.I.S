@@ -93,3 +93,20 @@ describe("investigationRules", () => {
     expect(r).not.toContain("Only move on to");
   });
 });
+
+describe("datadog is honest about the connector", () => {
+  test("it says the tools may simply be absent, and where to go instead", () => {
+    // the failure this exists for: told to use Datadog MCP tools it did not
+    // have, the bot went hunting through ~/.claude.json for credentials
+    const out = investigationRules(["datadog"], undefined, "X/jv");
+    expect(out).toContain("do NOT go hunting for API keys");
+    expect(out).toContain("X/jv investigate");
+    expect(out).toContain("RUM");
+  });
+
+  test("with no prefix to offer it drops the pointer rather than printing one", () => {
+    const out = investigationRules(["datadog"], undefined);
+    expect(out).not.toContain("{prefix}");
+    expect(out).not.toContain("investigate <question>");
+  });
+});

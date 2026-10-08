@@ -212,6 +212,32 @@ identically. Preset tasks that force a policy keep their own model: `review`
 runs full-access whoever asked and wherever it is asked, so a pal's review in a
 cheap channel is still done properly.
 
+## Investigating
+
+```
+//bot investigate why did /home crash for this user
+```
+
+`investigate` (aliases `inv`, `rca`) walks logs, RUM and traces for a cause and
+reports back in the thread - it reads the thread first, so the ids and
+timestamps already posted are not asked for again. It files nothing and changes
+nothing unless you ask; finding out is the job.
+
+It is a separate command for one reason: **Datadog is only reachable from the
+host's login.** RUM - browser errors, user sessions, front-end crashes - exists
+nowhere else, and the connectors that reach it come with the interactive
+account session, not with a `claude setup-token` credential. Ordinary chat runs
+on a setup token (the speaker's own, or the bot's), which loads zero `mcp__`
+tools, so a chat turn can query Grafana through `gcx` and genuinely cannot see
+Datadog however connected the account is. Chat says so now and points here,
+rather than hunting for API keys that do not exist.
+
+The prompt also encodes the ways a real investigation went wrong: count on the
+de-duplicating field (one crash emits several RUM events, so a naive count came
+out 3x too high), check every region rather than the one the report came from,
+prove the mechanism with a request timeline instead of a plausible story, and
+question an id that returns nothing before concluding there is no data.
+
 ### Why tickets use the host's login
 
 A ticket is the one task that needs a claude.ai connector (Notion), and a

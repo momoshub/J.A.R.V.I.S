@@ -838,6 +838,33 @@ describe("reviews run on the caller's own Claude token", () => {
     expect(token()).toBeUndefined(); // falls back to the bot's own credential
   });
 
+  test("investigate runs on the host login, where the connectors are", async () => {
+    // Datadog and its RUM data come from the account's connectors, which a
+    // setup token - the bot's or a caller's - carries none of
+    const { deps } = withTokens({ [OWNER]: TOKEN });
+    let seen: { oauthToken?: string; useHostLogin?: boolean; system?: string } = {};
+    deps.llm = {
+      complete: async (p) => {
+        seen = { oauthToken: p.oauthToken, useHostLogin: p.useHostLogin, system: p.system };
+        return "here is what happened";
+      },
+    };
+    const out = await dispatchCommand(deps, actor(), "C1", "investigate why did /home crash");
+    expect(seen.useHostLogin).toBe(true);
+    expect(seen.oauthToken).toBeUndefined();
+    expect(seen.system).toContain("why did /home crash");
+    expect(out).toBe("here is what happened");
+  });
+
+  test("investigate needs a question, and somewhere to look", async () => {
+    const { deps } = withTokens({ [OWNER]: TOKEN });
+    expect(await dispatchCommand(deps, actor(), "C1", "investigate")).toContain("What should I look into?");
+
+    deps.settings!.set("log_sources", "");
+    const noSources = { ...deps, settings: { ...deps.settings!, get: () => "" } } as typeof deps;
+    expect(await dispatchCommand(noSources, actor(), "C1", "investigate why")).not.toContain("What should I look into?");
+  });
+
   test("a ticket runs on the host login, never on a setup token", async () => {
     // tickets need Notion, and no setup token - the bot's or a caller's - carries
     // any claude.ai connector authorisation

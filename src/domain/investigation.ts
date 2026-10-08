@@ -17,6 +17,13 @@
  */
 const GRAFANA_GET_SCRIPT = "{grafanaGet}";
 
+/**
+ * Placeholder for the instance's command prefix. A source the bot cannot reach
+ * from this turn should point at the one that can, in the words this instance
+ * actually answers to.
+ */
+const COMMAND_PREFIX = "{prefix}";
+
 /** A log/metric/trace backend the bot may be pointed at. */
 export type LogSource = {
   /** Key used in configuration, e.g. `grafana`. */
@@ -47,7 +54,8 @@ export const LOG_SOURCES: Record<string, LogSource> = {
   },
   datadog: {
     id: "datadog",
-    how: "the Datadog MCP tools (search_datadog_logs, search_datadog_spans, and the rest).",
+    how: `the Datadog MCP tools (search_datadog_logs, search_datadog_rum_events, search_datadog_spans, and the rest). RUM - browser errors, user sessions, front-end crashes - exists ONLY here, never in Grafana.
+   These tools are loaded from the account's connectors, which an ordinary chat turn does NOT have. If you cannot see any \`mcp__\` Datadog tool, that is the expected state and not something to fix from inside the session: do NOT go hunting for API keys, config files or a CLI. Say plainly that Datadog is out of reach for this turn and that \`{prefix} investigate <question>\` runs with the connectors loaded.`,
   },
 };
 
@@ -79,7 +87,11 @@ export const logSourceOrder = (raw?: string): string[] => {
  * The investigation block. Empty when no backend is configured - claiming a
  * source the bot cannot reach is worse than saying nothing.
  */
-export const investigationRules = (order: readonly string[], grafanaGetScript?: string): string => {
+export const investigationRules = (
+  order: readonly string[],
+  grafanaGetScript?: string,
+  commandPrefix?: string,
+): string => {
   const sources = order
     .map((id) => LOG_SOURCES[id])
     .filter((s): s is LogSource => !!s)
@@ -88,6 +100,18 @@ export const investigationRules = (order: readonly string[], grafanaGetScript?: 
     .map((s) =>
       s.how.includes(GRAFANA_GET_SCRIPT)
         ? { ...s, how: grafanaGetScript ? s.how.replaceAll(GRAFANA_GET_SCRIPT, grafanaGetScript) : s.how.replace(/\n   - ANY OTHER type[\s\S]*?guessing at it\.\n/, "\n") }
+        : s,
+    )
+    // Pointing at a command needs the prefix this instance answers to; with no
+    // prefix to offer, drop the pointer rather than print a placeholder.
+    .map((s) =>
+      s.how.includes(COMMAND_PREFIX)
+        ? {
+            ...s,
+            how: commandPrefix
+              ? s.how.replaceAll(COMMAND_PREFIX, commandPrefix)
+              : s.how.replace(/ and that `\{prefix\} investigate <question>` runs with the connectors loaded\./, "."),
+          }
         : s,
     );
   if (sources.length === 0) return "";
