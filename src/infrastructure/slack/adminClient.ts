@@ -4,6 +4,7 @@
  * the console can mark editable messages and render senders.
  */
 import { WebClient } from "@slack/web-api";
+import { toMrkdwn } from "../../domain/slackFormat.ts";
 import type {
   SlackAdminPort,
   SlackConversation,
@@ -176,14 +177,14 @@ export const createSlackAdmin = (client: WebClient): SlackAdminPort => {
     },
 
     post: async (channel, text, threadTs) => {
-      await client.chat.postMessage({ channel, text, ...(threadTs ? { thread_ts: threadTs } : {}) });
+      await client.chat.postMessage({ channel, text: toMrkdwn(text), ...(threadTs ? { thread_ts: threadTs } : {}) });
     },
 
     postDm: async (userId, text) => {
       const open = (await client.conversations.open({ users: userId })) as { channel?: { id?: string } };
       const channel = open.channel?.id;
       if (!channel) return undefined;
-      const posted = (await client.chat.postMessage({ channel, text })) as { ts?: string };
+      const posted = (await client.chat.postMessage({ channel, text: toMrkdwn(text) })) as { ts?: string };
       return posted.ts ? { channel, ts: posted.ts } : undefined;
     },
 
@@ -195,7 +196,7 @@ export const createSlackAdmin = (client: WebClient): SlackAdminPort => {
         channel,
         text,
         blocks: [
-          { type: "section", text: { type: "mrkdwn", text } },
+          { type: "section", text: { type: "mrkdwn", text: toMrkdwn(text) } },
           {
             type: "actions",
             elements: actions.map((a) => ({
@@ -217,7 +218,7 @@ export const createSlackAdmin = (client: WebClient): SlackAdminPort => {
         text,
         ...(threadTs ? { thread_ts: threadTs } : {}),
         blocks: [
-          { type: "section", text: { type: "mrkdwn", text } },
+          { type: "section", text: { type: "mrkdwn", text: toMrkdwn(text) } },
           {
             type: "actions",
             elements: actions.map((a) => ({

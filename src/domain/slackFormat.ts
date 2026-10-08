@@ -32,3 +32,46 @@ export const SLACK_BREVITY = `Length:
 - never restate what the person just said back to them, and never narrate what you are about to do
 - a link plus one line beats a paragraph describing what is behind the link
 - when there is genuinely a lot to say, say the short version and offer the rest: people can ask`;
+
+/**
+ * Rewrite Markdown that slipped through into the mrkdwn Slack actually renders.
+ *
+ * `SLACK_FORMAT` tells every prompt the rules, and models still reach for
+ * Markdown - a long relayed answer is where the habit resurfaces. The result is
+ * a message full of literal `**` and `[label](url)`, which is the one thing the
+ * reader sees. A rule the model may ignore is not a guarantee; a conversion at
+ * the boundary is.
+ *
+ * Conservative on purpose. It only touches constructs that cannot render in
+ * Slack at all, and never looks inside code: a fenced block or an inline span
+ * is held out and put back untouched, because `**ptr` in a C snippet is code,
+ * not emphasis.
+ */
+export const toMrkdwn = (text: string): string => {
+  if (!text) return text;
+
+  // Hold out code first, so nothing below can reach inside it.
+  const held: string[] = [];
+  const stash = (s: string): string => {
+    held.push(s);
+    return `\u0000${held.length - 1}\u0000`;
+  };
+  let out = text
+    .replace(/```[\s\S]*?```/g, stash)
+    .replace(/`[^`\n]*`/g, stash);
+
+  out = out
+    // **bold** / __bold__ -> *bold*. Non-greedy, and never across a blank line,
+    // so an unpaired marker cannot swallow the rest of the message.
+    .replace(/\*\*(?!\s)([^\n]*?[^\s*])\*\*/g, "*$1*")
+    .replace(/__(?!\s)([^\n]*?[^\s_])__/g, "*$1*")
+    // [label](url) -> <url|label>
+    .replace(/\[([^\]\n]+)\]\((https?:\/\/[^\s)]+)\)/g, "<$2|$1>")
+    // headings -> a short bold line, which is what Slack leaves you
+    .replace(/^#{1,6}[ \t]+(.+?)[ \t]*#*$/gm, "*$1*")
+    // * bullet and + bullet -> "- ", the one Slack renders. Only at line start,
+    // and only with a space after, so it cannot catch *bold* at the margin.
+    .replace(/^([ \t]*)[*+][ \t]+/gm, "$1- ");
+
+  return out.replace(/\u0000(\d+)\u0000/g, (_, i: string) => held[Number(i)] ?? "");
+};

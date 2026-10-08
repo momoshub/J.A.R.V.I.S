@@ -34,6 +34,7 @@ import { tokenGuide, tokenHint, TOKEN_PREFIX } from "../../domain/claudeToken.ts
 import { commandLineOf, dispatchCommand } from "../../application/commands.ts";
 import { annotateMentions, extractMentionIds } from "../../domain/mentions.ts";
 import { isTimeout } from "../../domain/threadSession.ts";
+import { toMrkdwn } from "../../domain/slackFormat.ts";
 import { createSlackStream, type Streamer } from "./stream.ts";
 import {
   CONNECTION_GRACE_MS,
@@ -267,7 +268,10 @@ export const createHandler =
             .catch((e: unknown) => log(`broadcast failed: ${e instanceof Error ? e.message : String(e)}`));
         }
       } else if (result.text.trim()) {
-        await msg.say({ text: result.text, thread_ts: msg.threadTs, ...(broadcast ? { reply_broadcast: true } : {}) });
+        // Converted at the boundary, not merely asked for in the prompt: a rule
+        // the model may ignore is not a guarantee, and what it ignores is the
+        // one thing the reader sees.
+        await msg.say({ text: toMrkdwn(result.text), thread_ts: msg.threadTs, ...(broadcast ? { reply_broadcast: true } : {}) });
       }
     } catch (err) {
       log(`respond failed: ${err instanceof Error ? err.message : String(err)}`);

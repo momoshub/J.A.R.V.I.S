@@ -232,8 +232,17 @@ tools, so a chat turn can query Grafana through `gcx` and genuinely cannot see
 Datadog however connected the account is. Chat does not hand that back to you,
 though: when a question needs Datadog and the tools are not there, the bot runs
 `investigate` **itself** through its own command bridge and reports what it
-found. Telling someone to go and type a command it could have run is a hand-off,
-not an answer.
+found - and since that run posts its own findings into the thread, the bot says
+one line and lets it speak rather than repeating it. Telling someone to go and
+type a command it could have run is a hand-off, not an answer; restating what it
+already posted is the same message twice.
+
+Separately, anything the bot posts as plain text is converted to mrkdwn on the
+way out - `**bold**`, `[label](url)`, `#` headings and `*` bullets all render as
+literal characters in Slack otherwise. The prompts still carry the rule, but a
+rule a model may ignore is not a guarantee, and what it ignores is the one thing
+the reader sees. Code is held out of the conversion, so `**ptr` in a snippet
+stays as written.
 
 The prompt also encodes the ways a real investigation went wrong: count on the
 de-duplicating field (one crash emits several RUM events, so a naive count came

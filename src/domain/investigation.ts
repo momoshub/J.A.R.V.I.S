@@ -56,7 +56,7 @@ export const LOG_SOURCES: Record<string, LogSource> = {
     id: "datadog",
     how: `the Datadog MCP tools (search_datadog_logs, search_datadog_rum_events, search_datadog_spans, and the rest). RUM - browser errors, user sessions, front-end crashes - exists ONLY here, never in Grafana.
    These tools come from the account's connectors, which an ordinary chat turn does NOT have. If you cannot see any \`mcp__\` Datadog tool, that is the expected state, not a fault to fix from inside the session: do NOT hunt for API keys, config files or a CLI, and do NOT ask anyone to reconnect anything.
-   RUN IT YOURSELF instead. \`${COMMAND_PREFIX} investigate <the question>\` is the same job with the connectors loaded, and you start it the way you run any of your commands - through the run helper, in this turn, without being asked. Then report what it found as the answer. Telling someone to go and type a command you could have run is not an answer, it is a hand-off.`,
+   RUN IT YOURSELF instead. \`${COMMAND_PREFIX} investigate <the question>\` is the same job with the connectors loaded, and you start it the way you run any of your commands - through the run helper, in this turn, without being asked. It posts its own findings straight into the thread, so do NOT repeat them afterwards - say in one line that it is running and let it speak. Telling someone to go and type a command you could have run is not an answer, it is a hand-off; restating what it already posted is just the same message twice.`,
   },
 };
 
