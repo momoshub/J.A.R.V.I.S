@@ -229,8 +229,11 @@ nowhere else, and the connectors that reach it come with the interactive
 account session, not with a `claude setup-token` credential. Ordinary chat runs
 on a setup token (the speaker's own, or the bot's), which loads zero `mcp__`
 tools, so a chat turn can query Grafana through `gcx` and genuinely cannot see
-Datadog however connected the account is. Chat says so now and points here,
-rather than hunting for API keys that do not exist.
+Datadog however connected the account is. Chat does not hand that back to you,
+though: when a question needs Datadog and the tools are not there, the bot runs
+`investigate` **itself** through its own command bridge and reports what it
+found. Telling someone to go and type a command it could have run is a hand-off,
+not an answer.
 
 The prompt also encodes the ways a real investigation went wrong: count on the
 de-duplicating field (one crash emits several RUM events, so a naive count came
