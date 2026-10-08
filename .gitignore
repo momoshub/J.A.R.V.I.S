@@ -27,3 +27,7 @@ data/tokens.key
 
 # os
 .DS_Store
+
+# Claude Code's own worktrees. They are checkouts of this repo, so committing
+# them embeds a repository inside itself and clones come out broken.
+.claude/worktrees/
