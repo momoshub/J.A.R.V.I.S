@@ -59,6 +59,39 @@ describe("dashboard static + api", () => {
     expect(((await good.json()) as { ok: boolean }).ok).toBe(true);
   });
 
+  test("health reports desktop access without letting it fail the bot", async () => {
+    // it is not fatal - almost nothing needs the UI - which is exactly why its
+    // absence goes unnoticed for weeks unless something says so
+    const denied = build({
+      slackHealth: () => ({ state: "connected", since: 0 }),
+      uiAccess: async () => ({ access: "denied" as const, checkedAt: 7 }),
+    });
+    const res = await denied.dash.handle(api("/health"));
+    expect(res.status).toBe(200); // still 200: the socket is what `ok` means
+    const body = (await res.json()) as { ok: boolean; ui: string; uiState: string };
+    expect(body.ok).toBe(true);
+    expect(body.ui).toContain("REFUSED");
+    expect(body.uiState).toBe("denied");
+
+    const fine = build({
+      slackHealth: () => ({ state: "connected", since: 0 }),
+      uiAccess: async () => ({ access: "granted" as const, checkedAt: 7 }),
+    });
+    expect(((await (await fine.dash.handle(api("/health"))).json()) as { ui: string }).ui).toContain("allowed");
+  });
+
+  test("a probe that throws does not take the health endpoint with it", async () => {
+    const broken = build({
+      slackHealth: () => ({ state: "connected", since: 0 }),
+      uiAccess: async () => {
+        throw new Error("osascript exploded");
+      },
+    });
+    const res = await broken.dash.handle(api("/health"));
+    expect(res.status).toBe(200);
+    expect((await res.json()) as { ui?: string }).not.toHaveProperty("ui");
+  });
+
   test("static falls back to a 500 hint when the build is missing", async () => {
     // distDir does not exist, so serveStatic reports the build is missing.
     const res = await build().dash.handle(api("/"));

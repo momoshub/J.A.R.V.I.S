@@ -371,6 +371,33 @@ stays a note rather than refusing the command. Bare words are just words -
 "approve after CI is green" asks for nothing. With several PRs the flag applies
 to the whole run whatever order it was typed in.
 
+## Desktop access
+
+Some things the bot can be asked to do reach the desktop - taking a screenshot,
+closing a window. On macOS that needs the Accessibility permission, which is
+granted against the **path of the binary that launched the process**. Under
+launchd that is the runtime (`bun`), not `claude` and not a terminal, which is
+the first thing people get wrong: a terminal usually has the grant already, so
+testing by hand succeeds while the bot still cannot.
+
+The second thing is worse. The grant follows a path, and a package upgrade that
+installs into a versioned directory moves the binary - the permission then
+silently stops applying, weeks before anyone asks for a screenshot and gets a
+confusing refusal.
+
+So it is probed rather than assumed: one cheap `osascript` call at boot and on a
+five minute TTL, logged at startup and reported by `GET /health`:
+
+```json
+{ "ok": true, "slack": "listening, connected for 2m",
+  "ui": "desktop UI control: REFUSED - the Accessibility permission is missing or no longer matches this binary (an upgrade moves it). Grant it to /opt/homebrew/bin/bun",
+  "uiState": "denied" }
+```
+
+It never affects `ok`. Nothing core needs the desktop, which is exactly why its
+absence would otherwise go unnoticed - and a probe that fails for some other
+reason reports `unknown` rather than blaming a permission.
+
 ## Staying online
 
 Socket Mode fails in a way that looks like health from every angle: the process

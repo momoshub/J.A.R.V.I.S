@@ -35,6 +35,8 @@ import { createClaudeCliLlm } from "./infrastructure/llm/claudeCli.ts";
 import { WebClient } from "@slack/web-api";
 import { createSlackApp } from "./infrastructure/slack/app.ts";
 import type { ConnectionHealth } from "./domain/connectionHealth.ts";
+import { createUiAccessProbe } from "./infrastructure/system/uiAccessProbe.ts";
+import { describeUiAccess, needsAttention } from "./domain/uiAccess.ts";
 import { createSlackAdmin } from "./infrastructure/slack/adminClient.ts";
 import { createGhCli } from "./infrastructure/github/ghCli.ts";
 import { createDraftReply } from "./application/draftReply.ts";
@@ -252,6 +254,10 @@ const main = async () => {
   // Filled in once the Slack app exists, so /health can report the socket from
   // the moment it does and never trips over the order things are built in.
   let slackApp: { health: () => ConnectionHealth } | undefined;
+  // Whether the desktop will take orders from us. Probed rather than assumed:
+  // the grant is bound to the runtime's path, so upgrading it silently revokes
+  // the permission and nothing says so.
+  const uiAccess = createUiAccessProbe();
   const dashboard = createDashboard(
     {
       port: config.dashboardPort,
@@ -266,6 +272,7 @@ const main = async () => {
       // Read through a getter: the Slack app is built after this server, and a
       // bot that cannot hear Slack is down however well /health answers.
       slackHealth: () => slackApp?.health(),
+      uiAccess: uiAccess.read,
       users,
       messages,
       learnings,
@@ -328,6 +335,13 @@ const main = async () => {
   );
   slackApp = slack;
   await slack.start();
+
+  // Said at boot, where someone will see it, and loudly when it is missing.
+  void uiAccess.read().then(({ access }) => {
+    const line = describeUiAccess(access, config.claudeBin === "claude" ? process.execPath : config.claudeBin);
+    if (needsAttention(access)) activity.error("ui_access", { msg: line });
+    console.log(`[ui] ${line}`);
+  });
 
   const shutdown = async () => {
     console.log("\nShutting down ...");

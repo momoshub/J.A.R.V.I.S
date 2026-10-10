@@ -8,6 +8,7 @@
  */
 import { join, normalize } from "node:path";
 import { describeConnection, isListening, type ConnectionHealth } from "../../domain/connectionHealth.ts";
+import { describeUiAccess, type UiAccess } from "../../domain/uiAccess.ts";
 import type { UserRole } from "../../domain/types.ts";
 import { DEFAULT_PERSONALITY } from "../../domain/personality.ts";
 import type { BotProfile } from "../../application/botProfile.ts";
@@ -54,6 +55,12 @@ export type DashboardDeps = {
    * the process, since from inside it looks exactly like a quiet afternoon.
    */
   slackHealth?: () => ConnectionHealth | undefined;
+  /**
+   * Whether the bot may drive the desktop UI. Reported, never fatal: almost
+   * nothing needs it, which is why its absence otherwise goes unnoticed for
+   * weeks.
+   */
+  uiAccess?: () => Promise<{ access: UiAccess; checkedAt: number }>;
   /**
    * Run one of the bot's own commands on someone's behalf. Wired in the
    * composition root, where the full command dependencies live; the brain
@@ -384,8 +391,12 @@ export const createDashboard = (config: DashboardConfig, deps: DashboardDeps) =>
   const route = async (req: Request, url: URL): Promise<Response> => {
     if (url.pathname === "/health") {
       const health = deps.slackHealth?.();
+      const ui = await deps.uiAccess?.().catch(() => undefined);
       // `ok` means "can do its job", not "the process is up" - a bot that
       // cannot hear Slack is down however well this endpoint answers.
+      // `ui` rides along without touching `ok`: being unable to drive the
+      // desktop does not stop the bot doing its job, it just needs saying.
+      const uiPart = ui ? { ui: describeUiAccess(ui.access), uiState: ui.access, uiCheckedAt: ui.checkedAt } : {};
       return Response.json(
         health
           ? {
@@ -393,8 +404,9 @@ export const createDashboard = (config: DashboardConfig, deps: DashboardDeps) =>
               slack: describeConnection(health, deps.clock()),
               state: health.state,
               since: health.since,
+              ...uiPart,
             }
-          : { ok: true },
+          : { ok: true, ...uiPart },
         { status: health && !isListening(health.state) ? 503 : 200 },
       );
     }
