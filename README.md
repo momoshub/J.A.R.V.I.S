@@ -385,8 +385,11 @@ installs into a versioned directory moves the binary - the permission then
 silently stops applying, weeks before anyone asks for a screenshot and gets a
 confusing refusal.
 
-So it is probed rather than assumed: one cheap `osascript` call at boot and on a
-five minute TTL, logged at startup and reported by `GET /health`:
+So it is probed rather than assumed: `AXIsProcessTrusted()` at boot and on a
+five minute TTL, logged at startup and reported by `GET /health`. Not by
+scripting System Events - that answers a different question (Automation), which
+can be granted while Accessibility is not, and reported "allowed" while the real
+call was being refused:
 
 ```json
 { "ok": true, "slack": "listening, connected for 2m",

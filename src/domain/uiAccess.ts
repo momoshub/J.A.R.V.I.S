@@ -30,19 +30,27 @@ export type UiAccess =
   | "unknown";
 
 /**
- * macOS refuses assistive access with `-1743`, worded a few different ways
- * across versions. Matched loosely: a false "denied" costs a misleading health
- * line, while a false "granted" is the silence this exists to prevent.
+ * Ask the system directly, with `AXIsProcessTrusted()`.
+ *
+ * The first version of this probe scripted System Events instead, and that was
+ * the wrong question: driving another app over Apple Events is the *Automation*
+ * permission, which can be granted while Accessibility is not. It reported
+ * "allowed" while the real UI call was being refused - the precise false
+ * positive this exists to prevent. `AXIsProcessTrusted` answers about
+ * Accessibility and nothing else.
+ *
+ * `true` or `false` on stdout, and anything else is a probe that did not run.
  */
-const REFUSED = /-1743|not allowed assistive access|not authori[sz]ed to send apple events|accessibility access/i;
-
 export const readUiAccess = (
-  result: { exitCode: number; stderr: string },
+  result: { exitCode: number; stdout: string },
   platform: string = process.platform,
 ): UiAccess => {
   if (platform !== "darwin") return "not-applicable";
-  if (result.exitCode === 0) return "granted";
-  return REFUSED.test(result.stderr) ? "denied" : "unknown";
+  if (result.exitCode !== 0) return "unknown";
+  const answer = result.stdout.trim().toLowerCase();
+  if (answer === "true") return "granted";
+  if (answer === "false") return "denied";
+  return "unknown";
 };
 
 /** Does this state need somebody to do something? */
@@ -53,8 +61,12 @@ export const needsAttention = (access: UiAccess): boolean => access === "denied"
  * because by the time anyone reads this they will have forgotten that a grant
  * is attached to a path that can move.
  */
-export const describeUiAccess = (access: UiAccess, binaryPath?: string): string => {
-  const which = binaryPath ? ` Grant it to ${binaryPath}.` : "";
+export const describeUiAccess = (access: UiAccess, ...binaryPaths: (string | undefined)[]): string => {
+  // Both the runtime and the CLI it spawns, because the permission is attributed
+  // to whichever of them the system decides is responsible - and granting only
+  // the obvious one is how this looked fixed while still being refused.
+  const named = binaryPaths.filter((p): p is string => !!p);
+  const which = named.length > 0 ? ` Grant it to ${named.join(" and ")}.` : "";
   switch (access) {
     case "granted":
       return "desktop UI control: allowed";

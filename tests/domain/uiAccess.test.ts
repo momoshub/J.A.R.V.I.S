@@ -2,32 +2,28 @@ import { describe, expect, test } from "bun:test";
 import { describeUiAccess, needsAttention, readUiAccess } from "../../src/domain/uiAccess.ts";
 
 describe("readUiAccess", () => {
-  test("a clean run means the permission is in place", () => {
-    expect(readUiAccess({ exitCode: 0, stderr: "" }, "darwin")).toBe("granted");
+  test("it reads the system's own answer about Accessibility", () => {
+    expect(readUiAccess({ exitCode: 0, stdout: "true\n" }, "darwin")).toBe("granted");
+    expect(readUiAccess({ exitCode: 0, stdout: "false\n" }, "darwin")).toBe("denied");
   });
 
-  test("the permission error is recognised in the wordings macOS uses", () => {
-    const refusals = [
-      "execution error: Not authorized to send Apple events to System Events. (-1743)",
-      "osascript is not allowed assistive access. (-1743)",
-      "error -1743",
-      "accessibility access is required",
-    ];
-    for (const stderr of refusals) {
-      expect(readUiAccess({ exitCode: 1, stderr }, "darwin")).toBe("denied");
-    }
+  test("a refusal is reported as denied, not as a broken probe", () => {
+    // the whole point: AXIsProcessTrusted answers false rather than erroring,
+    // so a non-zero exit is never how a denial arrives
+    expect(readUiAccess({ exitCode: 0, stdout: "false" }, "darwin")).toBe("denied");
   });
 
-  test("another failure is unknown, never reported as a missing permission", () => {
+  test("a probe that did not run is unknown, never a missing permission", () => {
     // saying someone forgot a permission when the tool simply was not there
     // sends them to System Settings to fix something that is not broken
-    expect(readUiAccess({ exitCode: -1, stderr: "spawn osascript ENOENT" }, "darwin")).toBe("unknown");
-    expect(readUiAccess({ exitCode: 2, stderr: "syntax error" }, "darwin")).toBe("unknown");
+    expect(readUiAccess({ exitCode: -1, stdout: "spawn osascript ENOENT" }, "darwin")).toBe("unknown");
+    expect(readUiAccess({ exitCode: 2, stdout: "" }, "darwin")).toBe("unknown");
+    expect(readUiAccess({ exitCode: 0, stdout: "something else" }, "darwin")).toBe("unknown");
   });
 
   test("off macOS there is nothing to report", () => {
-    expect(readUiAccess({ exitCode: 1, stderr: "-1743" }, "linux")).toBe("not-applicable");
-    expect(readUiAccess({ exitCode: 0, stderr: "" }, "win32")).toBe("not-applicable");
+    expect(readUiAccess({ exitCode: 0, stdout: "false" }, "linux")).toBe("not-applicable");
+    expect(readUiAccess({ exitCode: 0, stdout: "true" }, "win32")).toBe("not-applicable");
   });
 });
 
@@ -39,13 +35,21 @@ test("only a refusal asks for someone's attention", () => {
 });
 
 describe("describeUiAccess", () => {
-  test("a refusal names the cause and the binary to grant", () => {
+  test("a refusal names the cause and EVERY binary that may need the grant", () => {
     // by the time anyone reads this they have forgotten the grant is bound to a
-    // path, and that upgrading the runtime moves it
-    const line = describeUiAccess("denied", "/opt/homebrew/bin/bun");
+    // path, that upgrading moves it, and that the UI call may be attributed to
+    // the CLI rather than the runtime - granting one of the two looks fixed
+    const line = describeUiAccess("denied", "/opt/homebrew/bin/bun", "/opt/homebrew/bin/claude");
     expect(line).toContain("REFUSED");
     expect(line).toContain("an upgrade moves it");
     expect(line).toContain("/opt/homebrew/bin/bun");
+    expect(line).toContain("/opt/homebrew/bin/claude");
+  });
+
+  test("an unknown path is simply left out", () => {
+    const line = describeUiAccess("denied", "/opt/homebrew/bin/bun", undefined);
+    expect(line).toContain("/opt/homebrew/bin/bun");
+    expect(line).not.toContain("undefined");
   });
 
   test("the other states read plainly", () => {

@@ -338,7 +338,10 @@ const main = async () => {
 
   // Said at boot, where someone will see it, and loudly when it is missing.
   void uiAccess.read().then(({ access }) => {
-    const line = describeUiAccess(access, config.claudeBin === "claude" ? process.execPath : config.claudeBin);
+    // Both: the runtime this process is, and the CLI it spawns the brain as.
+    // The permission attaches to whichever the system holds responsible, and
+    // granting only one is how this looked fixed while still being refused.
+    const line = describeUiAccess(access, process.execPath, Bun.which(config.claudeBin) ?? config.claudeBin);
     if (needsAttention(access)) activity.error("ui_access", { msg: line });
     console.log(`[ui] ${line}`);
   });
