@@ -19,12 +19,28 @@ describe("toolPolicyFor", () => {
     // so these are real denials rather than a request in the prompt
     for (const role of ["owner", "admin", "executer", "pal"] as const) {
       const denied = toolPolicyFor(role, opts).disallowedTools ?? [];
-      // a Slack connector posts as the human who authorised it, not as the bot
-      expect(denied).toContain("mcp__claude_ai_Slack");
-      expect(denied).toContain("mcp__slack");
+      // POSTING through a Slack connector arrives under the name of the human
+      // who authorised it, not the bot's
+      expect(denied).toContain("mcp__claude_ai_Slack__slack_send_message");
+      expect(denied).toContain("mcp__claude_ai_Slack__slack_schedule_message");
       // and CloudWatch bills per GB scanned
       expect(denied).toContain("Bash(aws logs:*)");
       expect(denied).toContain("Bash(aws cloudwatch:*)");
+    }
+  });
+
+  test("reading Slack is NOT denied - it impersonates nobody", () => {
+    // the blanket ban refused the reads too, which was never its point: reading
+    // is the only way to see a channel the bot was never invited to
+    for (const role of ["owner", "admin", "executer", "pal"] as const) {
+      const denied = toolPolicyFor(role, opts).disallowedTools ?? [];
+      for (const read of [
+        "mcp__claude_ai_Slack__slack_read_thread",
+        "mcp__claude_ai_Slack__slack_read_channel",
+        "mcp__claude_ai_Slack__slack_search_public",
+      ]) {
+        expect(denied).not.toContain(read);
+      }
     }
   });
 

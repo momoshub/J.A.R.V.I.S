@@ -838,6 +838,32 @@ describe("reviews run on the caller's own Claude token", () => {
     expect(token()).toBeUndefined(); // falls back to the bot's own credential
   });
 
+  test("read runs on the host login, and only the owner may ask", async () => {
+    // it reads with the authorising human's Slack access, so anyone who can run
+    // it can read anything that person can
+    const { deps } = withTokens({ [OWNER]: TOKEN });
+    let seen: { useHostLogin?: boolean; system?: string } = {};
+    deps.llm = {
+      complete: async (p) => {
+        seen = { useHostLogin: p.useHostLogin, system: p.system };
+        return "here is the gist";
+      },
+    };
+    const out = await dispatchCommand(deps, actor(), "C1", "read https://x.slack.com/archives/C1/p1792422356053559 just the decisions");
+    expect(seen.useHostLogin).toBe(true);
+    expect(seen.system).toContain("just the decisions");
+    expect(out).toBe("here is the gist");
+
+    const admin = actor({ slackId: "U0ADMIN99", role: "admin" });
+    deps.users.upsert(admin);
+    expect(await dispatchCommand(deps, admin, "C1", "read https://x.slack.com/archives/C1/p1")).toContain("owner");
+  });
+
+  test("read needs something to read", async () => {
+    const { deps } = withTokens({ [OWNER]: TOKEN });
+    expect(await dispatchCommand(deps, actor(), "C1", "read")).toContain("Read what?");
+  });
+
   test("investigate runs on the host login, where the connectors are", async () => {
     // Datadog and its RUM data come from the account's connectors, which a
     // setup token - the bot's or a caller's - carries none of

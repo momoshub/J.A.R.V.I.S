@@ -33,6 +33,7 @@ import {
   parseLogSources,
 } from "../domain/investigation.ts";
 import { investigatePrompt } from "../domain/investigatePrompt.ts";
+import { readPrompt } from "../domain/readPrompt.ts";
 import {
   asReviewPolicy,
   DEFAULT_REVIEW_POLICY,
@@ -134,6 +135,8 @@ const REVIEW_TIMEOUT_MS = 900_000;
 const TICKET_TIMEOUT_MS = 900_000;
 /** an investigation walks logs, RUM and traces across environments. */
 const INVESTIGATE_TIMEOUT_MS = 900_000;
+/** reading a conversation is bounded work, but a busy channel is a lot of it. */
+const READ_TIMEOUT_MS = 600_000;
 
 /** Public metadata for one command, for the dashboard. */
 export type CommandInfo = {
@@ -552,6 +555,56 @@ export const COMMANDS: readonly CommandDef[] = [
       if (!Number.isInteger(id)) return `Which one? \`${prefix} unlearn <id>\` (see \`${prefix} learnings\`)`;
       deps.learnings.remove(id);
       return `Forgotten learning #${id}.`;
+    },
+  },
+  {
+    name: "read",
+    aliases: ["summarise", "summarize", "catchup"],
+    // Owner only, and not out of caution for its own sake: this reads with the
+    // authorising human's Slack access, so whoever can run it can read anything
+    // that person can - private channels and DMs included.
+    minRole: "owner",
+    usage: "<slack link or #channel> [what you want from it]",
+    summary: "read a channel or DM I am not in, through the account's Slack connector",
+    run: async (ctx) => {
+      const { deps, actor, channelId, threadTs, args, rest, prefix, reply } = ctx;
+      const target = (args[0] ?? "").trim();
+      if (!target) return `Read what? \`${prefix} read <slack link or #channel>\``;
+      if (!deps.llm) return "My brain is not wired up right now.";
+
+      const note = rest.slice(rest.indexOf(target) + target.length).trim();
+      const full = deps.toolPolicy?.("owner") ?? { skipPermissions: true };
+      const name = botNameOf(deps);
+      const params = {
+        system: readPrompt({ target, note, channelId, threadTs, askedBy: actor.slackId }, name),
+        messages: [{ role: "user" as const, content: `read ${target}${note ? `\n\n${note}` : ""}` }],
+        assistantName: name,
+        policy: { ...full, timeoutMs: READ_TIMEOUT_MS },
+        // The connector lives with the host's interactive login; a setup token
+        // carries none, so this is the only credential that can see it.
+        useHostLogin: true,
+      };
+
+      if (!reply) {
+        const out = await deps.llm.complete(params);
+        return out.trim() || "I could not read that one.";
+      }
+
+      await reply(`👀 reading that for <@${actor.slackId}>`);
+      let out = "";
+      try {
+        out = deps.llm.stream
+          ? await deps.llm.stream(params, () => {})
+          : await deps.llm.complete(params);
+      } catch (err) {
+        if (!isAuthFailure(err)) throw err;
+        await reply(
+          "🔑 I could not read it - the login on my host has lapsed, and the Slack connector comes with it. Someone with access to the machine needs to run `claude` there and sign in again.",
+        );
+        return "";
+      }
+      await reply(out.trim() || "I could not read that one.");
+      return "";
     },
   },
   {

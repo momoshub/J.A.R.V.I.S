@@ -371,6 +371,28 @@ stays a note rather than refusing the command. Bare words are just words -
 "approve after CI is green" asks for nothing. With several PRs the flag applies
 to the whole run whatever order it was typed in.
 
+## Reading a channel it is not in
+
+The bot speaks with its own Slack token, so everything it says arrives under its
+own name. The cost is that it only sees what it has been invited to - a channel
+or group DM it is not a member of returns `channel_not_found`.
+
+```
+//bot read <slack link or #channel> [what you want from it]
+```
+
+`read` (aliases `summarise`, `catchup`) reads it through the account's Slack
+connector, which sees what the authorising human sees, and reports back in the
+thread. **Owner only**, and not out of timidity: it reads with that person's
+access, so whoever can run it can read anything they can - private channels and
+DMs included.
+
+Reading through the connector is allowed; **posting through it never is.** A
+message sent that way arrives under the human's name rather than the bot's, so
+the connector's send, schedule, draft and canvas tools are denied to every role
+including full access. The ban used to cover the whole connector, which refused
+the harmless half along with the harmful one.
+
 ## Desktop access
 
 Some things the bot can be asked to do reach the desktop - taking a screenshot,

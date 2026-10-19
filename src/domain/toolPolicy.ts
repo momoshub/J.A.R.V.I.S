@@ -60,16 +60,29 @@ export const PAL_TOOLS: readonly string[] = [
  * Denied to EVERY role, full access included.
  *
  * `--disallowedTools` is honoured alongside `--dangerously-skip-permissions`, so
- * these are real denials rather than requests. Both entries here are things that
- * are never right, whoever is asking:
+ * these are real denials rather than requests.
  *
- * - a Slack connector posts as whichever human authorised it, so the bot's reply
- *   arrives under someone else's name. It has its own token; it must use it.
+ * - WRITING through a Slack connector posts as whichever human authorised it,
+ *   so the bot's reply arrives under someone else's name. It has its own token
+ *   and must use it for everything it says. Reading is a different matter and
+ *   is allowed: it impersonates nobody, and it is the only way to see a channel
+ *   or group DM the bot has not been invited to. The deny-list is therefore the
+ *   write tools by name rather than the whole connector - a blanket ban also
+ *   refused the reads, which was never the point.
  * - CloudWatch bills per GB scanned, and the logs live in Grafana anyway.
  */
+export const SLACK_CONNECTOR_WRITES: readonly string[] = [
+  "mcp__claude_ai_Slack__slack_send_message",
+  "mcp__claude_ai_Slack__slack_send_message_draft",
+  "mcp__claude_ai_Slack__slack_schedule_message",
+  "mcp__claude_ai_Slack__slack_create_canvas",
+  "mcp__claude_ai_Slack__slack_update_canvas",
+  "mcp__slack__slack_send_message",
+  "mcp__slack__slack_post_message",
+];
+
 export const ALWAYS_DISALLOW: readonly string[] = [
-  "mcp__claude_ai_Slack",
-  "mcp__slack",
+  ...SLACK_CONNECTOR_WRITES,
   "Bash(aws logs:*)",
   "Bash(aws cloudwatch:*)",
 ];
