@@ -564,12 +564,12 @@ export const COMMANDS: readonly CommandDef[] = [
     // authorising human's Slack access, so whoever can run it can read anything
     // that person can - private channels and DMs included.
     minRole: "owner",
-    usage: "<slack link or #channel> [what you want from it]",
-    summary: "read a channel or DM I am not in, through the account's Slack connector",
+    usage: "<link> [what you want from it]",
+    summary: "read something my own token cannot - a Notion page, a channel I am not in - through the account's connectors",
     run: async (ctx) => {
       const { deps, actor, channelId, threadTs, args, rest, prefix, reply } = ctx;
       const target = (args[0] ?? "").trim();
-      if (!target) return `Read what? \`${prefix} read <slack link or #channel>\``;
+      if (!target) return `Read what? \`${prefix} read <link>\``;
       if (!deps.llm) return "My brain is not wired up right now.";
 
       const note = rest.slice(rest.indexOf(target) + target.length).trim();

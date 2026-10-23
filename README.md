@@ -371,7 +371,7 @@ stays a note rather than refusing the command. Bare words are just words -
 "approve after CI is green" asks for nothing. With several PRs the flag applies
 to the whole run whatever order it was typed in.
 
-## Reading a channel it is not in
+## Reading what its own credentials cannot see
 
 The bot speaks with its own Slack token, so everything it says arrives under its
 own name. The cost is that it only sees what it has been invited to - a channel
@@ -381,9 +381,15 @@ or group DM it is not a member of returns `channel_not_found`.
 //bot read <slack link or #channel> [what you want from it]
 ```
 
-`read` (aliases `summarise`, `catchup`) reads it through the account's Slack
-connector, which sees what the authorising human sees, and reports back in the
-thread. **Owner only**, and not out of timidity: it reads with that person's
+`read` (aliases `summarise`, `catchup`) opens it through the account's
+connectors - Slack, Notion, whatever else is authorised - which see what the
+authorising human sees, and reports back in the thread. A private Notion page
+linked from a Slack thread is the normal case, not an exception.
+
+"Private", a 403 or an empty page means the **credentials are wrong**, not that
+the thing cannot be read. And a hand-rolled `curl` at a private service's
+internal API is never the way to find out: it returns an empty body, which
+proves nothing. **Owner only**, and not out of timidity: it reads with that person's
 access, so whoever can run it can read anything they can - private channels and
 DMs included.
 

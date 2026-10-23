@@ -17,6 +17,13 @@ describe("readPrompt", () => {
     expect(readPrompt(req, "Bot")).toContain("decimal point inserted before the last six digits");
   });
 
+  test("it knows a link may lead to the document that is the actual content", () => {
+    // "Paul posted a link" is not a summary when the link is the thing
+    const p = readPrompt(req, "Bot");
+    expect(p).toContain("trailing 32 hex characters");
+    expect(p).toContain("Summarising \"Paul posted a link\" when the link is the content is not an answer");
+  });
+
   test("the asker's angle is quoted when given, and a default stands in when not", () => {
     expect(readPrompt({ ...req, note: "just the decisions" }, "Bot")).toContain("just the decisions");
     expect(readPrompt(req, "Bot")).toContain("what is still open");
@@ -35,11 +42,28 @@ describe("readChatRules", () => {
     // of posting and wrong about reading
     const r = readChatRules("X/jv");
     expect(r).toContain("X/jv read");
-    expect(r).toContain("not a reason to give up");
     expect(r).toContain("Run it yourself");
   });
 
+  test("it covers every connector-backed source, not only Slack", () => {
+    // the failure this exists for: handed a private Notion page it answered
+    // "none of my commands can read Notion", which was simply untrue - the same
+    // command had been reading the ticket tracker for weeks
+    const r = readChatRules("X/jv");
+    expect(r).toContain("not just Slack");
+    expect(r).toContain("Notion page");
+    expect(r).toContain("your credentials are the wrong ones");
+  });
+
+  test("a failed hand-rolled scrape is not evidence that something is private", () => {
+    // it curled notion.so's internal API unauthenticated, got nothing back, and
+    // reported the page as private twice
+    const r = readChatRules("X/jv");
+    expect(r).toContain("NEVER try to scrape a private service's internal API");
+    expect(r).toContain("a conclusion you did not earn");
+  });
+
   test("and keeps the one line that actually mattered", () => {
-    expect(readChatRules("X/jv")).toContain("You may never POST that way");
+    expect(readChatRules("X/jv")).toContain("You may never POST this way");
   });
 });
