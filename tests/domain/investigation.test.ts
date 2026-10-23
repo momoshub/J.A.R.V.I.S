@@ -94,21 +94,21 @@ describe("investigationRules", () => {
   });
 });
 
-describe("datadog is honest about the connector", () => {
-  test("it says the tools may simply be absent, and where to go instead", () => {
-    // the failure this exists for: told to use Datadog MCP tools it did not
-    // have, the bot went hunting through ~/.claude.json for credentials
-    const out = investigationRules(["datadog"], undefined, "X/jv");
-    expect(out).toContain("do NOT hunt for API keys");
-    expect(out).toContain("do NOT ask anyone to reconnect");
-    expect(out).toContain("RUN IT YOURSELF");
-    expect(out).toContain("X/jv investigate");
+describe("datadog states where the data is, not how to escalate", () => {
+  test("RUM lives only in Datadog, and those tools come from connectors", () => {
+    const out = investigationRules(["datadog"]);
     expect(out).toContain("RUM");
+    expect(out).toContain("exists ONLY here, never in Grafana");
+    expect(out).toContain("an ordinary chat turn does not have them");
   });
 
-  test("with no prefix to offer it drops the pointer rather than printing one", () => {
-    const out = investigationRules(["datadog"], undefined);
-    expect(out).not.toContain("{prefix}");
+  test("escalation is NOT repeated here - one rule covers every source", () => {
+    // it used to carry its own "RUN IT YOURSELF" paragraph, and so did the
+    // Slack/Notion rule. Three copies of one idea is how the fourth case is
+    // missed; `credentialGapRules` now owns it
+    const out = investigationRules(["grafana", "datadog"], "/bin/g.sh");
+    expect(out).not.toContain("RUN IT YOURSELF");
     expect(out).not.toContain("investigate <the question>");
+    expect(out).not.toContain("{prefix}");
   });
 });

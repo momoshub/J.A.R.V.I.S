@@ -29,17 +29,6 @@ export type ReadRequest = {
   askedBy: string;
 };
 
-/** One line for the chat prompt, so the brain escalates instead of refusing. */
-export const readChatRules = (prefix: string): string => `
-
-Reading something your own credentials cannot see:
-- this covers ANY source behind the account's connectors, not just Slack: a Notion page, a Slack channel or group DM you were never invited to, a doc someone linked. Your own bot token sees very little of it, and this turn has no connectors loaded at all
-- so "private", "channel_not_found", a 403, or a page that comes back empty is NOT the end of the matter. It means your credentials are the wrong ones, not that the thing is unreadable
-- \`${prefix} read <link>\` opens it with the account's connectors, which see what the authorising human sees. Run it yourself through the run helper, in this turn, without being asked - do not tell someone to type it, and do not ask them to paste the content until that has actually failed
-- NEVER try to scrape a private service's internal API by hand (a raw \`curl\` to notion.so, a Slack endpoint your token has no scope for). It returns an empty page, which proves nothing, and then reporting "it is private" is a conclusion you did not earn
-- it is owner-only, so for anyone else the honest answer really is "paste it here, or give me access"
-- you may READ this way. You may never POST this way: a message sent through a connector arrives under a human's name instead of yours, which is why those tools are denied to you everywhere`;
-
 export const readPrompt = (req: ReadRequest, botName: string): string => {
   const wanted = req.note?.trim()
     ? `What they want from it, in their words:\n"""\n${req.note.trim()}\n"""`

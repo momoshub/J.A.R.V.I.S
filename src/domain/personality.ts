@@ -8,7 +8,7 @@
  */
 import { investigationRules } from "./investigation.ts";
 import { ticketChatRules } from "./ticketPrompt.ts";
-import { readChatRules } from "./readPrompt.ts";
+import { credentialGapRules } from "./credentialGap.ts";
 import { SLACK_BREVITY, SLACK_FORMAT } from "./slackFormat.ts";
 import type { Participant, PromptContext, Reactable } from "./types.ts";
 
@@ -208,13 +208,9 @@ export const buildSystemPrompt = (options: Partial<BuildSystemPromptOptions> = {
   const reactions = reactionRules(options.channelId ?? "", options.reactable ?? [], options.reactScript);
   const remembering = learningRules(options.learnUrl ?? "");
   const attachments = attachmentRules(options.fileScript);
-  const investigating = investigationRules(
-    options.logSources ?? [],
-    options.grafanaGetScript,
-    options.commandPrefix,
-  );
+  const investigating = investigationRules(options.logSources ?? [], options.grafanaGetScript);
   const tickets = ticketChatRules(options.commandPrefix ?? "//bot", options.canRaiseTickets === true);
-  const reading = readChatRules(options.commandPrefix ?? "//bot");
+  const reaching = credentialGapRules(options.commandPrefix ?? "//bot");
   const commands = commandRules(
     options.runScript ?? "",
     options.runUrl ?? "",
@@ -222,5 +218,5 @@ export const buildSystemPrompt = (options: Partial<BuildSystemPromptOptions> = {
     options.commandPrefix ?? "//bot",
   );
 
-  return `${base}${learningsBlock}${addressed}${roster}\n\n${OPERATING_RULES}${attachments}${investigating}${tickets}${reading}${reactions}${commands}${remembering}\n\n${WORKSPACE_NOTE}\n\n${identityLock(botName, options.botUserId)}`;
+  return `${base}${learningsBlock}${addressed}${roster}\n\n${OPERATING_RULES}${attachments}${investigating}${tickets}${reaching}${reactions}${commands}${remembering}\n\n${WORKSPACE_NOTE}\n\n${identityLock(botName, options.botUserId)}`;
 };

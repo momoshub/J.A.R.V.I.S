@@ -17,13 +17,6 @@
  */
 const GRAFANA_GET_SCRIPT = "{grafanaGet}";
 
-/**
- * Placeholder for the instance's command prefix. A source the bot cannot reach
- * from this turn should point at the one that can, in the words this instance
- * actually answers to.
- */
-const COMMAND_PREFIX = "{prefix}";
-
 /** A log/metric/trace backend the bot may be pointed at. */
 export type LogSource = {
   /** Key used in configuration, e.g. `grafana`. */
@@ -54,9 +47,7 @@ export const LOG_SOURCES: Record<string, LogSource> = {
   },
   datadog: {
     id: "datadog",
-    how: `the Datadog MCP tools (search_datadog_logs, search_datadog_rum_events, search_datadog_spans, and the rest). RUM - browser errors, user sessions, front-end crashes - exists ONLY here, never in Grafana.
-   These tools come from the account's connectors, which an ordinary chat turn does NOT have. If you cannot see any \`mcp__\` Datadog tool, that is the expected state, not a fault to fix from inside the session: do NOT hunt for API keys, config files or a CLI, and do NOT ask anyone to reconnect anything.
-   RUN IT YOURSELF instead. \`${COMMAND_PREFIX} investigate <the question>\` is the same job with the connectors loaded, and you start it the way you run any of your commands - through the run helper, in this turn, without being asked. It posts its own findings straight into the thread, so do NOT repeat them afterwards - say in one line that it is running and let it speak. Telling someone to go and type a command you could have run is not an answer, it is a hand-off; restating what it already posted is just the same message twice.`,
+    how: `the Datadog MCP tools (search_datadog_logs, search_datadog_rum_events, search_datadog_spans, and the rest). RUM - browser errors, user sessions, front-end crashes - exists ONLY here, never in Grafana. These tools come from the account's connectors, so an ordinary chat turn does not have them.`,
   },
 };
 
@@ -88,11 +79,7 @@ export const logSourceOrder = (raw?: string): string[] => {
  * The investigation block. Empty when no backend is configured - claiming a
  * source the bot cannot reach is worse than saying nothing.
  */
-export const investigationRules = (
-  order: readonly string[],
-  grafanaGetScript?: string,
-  commandPrefix?: string,
-): string => {
+export const investigationRules = (order: readonly string[], grafanaGetScript?: string): string => {
   const sources = order
     .map((id) => LOG_SOURCES[id])
     .filter((s): s is LogSource => !!s)
@@ -102,21 +89,8 @@ export const investigationRules = (
       s.how.includes(GRAFANA_GET_SCRIPT)
         ? { ...s, how: grafanaGetScript ? s.how.replaceAll(GRAFANA_GET_SCRIPT, grafanaGetScript) : s.how.replace(/\n   - ANY OTHER type[\s\S]*?guessing at it\.\n/, "\n") }
         : s,
-    )
-    // Pointing at a command needs the prefix this instance answers to; with no
-    // prefix to offer, drop the pointer rather than print a placeholder.
-    .map((s) =>
-      s.how.includes(COMMAND_PREFIX)
-        ? {
-            ...s,
-            how: commandPrefix
-              ? s.how.replaceAll(COMMAND_PREFIX, commandPrefix)
-              // No prefix to name means no command to point at, so the whole
-              // escape hatch goes rather than printing a placeholder at someone.
-              : s.how.replace(/\n   RUN IT YOURSELF instead\.[\s\S]*$/, ""),
-          }
-        : s,
     );
+
   if (sources.length === 0) return "";
 
   const steps = sources.map((s, i) => `${i + 1}. *${s.id}* - ${s.how}`).join("\n");

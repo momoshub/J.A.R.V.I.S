@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { readChatRules, readPrompt } from "../../src/domain/readPrompt.ts";
+import { readPrompt } from "../../src/domain/readPrompt.ts";
 
 const req = { target: "https://x.slack.com/archives/C1/p1792422356053559", channelId: "D1", askedBy: "U1" };
 
@@ -33,37 +33,5 @@ describe("readPrompt", () => {
     const p = readPrompt(req, "Bot");
     expect(p).toContain("say which part and why");
     expect(p).toContain("that is a real answer, not a failure");
-  });
-});
-
-describe("readChatRules", () => {
-  test("it tells the brain to escalate rather than refuse", () => {
-    // it used to answer "my rules forbid the Slack connector", which was true
-    // of posting and wrong about reading
-    const r = readChatRules("X/jv");
-    expect(r).toContain("X/jv read");
-    expect(r).toContain("Run it yourself");
-  });
-
-  test("it covers every connector-backed source, not only Slack", () => {
-    // the failure this exists for: handed a private Notion page it answered
-    // "none of my commands can read Notion", which was simply untrue - the same
-    // command had been reading the ticket tracker for weeks
-    const r = readChatRules("X/jv");
-    expect(r).toContain("not just Slack");
-    expect(r).toContain("Notion page");
-    expect(r).toContain("your credentials are the wrong ones");
-  });
-
-  test("a failed hand-rolled scrape is not evidence that something is private", () => {
-    // it curled notion.so's internal API unauthenticated, got nothing back, and
-    // reported the page as private twice
-    const r = readChatRules("X/jv");
-    expect(r).toContain("NEVER try to scrape a private service's internal API");
-    expect(r).toContain("a conclusion you did not earn");
-  });
-
-  test("and keeps the one line that actually mattered", () => {
-    expect(readChatRules("X/jv")).toContain("You may never POST this way");
   });
 });
