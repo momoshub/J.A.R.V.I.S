@@ -23,6 +23,7 @@ import type { MessageRepo } from "../infrastructure/db/messageRepo.ts";
 import type { UserRepo } from "../infrastructure/db/userRepo.ts";
 import type { LearningsRepo } from "../infrastructure/db/learningsRepo.ts";
 import type { AdapterStore } from "../infrastructure/adapter/adapterStore.ts";
+import type { SystemTracker } from "../infrastructure/system/systemProbe.ts";
 import type { AdapterRevisionRepo } from "../infrastructure/db/adapterRevisionRepo.ts";
 import type { CommandLogRepo } from "../infrastructure/db/commandLogRepo.ts";
 import type { WorkflowRepo } from "../infrastructure/db/workflowRepo.ts";
@@ -55,6 +56,8 @@ export type HandleMessageDeps = {
   adapterStore?: AdapterStore;
   adapterRevisions?: AdapterRevisionRepo;
   adapterBudget?: () => number;
+  /** Host and process vitals, for the `sys` command. */
+  system?: SystemTracker;
   /** Bot name + model, for the `model`/`status` command. */
   botInfo?: () => { botName: string; model: string };
   /** Audit log for command executions. */

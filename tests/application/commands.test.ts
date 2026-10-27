@@ -86,6 +86,7 @@ const fakeSlack = (calls: SlackCalls, thread: SlackMessage[] = []): SlackAdminPo
     calls.buttons.push(...actions.map((a) => `${a.actionId}:${a.value}`));
     return { channel, ts: `interactive-${calls.posts.length}` };
   },
+  postMenu: async () => undefined,
   settleInteractive: async (channel, ts, text) => {
     calls.settled.push({ channel, ts, text });
   },

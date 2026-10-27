@@ -60,6 +60,7 @@ const build = () => {
       buttons.push(...actions);
       return { channel, ts: "notice" };
     },
+    postMenu: async () => undefined,
     settleInteractive: async (_c, _ts, text) => {
       settled.push(text);
     },

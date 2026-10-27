@@ -31,7 +31,18 @@ import {
   TOTP_VIEW,
 } from "../../application/totp.ts";
 import { tokenGuide, tokenHint, TOKEN_PREFIX } from "../../domain/claudeToken.ts";
-import { commandLineOf, dispatchCommand } from "../../application/commands.ts";
+import { commandLineOf, dispatchCommand, listCommandInfo } from "../../application/commands.ts";
+import {
+  clip,
+  decodeMenuRequest,
+  encodeMenuRequest,
+  MENU_BLOCK,
+  MENU_INPUT,
+  MENU_RUN_PATTERN,
+  MENU_SELECT_ACTION,
+  MENU_VIEW,
+  needsArguments,
+} from "../../domain/commandMenu.ts";
 import { annotateMentions, extractMentionIds } from "../../domain/mentions.ts";
 import { isTimeout } from "../../domain/threadSession.ts";
 import { toMrkdwn } from "../../domain/slackFormat.ts";
@@ -154,6 +165,19 @@ type ModalButtonArgs = {
   ack: () => Promise<unknown>;
   body: { user?: { id?: string }; trigger_id?: string };
   action: { value?: string };
+  client: ViewOpener;
+};
+
+/** A menu press: a button, or a pick from the command select. */
+type MenuArgs = {
+  ack: () => Promise<unknown>;
+  body: {
+    user?: { id?: string };
+    channel?: { id?: string };
+    message?: { ts?: string; thread_ts?: string };
+    trigger_id?: string;
+  };
+  action: { action_id?: string; value?: string; selected_option?: { value?: string } };
   client: ViewOpener;
 };
 
@@ -543,6 +567,103 @@ export const createSlackApp = (config: SlackAppConfig, deps: Deps) => {
     } catch (err) {
       log(`2fa follow-up failed: ${err instanceof Error ? err.message : String(err)}`);
     }
+  }) as never);
+
+  /**
+   * The command menu: a pick runs the command, or asks for its arguments first.
+   *
+   * It runs as whoever pressed it, through the ordinary dispatcher, so the
+   * command's own role gate still decides. A button is never a way to run
+   * something you could not have typed.
+   */
+  const menuModal = (command: string, usage: string, summary: string, metadata: string, confirmOnly = false) => ({
+    type: "modal" as const,
+    callback_id: MENU_VIEW,
+    private_metadata: metadata,
+    title: { type: "plain_text" as const, text: clip(command, 24) },
+    submit: { type: "plain_text" as const, text: confirmOnly ? "Yes, do it" : "Run" },
+    close: { type: "plain_text" as const, text: "Cancel" },
+    blocks: confirmOnly
+      ? [{ type: "section", text: { type: "mrkdwn", text: `*${command}* - ${summary}.\n\nThis cannot be undone.` } }]
+      : [
+          {
+            type: "input",
+            block_id: MENU_BLOCK,
+            label: { type: "plain_text", text: clip(usage || "arguments", 48) },
+            hint: { type: "plain_text", text: clip(summary, 150) },
+            element: {
+              type: "plain_text_input",
+              action_id: MENU_INPUT,
+              placeholder: { type: "plain_text", text: clip(usage || "…", 150) },
+            },
+          },
+        ],
+  });
+
+  /** Run a command on behalf of whoever pressed, answering where they pressed. */
+  const runFromMenu = async (by: string, channelId: string, threadTs: string | undefined, line: string) => {
+    const user = deps.users.get(by);
+    if (!user) return;
+    const reply = async (text: string) => {
+      await deps.slack?.post(channelId, text, threadTs);
+    };
+    try {
+      const text = await dispatchCommand(deps, user, channelId, line, {
+        prefix: deps.commandPrefix,
+        slash: deps.slashCommand,
+        threadTs,
+        reply,
+      });
+      if (text.trim()) await reply(text);
+    } catch (err) {
+      log(`menu command failed: ${err instanceof Error ? err.message : String(err)}`);
+      await reply("that one did not go through - try typing it").catch(() => undefined);
+    }
+  };
+
+  const onMenuPress = async ({ ack, body, action, client }: MenuArgs) => {
+    await ack();
+    const by = body.user?.id;
+    const channelId = body.channel?.id;
+    const command = action.selected_option?.value ?? action.value;
+    if (!by || !channelId || !command) return;
+    // Answer under the menu rather than beside it: the menu is often posted at
+    // the top of a channel, and a thread keeps the reply with the question.
+    const threadTs = body.message?.thread_ts ?? body.message?.ts;
+
+    const info = listCommandInfo().find((c) => c.name === command);
+    // Arguments, or a destructive command that should be asked about first.
+    const wantsArgs = !!info && needsArguments(info.usage);
+    if (info && (wantsArgs || info.destructive) && body.trigger_id) {
+      try {
+        await client.views.open({
+          trigger_id: body.trigger_id,
+          view: menuModal(
+            command,
+            info.usage,
+            info.summary,
+            encodeMenuRequest({ channelId, threadTs, command }),
+            !wantsArgs,
+          ) as never,
+        });
+      } catch (err) {
+        log(`menu modal failed: ${err instanceof Error ? err.message : String(err)}`);
+      }
+      return;
+    }
+    await runFromMenu(by, channelId, threadTs, command);
+  };
+  app.action({ action_id: MENU_SELECT_ACTION }, onMenuPress as never);
+  // One id per button, so they are matched by prefix rather than by name.
+  app.action(MENU_RUN_PATTERN, onMenuPress as never);
+
+  app.view(MENU_VIEW, (async ({ ack, body, view }: ViewArgs) => {
+    await ack();
+    const req = decodeMenuRequest(view.private_metadata);
+    const by = body.user?.id;
+    if (!req?.command || !by) return;
+    const args = view.state?.values?.[MENU_BLOCK]?.[MENU_INPUT]?.value ?? "";
+    await runFromMenu(by, req.channelId, req.threadTs, `${req.command} ${args}`.trim());
   }) as never);
 
   // Stop / never mind, on the "still busy" notice. The turn is killed the same

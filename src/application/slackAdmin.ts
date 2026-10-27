@@ -57,6 +57,29 @@ export type InteractiveAction = {
   style?: "primary" | "danger";
 };
 
+/** One choice in a menu. Slack's limits are applied in the domain, not here. */
+export type MenuOption = {
+  readonly label: string;
+  readonly value: string;
+  readonly description?: string;
+};
+
+/** Choices under a heading, so a long menu stays readable. */
+export type MenuGroup = {
+  readonly label: string;
+  readonly options: readonly MenuOption[];
+};
+
+/** A picker plus optional one-click buttons, posted as one message. */
+export type InteractiveMenu = {
+  readonly select?: {
+    readonly actionId: string;
+    readonly placeholder: string;
+    readonly groups: readonly MenuGroup[];
+  };
+  readonly actions?: readonly InteractiveAction[];
+};
+
 export type SlackAdminPort = {
   /** Conversations the bot is a member of (joined channels, DMs, groups), recent first. */
   listConversations: () => Promise<SlackConversation[]>;
@@ -96,6 +119,19 @@ export type SlackAdminPort = {
     channel: string,
     text: string,
     actions: readonly InteractiveAction[],
+    threadTs?: string,
+  ) => Promise<PostedRef | undefined>;
+  /**
+   * Post a message carrying a picker (and optionally buttons).
+   *
+   * Separate from `postInteractive` because a select is not a button: it has
+   * grouped options and hands back a selection rather than a press, and the
+   * one caller that wants both wants them in a single message.
+   */
+  postMenu: (
+    channel: string,
+    text: string,
+    menu: InteractiveMenu,
     threadTs?: string,
   ) => Promise<PostedRef | undefined>;
   /** Replace an interactive message's buttons with settled text. */

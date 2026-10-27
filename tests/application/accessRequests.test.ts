@@ -34,6 +34,7 @@ const build = () => {
     },
     postDmInteractive: async () => undefined,
     postInteractive: async () => undefined,
+    postMenu: async () => undefined,
     settleInteractive: async (_c, _ts, text) => {
       settled.push(text);
     },

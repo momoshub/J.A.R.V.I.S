@@ -60,6 +60,8 @@ export type RunRegistry = {
   stop: (id: string, by: string) => TrackedRun | undefined;
   /** Stop whatever is running in a thread. Returns what was stopped. */
   stopThread: (key: string, by: string) => TrackedRun | undefined;
+  /** Every tracked run, whatever thread it is in - for a status report. */
+  all: () => TrackedRun[];
 };
 
 type Entry = { run: TrackedRun; abort: AbortController };
@@ -74,6 +76,7 @@ export const createRunRegistry = (): RunRegistry => {
   };
 
   return {
+    all: () => [...byId.values()].map((e) => e.run),
     track: (run) => {
       const abort = new AbortController();
       const entry: Entry = { run: { ...run, state: "queued" }, abort };

@@ -234,6 +234,46 @@ export const createSlackAdmin = (client: WebClient): SlackAdminPort => {
       return posted.ts ? { channel, ts: posted.ts } : undefined;
     },
 
+    postMenu: async (channel, text, menu, threadTs) => {
+      const elements: Record<string, unknown>[] = [];
+      if (menu.select && menu.select.groups.length > 0) {
+        elements.push({
+          type: "static_select",
+          action_id: menu.select.actionId,
+          placeholder: { type: "plain_text", text: menu.select.placeholder },
+          option_groups: menu.select.groups.map((g) => ({
+            label: { type: "plain_text", text: g.label },
+            options: g.options.map((o) => ({
+              text: { type: "plain_text", text: o.label },
+              value: o.value,
+              ...(o.description ? { description: { type: "plain_text", text: o.description } } : {}),
+            })),
+          })),
+        });
+      }
+      for (const a of menu.actions ?? []) {
+        elements.push({
+          type: "button",
+          action_id: a.actionId,
+          text: { type: "plain_text", text: a.label },
+          value: a.value,
+          ...(a.style ? { style: a.style } : {}),
+        });
+      }
+      const posted = (await client.chat.postMessage({
+        channel,
+        text,
+        ...(threadTs ? { thread_ts: threadTs } : {}),
+        // The SDK's Block union does not describe option_groups; the shape is
+        // Slack's documented one and is built right above.
+        blocks: [
+          { type: "section", text: { type: "mrkdwn", text: toMrkdwn(text) } },
+          ...(elements.length > 0 ? [{ type: "actions", elements }] : []),
+        ] as never,
+      })) as { ts?: string };
+      return posted.ts ? { channel, ts: posted.ts } : undefined;
+    },
+
     settleInteractive: async (channel, ts, text) => {
       // Drop the buttons so a decided request cannot be clicked again.
       await client.chat.update({ channel, ts, text, blocks: [{ type: "section", text: { type: "mrkdwn", text } }] });

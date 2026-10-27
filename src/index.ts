@@ -7,7 +7,7 @@
  * and independently testable.
  */
 import { mkdirSync } from "node:fs";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { tmpdir } from "node:os";
 import { loadConfig, modelLabel, type AppConfig } from "./config/env.ts";
 import { openDatabase } from "./infrastructure/db/client.ts";
@@ -15,6 +15,7 @@ import { createThreadSessionRepo } from "./infrastructure/db/threadSessionRepo.t
 import { createThreadQueue } from "./application/threadQueue.ts";
 import { RESTART_DELAY_MS } from "./domain/selfUpdate.ts";
 import { createRunRegistry } from "./application/runRegistry.ts";
+import { createSystemProbe, createSystemTracker } from "./infrastructure/system/systemProbe.ts";
 import { createTotpRepo } from "./infrastructure/db/totpRepo.ts";
 import {
   createClaudeTokenRepo,
@@ -222,6 +223,28 @@ const main = async () => {
   });
   const draft = createDraftReply({ llm, promptContext });
 
+  // Filled in once the Slack app exists, so /health and `sys` can report the
+  // socket from the moment it does and never trip over the order things are
+  // built in.
+  let slackApp: { health: () => ConnectionHealth } | undefined;
+  const runs = createRunRegistry();
+  // Vitals, sampled on a timer: a snapshot answers "is it bad now", a short
+  // history answers "has it been bad for a while", which is the question
+  // someone is really asking when they notice something feels slow.
+  const system = createSystemTracker(
+    createSystemProbe({
+      dataDir: dirname(config.databasePath) || ".",
+      socket: () => slackApp?.health().state,
+      runs: () => {
+        const tracked = runs.all();
+        return {
+          active: tracked.filter((r) => r.state === "running").length,
+          queued: tracked.filter((r) => r.state === "queued").length,
+        };
+      },
+    }),
+  );
+
   const deps: RespondDeps = {
     users,
     messages,
@@ -250,7 +273,8 @@ const main = async () => {
     threadQueue: createThreadQueue(),
     // Handles on the turns in flight, so one can be stopped from a button or
     // `stop` instead of being waited out.
-    runs: createRunRegistry(),
+    runs,
+    system,
     threadSessionsOn: () => settings.get(SETTING_KEYS.threadSessions)?.trim().toLowerCase() !== "off",
     // A stranger is put to the owner for a ✅ / ❌ rather than refused outright.
     accessRequests,
@@ -284,9 +308,6 @@ const main = async () => {
     slashCommand: config.slashCommand,
   };
 
-  // Filled in once the Slack app exists, so /health can report the socket from
-  // the moment it does and never trips over the order things are built in.
-  let slackApp: { health: () => ConnectionHealth } | undefined;
   // Whether the desktop will take orders from us. Probed rather than assumed:
   // the grant is bound to the runtime's path, so upgrading it silently revokes
   // the permission and nothing says so.

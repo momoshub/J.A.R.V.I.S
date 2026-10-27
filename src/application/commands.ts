@@ -22,6 +22,14 @@ import {
   rememberFact,
   revertAdapter,
 } from "./adapterMemory.ts";
+import { describeSystem, trendOf } from "../domain/systemStatus.ts";
+import {
+  buildCommandMenu,
+  MENU_SELECT_ACTION,
+  menuIntro,
+  menuRunActionId,
+} from "../domain/commandMenu.ts";
+import type { SystemTracker } from "../infrastructure/system/systemProbe.ts";
 import type { AdapterStore } from "../infrastructure/adapter/adapterStore.ts";
 import type { AdapterRevisionRepo } from "../infrastructure/db/adapterRevisionRepo.ts";
 import { validateRemoval, validateRoleChange } from "../domain/access.ts";
@@ -106,6 +114,8 @@ export type CommandDeps = {
   adapterRevisions?: AdapterRevisionRepo;
   /** Always-on byte ceiling; the default lives in `adapterCheck`. */
   adapterBudget?: () => number;
+  /** Host and process vitals, sampled over time. */
+  system?: SystemTracker;
   llm?: LlmPort;
   promptContext?: () => PromptContext;
   botInfo?: () => { botName: string; model: string };
@@ -165,6 +175,8 @@ export type CommandInfo = {
   minRole: UserRole;
   usage: string;
   summary: string;
+  /** Destroys something; the menu confirms before running it. */
+  destructive?: boolean;
 };
 
 type Context = {
@@ -208,6 +220,12 @@ type CommandDef = {
    * difference is only in who asked and what they do with the answer.
    */
   quiet?: boolean;
+  /**
+   * Destroys something, so the menu will not make it a one-tap button and
+   * confirms before running it. Typing it stays as direct as it ever was -
+   * this is about a stray press, not about second-guessing the command.
+   */
+  destructive?: boolean;
   run: (ctx: Context) => string | Promise<string>;
 };
 
@@ -373,11 +391,58 @@ export const COMMANDS: readonly CommandDef[] = [
   {
     name: "help",
     trivial: true,
-    aliases: ["commands", "?"],
+    // `menu` because that is the word people reach for once it IS one.
+    aliases: ["commands", "menu", "?"],
     minRole: "pal",
     usage: "",
     summary: "list the commands you can run",
-    run: ({ actor, prefix, slash }) => renderHelp(actor.role, prefix, slash),
+    run: async ({ deps, actor, channelId, threadTs, prefix, slash }) => {
+      // A menu where there is a Slack to put one in, the plain list everywhere
+      // else - the dashboard, a test, a transport with no interactivity. The
+      // list is still the fallback rather than an error, because help that
+      // fails is worse than help that is merely old-fashioned.
+      const menu = buildCommandMenu(listCommandInfo(), actor.role);
+      if (deps.slack && channelId && menu.groups.length > 0) {
+        const posted = await deps.slack
+          .postMenu(
+            channelId,
+            menuIntro(prefix, slash, menu),
+            {
+              select: {
+                actionId: MENU_SELECT_ACTION,
+                placeholder: "Pick a command",
+                groups: menu.groups,
+              },
+              actions: menu.quick.map((c) => ({
+                actionId: menuRunActionId(c.name),
+                label: c.name,
+                value: c.name,
+              })),
+            },
+            threadTs,
+          )
+          .catch(() => undefined);
+        if (posted) return "";
+      }
+      return renderHelp(actor.role, prefix, slash);
+    },
+  },
+  {
+    name: "sys",
+    aliases: ["vitals"],
+    // Host metrics describe the machine the bot runs on, which is somebody's
+    // actual computer. `ping` is the one anybody can ask.
+    minRole: "admin",
+    usage: "",
+    summary: "how the host and I are doing, and whether anything is abnormal",
+    run: async ({ deps }) => {
+      if (!deps.system) return "I cannot read the system from here.";
+      const reading = await deps.system.read();
+      return describeSystem(reading, {
+        botName: botNameOf(deps),
+        trend: trendOf(deps.system.history()),
+      });
+    },
   },
   {
     name: "ping",
@@ -477,6 +542,7 @@ export const COMMANDS: readonly CommandDef[] = [
   {
     name: "forget",
     minRole: "pal",
+    destructive: true,
     usage: "",
     summary: "wipe my memory of this channel",
     run: ({ deps, channelId }) => {
@@ -1705,6 +1771,7 @@ export const listCommandInfo = (): CommandInfo[] =>
     minRole: c.minRole,
     usage: c.usage,
     summary: c.summary,
+    destructive: c.destructive === true,
   }));
 
 export type DispatchOptions = {
