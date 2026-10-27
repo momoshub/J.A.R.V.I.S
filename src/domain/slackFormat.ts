@@ -75,3 +75,32 @@ export const toMrkdwn = (text: string): string => {
 
   return out.replace(/\u0000(\d+)\u0000/g, (_, i: string) => held[Number(i)] ?? "");
 };
+
+/**
+ * Slack refuses a section block whose text is over 3000 characters, and refuses
+ * the whole message with it. A command list grows a line at a time and would
+ * cross that quietly, so long text is split across several sections instead.
+ *
+ * Splits on line boundaries, because the text is a list and a section that ends
+ * mid-entry reads like a bug. A single line longer than the limit is passed
+ * through whole rather than cut - Slack's own truncation is better than silently
+ * losing half of something.
+ */
+export const SECTION_LIMIT = 2900;
+
+export const splitForBlocks = (text: string, limit = SECTION_LIMIT): string[] => {
+  if (text.length <= limit) return text.trim() ? [text] : [];
+  const chunks: string[] = [];
+  let current = "";
+  for (const line of text.split("\n")) {
+    const candidate = current ? `${current}\n${line}` : line;
+    if (candidate.length > limit && current) {
+      chunks.push(current);
+      current = line;
+    } else {
+      current = candidate;
+    }
+  }
+  if (current.trim()) chunks.push(current);
+  return chunks;
+};

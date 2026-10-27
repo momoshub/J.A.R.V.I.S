@@ -60,13 +60,21 @@ const run = (d: CommandDeps, line: string, who = actor()) =>
   dispatchCommand(d, who, "C1", line, { prefix: "X/jv", slash: "/jv", threadTs: "99.1" });
 
 describe("help as a menu", () => {
-  test("it posts a picker instead of a wall of text", async () => {
+  test("it posts the full list AND a picker, in that order", async () => {
     const posted: Posted[] = [];
     const out = await run(deps({ slack: fakeSlack(posted) }), "help");
 
     expect(posted.length).toBe(1);
+    const text = posted[0]?.text ?? "";
+    // the list is still what you read to find out what exists, or to copy a
+    // command out of - the picker is the convenient path, not the only one
+    expect(text).toContain("Commands - run either way");
+    expect(text).toContain("`ping`");
+    expect(text).toContain("`whoami`");
+    // and the controls come last
+    expect(text.indexOf("Or pick one here")).toBeGreaterThan(text.indexOf("`ping`"));
     expect(posted[0]?.menu.select?.actionId).toBe(MENU_SELECT_ACTION);
-    // nothing returned, so the transport does not also post the old list
+    // nothing returned, so the transport does not post the list a second time
     expect(out).toBe("");
   });
 

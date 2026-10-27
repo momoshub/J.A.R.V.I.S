@@ -6,7 +6,7 @@ import {
   encodeMenuRequest,
   type MenuCommand,
   MENU_OPTION_MAX,
-  menuIntro,
+  menuPrompt,
   needsArguments,
   QUICK_MAX,
 } from "../../src/domain/commandMenu.ts";
@@ -104,7 +104,7 @@ describe("buildCommandMenu", () => {
     const menu = buildCommandMenu(many, "pal", []);
     expect(menu.groups.flatMap((g) => g.options).length).toBe(MENU_OPTION_MAX);
     expect(menu.omitted).toBe(7);
-    expect(menuIntro("X/jv", "/jv", menu)).toContain("7 more");
+    expect(menuPrompt(menu)).toContain("7 more");
   });
 });
 

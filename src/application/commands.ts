@@ -26,7 +26,7 @@ import { describeSystem, trendOf } from "../domain/systemStatus.ts";
 import {
   buildCommandMenu,
   MENU_SELECT_ACTION,
-  menuIntro,
+  menuPrompt,
   menuRunActionId,
 } from "../domain/commandMenu.ts";
 import type { SystemTracker } from "../infrastructure/system/systemProbe.ts";
@@ -402,11 +402,12 @@ export const COMMANDS: readonly CommandDef[] = [
       // list is still the fallback rather than an error, because help that
       // fails is worse than help that is merely old-fashioned.
       const menu = buildCommandMenu(listCommandInfo(), actor.role);
+      const listed = renderHelp(actor.role, prefix, slash);
       if (deps.slack && channelId && menu.groups.length > 0) {
         const posted = await deps.slack
           .postMenu(
             channelId,
-            menuIntro(prefix, slash, menu),
+            `${listed}\n\n${menuPrompt(menu)}`,
             {
               select: {
                 actionId: MENU_SELECT_ACTION,
@@ -424,7 +425,7 @@ export const COMMANDS: readonly CommandDef[] = [
           .catch(() => undefined);
         if (posted) return "";
       }
-      return renderHelp(actor.role, prefix, slash);
+      return listed;
     },
   },
   {

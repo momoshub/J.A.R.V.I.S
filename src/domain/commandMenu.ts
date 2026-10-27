@@ -170,11 +170,18 @@ export const decodeMenuRequest = (raw: string | undefined): MenuRequest | undefi
   }
 };
 
-/** The line that introduces the menu. */
-export const menuIntro = (prefix: string, slash: string, menu: CommandMenu): string =>
+/**
+ * The line that closes the list and opens the controls.
+ *
+ * It sits AFTER the full command list rather than replacing it. The picker is
+ * the convenient path, not the only one: the list is what you read to find out
+ * what exists, to copy a command into a script, or to check an argument shape
+ * without opening a modal - and a menu that hid all of that traded one kind of
+ * awkwardness for another.
+ */
+export const menuPrompt = (menu: CommandMenu): string =>
   [
-    "*What would you like me to do?*",
-    `Pick one below, or type it: \`${prefix} <command>\` / \`${slash} <command>\`.`,
+    "*Or pick one here:*",
     menu.omitted > 0 ? `_${menu.omitted} more are available by typing._` : "",
   ]
     .filter(Boolean)

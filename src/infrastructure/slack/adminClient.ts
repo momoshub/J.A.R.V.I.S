@@ -4,7 +4,7 @@
  * the console can mark editable messages and render senders.
  */
 import { WebClient } from "@slack/web-api";
-import { toMrkdwn } from "../../domain/slackFormat.ts";
+import { splitForBlocks, toMrkdwn } from "../../domain/slackFormat.ts";
 import type {
   SlackAdminPort,
   SlackConversation,
@@ -267,7 +267,12 @@ export const createSlackAdmin = (client: WebClient): SlackAdminPort => {
         // The SDK's Block union does not describe option_groups; the shape is
         // Slack's documented one and is built right above.
         blocks: [
-          { type: "section", text: { type: "mrkdwn", text: toMrkdwn(text) } },
+          // One section per chunk: Slack rejects a section over 3000 chars and
+          // takes the whole message down with it.
+          ...splitForBlocks(text).map((chunk) => ({
+            type: "section",
+            text: { type: "mrkdwn", text: toMrkdwn(chunk) },
+          })),
           ...(elements.length > 0 ? [{ type: "actions", elements }] : []),
         ] as never,
       })) as { ts?: string };
