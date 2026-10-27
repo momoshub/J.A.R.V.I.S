@@ -21,7 +21,7 @@
 export type HostCommand = { readonly name: string; readonly covers: string };
 
 export const HOST_COMMANDS: readonly HostCommand[] = [
-  { name: "read", covers: "anything a connector can open - a Notion page, a Slack channel or DM you were never invited to, a linked doc (owner only)" },
+  { name: "read", covers: "anything a connector can open - a Notion page, a Slack channel or DM you were never invited to, a linked doc. It borrows the host's access, so it has a role floor; if you are refused, say who can run it rather than just that you cannot" },
   { name: "investigate", covers: "logs, metrics, traces, and RUM, which exists only in Datadog" },
   { name: "ticket", covers: "raising one, which reads the tracker and the SOP in Notion" },
 ];
@@ -41,5 +41,6 @@ ${routes}
 - run it YOURSELF, in this turn, through the run helper. Do not describe the command and wait for someone to type it, do not ask anyone to reconnect anything, and do not ask for a paste or an export until the command itself has actually failed
 - NEVER go hunting for credentials or hand-roll your way around the gap: no grepping config files for API keys, no raw request to a private service's internal API. An empty body from an endpoint you are not authenticated to proves nothing, and reporting "it is private" on that basis is a conclusion you did not earn
 - you may READ this way. You may never WRITE this way: anything sent through a connector arrives under the name of the human who authorised it rather than yours, which is why those tools are denied to you everywhere
-- when a host command cannot reach it either, THAT is a real answer. Say what you tried and what it said`;
+- when a host command cannot reach it either, THAT is a real answer. Say what you tried and what it said
+- and if a command refuses you on the asker's role, relay that: "I cannot open it myself, ask an admin to run \`<the command>\`, or paste it here" tells them what to do next. "I cannot open that from here" leaves them guessing`;
 };

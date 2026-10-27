@@ -838,7 +838,27 @@ describe("reviews run on the caller's own Claude token", () => {
     expect(token()).toBeUndefined(); // falls back to the bot's own credential
   });
 
-  test("read runs on the host login, and only the owner may ask", async () => {
+  test("read's floor is configurable, and a refusal says who can run it", async () => {
+    // owner-only made it useless for the case it exists for: a teammate asking
+    // it to follow a document the team shares
+    const { deps } = withTokens({ [OWNER]: TOKEN });
+    const pal = actor({ slackId: "U0PAL77", role: "pal" });
+    deps.users.upsert(pal);
+    const link = "https://app.notion.com/p/handbook-1a2b3c4d5e6f7081920a1b2c3d4e5f61";
+
+    const refused = await dispatchCommand(deps, pal, "C1", `read ${link}`);
+    expect(refused).toContain("*admin* and above"); // the default floor
+    expect(refused).toContain("Ask someone at that level");
+    expect(refused).toContain("paste the content here");
+
+    // an admin may open it up, and then the pal gets through
+    expect(await dispatchCommand(deps, pal, "C1", "read access pal")).toContain("Only admins");
+    expect(await dispatchCommand(deps, actor(), "C1", "read access pal")).toContain("open to *pal*");
+    expect(deps.settings!.get("read_min_role")).toBe("pal");
+    expect(await dispatchCommand(deps, pal, "C1", "read")).toContain("Read what?");
+  });
+
+  test("read runs on the host login, and is open to admins by default", async () => {
     // it reads with the authorising human's Slack access, so anyone who can run
     // it can read anything that person can
     const { deps } = withTokens({ [OWNER]: TOKEN });
@@ -854,9 +874,11 @@ describe("reviews run on the caller's own Claude token", () => {
     expect(seen.system).toContain("just the decisions");
     expect(out).toBe("here is the gist");
 
+    // an admin is above the default floor, so it reaches the brain
     const admin = actor({ slackId: "U0ADMIN99", role: "admin" });
     deps.users.upsert(admin);
-    expect(await dispatchCommand(deps, admin, "C1", "read https://x.slack.com/archives/C1/p1")).toContain("owner");
+    await dispatchCommand(deps, admin, "C1", "read https://x.slack.com/archives/C1/p1");
+    expect(seen.useHostLogin).toBe(true);
   });
 
   test("read needs something to read", async () => {

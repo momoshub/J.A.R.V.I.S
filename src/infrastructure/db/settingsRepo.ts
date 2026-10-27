@@ -26,6 +26,8 @@ export const SETTING_KEYS = {
   reviewAgents: "review_agents",
   /** "off" turns one-session-per-thread back into a cold call per turn. */
   threadSessions: "thread_sessions",
+  /** Lowest role that may run `read`, which borrows the host human's access. */
+  readMinRole: "read_min_role",
 } as const;
 
 /** Model override for one role, e.g. `model:pal`. Empty means "use the default". */

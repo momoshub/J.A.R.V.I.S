@@ -300,6 +300,13 @@ const since = (ms: number): string => {
   return `${days}d ago`;
 };
 
+/**
+ * Lowest role that may run `read`. Defaults to admin: it borrows the host
+ * human's Slack and Notion access, so this is a trust decision, not a detail.
+ */
+const readFloorOf = (deps: CommandDeps): UserRole =>
+  roleOf(deps.settings?.get(SETTING_KEYS.readMinRole)?.trim().toLowerCase()) ?? "admin";
+
 /** How many child agents a review may fan out to, defaulting when unset. */
 const reviewAgentsOf = (deps: CommandDeps): number =>
   asAgentCap(deps.settings?.get(SETTING_KEYS.reviewAgents)) ?? DEFAULT_REVIEW_AGENTS;
@@ -560,15 +567,33 @@ export const COMMANDS: readonly CommandDef[] = [
   {
     name: "read",
     aliases: ["summarise", "summarize", "catchup"],
-    // Owner only, and not out of caution for its own sake: this reads with the
-    // authorising human's Slack access, so whoever can run it can read anything
-    // that person can - private channels and DMs included.
-    minRole: "owner",
-    usage: "<link> [what you want from it]",
+    // The entry gate is `pal` so the command is reachable; the real threshold is
+    // configurable and checked below. It reads with the authorising human's
+    // access, so whoever may run it can read anything that person can - which
+    // is a decision for whoever owns this instance, not a constant.
+    minRole: "pal",
+    usage: "<link> [what you want from it] | access <role>",
     summary: "read something my own token cannot - a Notion page, a channel I am not in - through the account's connectors",
     run: async (ctx) => {
       const { deps, actor, channelId, threadTs, args, rest, prefix, reply } = ctx;
       const target = (args[0] ?? "").trim();
+
+      // Who may borrow the host's access, as configuration rather than a
+      // constant: owner-only made the command useless for the case it exists
+      // for - a colleague asking it to follow a document the team shares.
+      const floor = readFloorOf(deps);
+      if (target.toLowerCase() === "access") {
+        const want = roleOf((args[1] ?? "").toLowerCase());
+        if (!want) return `Which role? \`${prefix} read access <pal|executer|admin|owner>\` (now: *${floor}*)`;
+        if (RANK[actor.role] < RANK.admin) return "Only admins can change who may use `read`.";
+        deps.settings?.set(SETTING_KEYS.readMinRole, want);
+        return `\`read\` is now open to *${want}* and above. It borrows my host's Slack and Notion access, so anyone at that level can have me read anything that account can see.`;
+      }
+
+      if (RANK[actor.role] < RANK[floor]) {
+        return `I cannot open that one myself - \`read\` borrows my host's access and is limited to *${floor}* and above. Ask someone at that level to run \`${prefix} read <link>\`, or paste the content here and I will work from that.`;
+      }
+
       if (!target) return `Read what? \`${prefix} read <link>\``;
       if (!deps.llm) return "My brain is not wired up right now.";
 
