@@ -43,6 +43,20 @@ describe("dashboard static + api", () => {
     expect(((await res.json()) as { ok: boolean }).ok).toBe(true);
   });
 
+  test("the restart endpoint defers to the handler and says so", async () => {
+    const asked: string[] = [];
+    const d = build({ requestRestart: (r) => asked.push(r) });
+    const res = await d.dash.handle(postJson("/api/restart", { reason: "picked up a fix" }));
+    expect(res.status).toBe(200);
+    expect((await res.json()) as { restarting: boolean }).toMatchObject({ ok: true, restarting: true });
+    expect(asked).toEqual(["picked up a fix"]);
+  });
+
+  test("without self-restart wired, it refuses rather than pretending", async () => {
+    const res = await build().dash.handle(postJson("/api/restart", {}));
+    expect(res.status).toBe(503);
+  });
+
   test("health reports whether the bot can hear Slack, not whether it is running", async () => {
     // the failure this exists for: twice the process was up and this endpoint
     // answered while the bot had not heard a word for hours

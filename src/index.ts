@@ -13,6 +13,7 @@ import { loadConfig, modelLabel, type AppConfig } from "./config/env.ts";
 import { openDatabase } from "./infrastructure/db/client.ts";
 import { createThreadSessionRepo } from "./infrastructure/db/threadSessionRepo.ts";
 import { createThreadQueue } from "./application/threadQueue.ts";
+import { RESTART_DELAY_MS } from "./domain/selfUpdate.ts";
 import { createRunRegistry } from "./application/runRegistry.ts";
 import { createTotpRepo } from "./infrastructure/db/totpRepo.ts";
 import {
@@ -156,6 +157,8 @@ const main = async () => {
   const fileScript = join(import.meta.dir, "..", "bin", "slack-file.sh");
   const grafanaGetScript = join(import.meta.dir, "..", "bin", "grafana-get.sh");
   const slackReadScript = join(import.meta.dir, "..", "bin", "slack-read.sh");
+  const restartScript = join(import.meta.dir, "..", "bin", "jarvis-restart.sh");
+  const repoPath = join(import.meta.dir, "..");
   // Model per role: a dashboard/command override wins, otherwise the env value,
   // otherwise the adapter default. Read per call so a change needs no restart.
   const modelsForRoles = () => {
@@ -238,6 +241,8 @@ const main = async () => {
     fileScript,
     grafanaGetScript,
     slackReadScript,
+    restartScript,
+    repoPath,
     draft,
     toolPolicy,
     // A person's own Claude Code credential: required by `review`, used by every
@@ -275,6 +280,15 @@ const main = async () => {
       // Read through a getter: the Slack app is built after this server, and a
       // bot that cannot hear Slack is down however well /health answers.
       slackHealth: () => slackApp?.health(),
+      // Exit, and let launchd bring us back. Deferred so the reply that asked
+      // for it has landed before the process goes.
+      requestRestart: (reason: string) => {
+        activity.line(`restart requested: ${reason}`);
+        setTimeout(() => {
+          console.log("Restarting on request ...");
+          process.exit(0);
+        }, RESTART_DELAY_MS).unref?.();
+      },
       uiAccess: uiAccess.read,
       users,
       messages,

@@ -77,6 +77,10 @@ export type HandleMessageDeps = {
   grafanaGetScript?: string;
   /** Absolute path of the read-only Slack reader, granted to every role. */
   slackReadScript?: string;
+  /** Absolute path of the verify-and-restart helper. Admin+ only; see below. */
+  restartScript?: string;
+  /** The bot's own source tree, so it can work on itself. Admin+ only. */
+  repoPath?: string;
   /** Long-running workflow sessions bound to a thread. */
   workflows?: WorkflowRepo;
   /** Pending access requests, so a stranger is put to the owner rather than refused. */
@@ -207,6 +211,10 @@ export const handleMessage = async (
     // ... and keep a durable fact, but only when talking to someone who could
     // have taught it one by hand. Learnings apply to everyone, everywhere.
     learnUrl: canTeach(decision.user.role) ? deps.learnUrl : undefined,
+    // Working on its own source is admin+, and not as a formality: a bad change
+    // restarted into is a crash-loop that cannot be fixed from Slack.
+    repoPath: canTeach(decision.user.role) ? deps.repoPath : undefined,
+    restartScript: canTeach(decision.user.role) ? deps.restartScript : undefined,
     // Offered to everyone: the command's own role gate decides what actually
     // runs, so asking in words can never do more than typing it would.
     runUrl: deps.runUrl,

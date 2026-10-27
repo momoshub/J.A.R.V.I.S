@@ -67,6 +67,11 @@ export type DashboardDeps = {
    * reaches it through this endpoint when a chat request is really a command.
    */
   runCommand?: (req: RunCommandRequest) => Promise<string>;
+  /**
+   * Exit so the supervisor restarts us, after a delay long enough for the reply
+   * that asked for it to land. Absent means self-restart is not wired up.
+   */
+  requestRestart?: (reason: string) => void;
 };
 
 /**
@@ -342,6 +347,16 @@ export const createDashboard = (config: DashboardConfig, deps: DashboardDeps) =>
             return jsonError(e instanceof Error ? e.message : String(e), 500);
           }
         }
+        case "/api/restart": {
+          // Loopback-only like the rest of this API, and deferred by the
+          // handler rather than here: a restart that happens before the
+          // response is written is a restart nobody can be told about.
+          if (!deps.requestRestart) return jsonError("Self-restart is not configured", 503);
+          const reason = String(body.reason ?? "requested over the local API").slice(0, 200);
+          deps.requestRestart(reason);
+          return Response.json({ ok: true, restarting: true });
+        }
+
         case "/api/command-log/clear":
           deps.commandLog?.clear();
           return Response.json({ ok: true });

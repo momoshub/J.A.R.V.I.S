@@ -10,6 +10,7 @@ import { investigationRules } from "./investigation.ts";
 import { ticketChatRules } from "./ticketPrompt.ts";
 import { credentialGapRules } from "./credentialGap.ts";
 import { slackReadRules } from "./slackRead.ts";
+import { selfUpdateRules } from "./selfUpdate.ts";
 import { SLACK_BREVITY, SLACK_FORMAT } from "./slackFormat.ts";
 import type { Participant, PromptContext, Reactable } from "./types.ts";
 
@@ -175,6 +176,8 @@ export type BuildSystemPromptOptions = PromptContext & {
   /** absolute path of the read-only Grafana helper */
   readonly grafanaGetScript?: string;
   readonly slackReadScript?: string;
+  readonly repoPath?: string;
+  readonly restartScript?: string;
   /** this turn's ticket, which carries who a triggered command runs as */
   readonly runTicket?: string;
   /** configured message command prefix, for explaining what a command line is */
@@ -214,6 +217,7 @@ export const buildSystemPrompt = (options: Partial<BuildSystemPromptOptions> = {
   const tickets = ticketChatRules(options.commandPrefix ?? "//bot", options.canRaiseTickets === true);
   const reaching = credentialGapRules(options.commandPrefix ?? "//bot");
   const slackReading = slackReadRules(options.slackReadScript);
+  const selfWork = selfUpdateRules(options.repoPath, options.restartScript);
   const commands = commandRules(
     options.runScript ?? "",
     options.runUrl ?? "",
@@ -221,5 +225,5 @@ export const buildSystemPrompt = (options: Partial<BuildSystemPromptOptions> = {
     options.commandPrefix ?? "//bot",
   );
 
-  return `${base}${learningsBlock}${addressed}${roster}\n\n${OPERATING_RULES}${attachments}${investigating}${tickets}${slackReading}${reaching}${reactions}${commands}${remembering}\n\n${WORKSPACE_NOTE}\n\n${identityLock(botName, options.botUserId)}`;
+  return `${base}${learningsBlock}${addressed}${roster}\n\n${OPERATING_RULES}${attachments}${investigating}${tickets}${slackReading}${reaching}${selfWork}${reactions}${commands}${remembering}\n\n${WORKSPACE_NOTE}\n\n${identityLock(botName, options.botUserId)}`;
 };

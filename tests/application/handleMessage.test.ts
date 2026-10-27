@@ -500,6 +500,27 @@ describe("handleMessage", () => {
     expect(seen[0]?.session).toBeUndefined();
   });
 
+  test("only admin+ is told it can work on its own source", async () => {
+    // a bad change restarted into is a crash-loop that cannot be fixed from
+    // Slack, so a pal is not even shown the door
+    let system = "";
+    const deps = build({
+      complete: async (p) => {
+        system = p.system;
+        return "ok";
+      },
+    });
+    deps.repoPath = "/repo";
+    deps.restartScript = "/bin/jarvis-restart.sh";
+
+    await handleMessage(deps, { channelId: "D1", slackUserId: OWNER, text: "hi" });
+    expect(system).toContain("Working on your own source");
+
+    deps.users.upsert({ slackId: "U0PAL01", role: "pal", displayName: "P", addedBy: OWNER, createdAt: 0 });
+    await handleMessage(deps, { channelId: "D1", slackUserId: "U0PAL01", text: "hi" });
+    expect(system).not.toContain("Working on your own source");
+  });
+
   test("a speaker's own Claude token runs their chat turn", async () => {
     let token: string | undefined;
     const deps = build({
