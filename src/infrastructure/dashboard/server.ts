@@ -39,6 +39,20 @@ export type DashboardDeps = {
   users: UserRepo;
   messages: MessageRepo;
   learnings: LearningsRepo;
+  /**
+   * The memory adapter, when one is configured.
+   *
+   * `remember` is what the brain's own save endpoint writes through, so a fact
+   * it decides to keep mid-conversation lands in the adapter rather than the
+   * old table. `status` backs a read-only view of what it currently holds.
+   */
+  adapter?: {
+    readonly status: () => string;
+    readonly remember: (
+      content: string,
+      by: string,
+    ) => { readonly ok: boolean; readonly violations?: readonly string[]; readonly warnings?: readonly string[] };
+  };
   settings: SettingsRepo;
   clock: Clock;
   /** Current bot identity, for the header and identity editor. */
@@ -205,6 +219,13 @@ export const createDashboard = (config: DashboardConfig, deps: DashboardDeps) =>
           });
         case "/api/learnings":
           return Response.json(deps.learnings.list());
+        case "/api/adapter":
+          // Read-only: curating is `adapter refine`, which is gated and
+          // recorded as a revision. A text box that writes straight into
+          // memory is the thing this whole change exists to remove.
+          return deps.adapter
+            ? Response.json({ configured: true, status: deps.adapter.status() })
+            : Response.json({ configured: false });
         case "/api/identity": {
           const override = deps.settings.get(SETTING_KEYS.systemPrompt);
           const p = deps.profile();
@@ -285,6 +306,13 @@ export const createDashboard = (config: DashboardConfig, deps: DashboardDeps) =>
         case "/api/learnings": {
           const content = String(body.content ?? "").trim();
           if (!content) return jsonError("Empty learning");
+          // This is the endpoint the brain curls when it decides to keep
+          // something, so it has to reach whichever memory is live.
+          if (deps.adapter) {
+            const result = deps.adapter.remember(content, "dashboard");
+            if (!result.ok) return jsonError((result.violations ?? ["Could not save that"]).join("; "));
+            return Response.json({ ok: true, warnings: result.warnings ?? [] });
+          }
           deps.learnings.add(content, "dashboard", deps.clock());
           return Response.json({ ok: true });
         }

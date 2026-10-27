@@ -11,6 +11,19 @@
  * enforces per-command role gates before touching repos or the brain.
  */
 import { buildSystemPrompt, DEFAULT_BOT_NAME } from "../domain/personality.ts";
+import { refinePrompt } from "../domain/refinePrompt.ts";
+import { adapterRules, isBlank } from "../domain/adapter.ts";
+import { ALWAYS_ON_BUDGET, describeCheck } from "../domain/adapterCheck.ts";
+import {
+  type AdapterDeps,
+  adapterStatus,
+  commitAdapter,
+  migrateLearnings,
+  rememberFact,
+  revertAdapter,
+} from "./adapterMemory.ts";
+import type { AdapterStore } from "../infrastructure/adapter/adapterStore.ts";
+import type { AdapterRevisionRepo } from "../infrastructure/db/adapterRevisionRepo.ts";
 import { validateRemoval, validateRoleChange } from "../domain/access.ts";
 import {
   asAgentCap,
@@ -88,6 +101,11 @@ export type CommandDeps = {
   users: UserRepo;
   messages: MessageRepo;
   learnings?: LearningsRepo;
+  /** The memory adapter directory; when set, it replaces the learnings list. */
+  adapterStore?: AdapterStore;
+  adapterRevisions?: AdapterRevisionRepo;
+  /** Always-on byte ceiling; the default lives in `adapterCheck`. */
+  adapterBudget?: () => number;
   llm?: LlmPort;
   promptContext?: () => PromptContext;
   botInfo?: () => { botName: string; model: string };
@@ -133,6 +151,8 @@ const clip = (s: string): string =>
 const REVIEW_TIMEOUT_MS = 900_000;
 /** a ticket reads the SOP, the thread and the code, and may open a PR. */
 const TICKET_TIMEOUT_MS = 900_000;
+/** A refine pass reads every file and rewrites most of them. */
+const REFINE_TIMEOUT_MS = 900_000;
 /** an investigation walks logs, RUM and traces across environments. */
 const INVESTIGATE_TIMEOUT_MS = 900_000;
 /** reading a conversation is bounded work, but a busy channel is a lot of it. */
@@ -190,6 +210,17 @@ type CommandDef = {
   quiet?: boolean;
   run: (ctx: Context) => string | Promise<string>;
 };
+
+/** The adapter use-case bag, or undefined when no adapter is configured. */
+const adapterDepsOf = (deps: CommandDeps): AdapterDeps | undefined =>
+  deps.adapterStore?.exists()
+    ? {
+        store: deps.adapterStore,
+        revisions: deps.adapterRevisions,
+        clock: deps.clock,
+        budget: deps.adapterBudget?.() ?? ALWAYS_ON_BUDGET,
+      }
+    : undefined;
 
 const RANK: Record<UserRole, number> = { pal: 0, executer: 1, admin: 2, owner: 3 };
 /** Roles an allowance applies to; mirrors LIMITED_ROLES without the import cycle. */
@@ -516,14 +547,136 @@ export const COMMANDS: readonly CommandDef[] = [
     },
   },
   {
+    name: "adapter",
+    aliases: ["memory"],
+    minRole: "admin",
+    usage: "[status|check|history|refine [note]|revert <id>|migrate]",
+    summary: "inspect and curate what I remember",
+    run: async (ctx) => {
+      const { deps, actor, args, rest, prefix, reply } = ctx;
+      const a = adapterDepsOf(deps);
+      if (!a) return "No memory adapter is configured, so I am still on the flat learnings list.";
+      const sub = (args[0] ?? "status").toLowerCase();
+
+      if (sub === "status") return adapterStatus(a);
+
+      if (sub === "check") {
+        const files = a.store.files();
+        const result = commitAdapter(a, files, { reason: "check", actor: actor.slackId });
+        // A check is a dry run: committing the files it already has changes
+        // nothing on disk, and the gate is the only thing being asked.
+        return result.ok
+          ? `${describeCheck({ ok: true, violations: [] })}\n\n${adapterStatus(a)}`
+          : `The adapter does NOT pass:\n${result.violations.map((v) => `- ${v}`).join("\n")}`;
+      }
+
+      if (sub === "history") {
+        const list = a.revisions?.list(15) ?? [];
+        if (list.length === 0) return "No revisions yet.";
+        return list
+          .map((r) => `- #${r.id} ${new Date(r.createdAt).toISOString().slice(0, 16).replace("T", " ")} ${r.reason}`)
+          .join("\n");
+      }
+
+      if (sub === "revert") {
+        const id = Number(args[1]);
+        if (!Number.isInteger(id)) return `Which one? \`${prefix} adapter revert <id>\` (see \`${prefix} adapter history\`)`;
+        const result = revertAdapter(a, id, actor.slackId);
+        return result.ok
+          ? `Reverted to #${id}${result.revision ? ` (now #${result.revision})` : ""}.\n\n${adapterStatus(a)}`
+          : `Could not revert:\n${result.violations.map((v) => `- ${v}`).join("\n")}`;
+      }
+
+      if (sub === "migrate") {
+        const list = deps.learnings?.list() ?? [];
+        if (list.length === 0) return "The learnings list is empty - nothing to migrate.";
+        const result = migrateLearnings(a, list.map((l) => l.content), actor.slackId);
+        if (!result.ok) return `Could not migrate:\n${result.violations.map((v) => `- ${v}`).join("\n")}`;
+        return [
+          `Moved ${list.length} learnings into the adapter${result.revision ? ` (#${result.revision})` : ""}.`,
+          "They went in unsorted and unmerged, exactly as they were.",
+          `Run \`${prefix} adapter refine\` to actually curate them.`,
+          ...(result.warnings.length > 0 ? ["", ...result.warnings.map((w) => `:warning: ${w}`)] : []),
+        ].join("\n");
+      }
+
+      if (sub !== "refine") return `Which one? \`${prefix} adapter [status|check|history|refine|revert <id>|migrate]\``;
+
+      if (!deps.llm) return "My brain is not wired up right now.";
+      const note = rest.slice(rest.toLowerCase().indexOf("refine") + "refine".length).trim();
+      const adapter = a.store.load();
+      const currentBytes = new TextEncoder().encode(
+        [adapterRules(adapter), isBlank(adapter.notes) ? "" : adapter.notes].filter(Boolean).join("\n\n"),
+      ).length;
+      const budget = a.budget ?? ALWAYS_ON_BUDGET;
+
+      // The pass edits a throwaway copy; what comes back is gated and
+      // committed here. The model never writes the live adapter.
+      const staging = a.store.stage();
+      const name = botNameOf(deps);
+      const full = deps.toolPolicy?.("owner") ?? { skipPermissions: true };
+      const params = {
+        system: refinePrompt({ currentBytes, budget, note: note || undefined }, name),
+        messages: [{ role: "user" as const, content: note || "Curate my memory." }],
+        assistantName: name,
+        policy: { ...full, cwd: staging, timeoutMs: REFINE_TIMEOUT_MS },
+      };
+
+      if (reply) await reply("🧹 going through what I remember");
+      let out = "";
+      try {
+        out = deps.llm.stream && reply ? await deps.llm.stream(params, () => {}) : await deps.llm.complete(params);
+        const next = a.store.collect(staging);
+        if (next.size === 0) return "The pass came back with nothing, so I left my memory alone.";
+        const result = commitAdapter(a, next, {
+          reason: note ? `refine: ${note.slice(0, 100)}` : "refine",
+          actor: actor.slackId,
+          enforceBudget: true,
+          enforceFixed: true,
+        });
+        if (!result.ok) {
+          return [
+            "That pass did not pass its own checks, so I kept what I had:",
+            ...result.violations.map((v) => `- ${v}`),
+          ].join("\n");
+        }
+        const summary = out.trim() || "Done.";
+        const tail = `\n\n${adapterStatus(a)}\n_revision #${result.revision ?? "?"} - \`${prefix} adapter revert ${result.revision ?? ""}\` puts it back_`;
+        if (reply) {
+          await reply(summary + tail);
+          return "";
+        }
+        return summary + tail;
+      } finally {
+        a.store.discard(staging);
+      }
+    },
+  },
+  {
     name: "learn",
     minRole: "admin",
     usage: "<fact>",
     summary: "teach me a durable fact",
     run: ({ deps, actor, rest, prefix }) => {
-      if (!deps.learnings) return "Learnings are not available.";
       const fact = rest.trim();
       if (!fact) return `Teach me something: \`${prefix} learn <fact>\``;
+
+      // With an adapter, the fact lands in the inbox heading and a refine pass
+      // files it. Teaching stays instant and is never refused - the moment
+      // "remember this" can fail, people stop telling me things - so the
+      // budget is reported here rather than enforced.
+      const a = adapterDepsOf(deps);
+      if (a) {
+        const result = rememberFact(a, fact, { kind: "global" }, actor.slackId);
+        if (!result.ok) return `I could not keep that:\n${result.violations.map((v) => `- ${v}`).join("\n")}`;
+        const nag =
+          result.warnings.length > 0
+            ? `\n:warning: my always-on memory is over budget - \`${prefix} adapter refine\` will tidy it.`
+            : "";
+        return `Learned it. I will keep that in mind.${nag}`;
+      }
+
+      if (!deps.learnings) return "Learnings are not available.";
       const l = deps.learnings.add(fact, actor.slackId, deps.clock());
       return `Learned it (#${l.id}). I will keep that in mind.`;
     },
@@ -533,7 +686,24 @@ export const COMMANDS: readonly CommandDef[] = [
     minRole: "admin",
     usage: "",
     summary: "list what I have learned",
-    run: ({ deps }) => {
+    run: ({ deps, prefix }) => {
+      const a = adapterDepsOf(deps);
+      if (a) {
+        const adapter = a.store.load();
+        const blocks = [
+          isBlank(adapter.policy) ? "" : `*Policy*\n${adapter.policy}`,
+          isBlank(adapter.notes) ? "" : `*Notes*\n${adapter.notes}`,
+          adapter.skills.length === 0
+            ? ""
+            : `*In depth*\n${adapter.skills.map((sk) => `- ${sk.name}: ${sk.description}`).join("\n")}`,
+          adapter.people.size + adapter.channels.size === 0
+            ? ""
+            : `_plus ${adapter.people.size} people and ${adapter.channels.size} channels I keep separate notes on_`,
+        ].filter(Boolean);
+        return blocks.length === 0
+          ? "I have not learned anything yet."
+          : `${blocks.join("\n\n")}\n\n_\`${prefix} adapter\` for the numbers_`;
+      }
       if (!deps.learnings) return "Learnings are not available.";
       const list = deps.learnings.list();
       if (list.length === 0) return "I have not learned anything yet.";
@@ -547,6 +717,9 @@ export const COMMANDS: readonly CommandDef[] = [
     usage: "<id> <new wording>",
     summary: "reword something I have learned",
     run: ({ deps, args, rest, prefix }) => {
+      if (adapterDepsOf(deps)) {
+        return `My memory is an adapter now, so there are no numbered learnings to edit. Use \`${prefix} adapter refine\` to curate it, or \`${prefix} adapter revert <id>\` to undo a pass.`;
+      }
       if (!deps.learnings) return "Learnings are not available.";
       const id = Number(args[0]);
       if (!Number.isInteger(id)) return `Which one? \`${prefix} relearn <id> <new wording>\` (see \`${prefix} learnings\`)`;
@@ -564,6 +737,9 @@ export const COMMANDS: readonly CommandDef[] = [
     usage: "<id>",
     summary: "make me forget a learning",
     run: ({ deps, args, prefix }) => {
+      if (adapterDepsOf(deps)) {
+        return `My memory is an adapter now, so there are no numbered learnings to edit. Use \`${prefix} adapter refine\` to curate it, or \`${prefix} adapter revert <id>\` to undo a pass.`;
+      }
       if (!deps.learnings) return "Learnings are not available.";
       const id = Number(args[0]);
       if (!Number.isInteger(id)) return `Which one? \`${prefix} unlearn <id>\` (see \`${prefix} learnings\`)`;

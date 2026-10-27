@@ -24,6 +24,9 @@ import {
 import { createUserRepo } from "./infrastructure/db/userRepo.ts";
 import { createMessageRepo } from "./infrastructure/db/messageRepo.ts";
 import { createLearningsRepo } from "./infrastructure/db/learningsRepo.ts";
+import { createAdapterStore } from "./infrastructure/adapter/adapterStore.ts";
+import { adapterStatus, rememberFact } from "./application/adapterMemory.ts";
+import { createAdapterRevisionRepo } from "./infrastructure/db/adapterRevisionRepo.ts";
 import { createCommandLogRepo } from "./infrastructure/db/commandLogRepo.ts";
 import { createWorkflowRepo } from "./infrastructure/db/workflowRepo.ts";
 import { createAccessRequestRepo } from "./infrastructure/db/accessRequestRepo.ts";
@@ -91,6 +94,27 @@ const main = async () => {
   const users = createUserRepo(db);
   const messages = createMessageRepo(db);
   const learnings = createLearningsRepo(db);
+  // Memory as a checked directory rather than a growing list of rows. Optional:
+  // without an adapter.yaml at this path the bot keeps using `learnings`.
+  const adapterStore = createAdapterStore(config.adapterPath);
+  const adapterRevisions = createAdapterRevisionRepo(db);
+  const adapterDeps = () => ({
+    store: adapterStore,
+    revisions: adapterRevisions,
+    clock,
+    budget: config.adapterBudget,
+  });
+  const loadAdapter = () => {
+    if (!adapterStore.exists()) return undefined;
+    try {
+      return adapterStore.load();
+    } catch (err) {
+      // A broken manifest must not take the bot down with it: fall back to the
+      // flat list and say so, loudly enough to be noticed in the log.
+      console.error("[adapter] could not load, falling back to learnings:", err);
+      return undefined;
+    }
+  };
   const settings = createSettingsRepo(db);
   // Separate database on purpose: the main one is committed, and user tokens
   // must never be able to reach git. Encrypted under a key kept beside it.
@@ -197,6 +221,7 @@ const main = async () => {
     botName: profile().name,
     base: settings.get(SETTING_KEYS.systemPrompt),
     learnings: learnings.list().map((l) => l.content),
+    adapter: loadAdapter(),
   });
   const draft = createDraftReply({ llm, promptContext });
 
@@ -210,6 +235,9 @@ const main = async () => {
     promptContext,
     // For the command registry (learn/learnings, model/status, log + disable, rv/br/jrp).
     learnings,
+    adapterStore,
+    adapterRevisions,
+    adapterBudget: () => config.adapterBudget,
     botInfo: () => ({ botName: profile().name, model: modelLabel(config) }),
     commandLog,
     disabledCommands,
@@ -293,6 +321,17 @@ const main = async () => {
       users,
       messages,
       learnings,
+      adapter: adapterStore.exists()
+        ? {
+            status: () => adapterStatus(adapterDeps()),
+            remember: (content, by) => {
+              const r = rememberFact(adapterDeps(), content, { kind: "global" }, by);
+              return r.ok
+                ? { ok: true, warnings: r.warnings }
+                : { ok: false, violations: r.violations };
+            },
+          }
+        : undefined,
       settings,
       clock,
       profile,

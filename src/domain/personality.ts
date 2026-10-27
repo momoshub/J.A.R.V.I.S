@@ -12,6 +12,7 @@ import { credentialGapRules } from "./credentialGap.ts";
 import { slackReadRules } from "./slackRead.ts";
 import { selfUpdateRules } from "./selfUpdate.ts";
 import { SLACK_BREVITY, SLACK_FORMAT } from "./slackFormat.ts";
+import { type Adapter, type AdapterScope, renderAdapter } from "./adapter.ts";
 import type { Participant, PromptContext, Reactable } from "./types.ts";
 
 /** Neutral fallback persona used when no custom one is configured. */
@@ -183,6 +184,15 @@ export type BuildSystemPromptOptions = PromptContext & {
   readonly runTicket?: string;
   /** configured message command prefix, for explaining what a command line is */
   readonly commandPrefix?: string;
+  /**
+   * The memory adapter, when one is configured. It replaces the flat learnings
+   * block: the same always-on facts, plus notes that load only where they
+   * apply and skills that are read when they are relevant rather than carried
+   * into every conversation.
+   */
+  readonly adapter?: Adapter;
+  /** Who is here and where, so scoped memory can be resolved. */
+  readonly adapterScope?: AdapterScope;
 };
 
 const renderParticipants = (participants: readonly Participant[]): string => {
@@ -198,10 +208,14 @@ export const buildSystemPrompt = (options: Partial<BuildSystemPromptOptions> = {
   const botName = options.botName?.trim() || DEFAULT_BOT_NAME;
   const base = options.base?.trim() ? options.base.trim() : DEFAULT_PERSONALITY;
 
+  // Memory is the adapter when one is configured, and the legacy flat list
+  // otherwise - an instance that has not migrated must keep working unchanged.
   const learnings = (options.learnings ?? []).map((l) => l.trim()).filter(Boolean);
-  const learningsBlock = learnings.length
-    ? `\n\nThings you have learned (treat these as known facts):\n${learnings.map((l) => `- ${l}`).join("\n")}`
-    : "";
+  const learningsBlock = options.adapter
+    ? renderAdapter(options.adapter, options.adapterScope ?? {})
+    : learnings.length
+      ? `\n\nThings you have learned (treat these as known facts):\n${learnings.map((l) => `- ${l}`).join("\n")}`
+      : "";
 
   const who = options.addresseeName?.trim();
   // The name comes from the user's own Slack profile, so treat it as untrusted

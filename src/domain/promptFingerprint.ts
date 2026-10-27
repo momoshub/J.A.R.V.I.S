@@ -16,6 +16,12 @@
  * Deliberately NOT included: anything that varies per turn (who is present,
  * which messages are reactable, the run ticket) or learnings, which are added
  * often and are additive rather than behavioural. Only the rules.
+ *
+ * The memory adapter is split along the same line. Its policy and skill index
+ * ARE rules - they change how the bot behaves everywhere - so they are hashed.
+ * Its notes, scoped or global, are not: a note is taught often and adds to what
+ * the bot knows rather than changing what it does, and hashing those would
+ * reset every open thread the moment anybody said "remember this".
  */
 import { createHash } from "node:crypto";
 
@@ -44,8 +50,11 @@ const SENTINELS = {
 export const promptFingerprint = (
   build: (opts: Record<string, unknown>) => string,
   base?: string,
+  /** The adapter's always-on rules: its policy and the skill index, if any. */
+  adapterRules?: string,
 ): string =>
   createHash("sha256")
     .update(build({ ...SENTINELS, logSources: [...SENTINELS.logSources], learnings: [], base }))
+    .update(adapterRules ?? "")
     .digest("hex")
     .slice(0, 16);

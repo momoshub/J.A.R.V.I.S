@@ -14,6 +14,7 @@ import {
   reactableMessages,
 } from "../domain/conversation.ts";
 import { buildSystemPrompt } from "../domain/personality.ts";
+import { adapterRules } from "../domain/adapter.ts";
 import { hasContent } from "../domain/mentions.ts";
 import type { Clock, LlmPort, LlmStreamSink } from "./ports.ts";
 import type { PromptContext, StoredMessage, UserRole } from "../domain/types.ts";
@@ -21,6 +22,8 @@ import type { ToolPolicy } from "../domain/toolPolicy.ts";
 import type { MessageRepo } from "../infrastructure/db/messageRepo.ts";
 import type { UserRepo } from "../infrastructure/db/userRepo.ts";
 import type { LearningsRepo } from "../infrastructure/db/learningsRepo.ts";
+import type { AdapterStore } from "../infrastructure/adapter/adapterStore.ts";
+import type { AdapterRevisionRepo } from "../infrastructure/db/adapterRevisionRepo.ts";
 import type { CommandLogRepo } from "../infrastructure/db/commandLogRepo.ts";
 import type { WorkflowRepo } from "../infrastructure/db/workflowRepo.ts";
 import type { AccessRequestRepo } from "../infrastructure/db/accessRequestRepo.ts";
@@ -48,6 +51,10 @@ export type HandleMessageDeps = {
   promptContext?: () => PromptContext;
   /** Learnings repo, for the `learn`/`learnings` commands. */
   learnings?: LearningsRepo;
+  /** The memory adapter, for the `adapter` command; replaces `learnings`. */
+  adapterStore?: AdapterStore;
+  adapterRevisions?: AdapterRevisionRepo;
+  adapterBudget?: () => number;
   /** Bot name + model, for the `model`/`status` command. */
   botInfo?: () => { botName: string; model: string };
   /** Audit log for command executions. */
@@ -193,12 +200,16 @@ export const handleMessage = async (
     (await loadThread(deps, inbound)) ??
     deps.messages.recentForThread(inbound.channelId, inbound.threadTs ?? "", window);
   const ctx = deps.promptContext?.() ?? { learnings: [] };
+  const participants = collectParticipants(deps, history, inbound);
+  // Needed before the prompt is built: a sandboxed turn cannot read the
+  // adapter's files, so it must not be offered skills it could never open.
+  const policy = deps.toolPolicy?.(decision.user.role, inbound.channelId);
   const system = buildSystemPrompt({
     botName: ctx.botName,
     base: ctx.base,
     learnings: ctx.learnings,
     addresseeName: inbound.displayName ?? decision.user.displayName,
-    participants: collectParticipants(deps, history, inbound),
+    participants,
     // Lets the bot react to earlier messages with its own token, if it wants to.
     channelId: inbound.channelId,
     reactable: reactableMessages(history),
@@ -222,9 +233,15 @@ export const handleMessage = async (
     runScript: deps.runScript,
     runTicket,
     commandPrefix: deps.commandPrefix,
+    adapter: ctx.adapter,
+    // Scoped memory resolves against who is actually here and where.
+    adapterScope: {
+      channelId: inbound.channelId,
+      participantIds: participants.map((p) => p.id),
+      canReadFiles: tierOf(policy) === "full",
+    },
   });
 
-  const policy = deps.toolPolicy?.(decision.user.role, inbound.channelId);
   // One CLI session per thread, per access tier: the model keeps its own context
   // between turns, so it is handed only what it has not seen rather than the
   // whole thread replayed into a memory that already holds it.
@@ -234,7 +251,11 @@ export const handleMessage = async (
   // A session opened under different rules is abandoned: it carries everything
   // it has already said, so a rule change would otherwise never reach a thread
   // that was already running.
-  const fingerprint = promptFingerprint(buildSystemPrompt as never, ctx.base);
+  const fingerprint = promptFingerprint(
+    buildSystemPrompt as never,
+    ctx.base,
+    ctx.adapter ? adapterRules(ctx.adapter) : undefined,
+  );
   const found = key ? sessions?.find(key.channelId, key.threadTs, tier) : undefined;
   if (found && found.promptHash && found.promptHash !== fingerprint && key) {
     sessions?.drop(key.channelId, key.threadTs, tier);

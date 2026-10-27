@@ -82,6 +82,32 @@ export const migrate = (db: Database): void => {
   migrateAccessNotices(db);
   migrateThreadSessions(db);
   migrateSessionPromptHash(db);
+  migrateAdapterRevisions(db);
+};
+
+/**
+ * Migration v11: adapter revisions.
+ *
+ * Memory moved out of the `learnings` table and into a checked directory, so
+ * every change to it is now a commit that can be read back and undone. The
+ * table stores a whole snapshot rather than a diff: an adapter is a few dozen
+ * small text files, and a revert that cannot itself fail is worth far more
+ * than the bytes it saves.
+ */
+const migrateAdapterRevisions = (db: Database): void => {
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS adapter_revisions (
+      id         INTEGER PRIMARY KEY AUTOINCREMENT,
+      created_at INTEGER NOT NULL,
+      created_by TEXT NOT NULL DEFAULT '',
+      reason     TEXT NOT NULL DEFAULT '',
+      files      TEXT NOT NULL
+    );
+  `);
+  const { user_version } = db.query<{ user_version: number }, []>("PRAGMA user_version").get() ?? {
+    user_version: 0,
+  };
+  if (user_version < 11) db.exec("PRAGMA user_version = 11;");
 };
 
 /**

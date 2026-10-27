@@ -82,6 +82,8 @@ export type PromptContext = {
   /** Overridden base personality/rules; falls back to the built-in default. */
   readonly base?: string;
   readonly learnings: readonly string[];
+  /** The memory adapter, when one is configured; replaces `learnings`. */
+  readonly adapter?: import("./adapter.ts").Adapter;
 };
 
 /** Outcome of an access-control check. */
