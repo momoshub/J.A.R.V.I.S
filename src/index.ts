@@ -155,6 +155,7 @@ const main = async () => {
   const runScript = join(import.meta.dir, "..", "bin", "jarvis-run.sh");
   const fileScript = join(import.meta.dir, "..", "bin", "slack-file.sh");
   const grafanaGetScript = join(import.meta.dir, "..", "bin", "grafana-get.sh");
+  const slackReadScript = join(import.meta.dir, "..", "bin", "slack-read.sh");
   // Model per role: a dashboard/command override wins, otherwise the env value,
   // otherwise the adapter default. Read per call so a change needs no restart.
   const modelsForRoles = () => {
@@ -175,6 +176,7 @@ const main = async () => {
       runScript,
       fileScript,
       grafanaGetScript,
+    slackReadScript,
       models: modelsForRoles(),
       executerTools: (settings.get(SETTING_KEYS.executerTools) ?? "")
         .split(/[,\n]/)
@@ -235,6 +237,7 @@ const main = async () => {
     reactScript,
     fileScript,
     grafanaGetScript,
+    slackReadScript,
     draft,
     toolPolicy,
     // A person's own Claude Code credential: required by `review`, used by every

@@ -29,6 +29,16 @@ describe("toolPolicyFor", () => {
     }
   });
 
+  test("every role gets the Slack reader, including the sandboxed ones", () => {
+    // a pal has no `curl` on purpose, so without this it cannot read a channel
+    // the bot is sitting in - and it reported that as a Slack permission error
+    const withReader = { ...opts, slackReadScript: "/bin/slack-read.sh" };
+    for (const role of ["pal", "executer"] as const) {
+      const allowed = toolPolicyFor(role, withReader).allowedTools ?? [];
+      expect(allowed).toContain("Bash(/bin/slack-read.sh:*)");
+    }
+  });
+
   test("reading Slack is NOT denied - it impersonates nobody", () => {
     // the blanket ban refused the reads too, which was never its point: reading
     // is the only way to see a channel the bot was never invited to

@@ -123,6 +123,13 @@ export type ToolPolicyOptions = {
    */
   readonly grafanaGetScript?: string;
   /**
+   * Absolute path of the Slack reader. Sandboxed roles have no `curl` - a
+   * general outbound request with the bot token in the environment is an
+   * exfiltration channel - but the bot can genuinely read these conversations,
+   * and refusing is a worse answer than a narrow door.
+   */
+  readonly slackReadScript?: string;
+  /**
    * Model per role, for roles that should not be spending the expensive one on
    * ordinary chat. Absent means the adapter's default.
    */
@@ -146,6 +153,7 @@ const withHelpers = (tools: readonly string[], opts: ToolPolicyOptions): readonl
   ...(opts.runScript ? [`Bash(${opts.runScript}:*)`] : []),
   ...(opts.fileScript ? [`Bash(${opts.fileScript}:*)`] : []),
   ...(opts.grafanaGetScript ? [`Bash(${opts.grafanaGetScript}:*)`] : []),
+  ...(opts.slackReadScript ? [`Bash(${opts.slackReadScript}:*)`] : []),
 ];
 
 /** Channel beats role beats the adapter default. */

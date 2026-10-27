@@ -75,6 +75,8 @@ export type HandleMessageDeps = {
   fileScript?: string;
   /** Absolute path of the read-only Grafana helper, granted to every role. */
   grafanaGetScript?: string;
+  /** Absolute path of the read-only Slack reader, granted to every role. */
+  slackReadScript?: string;
   /** Long-running workflow sessions bound to a thread. */
   workflows?: WorkflowRepo;
   /** Pending access requests, so a stranger is put to the owner rather than refused. */
@@ -201,6 +203,7 @@ export const handleMessage = async (
     logSources: deps.logSources?.(),
     canRaiseTickets: deps.canRaiseTickets?.(),
     grafanaGetScript: deps.grafanaGetScript,
+    slackReadScript: deps.slackReadScript,
     // ... and keep a durable fact, but only when talking to someone who could
     // have taught it one by hand. Learnings apply to everyone, everywhere.
     learnUrl: canTeach(decision.user.role) ? deps.learnUrl : undefined,
