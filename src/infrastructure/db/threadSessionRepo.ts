@@ -11,6 +11,8 @@ import type { SessionTier } from "../../domain/threadSession.ts";
 
 export type ThreadSession = {
   sessionId: string;
+  /** Fingerprint of the rules this session was opened under. */
+  promptHash: string;
   /** Slack ts of the newest turn this session has already been shown. */
   lastTs: string;
   /** Turns taken on this session, for the dashboard and for sanity checks. */
@@ -30,6 +32,7 @@ export type ThreadSessionRepo = {
     sessionId: string,
     lastTs: string,
     now: number,
+    promptHash: string,
   ) => void;
   /** Record a turn taken on the session, and how far it has now been shown. */
   touch: (channelId: string, threadTs: string, tier: SessionTier, lastTs: string, now: number) => void;
@@ -37,18 +40,19 @@ export type ThreadSessionRepo = {
   drop: (channelId: string, threadTs: string, tier?: SessionTier) => void;
 };
 
-type Row = { session_id: string; last_ts: string; turns: number; created_at: number; used_at: number };
+type Row = { session_id: string; last_ts: string; turns: number; created_at: number; used_at: number; prompt_hash: string };
 
 export const createThreadSessionRepo = (db: DbClient): ThreadSessionRepo => {
   const findStmt = db.query<Row, [string, string, string]>(
-    "SELECT session_id, last_ts, turns, created_at, used_at FROM thread_sessions WHERE channel_id = ? AND thread_ts = ? AND tier = ?",
+    "SELECT session_id, last_ts, turns, created_at, used_at, prompt_hash FROM thread_sessions WHERE channel_id = ? AND thread_ts = ? AND tier = ?",
   );
   const claimStmt = db.query(
-    `INSERT INTO thread_sessions (channel_id, thread_ts, tier, session_id, last_ts, turns, created_at, used_at)
-     VALUES ($channel, $thread, $tier, $session, $lastTs, 1, $now, $now)
+    `INSERT INTO thread_sessions (channel_id, thread_ts, tier, session_id, last_ts, turns, created_at, used_at, prompt_hash)
+     VALUES ($channel, $thread, $tier, $session, $lastTs, 1, $now, $now, $hash)
      ON CONFLICT(channel_id, thread_ts, tier)
      DO UPDATE SET session_id = excluded.session_id, last_ts = excluded.last_ts, turns = 1,
-                   created_at = excluded.created_at, used_at = excluded.used_at`,
+                   created_at = excluded.created_at, used_at = excluded.used_at,
+                   prompt_hash = excluded.prompt_hash`,
   );
   const touchStmt = db.query(
     "UPDATE thread_sessions SET turns = turns + 1, last_ts = $lastTs, used_at = $now WHERE channel_id = $channel AND thread_ts = $thread AND tier = $tier",
@@ -64,11 +68,11 @@ export const createThreadSessionRepo = (db: DbClient): ThreadSessionRepo => {
     find: (channelId, threadTs, tier) => {
       const row = findStmt.get(channelId, threadTs, tier);
       return row
-        ? { sessionId: row.session_id, lastTs: row.last_ts, turns: row.turns, createdAt: row.created_at, usedAt: row.used_at }
+        ? { sessionId: row.session_id, promptHash: row.prompt_hash, lastTs: row.last_ts, turns: row.turns, createdAt: row.created_at, usedAt: row.used_at }
         : undefined;
     },
-    claim: (channelId, threadTs, tier, sessionId, lastTs, now) => {
-      claimStmt.run({ $channel: channelId, $thread: threadTs, $tier: tier, $session: sessionId, $lastTs: lastTs, $now: now });
+    claim: (channelId, threadTs, tier, sessionId, lastTs, now, promptHash) => {
+      claimStmt.run({ $channel: channelId, $thread: threadTs, $tier: tier, $session: sessionId, $lastTs: lastTs, $now: now, $hash: promptHash });
     },
     touch: (channelId, threadTs, tier, lastTs, now) => {
       touchStmt.run({ $channel: channelId, $thread: threadTs, $tier: tier, $lastTs: lastTs, $now: now });

@@ -431,6 +431,35 @@ describe("handleMessage", () => {
     expect(seen[1]?.session).toEqual({ id: "sess-1", resume: true });
   });
 
+  test("a session opened under different rules is abandoned, not resumed", async () => {
+    // the failure this exists for: a language rule was fixed three times and
+    // the thread carried on in the old language, because the session it was
+    // resuming carried everything it had already said
+    const seen: LlmCompleteParams[] = [];
+    const deps = build({
+      complete: async (p) => {
+        seen.push(p);
+        return "ok";
+      },
+    });
+    deps.threadSessions = createThreadSessionRepo(db);
+    let n = 0;
+    deps.newSessionId = () => `sess-${++n}`;
+
+    const inbound = { channelId: "C1", slackUserId: OWNER, text: "hi", threadTs: "700.1", messageTs: "700.1" };
+    await handleMessage(deps, inbound);
+    expect(seen[0]?.session).toEqual({ id: "sess-1", resume: false });
+
+    // same rules - resumed
+    await handleMessage(deps, { ...inbound, messageTs: "700.2" });
+    expect(seen[1]?.session).toEqual({ id: "sess-1", resume: true });
+
+    // the persona changes, so the session is dropped and reopened cold
+    deps.promptContext = () => ({ learnings: [], base: "a different persona entirely" });
+    await handleMessage(deps, { ...inbound, messageTs: "700.3" });
+    expect(seen[2]?.session).toEqual({ id: "sess-2", resume: false });
+  });
+
   test("a session the CLI no longer has is replaced, not surfaced as an error", async () => {
     let calls = 0;
     const deps = build({

@@ -31,6 +31,7 @@ import type { CommandTickets } from "./commandTickets.ts";
 import { tokenFor, type ClaudeTokenPort } from "./claudeTokens.ts";
 import type { TotpPort } from "./totp.ts";
 import { isMissingSession, tierOf, unseenTurns } from "../domain/threadSession.ts";
+import { promptFingerprint } from "../domain/promptFingerprint.ts";
 import type { ThreadSessionRepo } from "../infrastructure/db/threadSessionRepo.ts";
 import type { SlackAdminPort, SlackMessage } from "./slackAdmin.ts";
 import type { GitHubPort } from "./github.ts";
@@ -230,7 +231,15 @@ export const handleMessage = async (
   const tier = tierOf(policy);
   const sessions = deps.threadSessionsOn?.() === false ? undefined : deps.threadSessions;
   const key = sessions && inbound.threadTs ? { channelId: inbound.channelId, threadTs: inbound.threadTs } : undefined;
-  const bound = key ? sessions?.find(key.channelId, key.threadTs, tier) : undefined;
+  // A session opened under different rules is abandoned: it carries everything
+  // it has already said, so a rule change would otherwise never reach a thread
+  // that was already running.
+  const fingerprint = promptFingerprint(buildSystemPrompt as never, ctx.base);
+  const found = key ? sessions?.find(key.channelId, key.threadTs, tier) : undefined;
+  if (found && found.promptHash && found.promptHash !== fingerprint && key) {
+    sessions?.drop(key.channelId, key.threadTs, tier);
+  }
+  const bound = found && (!found.promptHash || found.promptHash === fingerprint) ? found : undefined;
   const cold = () => buildContextWindow(history, window);
   const newestTs = history[history.length - 1]?.slackTs ?? inbound.messageTs ?? "";
 
@@ -254,7 +263,7 @@ export const handleMessage = async (
   // the retry starts cold and repeats the same expensive discovery that ran it
   // out of time in the first place. The CLI writes its session as it goes, so
   // resuming a killed one picks up everything it had already done.
-  if (key && !bound) sessions?.claim(key.channelId, key.threadTs, tier, sessionId, newestTs, deps.clock());
+  if (key && !bound) sessions?.claim(key.channelId, key.threadTs, tier, sessionId, newestTs, deps.clock(), fingerprint);
   let raw: string;
   try {
     raw = await run({
@@ -269,7 +278,7 @@ export const handleMessage = async (
     if (!bound || !isMissingSession(err)) throw err;
     sessionId = deps.newSessionId?.() ?? crypto.randomUUID();
     resumed = false;
-    if (key) sessions?.claim(key.channelId, key.threadTs, tier, sessionId, newestTs, deps.clock());
+    if (key) sessions?.claim(key.channelId, key.threadTs, tier, sessionId, newestTs, deps.clock(), fingerprint);
     raw = await run({ ...base, messages: cold(), session: { id: sessionId, resume: false } });
   }
   const reply = raw.trim();

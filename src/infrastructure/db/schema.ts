@@ -81,6 +81,23 @@ export const migrate = (db: Database): void => {
   migrateCommandApprovals(db);
   migrateAccessNotices(db);
   migrateThreadSessions(db);
+  migrateSessionPromptHash(db);
+};
+
+/**
+ * Migration v10: a session records the rules it was opened under.
+ *
+ * The system prompt is sent on every turn, but a resumed session also carries
+ * everything it has already said, and that wins. A rule change therefore never
+ * reached a thread that was already running - verifiably correct prompt, old
+ * behaviour, three times over. A session whose rules have changed is dropped
+ * and reopened instead.
+ */
+const migrateSessionPromptHash = (db: Database): void => {
+  const cols = db.query<{ name: string }, []>("PRAGMA table_info(thread_sessions)").all();
+  if (cols.some((c) => c.name === "prompt_hash")) return;
+  db.exec("ALTER TABLE thread_sessions ADD COLUMN prompt_hash TEXT NOT NULL DEFAULT ''");
+  db.exec("PRAGMA user_version = 10;");
 };
 
 /**

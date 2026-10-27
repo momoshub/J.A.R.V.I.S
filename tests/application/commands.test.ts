@@ -703,7 +703,7 @@ describe("session command", () => {
     const inThread = { threadTs: "900.1" };
     expect(await dispatchCommand(deps, actor(), "C1", "session", inThread)).toContain("No session bound");
 
-    deps.threadSessions.claim("C1", "900.1", "sandbox", "sess-1", "900.1", 1);
+    deps.threadSessions.claim("C1", "900.1", "sandbox", "sess-1", "900.1", 1, "hash");
     expect(await dispatchCommand(deps, pal, "C1", "session", inThread)).toContain("1 turn in");
 
     expect(await dispatchCommand(deps, pal, "C1", "session reset", inThread)).toContain("Dropped it");
