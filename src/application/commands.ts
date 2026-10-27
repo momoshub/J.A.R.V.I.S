@@ -181,6 +181,13 @@ type CommandDef = {
    * nothing and reveal nothing - mirroring a `ping` is pure noise.
    */
   trivial?: boolean;
+  /**
+   * A command the brain uses as a TOOL rather than an errand: it hands the
+   * result back to the caller instead of posting it, and the caller waits for
+   * it. Typed by a person it still answers in the thread as usual - the
+   * difference is only in who asked and what they do with the answer.
+   */
+  quiet?: boolean;
   run: (ctx: Context) => string | Promise<string>;
 };
 
@@ -567,6 +574,10 @@ export const COMMANDS: readonly CommandDef[] = [
   {
     name: "read",
     aliases: ["summarise", "summarize", "catchup"],
+    // A step inside a larger job, not an announcement. When the brain reaches
+    // for it mid-task the content comes back to it; posting the document into
+    // the thread as well is the noise that made this feel like a dump.
+    quiet: true,
     // The entry gate is `pal` so the command is reachable; the real threshold is
     // configurable and checked below. It reads with the authorising human's
     // access, so whoever may run it can read anything that person can - which
@@ -1494,6 +1505,12 @@ export const commandLineOf = (text: string, prefix: string = DEFAULT_COMMAND_PRE
  */
 /** Commands that cost nothing and so do not count against an allowance. */
 export const TRIVIAL_COMMANDS: readonly string[] = COMMANDS.filter((c) => c.trivial).map((c) => c.name);
+
+/** Whether this line runs a tool-like command: result to the caller, not the thread. */
+export const isQuietCommand = (line: string): boolean => {
+  const name = (line.trim().split(/\s+/)[0] || "").toLowerCase();
+  return byName.get(name)?.quiet === true;
+};
 
 export const notifiesOwner = (line: string): boolean => {
   const name = (line.trim().split(/\s+/)[0] || "help").toLowerCase();

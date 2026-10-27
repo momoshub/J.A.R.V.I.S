@@ -7,7 +7,7 @@ import { createSettingsRepo } from "../../src/infrastructure/db/settingsRepo.ts"
 import type { ClaudeTokenPort } from "../../src/application/claudeTokens.ts";
 import { createThreadSessionRepo } from "../../src/infrastructure/db/threadSessionRepo.ts";
 import { createRunRegistry } from "../../src/application/runRegistry.ts";
-import { commandLineOf, dispatchCommand, type CommandDeps } from "../../src/application/commands.ts";
+import { commandLineOf, dispatchCommand, type CommandDeps, isQuietCommand } from "../../src/application/commands.ts";
 import { respond, type RespondDeps } from "../../src/application/respond.ts";
 import type { AllowedUser } from "../../src/domain/types.ts";
 import type { LlmPort } from "../../src/application/ports.ts";
@@ -836,6 +836,28 @@ describe("reviews run on the caller's own Claude token", () => {
     deps.users.upsert(pal);
     await dispatchCommand(deps, pal, "C1", "ask hello");
     expect(token()).toBeUndefined(); // falls back to the bot's own credential
+  });
+
+  test("read is a tool: no reply wired means the content comes back", async () => {
+    // it is one step of a larger job, so the brain gets the document to work
+    // with rather than the thread getting the document posted into it
+    const { deps } = withTokens({ [OWNER]: TOKEN });
+    deps.llm = { complete: async () => "the page says X" };
+    const lines: string[] = [];
+    // no `reply` - the shape the command bridge now uses for tool-like commands
+    const out = await dispatchCommand(deps, actor(), "C1", "read https://x/p1");
+    expect(out).toBe("the page says X");
+    expect(lines).toHaveLength(0);
+  });
+
+  test("and is marked quiet, so the bridge waits for it instead of posting", () => {
+    expect(isQuietCommand("read https://x/p1")).toBe(true);
+    expect(isQuietCommand("summarise https://x/p1")).toBe(true);
+    // the long-running announcers stay as they are: nobody is holding a line
+    // open for a review, and it reports into the thread itself
+    expect(isQuietCommand("review https://github.com/o/r/pull/1")).toBe(false);
+    expect(isQuietCommand("ticket something broke")).toBe(false);
+    expect(isQuietCommand("investigate why")).toBe(false);
   });
 
   test("read's floor is configurable, and a refusal says who can run it", async () => {

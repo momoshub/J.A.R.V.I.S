@@ -44,7 +44,7 @@ import { createDraftReply } from "./application/draftReply.ts";
 import { toolPolicyFor } from "./domain/toolPolicy.ts";
 import { logSourceOrder } from "./domain/investigation.ts";
 import { createDashboard } from "./infrastructure/dashboard/server.ts";
-import { dispatchCommand } from "./application/commands.ts";
+import { dispatchCommand, isQuietCommand } from "./application/commands.ts";
 import { createCommandTickets } from "./application/commandTickets.ts";
 import { createActivityLog } from "./infrastructure/logger.ts";
 import type { CommandLogRepo } from "./infrastructure/db/commandLogRepo.ts";
@@ -308,6 +308,20 @@ const main = async () => {
         if (!ctx) throw new Error("that ticket is not valid any more");
         const user = users.get(ctx.actor);
         if (!user) throw new Error("whoever asked is not on the access list");
+
+        // A tool-like command answers its CALLER. No `reply`, so it returns the
+        // content instead of posting it, and no handoff, because the caller is
+        // waiting on that content to carry on with. The chat turn has far more
+        // time than the command does, so waiting is safe here in a way it is
+        // not for a `review` nobody is holding a line open for.
+        if (isQuietCommand(line)) {
+          return dispatchCommand(deps, user, ctx.channel, line, {
+            prefix: config.commandPrefix,
+            slash: config.slashCommand,
+            threadTs: ctx.threadTs,
+          });
+        }
+
         const run = dispatchCommand(deps, user, ctx.channel, line, {
           prefix: config.commandPrefix,
           slash: config.slashCommand,

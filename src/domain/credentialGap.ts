@@ -21,7 +21,7 @@
 export type HostCommand = { readonly name: string; readonly covers: string };
 
 export const HOST_COMMANDS: readonly HostCommand[] = [
-  { name: "read", covers: "anything a connector can open - a Notion page, a Slack channel or DM you were never invited to, a linked doc. It borrows the host's access, so it has a role floor; if you are refused, say who can run it rather than just that you cannot" },
+  { name: "read", covers: "anything a connector can open - a Notion page, a Slack channel or DM you were never invited to, a linked doc. It is a TOOL, not an errand: the content comes back to YOU, nothing is posted, and you carry on with the job using it. One step of a larger task, so use it mid-work without announcing it. It borrows the host's access and has a role floor; if you are refused, say who can run it rather than just that you cannot" },
   { name: "investigate", covers: "logs, metrics, traces, and RUM, which exists only in Datadog" },
   { name: "ticket", covers: "raising one, which reads the tracker and the SOP in Notion" },
 ];
