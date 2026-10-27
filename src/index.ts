@@ -54,7 +54,7 @@ import { toolPolicyFor } from "./domain/toolPolicy.ts";
 import { logSourceOrder } from "./domain/investigation.ts";
 import { createDashboard } from "./infrastructure/dashboard/server.ts";
 import { dispatchCommand, isQuietCommand } from "./application/commands.ts";
-import { createCommandTickets } from "./application/commandTickets.ts";
+import { createCommandTickets, refusalMessage } from "./application/commandTickets.ts";
 import { createActivityLog } from "./infrastructure/logger.ts";
 import type { CommandLogRepo } from "./infrastructure/db/commandLogRepo.ts";
 import type { LlmPort } from "./application/ports.ts";
@@ -131,7 +131,7 @@ const main = async () => {
   const threadSessions = createThreadSessionRepo(db);
   const accessRequests = createAccessRequestRepo(db);
   const commandApprovals = createCommandApprovalRepo(db);
-  const commandTickets = createCommandTickets(() => Date.now());
+  const commandTickets = createCommandTickets(() => Date.now(), undefined, config.commandTicketUses);
   const baseCommandLog = createCommandLogRepo(db);
   const commandLog: CommandLogRepo = {
     ...baseCommandLog,
@@ -302,6 +302,7 @@ const main = async () => {
     // same way the dashboard does - offered to admins/owner conversations only.
     learnUrl: `http://127.0.0.1:${config.dashboardPort}/api/learnings`,
     runUrl: `http://127.0.0.1:${config.dashboardPort}/api/commands/run`,
+    commandBudget: () => config.commandTicketUses,
     runScript,
     commandTickets,
     commandPrefix: config.commandPrefix,
@@ -378,8 +379,9 @@ const main = async () => {
       // The actor's own role decides what is allowed - nothing is elevated by
       // going through here.
       runCommand: async ({ ticket, line }) => {
-        const ctx = commandTickets.redeem(ticket);
-        if (!ctx) throw new Error("that ticket is not valid any more");
+        const resolved = commandTickets.redeem(ticket);
+        if (!resolved.ok) throw new Error(refusalMessage(resolved.reason, resolved.limit));
+        const ctx = resolved.ctx;
         const user = users.get(ctx.actor);
         if (!user) throw new Error("whoever asked is not on the access list");
 

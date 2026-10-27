@@ -40,6 +40,7 @@ const SENTINELS = {
   restartScript: "/fp/restart",
   logSources: ["grafana", "datadog"] as const,
   canRaiseTickets: true,
+  commandBudget: 50,
 };
 
 /**

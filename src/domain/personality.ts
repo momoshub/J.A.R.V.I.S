@@ -134,6 +134,8 @@ export const commandRules = (
   runUrl: string,
   canRun: boolean,
   prefix: string,
+  /** Commands this turn may run before the runaway guard stops it. */
+  budget?: number,
 ): string => {
   if (!runScript || !runUrl || !canRun) return "";
   return `
@@ -147,6 +149,11 @@ Running my own commands (when a request is really one):
 - Pass no ticket or token: the helper authenticates itself from this turn's environment. If you remember an older form of this line that took one, forget it - a ticket you remember is dead, and typing one is how a command fails for no reason you can see.
 - It already carries who you are talking to - the command runs as them. Their role decides what is allowed, so a command they could not type themselves comes back refused: relay that plainly instead of working around it or doing the job by hand.
 - The command posts its own progress here as it goes. Do not repeat it, do not narrate that you are running one, and do not paste a review you did yourself - just let it run and add anything it did not cover.
+- A job that needs the same command many times - deleting a thread's messages, reacting to a batch - is an ordinary shell loop over the helper. Collect the list first, then loop over it. Doing a handful and asking them to prompt you again is not finishing the job.${
+    budget
+      ? `\n- One turn may run *${budget}* commands before a runaway guard stops it. That is plenty for real work, so do not ration it - but if a job plainly needs more, say so BEFORE you start and ask how they want it split. If you do hit it you will be told in those words; finish, report what is done and what is left, and never fall back to raw API calls to get around it.`
+      : ""
+  }
 - For an ordinary question, answer it yourself. This is only for requests that map onto a real command.`;
 };
 
@@ -182,6 +189,8 @@ export type BuildSystemPromptOptions = PromptContext & {
   readonly restartScript?: string;
   /** this turn's ticket, which carries who a triggered command runs as */
   readonly runTicket?: string;
+  /** how many commands this turn may run before the runaway guard stops it */
+  readonly commandBudget?: number;
   /** configured message command prefix, for explaining what a command line is */
   readonly commandPrefix?: string;
   /**
@@ -238,6 +247,7 @@ export const buildSystemPrompt = (options: Partial<BuildSystemPromptOptions> = {
     options.runUrl ?? "",
     !!options.runTicket,
     options.commandPrefix ?? "//bot",
+    options.commandBudget,
   );
 
   return `${base}${learningsBlock}${addressed}${roster}\n\n${OPERATING_RULES}${attachments}${investigating}${tickets}${slackReading}${reaching}${selfWork}${reactions}${commands}${remembering}\n\n${WORKSPACE_NOTE}\n\n${identityLock(botName, options.botUserId)}`;

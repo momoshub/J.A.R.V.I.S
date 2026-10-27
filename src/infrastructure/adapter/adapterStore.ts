@@ -23,6 +23,7 @@ import {
   POLICY_FILE,
   scopedId,
   SKILLS_DIR,
+  withoutTitle,
 } from "../../domain/adapter.ts";
 
 /** Bun parses YAML natively; the type is not in @types/bun yet. */
@@ -87,9 +88,9 @@ export const createAdapterStore = (rootPath: string): AdapterStore => {
     const channels = new Map<string, string>();
     for (const [rel, content] of all) {
       const person = scopedId(rel, PEOPLE_DIR);
-      if (person) people.set(person, body(content).trim());
+      if (person) people.set(person, withoutTitle(body(content)).trim());
       const channel = scopedId(rel, CHANNELS_DIR);
-      if (channel) channels.set(channel, body(content).trim());
+      if (channel) channels.set(channel, withoutTitle(body(content)).trim());
     }
 
     const skillsDir = manifest.skills ?? SKILLS_DIR;
@@ -105,8 +106,8 @@ export const createAdapterStore = (rootPath: string): AdapterStore => {
 
     return {
       manifest,
-      policy: body(all.get(POLICY_FILE) ?? "").trim(),
-      notes: body(all.get(NOTES_FILE) ?? "").trim(),
+      policy: withoutTitle(body(all.get(POLICY_FILE) ?? "")).trim(),
+      notes: withoutTitle(body(all.get(NOTES_FILE) ?? "")).trim(),
       people,
       channels,
       skills,

@@ -58,6 +58,8 @@ export type HandleMessageDeps = {
   adapterBudget?: () => number;
   /** Host and process vitals, for the `sys` command. */
   system?: SystemTracker;
+  /** Commands one turn may run, so the brain can plan rather than discover it. */
+  commandBudget?: () => number;
   /** Bot name + model, for the `model`/`status` command. */
   botInfo?: () => { botName: string; model: string };
   /** Audit log for command executions. */
@@ -235,6 +237,7 @@ export const handleMessage = async (
     runUrl: deps.runUrl,
     runScript: deps.runScript,
     runTicket,
+    commandBudget: deps.commandBudget?.(),
     commandPrefix: deps.commandPrefix,
     adapter: ctx.adapter,
     // Scoped memory resolves against who is actually here and where.

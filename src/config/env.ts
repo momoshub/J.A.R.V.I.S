@@ -60,6 +60,11 @@ const schema = z
     // Bytes of the adapter that may load into EVERY prompt. A refine pass must
     // come in under it; teaching may exceed it and says so.
     ADAPTER_BUDGET: z.coerce.number().int().positive().default(8000),
+    // Commands one chat turn may trigger through the run helper. A runaway
+    // guard, not a rate limit: it has to be high enough that ordinary bulk
+    // work (deleting a thread's messages, reacting to a batch) finishes, or it
+    // becomes pressure to work around the audited path.
+    COMMAND_TICKET_USES: z.coerce.number().int().positive().default(50),
     // Per-user Claude Code tokens live in their OWN database, never the one that
     // gets committed, and are encrypted under a key kept beside it. Both paths
     // are gitignored; set them elsewhere if the data directory is shared.
@@ -101,6 +106,8 @@ export type AppConfig = {
   adapterPath: string;
   /** Bytes of the adapter allowed to load into every prompt. */
   adapterBudget: number;
+  /** Commands one turn may trigger through the run helper. */
+  commandTicketUses: number;
   tokenDatabasePath: string;
   tokenKeyPath: string;
   logDir: string;
@@ -147,6 +154,7 @@ export const loadConfig = (source: Record<string, string | undefined> = process.
     databasePath: env.DATABASE_PATH,
     adapterPath: env.ADAPTER_PATH,
     adapterBudget: env.ADAPTER_BUDGET,
+    commandTicketUses: env.COMMAND_TICKET_USES,
     tokenDatabasePath: env.TOKEN_DATABASE_PATH,
     tokenKeyPath: env.TOKEN_KEY_PATH,
     logDir: env.LOG_DIR,

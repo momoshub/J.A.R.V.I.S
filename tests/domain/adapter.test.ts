@@ -9,6 +9,7 @@ import {
   parseManifest,
   renderAdapter,
   scopedId,
+  withoutTitle,
 } from "../../src/domain/adapter.ts";
 
 const manifest = {
@@ -148,5 +149,21 @@ describe("adapterRules", () => {
 
   test("but a policy change is", () => {
     expect(adapterRules(adapter())).not.toBe(adapterRules(adapter({ policy: "- be terse" })));
+  });
+});
+
+describe("withoutTitle", () => {
+  test("a file's own heading is not rendered under the block's label", () => {
+    // it showed up in Slack as a literal "*Policy* *Policy*"
+    expect(withoutTitle("# Policy\n\n- be clear")).toBe("- be clear");
+    expect(withoutTitle("# chị Mai\n- address her as chị")).toBe("- address her as chị");
+  });
+
+  test("a body with no title is left alone", () => {
+    expect(withoutTitle("- just a fact")).toBe("- just a fact");
+  });
+
+  test("a heading further down is content, not a title", () => {
+    expect(withoutTitle("- a fact\n# Later")).toBe("- a fact\n# Later");
   });
 });

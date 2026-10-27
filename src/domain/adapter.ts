@@ -230,6 +230,20 @@ export const frontmatter = (text: string): Record<string, string> => {
   return out;
 };
 
+/**
+ * Drop a file's own title heading.
+ *
+ * `ADAPTER.md` opens with `# Policy` and every scoped note opens with a name -
+ * right for a file somebody reads on disk, wrong twice over once rendered,
+ * where the block already carries a label. It showed up as a literal
+ * "*Policy* *Policy*" in Slack, and costs a line of the always-on budget in
+ * every prompt for nothing.
+ */
+export const withoutTitle = (text: string): string => {
+  const trimmed = text.trimStart();
+  return /^#\s/.test(trimmed) ? trimmed.slice(trimmed.indexOf("\n") + 1).trimStart() : text;
+};
+
 /** The body of a Markdown file, with any frontmatter removed. */
 export const body = (text: string): string => {
   if (!text.startsWith("---\n")) return text;

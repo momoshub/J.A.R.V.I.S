@@ -263,3 +263,33 @@ describe("language follows the room, not the person", () => {
     expect(p).toContain("A one-to-one DM has a single reader");
   });
 });
+
+describe("the command budget", () => {
+  test("a turn is told how many commands it may run", () => {
+    // it used to find out by hitting the wall, guessing at the cap, guessing
+    // wrong, and asking to be prompted again
+    const prompt = buildSystemPrompt({
+      learnings: [],
+      runScript: "/run.sh",
+      runUrl: "http://loopback/run",
+      runTicket: "tk",
+      commandPrefix: "//bot",
+      commandBudget: 50,
+    });
+    expect(prompt).toContain("may run *50* commands");
+    expect(prompt).toContain("shell loop");
+    expect(prompt).toContain("never fall back to raw API calls");
+  });
+
+  test("with no budget known, nothing is claimed about one", () => {
+    const prompt = buildSystemPrompt({
+      learnings: [],
+      runScript: "/run.sh",
+      runUrl: "http://loopback/run",
+      runTicket: "tk",
+      commandPrefix: "//bot",
+    });
+    expect(prompt).toContain("shell loop");
+    expect(prompt).not.toContain("runaway guard stops it");
+  });
+});
