@@ -29,6 +29,31 @@ describe("readPrompt", () => {
     expect(readPrompt(req, "Bot")).toContain("what is still open");
   });
 
+  test("it answers a question rather than reproducing the source", () => {
+    // it posted an entire ClickHouse handbook across three messages into a
+    // thread someone else had opened about a slow page. The answer - that the
+    // handbook has no re-key procedure - was buried in paragraph two
+    const p = readPrompt(req, "Bot");
+    expect(p).toContain("ANSWERING A QUESTION, not mirroring a page");
+    expect(p).toContain("the first line answers why you were sent");
+    expect(p).toContain("never reproduce the source");
+  });
+
+  test("there is a hard ceiling, and a second message is the signal it was passed", () => {
+    const p = readPrompt(req, "Bot");
+    expect(p).toContain("fifteen lines is the ceiling");
+    expect(p).toContain("you have stopped answering and started transcribing");
+    expect(p).toContain("say the word");
+  });
+
+  test('"the page does not answer that" is a complete answer', () => {
+    expect(readPrompt(req, "Bot")).toContain("is a complete and valuable answer");
+  });
+
+  test("it remembers whose thread it is posting into", () => {
+    expect(readPrompt(req, "Bot")).toContain("it is somebody else's thread");
+  });
+
   test("not being able to read something is an answer, not a failure to hide", () => {
     const p = readPrompt(req, "Bot");
     expect(p).toContain("say which part and why");
