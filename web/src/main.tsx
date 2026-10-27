@@ -20,6 +20,7 @@ import {
   fmtTime,
   get,
   post,
+  type AdapterView,
   type AllowedUser,
   type Bootstrap,
   type Channel,
@@ -46,7 +47,7 @@ const guard =
 const NAV = [
   { to: "/", label: "Overview", end: true },
   { to: "/users", label: "Users" },
-  { to: "/learnings", label: "Learnings" },
+  { to: "/learnings", label: "Memory" },
   { to: "/identity", label: "Identity" },
   { to: "/conversations", label: "Conversations" },
   { to: "/console", label: "Console" },
@@ -110,7 +111,7 @@ function OverviewPage() {
     { n: overview.users, l: "allowed users" },
     { n: overview.conversations, l: "conversations" },
     { n: overview.messages, l: "stored turns" },
-    { n: overview.learnings, l: "learnings" },
+    { n: overview.learnings, l: overview.memory ? "memory items" : "learnings" },
   ];
   return (
     <>
@@ -201,15 +202,104 @@ function UsersPage() {
   );
 }
 
-/* ---------- Learnings ---------- */
-function LearningsPage() {
-  const { learnings } = useLoaderData() as { learnings: Learning[] };
-  const action = useActionData() as { error?: string } | undefined;
+/* ---------- Memory ---------- */
+
+/**
+ * Memory, when it is an adapter.
+ *
+ * Read-only on purpose. The old page was a grid of text boxes writing straight
+ * into a list that nothing ever curated, which is how that list came to hold a
+ * fact and its own retraction at the same time. The two safe actions are here -
+ * teach one fact, or put a whole revision back - and reshaping memory is
+ * `adapter refine`, which is gated and recorded.
+ */
+function AdapterMemory({ a, error }: { a: AdapterView; error?: string }) {
+  return (
+    <>
+      <h1>Memory</h1>
+      <p className="muted">
+        A Hermit harness adapter. The policy and notes load into every reply; notes about a person or a
+        channel load only there, and a skill costs its description until something makes it relevant.
+      </p>
+      <Banner error={error} />
+      {a.status && <pre className="card">{a.status}</pre>}
+
+      <Form method="post" className="row">
+        <input type="hidden" name="intent" value="add" />
+        <input name="content" placeholder="teach one durable fact" required style={{ flex: 1 }} />
+        <button type="submit">teach</button>
+      </Form>
+      <p className="muted">
+        It lands under "Recently taught" and stays there until a refine pass files it. Run that with
+        <code> adapter refine</code> in Slack.
+      </p>
+
+      <h2>Policy</h2>
+      <p className="muted">Rules. Always loaded.</p>
+      <pre className="card">{a.policy?.trim() || "Nothing yet."}</pre>
+
+      <h2>Notes</h2>
+      <p className="muted">Facts. Always loaded.</p>
+      <pre className="card">{a.notes?.trim() || "Nothing yet."}</pre>
+
+      <h2>In depth</h2>
+      <p className="muted">Only the description is loaded; the body is read when it is relevant.</p>
+      <div className="card table">
+        <table>
+          <thead><tr><th>skill</th><th>description</th></tr></thead>
+          <tbody>
+            {(a.skills ?? []).length === 0 && <tr><td colSpan={2} className="muted">No skills yet.</td></tr>}
+            {(a.skills ?? []).map((s) => (
+              <tr key={s.name}><td>{s.name}</td><td className="muted">{s.description}</td></tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+
+      <h2>Scoped</h2>
+      <p className="muted">Loaded only when that person is in the conversation, or in that channel.</p>
+      <p>
+        {(a.people ?? []).length + (a.channels ?? []).length === 0
+          ? <span className="muted">Nothing scoped yet.</span>
+          : [...(a.people ?? []), ...(a.channels ?? [])].map((id) => <code key={id} style={{ marginRight: 8 }}>{id}</code>)}
+      </p>
+
+      <h2>Revisions</h2>
+      <p className="muted">Every change is a snapshot, so a curation that lost something is one click back.</p>
+      <div className="card table">
+        <table>
+          <thead><tr><th>#</th><th>what</th><th>by</th><th>when</th><th /></tr></thead>
+          <tbody>
+            {(a.revisions ?? []).length === 0 && <tr><td colSpan={5} className="muted">No revisions yet.</td></tr>}
+            {(a.revisions ?? []).map((r) => (
+              <tr key={r.id}>
+                <td>{r.id}</td>
+                <td>{r.reason}</td>
+                <td className="muted">{r.createdBy}</td>
+                <td className="muted">{fmtTime(r.createdAt)}</td>
+                <td>
+                  <Form method="post">
+                    <input type="hidden" name="intent" value="revert" />
+                    <input type="hidden" name="id" value={r.id} />
+                    <button type="submit">revert</button>
+                  </Form>
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    </>
+  );
+}
+
+/** The flat list, for an instance that has not moved to an adapter. */
+function LegacyLearnings({ learnings, error }: { learnings: Learning[]; error?: string }) {
   return (
     <>
       <h1>Learnings</h1>
       <p className="muted">Durable facts injected into every reply as known facts.</p>
-      <Banner error={action?.error} />
+      <Banner error={error} />
       <Form method="post" className="row">
         <input type="hidden" name="intent" value="add" />
         <input name="content" placeholder="e.g. Our staging URL is staging.example.com" required style={{ flex: 1 }} />
@@ -250,6 +340,14 @@ function LearningsPage() {
       </div>
     </>
   );
+}
+
+function LearningsPage() {
+  const { learnings, adapter } = useLoaderData() as { learnings: Learning[]; adapter: AdapterView };
+  const action = useActionData() as { error?: string } | undefined;
+  return adapter.configured
+    ? <AdapterMemory a={adapter} error={action?.error} />
+    : <LegacyLearnings learnings={learnings} error={action?.error} />;
 }
 
 /* ---------- Identity ---------- */
@@ -397,13 +495,19 @@ const router = createBrowserRouter([
       },
       {
         path: "learnings",
-        loader: async () => ({ learnings: await get<Learning[]>("learnings") }),
+        loader: async () => ({
+          learnings: await get<Learning[]>("learnings"),
+          adapter: await get<AdapterView>("adapter"),
+        }),
         action: guard(async ({ request }) => {
           const fd = await request.formData();
           const intent = fd.get("intent");
-          if (intent === "remove") await post("learnings/remove", { id: Number(fd.get("id")) });
+          if (intent === "revert") await post("adapter/revert", { id: Number(fd.get("id")) });
+          else if (intent === "remove") await post("learnings/remove", { id: Number(fd.get("id")) });
           else if (intent === "update")
             await post("learnings/update", { id: Number(fd.get("id")), content: fd.get("content") });
+          // `learnings` is the teach endpoint either way: with an adapter it
+          // writes there instead of the table.
           else await post("learnings", { content: fd.get("content") });
           return { ok: true };
         }),

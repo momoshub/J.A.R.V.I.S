@@ -590,11 +590,15 @@ export const COMMANDS: readonly CommandDef[] = [
       if (sub === "migrate") {
         const list = deps.learnings?.list() ?? [];
         if (list.length === 0) return "The learnings list is empty - nothing to migrate.";
-        const result = migrateLearnings(a, list.map((l) => l.content), actor.slackId);
+        const result = migrateLearnings(a, list.map((l) => l.content), actor.slackId, () => {
+          // One store of memory, not two. The old rows are in the revision
+          // this just wrote, and in git.
+          for (const l of list) deps.learnings?.remove(l.id);
+        });
         if (!result.ok) return `Could not migrate:\n${result.violations.map((v) => `- ${v}`).join("\n")}`;
         return [
-          `Moved ${list.length} learnings into the adapter${result.revision ? ` (#${result.revision})` : ""}.`,
-          "They went in unsorted and unmerged, exactly as they were.",
+          `Moved ${list.length} learnings into the adapter${result.revision ? ` (#${result.revision})` : ""} and emptied the old list.`,
+          `They went in unsorted and unmerged, exactly as they were - revision #${result.revision ?? "?"} is the record.`,
           `Run \`${prefix} adapter refine\` to actually curate them.`,
           ...(result.warnings.length > 0 ? ["", ...result.warnings.map((w) => `:warning: ${w}`)] : []),
         ].join("\n");

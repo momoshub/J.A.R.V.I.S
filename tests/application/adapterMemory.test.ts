@@ -10,6 +10,7 @@ import {
   type AdapterDeps,
   adapterStatus,
   commitAdapter,
+  createAdapterReader,
   INBOX_HEADING,
   migrateLearnings,
   rememberFact,
@@ -160,6 +161,56 @@ describe("migrateLearnings", () => {
 
   test("an empty list is a no-op", () => {
     expect(migrateLearnings(setup(), [], "U1").ok).toBe(true);
+  });
+
+  test("it empties the source once the commit has landed", () => {
+    // two stores of memory means one of them is lying
+    let cleared = false;
+    migrateLearnings(setup(), ["a fact"], "U1", () => {
+      cleared = true;
+    });
+    expect(cleared).toBe(true);
+  });
+
+  test("but never on a refusal - that would lose the only copy", () => {
+    const deps = setup();
+    let cleared = false;
+    // a manifest that refuses the write: ADAPTER.md gone makes the gate fail
+    const broken = { ...deps, store: { ...deps.store, write: () => { throw new Error("disk full"); } } };
+    const result = migrateLearnings(broken, ["a fact"], "U1", () => {
+      cleared = true;
+    });
+    expect(result.ok).toBe(false);
+    expect(cleared).toBe(false);
+  });
+});
+
+describe("createAdapterReader", () => {
+  test("it reads the adapter", () => {
+    const deps = setup({ "memory/NOTES.md": "# Notes\n- a fact\n" });
+    expect(createAdapterReader(deps.store).read()?.notes).toContain("a fact");
+  });
+
+  test("a manifest that stops parsing serves the LAST GOOD read, not nothing", () => {
+    // the fallback used to be the old learnings table, which would restore the
+    // pre-curation list and go staler every day while looking authoritative
+    const deps = setup({ "memory/NOTES.md": "# Notes\n- a fact\n" });
+    const errors: unknown[] = [];
+    const reader = createAdapterReader(deps.store, (e) => errors.push(e));
+    expect(reader.read()?.notes).toContain("a fact");
+
+    const files = new Map(deps.store.files());
+    files.set("adapter.yaml", "template: not a mapping at all\nexports: []");
+    deps.store.write(files);
+
+    expect(reader.read()?.notes).toContain("a fact");
+    expect(errors.length).toBe(1);
+  });
+
+  test("with no adapter at all there is nothing to serve", () => {
+    const deps = setup();
+    deps.store.write(new Map());
+    expect(createAdapterReader(deps.store).read()).toBeUndefined();
   });
 });
 

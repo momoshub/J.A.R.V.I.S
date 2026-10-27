@@ -48,10 +48,29 @@ export type DashboardDeps = {
    */
   adapter?: {
     readonly status: () => string;
+    /** Everything the memory page renders, read-only. */
+    readonly view: () => {
+      readonly policy: string;
+      readonly notes: string;
+      readonly skills: readonly { readonly name: string; readonly description: string }[];
+      readonly people: readonly string[];
+      readonly channels: readonly string[];
+      readonly revisions: readonly {
+        readonly id: number;
+        readonly createdAt: number;
+        readonly createdBy: string;
+        readonly reason: string;
+      }[];
+      readonly items: number;
+    };
     readonly remember: (
       content: string,
       by: string,
     ) => { readonly ok: boolean; readonly violations?: readonly string[]; readonly warnings?: readonly string[] };
+    readonly revert: (
+      id: number,
+      by: string,
+    ) => { readonly ok: boolean; readonly violations?: readonly string[] };
   };
   settings: SettingsRepo;
   clock: Clock;
@@ -200,7 +219,10 @@ export const createDashboard = (config: DashboardConfig, deps: DashboardDeps) =>
             users: deps.users.list().length,
             conversations: deps.messages.channels().length,
             messages: deps.messages.count(),
-            learnings: deps.learnings.list().length,
+            // With an adapter the old table is empty by design, so count what
+            // memory actually holds rather than reporting a truthful zero.
+            learnings: deps.adapter ? deps.adapter.view().items : deps.learnings.list().length,
+            memory: !!deps.adapter,
           });
         case "/api/users": {
           const users = deps.users.list();
@@ -220,11 +242,12 @@ export const createDashboard = (config: DashboardConfig, deps: DashboardDeps) =>
         case "/api/learnings":
           return Response.json(deps.learnings.list());
         case "/api/adapter":
-          // Read-only: curating is `adapter refine`, which is gated and
-          // recorded as a revision. A text box that writes straight into
-          // memory is the thing this whole change exists to remove.
+          // Editing is `adapter refine`, which is gated and recorded as a
+          // revision. A grid of text boxes writing straight into memory is
+          // the thing this whole change exists to remove - so the page shows
+          // what is there, and the two safe actions: teach, and revert.
           return deps.adapter
-            ? Response.json({ configured: true, status: deps.adapter.status() })
+            ? Response.json({ configured: true, status: deps.adapter.status(), ...deps.adapter.view() })
             : Response.json({ configured: false });
         case "/api/identity": {
           const override = deps.settings.get(SETTING_KEYS.systemPrompt);
@@ -322,6 +345,14 @@ export const createDashboard = (config: DashboardConfig, deps: DashboardDeps) =>
           if (!Number.isInteger(id)) return jsonError("A learning id is required");
           if (!content) return jsonError("Empty learning");
           deps.learnings.update(id, content);
+          return Response.json({ ok: true });
+        }
+        case "/api/adapter/revert": {
+          if (!deps.adapter) return jsonError("No memory adapter is configured");
+          const id = Number(body.id);
+          if (!Number.isInteger(id)) return jsonError("A revision id is required");
+          const result = deps.adapter.revert(id, "dashboard");
+          if (!result.ok) return jsonError((result.violations ?? ["Could not revert"]).join("; "));
           return Response.json({ ok: true });
         }
         case "/api/learnings/remove": {

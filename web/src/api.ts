@@ -28,7 +28,14 @@ export type Bootstrap = {
   commandPrefix: string;
   slashCommand: string;
 };
-export type Overview = { users: number; conversations: number; messages: number; learnings: number };
+export type Overview = {
+  users: number;
+  conversations: number;
+  messages: number;
+  learnings: number;
+  /** True when memory is an adapter, so `learnings` counts memory items. */
+  memory?: boolean;
+};
 export type UserRole = "owner" | "admin" | "executer" | "pal";
 export type AllowedUser = {
   name?: string;
@@ -39,6 +46,19 @@ export type AllowedUser = {
   createdAt: number;
 };
 export type Learning = { id: number; content: string; createdBy: string; createdAt: number };
+
+/** The memory adapter as the dashboard renders it. Read-only: curating is `adapter refine`. */
+export type AdapterView = {
+  configured: boolean;
+  status?: string;
+  policy?: string;
+  notes?: string;
+  skills?: { name: string; description: string }[];
+  people?: string[];
+  channels?: string[];
+  revisions?: { id: number; createdAt: number; createdBy: string; reason: string }[];
+  items?: number;
+};
 export type Identity = {
   name: string;
   thinkingLabel: string;

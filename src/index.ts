@@ -25,7 +25,12 @@ import { createUserRepo } from "./infrastructure/db/userRepo.ts";
 import { createMessageRepo } from "./infrastructure/db/messageRepo.ts";
 import { createLearningsRepo } from "./infrastructure/db/learningsRepo.ts";
 import { createAdapterStore } from "./infrastructure/adapter/adapterStore.ts";
-import { adapterStatus, rememberFact } from "./application/adapterMemory.ts";
+import {
+  adapterStatus,
+  createAdapterReader,
+  rememberFact,
+  revertAdapter,
+} from "./application/adapterMemory.ts";
 import { createAdapterRevisionRepo } from "./infrastructure/db/adapterRevisionRepo.ts";
 import { createCommandLogRepo } from "./infrastructure/db/commandLogRepo.ts";
 import { createWorkflowRepo } from "./infrastructure/db/workflowRepo.ts";
@@ -104,17 +109,9 @@ const main = async () => {
     clock,
     budget: config.adapterBudget,
   });
-  const loadAdapter = () => {
-    if (!adapterStore.exists()) return undefined;
-    try {
-      return adapterStore.load();
-    } catch (err) {
-      // A broken manifest must not take the bot down with it: fall back to the
-      // flat list and say so, loudly enough to be noticed in the log.
-      console.error("[adapter] could not load, falling back to learnings:", err);
-      return undefined;
-    }
-  };
+  const adapterReader = createAdapterReader(adapterStore, (err) =>
+    console.error("[adapter] could not load, serving the last good read:", err),
+  );
   const settings = createSettingsRepo(db);
   // Separate database on purpose: the main one is committed, and user tokens
   // must never be able to reach git. Encrypted under a key kept beside it.
@@ -221,7 +218,7 @@ const main = async () => {
     botName: profile().name,
     base: settings.get(SETTING_KEYS.systemPrompt),
     learnings: learnings.list().map((l) => l.content),
-    adapter: loadAdapter(),
+    adapter: adapterReader.read(),
   });
   const draft = createDraftReply({ llm, promptContext });
 
@@ -324,11 +321,28 @@ const main = async () => {
       adapter: adapterStore.exists()
         ? {
             status: () => adapterStatus(adapterDeps()),
+            view: () => {
+              const a = adapterStore.load();
+              const bullets = (text: string) => text.split("\n").filter((l) => l.trim().startsWith("-")).length;
+              return {
+                policy: a.policy,
+                notes: a.notes,
+                skills: a.skills.map((s) => ({ name: s.name, description: s.description })),
+                people: [...a.people.keys()],
+                channels: [...a.channels.keys()],
+                revisions: adapterRevisions.list(20),
+                items: bullets(a.policy) + bullets(a.notes) + a.people.size + a.channels.size + a.skills.length,
+              };
+            },
             remember: (content, by) => {
               const r = rememberFact(adapterDeps(), content, { kind: "global" }, by);
               return r.ok
                 ? { ok: true, warnings: r.warnings }
                 : { ok: false, violations: r.violations };
+            },
+            revert: (id, by) => {
+              const r = revertAdapter(adapterDeps(), id, by);
+              return r.ok ? { ok: true } : { ok: false, violations: r.violations };
             },
           }
         : undefined,

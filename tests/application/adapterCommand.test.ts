@@ -95,6 +95,18 @@ describe("the adapter command", () => {
     expect(d.adapterStore?.load().notes).toContain("an old fact");
   });
 
+  test("migrate empties the old table - one store of memory, not two", async () => {
+    const d = deps();
+    d.learnings?.add("an old fact", OWNER, 0);
+    d.learnings?.add("another", OWNER, 0);
+    const out = await run(d, "adapter migrate");
+
+    expect(d.learnings?.list().length).toBe(0);
+    expect(out).toContain("emptied the old list");
+    // and the revision it just wrote is the record of what was there
+    expect(d.adapterRevisions?.get(1)?.files.get("memory/NOTES.md")).toContain("an old fact");
+  });
+
   test("revert puts a previous state back", async () => {
     const d = deps();
     await run(d, "learn first");

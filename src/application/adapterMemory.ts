@@ -86,7 +86,14 @@ export const commitAdapter = (
     deps.store.write(files);
     proposed = deps.store.load();
   } catch (e) {
-    deps.store.write(before);
+    // Best-effort rollback. If putting the old tree back fails too, the disk is
+    // in trouble and that is a bigger problem - but it must not replace the
+    // error that actually caused this, which is the one worth reporting.
+    try {
+      deps.store.write(before);
+    } catch {
+      /* ignored on purpose: never mask the real failure */
+    }
     return { ok: false, violations: [e instanceof Error ? e.message : String(e)] };
   }
 
@@ -146,11 +153,19 @@ export const rememberFact = (
  * about a repo - but that is the refine pass's job, done by a model that can
  * read them, and doing it with pattern-matching in a migration would bake a
  * particular instance's vocabulary into a generic codebase.
+ *
+ * `clear` empties the source once the commit has landed, and it is not
+ * optional politeness - two stores of memory means one of them is lying. The
+ * first instinct was to leave the table as a fallback, which is wrong twice
+ * over: it would restore the pre-curation list, contradictions and all, and it
+ * would get staler every day while looking authoritative. The snapshot in
+ * revision #1 is the real record of what was migrated.
  */
 export const migrateLearnings = (
   deps: AdapterDeps,
   learnings: readonly string[],
   actor: string,
+  clear?: () => void,
 ): CommitResult => {
   const kept = learnings.map((l) => l.trim()).filter(Boolean);
   if (kept.length === 0) return { ok: true, warnings: [] };
@@ -161,11 +176,14 @@ export const migrateLearnings = (
   const block = `${heading}\n${kept.map((l) => `- ${l}`).join("\n")}\n`;
   files.set(NOTES_FILE, current.trim() ? `${current.trimEnd()}\n\n${block}` : block);
 
-  return commitAdapter(deps, files, {
+  const result = commitAdapter(deps, files, {
     reason: `migrate ${kept.length} learnings into the adapter`,
     actor,
     enforceBudget: false,
   });
+  // Only once it is safely committed, and never on a refusal.
+  if (result.ok) clear?.();
+  return result;
 };
 
 /** Restore a previous revision, recording the restore as a revision of its own. */
@@ -177,6 +195,35 @@ export const revertAdapter = (deps: AdapterDeps, id: number, actor: string): Com
     actor,
     enforceBudget: false,
   });
+};
+
+/**
+ * Reads the adapter for the prompt builder, keeping the last good one.
+ *
+ * The safety net for a manifest that stops parsing is the LAST GOOD READ, not
+ * the old learnings table. Falling back to that table was the first instinct
+ * and it is wrong twice over: it restores the pre-curation list, contradictions
+ * and all, and it goes staler every day while looking authoritative. The last
+ * good read is the real memory, minus whatever broke it - and it is the only
+ * fallback that cannot quietly serve something months out of date.
+ */
+export const createAdapterReader = (
+  store: Pick<AdapterStore, "exists" | "load">,
+  onError: (err: unknown) => void = () => {},
+): { read: () => Adapter | undefined } => {
+  let lastGood: Adapter | undefined;
+  return {
+    read: () => {
+      if (!store.exists()) return undefined;
+      try {
+        lastGood = store.load();
+        return lastGood;
+      } catch (err) {
+        onError(err);
+        return lastGood;
+      }
+    },
+  };
 };
 
 /** A short status line: what the adapter holds and what it costs every turn. */
