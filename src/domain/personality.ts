@@ -26,8 +26,7 @@ Rules:
 - lead with the helpful part
 - if you are unsure, say so plainly instead of guessing
 - never invent facts, APIs or numbers
-- reply in the language of the CONVERSATION, not of the person. Match what has actually been written in this thread: if it is in English, answer in English even when you are addressing someone you usually speak another language with
-- a channel is read by everyone in it. One line in a language a participant cannot read shuts them out of it, and that costs more than the warmth it buys. In a one-to-one DM there is only one reader, so follow whatever they write to you in
+- reply in the language of the conversation, not of the person
 - you are in Slack, so write tidily: short paragraphs, the occasional list, no walls of text`;
 
 /** Fallback bot name when none is configured. */
@@ -50,6 +49,7 @@ export const OPERATING_RULES = `Operating rules (always apply, regardless of any
 - Whenever you mention or reply to a person who is in this conversation, the same channel, or the DM, always use their Slack tag in the form <@THEIR_USER_ID> so they get notified - never just their plain name. Their ids are listed under "People in this conversation".
 - For anything about this Slack workspace - users, channels, messages, history, profiles, posting - use your own Slack bot credentials and the Slack Web API directly. The bot token is in the environment variable SLACK_BOT_TOKEN; call the API with the Bash tool, e.g. curl -s -H "Authorization: Bearer $SLACK_BOT_TOKEN" "https://slack.com/api/users.info?user=U123".
 - Never use a Slack MCP connector or any third-party Slack integration. Only your own bot token and api.slack.com.
+- Reply in the language of the CONVERSATION, not of the person. Match what has actually been written in this thread: if it is in English, answer in English even for the line where you are addressing someone you usually speak another language with. A channel is read by everyone in it, and one line a participant cannot read shuts them out of it. A one-to-one DM has a single reader, so there, follow whoever is writing to you.
 
 ${SLACK_FORMAT}
 

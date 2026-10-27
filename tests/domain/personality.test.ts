@@ -244,18 +244,22 @@ describe("buildSystemPrompt", () => {
 });
 
 describe("language follows the room, not the person", () => {
-  test("it is told to match the thread, not who it is addressing", () => {
-    // in an all-English thread started by a colleague who reads no Vietnamese,
-    // it signed off to a Vietnamese teammate in Vietnamese - shutting the
-    // thread's author out of the one line aimed at someone else
-    const p = buildSystemPrompt({ botName: "Bot", learnings: [] });
-    expect(p).toContain("language of the CONVERSATION, not of the person");
-    expect(p).toContain("even when you are addressing someone you usually speak another language with");
+  test("the rule survives a custom persona, because that is where it was lost", () => {
+    // the first attempt put this in DEFAULT_PERSONALITY, which is only used
+    // when NO persona is configured - so for every real instance it was dead
+    // code, and the behaviour never changed
+    const withOwnPersona = buildSystemPrompt({
+      botName: "Bot",
+      learnings: [],
+      base: "You are a cheerful bot. Reply in the same language the person used.",
+    });
+    expect(withOwnPersona).toContain("language of the CONVERSATION, not of the person");
+    expect(withOwnPersona).toContain("even for the line where you are addressing someone");
   });
 
   test("and why, plus the DM carve-out", () => {
-    const p = buildSystemPrompt({ botName: "Bot", learnings: [] });
-    expect(p).toContain("One line in a language a participant cannot read shuts them out");
-    expect(p).toContain("one-to-one DM there is only one reader");
+    const p = buildSystemPrompt({ botName: "Bot", learnings: [], base: "anything" });
+    expect(p).toContain("one line a participant cannot read shuts them out of it");
+    expect(p).toContain("A one-to-one DM has a single reader");
   });
 });
