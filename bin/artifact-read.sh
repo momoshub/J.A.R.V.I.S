@@ -18,6 +18,14 @@
 # Runs on the HOST login - CLAUDE_CODE_OAUTH_TOKEN is removed, exactly as the
 # `read` and `ticket` spawns do, because a setup token carries no artifact
 # access at all.
+#
+# It also scrubs the CLAUDE_CODE_* variables of whatever session it was called
+# from. This is not tidiness: called by hand it worked, called from inside a
+# `read` spawn the session it started reported "Artifact tool is not available
+# in this session", because the parent marks its children
+# (CLAUDE_CODE_CHILD_SESSION, CLAUDE_CODE_SESSION_ID and friends) and a session
+# that inherits those comes up as a nested one, without the tool. The whole
+# point here is a session that is NOT nested.
 set -uo pipefail
 
 URL="${1:?usage: artifact-read.sh <claude.ai artifact url> [timeout-seconds]}"
@@ -35,7 +43,13 @@ OUT="$(mktemp -t artifact-read)" || exit 1
 
 PROMPT="Use the Artifact tool with action=\"read\" and url=\"$URL\". Write what it returns, verbatim and complete, to the file $OUT using the Write tool. If the read fails, write the exact error to that same file instead. Do nothing else: do not summarise, do not explain, do not write anywhere else."
 
-ID="$(env -u CLAUDE_CODE_OAUTH_TOKEN claude --bg --dangerously-skip-permissions "$PROMPT" 2>&1 \
+ID="$(env -u CLAUDE_CODE_OAUTH_TOKEN \
+  -u CLAUDECODE -u CLAUDE_CODE_ENTRYPOINT -u CLAUDE_CODE_CHILD_SESSION \
+  -u CLAUDE_CODE_SESSION_ID -u CLAUDE_CODE_BRIDGE_SESSION_ID \
+  -u CLAUDE_CODE_SESSION_ATTENDED -u CLAUDE_CODE_MESSAGING_SOCKET \
+  -u CLAUDE_CODE_MESSAGING_TOKEN -u CLAUDE_CODE_EXECPATH \
+  -u CLAUDE_PID -u CLAUDE_EFFORT \
+  claude --bg --dangerously-skip-permissions "$PROMPT" 2>&1 \
   | grep -oE 'backgrounded · [0-9a-f]+' | awk '{print $3}' | head -1)"
 
 if [ -z "$ID" ]; then
