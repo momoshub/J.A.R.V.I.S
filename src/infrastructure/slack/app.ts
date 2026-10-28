@@ -13,7 +13,7 @@ import { respond, type RespondDeps } from "../../application/respond.ts";
 import { decideAccessRequest } from "../../application/accessRequests.ts";
 import { APPROVE_ACTION, decideCommandApproval, REJECT_ACTION } from "../../application/commandLimits.ts";
 import { decideRunPress, DROP_ACTION, STOP_ACTION } from "../../application/runRegistry.ts";
-import { droppedNotice, stoppedNotice } from "../../domain/runControl.ts";
+import { droppedNotice, stillStoppingNotice, stoppedNotice } from "../../domain/runControl.ts";
 import {
   decodeRequest,
   submitClaudeToken,
@@ -686,9 +686,11 @@ export const createSlackApp = (config: SlackAppConfig, deps: Deps) => {
         ? stoppedNotice(outcome.run, by, Date.now())
         : outcome.kind === "dropped"
           ? droppedNotice(outcome.run.what, by)
-          : outcome.kind === "refused"
-            ? "that one is not yours to stop - ask an admin, or whoever started it"
-            : "that one had already finished";
+          : outcome.kind === "stopping"
+            ? stillStoppingNotice(outcome.run, Date.now())
+            : outcome.kind === "refused"
+              ? "that one is not yours to stop - ask an admin, or whoever started it"
+              : "that one had already finished";
     log(`run button ${outcome.kind}`);
     // Replace the buttons so a settled notice cannot be clicked twice.
     if (body.channel?.id && body.message?.ts) {

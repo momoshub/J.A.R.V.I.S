@@ -34,6 +34,22 @@ export const stoppedNotice = (
   return `⏹ stopped *${run.what}*${who} after ${forHowLong(now - run.startedAt)}`;
 };
 
+/**
+ * What a SECOND press is told, when the first one has not taken effect yet.
+ *
+ * It is deliberately not reassuring. Pressing stop four times on a wedged turn
+ * produced four confident "stopped" lines while the process ran on, which is
+ * worse than no button at all - the one thing someone needs to know here is
+ * that the ask landed and the thing is refusing to die.
+ */
+export const stillStoppingNotice = (
+  run: { what: string; stoppedAt?: number },
+  now: number,
+): string => {
+  const waited = run.stoppedAt ? ` - ${forHowLong(now - run.stoppedAt)} ago now` : "";
+  return `⏹ already stopping *${run.what}*${waited}. It has not let go yet; I am killing it harder.`;
+};
+
 /** What a dropped-before-it-ran message is told. */
 export const droppedNotice = (what: string, by: string): string =>
   `✖ dropped *${what}* - <@${by}> called it off before I got to it`;

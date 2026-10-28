@@ -5,6 +5,7 @@ import {
   forHowLong,
   nameOfRequest,
   stoppedNotice,
+  stillStoppingNotice,
 } from "../../src/domain/runControl.ts";
 
 describe("forHowLong", () => {
@@ -51,5 +52,18 @@ describe("the notices", () => {
 
   test("dropped is about something that never ran", () => {
     expect(droppedNotice("that query", "U2")).toContain("before I got to it");
+  });
+});
+
+describe("stillStoppingNotice", () => {
+  test("it does not pretend a second press did anything", () => {
+    const text = stillStoppingNotice({ what: "a long job", stoppedAt: 1000 }, 61_000);
+    expect(text).toContain("already stopping");
+    expect(text).toContain("1m ago");
+    expect(text).toContain("has not let go");
+  });
+
+  test("it still reads sensibly when the stop time is unknown", () => {
+    expect(stillStoppingNotice({ what: "a job" }, 0)).toContain("already stopping");
   });
 });

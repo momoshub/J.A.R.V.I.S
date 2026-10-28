@@ -112,3 +112,43 @@ describe("decideRunPress", () => {
     expect(decideRunPress(runs, press({ actionId: "command_approve" })).kind).toBe("ignored");
   });
 });
+
+describe("stopping is a request, not an event", () => {
+  const track = (runs: ReturnType<typeof createRunRegistry>, id: string, actor = "U1") => {
+    const h = runs.track({ id, key: "C1:1", channelId: "C1", actor, what: "a long job", startedAt: 0 });
+    h.running();
+    return h;
+  };
+
+  test("the first stop is an action, the second is not", () => {
+    const runs = createRunRegistry(() => 1000);
+    track(runs, "r1");
+
+    const first = decideRunPress(runs, { actionId: STOP_ACTION, value: "r1", by: "U1", isAdmin: false });
+    expect(first.kind).toBe("stopped");
+
+    // the process may take a moment to die, or never die at all. Reporting a
+    // fresh successful stop each time is how four presses produced four
+    // confident "stopped" lines while nothing was actually dying.
+    const second = decideRunPress(runs, { actionId: STOP_ACTION, value: "r1", by: "U1", isAdmin: false });
+    expect(second.kind).toBe("stopping");
+  });
+
+  test("a stopped run records when it was asked, so the wait can be reported", () => {
+    const runs = createRunRegistry(() => 7000);
+    track(runs, "r2");
+    decideRunPress(runs, { actionId: STOP_ACTION, value: "r2", by: "U1", isAdmin: false });
+
+    expect(runs.byId("r2")?.state).toBe("stopping");
+    expect(runs.byId("r2")?.stoppedAt).toBe(7000);
+  });
+
+  test("it is still gone once the turn actually unwinds", () => {
+    const runs = createRunRegistry(() => 0);
+    const h = track(runs, "r3");
+    decideRunPress(runs, { actionId: STOP_ACTION, value: "r3", by: "U1", isAdmin: false });
+    h.done();
+
+    expect(decideRunPress(runs, { actionId: STOP_ACTION, value: "r3", by: "U1", isAdmin: false }).kind).toBe("gone");
+  });
+});

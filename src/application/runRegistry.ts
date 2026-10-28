@@ -18,7 +18,14 @@ export const STOP_ACTION = "run_stop";
 /** Button on the same notice: drop the message that was just queued. */
 export const DROP_ACTION = "run_drop";
 
-export type RunState = "running" | "queued";
+/**
+ * `stopping` is its own state because a stop is a REQUEST, not an event. The
+ * process may take a moment to die, or - as happened - never die at all, and a
+ * registry that cannot tell "asked to stop" from "running" reports a fresh
+ * successful stop every time the button is pressed. Pressing it four times on a
+ * wedged turn got four confirmations and killed nothing.
+ */
+export type RunState = "running" | "queued" | "stopping";
 
 export type TrackedRun = {
   /** Short id, carried on the buttons. */
@@ -32,9 +39,12 @@ export type TrackedRun = {
   /** The first words of the request, to name it in a notice. */
   readonly what: string;
   readonly startedAt: number;
-  readonly state: RunState;
+  /** Mutable: a stop flips it to `stopping`, which the next press must see. */
+  state: RunState;
   /** Set once someone stops it; the Slack id of whoever did. */
   stoppedBy?: string;
+  /** When the stop was asked for, so a slow death can be reported honestly. */
+  stoppedAt?: number;
 };
 
 export type RunRegistry = {
@@ -66,11 +76,17 @@ export type RunRegistry = {
 
 type Entry = { run: TrackedRun; abort: AbortController };
 
-export const createRunRegistry = (): RunRegistry => {
+export const createRunRegistry = (clock: () => number = () => Date.now()): RunRegistry => {
   const byId = new Map<string, Entry>();
 
-  const stopEntry = (entry: Entry, by: string): TrackedRun => {
+  // Undefined when it has ALREADY been asked to stop: the caller needs to tell
+  // "I stopped it" from "it was asked and has not let go", and only the first
+  // of those should be reported as an action.
+  const stopEntry = (entry: Entry, by: string): TrackedRun | undefined => {
+    if (entry.run.state === "stopping") return undefined;
     entry.run.stoppedBy = by;
+    entry.run.stoppedAt = clock();
+    entry.run.state = "stopping";
     entry.abort.abort();
     return entry.run;
   };
@@ -94,7 +110,7 @@ export const createRunRegistry = (): RunRegistry => {
       };
     },
     inThread: (key) => [...byId.values()].filter((e) => e.run.key === key).map((e) => e.run),
-    current: (key) => [...byId.values()].find((e) => e.run.key === key && e.run.state === "running")?.run,
+      current: (key) => [...byId.values()].find((e) => e.run.key === key && e.run.state === "running")?.run,
     byId: (id) => byId.get(id)?.run,
     stop: (id, by) => {
       const entry = byId.get(id);
@@ -114,6 +130,8 @@ export type RunPressOutcome =
   | { kind: "dropped"; run: TrackedRun }
   /** The button outlived what it pointed at - it finished on its own. */
   | { kind: "gone" }
+  /** Already asked to stop and still letting go; pressing again changes nothing. */
+  | { kind: "stopping"; run: TrackedRun }
   /** Not theirs to stop. */
   | { kind: "refused" }
   | { kind: "ignored" };
@@ -136,6 +154,9 @@ export const decideRunPress = (
   // Anyone may stop what they asked for; stopping someone else's takes an admin,
   // because a turn is somebody's work and often their money.
   if (run.actor !== press.by && !press.isAdmin) return { kind: "refused" };
+  // Already asked. Saying "stopped" again would be the lie that made four
+  // presses look like four successful stops while nothing was dying.
+  if (run.state === "stopping") return { kind: "stopping", run };
   const wasRunning = run.state === "running";
   const stopped = runs.stop(press.value, press.by);
   if (!stopped) return { kind: "gone" };

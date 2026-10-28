@@ -17,6 +17,7 @@ import type { LlmCompleteParams, LlmPort, LlmSession, LlmStreamSink } from "../.
 import type { PromptMessage } from "../../domain/types.ts";
 import type { ToolPolicy } from "../../domain/toolPolicy.ts";
 import { redactSecrets } from "../../domain/toolVisibility.ts";
+import { stopProcess } from "./killTree.ts";
 
 export type ClaudeCliConfig = {
   /** Path or name of the claude binary. Default "claude". */
@@ -161,12 +162,14 @@ const spawnClaude = (
     // them and runs with their account's access.
     env: { ...hostLoginEnv(oauthToken, useHostLogin), ...(runTicket ? { JARVIS_RUN_TICKET: runTicket } : {}) },
   });
-  // Stopping is the same kill the timeout uses, so a stopped run surfaces as
-  // exit 143 like any reaped one. The caller holds the controller, so it is the
-  // caller that knows the difference between "stopped" and "ran out of time".
+  // Stopping kills the whole TREE, not just the CLI: the model's shell commands
+  // are its children, and a turn wedged inside one of them ignores a signal to
+  // the parent entirely. SIGTERM first so the session file is flushed, SIGKILL
+  // after a grace period for anything still standing.
   if (signal) {
-    if (signal.aborted) proc.kill();
-    else signal.addEventListener("abort", () => proc.kill(), { once: true });
+    const stop = () => stopProcess(proc);
+    if (signal.aborted) stop();
+    else signal.addEventListener("abort", stop, { once: true });
   }
   return proc;
 };
@@ -215,6 +218,25 @@ export const createClaudeCliLlm = (config: ClaudeCliConfig = {}): LlmPort => {
     const proc = spawnClaude(config, [...buildArgs(config, true, policy, session), "--append-system-prompt", system], renderPrompt(messages, assistantName), policy, oauthToken, useHostLogin, signal, runTicket);
     const stderrPromise = new Response(proc.stderr).text();
 
+    /**
+     * Emit to the caller without ever letting it break the read loop.
+     *
+     * The sink posts to Slack, and Slack fails - `msg_too_long` alone shows up
+     * dozens of times in the log. A throw from here used to escape the loop
+     * below, which abandoned the child's stdout. A pipe nobody drains fills
+     * after ~64KB and the CLI blocks writing to it FOREVER: 0% CPU, no
+     * children, alive. That is what a wedged turn looked like in production,
+     * and it ignored SIGTERM. Reporting a hiccup is never worth a stuck turn.
+     */
+    const emit = (ev: Parameters<LlmStreamSink>[0]): void => {
+      try {
+        const r = sink(ev) as unknown;
+        if (r && typeof (r as Promise<void>).catch === "function") (r as Promise<void>).catch(() => {});
+      } catch {
+        // the transport's problem, not the run's
+      }
+    };
+
     // index -> in-flight tool_use block; id -> resolved card, replayed on the result.
     const toolByIndex = new Map<number, { id: string; name: string; json: string }>();
     const cardById = new Map<string, { title: string; command?: string }>();
@@ -233,7 +255,7 @@ export const createClaudeCliLlm = (config: ClaudeCliConfig = {}): LlmPort => {
             // and the message reads as one mangled line.
             const gap = streamedText.endsWith("\n") ? "\n" : "\n\n";
             streamedText += gap;
-            sink({ type: "text", delta: gap });
+            emit({ type: "text", delta: gap });
           }
           if (block.type === "tool_use" && typeof index === "number") {
             toolByIndex.set(index, {
@@ -246,7 +268,7 @@ export const createClaudeCliLlm = (config: ClaudeCliConfig = {}): LlmPort => {
           const delta = (ev.delta ?? {}) as Record<string, unknown>;
           if (delta.type === "text_delta" && typeof delta.text === "string") {
             streamedText += delta.text;
-            sink({ type: "text", delta: delta.text });
+            emit({ type: "text", delta: delta.text });
           } else if (delta.type === "input_json_delta" && typeof delta.partial_json === "string" && typeof index === "number") {
             const tb = toolByIndex.get(index);
             if (tb) tb.json += delta.partial_json;
@@ -256,7 +278,7 @@ export const createClaudeCliLlm = (config: ClaudeCliConfig = {}): LlmPort => {
           if (tb) {
             const { title, details, command } = summarizeTool(tb.name, tb.json);
             cardById.set(tb.id, { title, command });
-            sink({ type: "tool", id: tb.id, title, details, command, status: "in_progress" });
+            emit({ type: "tool", id: tb.id, title, details, command, status: "in_progress" });
           }
         }
       } else if (e.type === "user") {
@@ -264,7 +286,7 @@ export const createClaudeCliLlm = (config: ClaudeCliConfig = {}): LlmPort => {
         for (const c of content) {
           if (c.type === "tool_result" && typeof c.tool_use_id === "string") {
             const card = cardById.get(c.tool_use_id);
-            sink({
+            emit({
               type: "tool",
               id: c.tool_use_id,
               title: card?.title ?? "tool",
@@ -298,12 +320,22 @@ export const createClaudeCliLlm = (config: ClaudeCliConfig = {}): LlmPort => {
       }
     };
 
-    while (true) {
-      const { done, value } = await reader.read();
-      if (done) break;
-      consume(decoder.decode(value, { stream: true }));
+    // Whatever happens in here - a parse blowing up, the caller unwinding, an
+    // abort - the child gets stopped and the reader released on the way out.
+    // Leaving either behind is how a turn survives its own stream call.
+    try {
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        consume(decoder.decode(value, { stream: true }));
+      }
+      if (buffer.trim()) consume("\n");
+    } catch (err) {
+      stopProcess(proc);
+      throw err;
+    } finally {
+      reader.releaseLock();
     }
-    if (buffer.trim()) consume("\n");
 
     const exitCode = await proc.exited;
     const finished = (finalText || streamedText).trim();
@@ -315,7 +347,7 @@ export const createClaudeCliLlm = (config: ClaudeCliConfig = {}): LlmPort => {
     // a run, not its answer - 143 is the timeout reaping it. Say so rather than
     // letting a caller hand the fragment over as the finished work.
     if (exitCode !== 0) {
-      sink({
+      emit({
         type: "aborted",
         reason: exitCode === 143 ? "it ran out of time" : `it exited with code ${exitCode}`,
       });
