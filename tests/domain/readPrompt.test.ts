@@ -71,6 +71,12 @@ describe("claude.ai artifact links", () => {
     expect(p).toContain("Do NOT ask them to share it with the host account");
   });
 
+  test("a dead end still ends in something they can do", () => {
+    // "I cannot open it" is true and useless on its own
+    expect(p).toContain("paste the content here");
+    expect(p).toContain("publish it as a Claude *Doc*");
+  });
+
   test("and an artifact url is never web-fetched", () => {
     // every artifact returns the same placeholder shell, so an empty page is
     // evidence of nothing
