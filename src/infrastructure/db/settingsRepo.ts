@@ -28,6 +28,10 @@ export const SETTING_KEYS = {
   threadSessions: "thread_sessions",
   /** Lowest role that may run `read`, which borrows the host human's access. */
   readMinRole: "read_min_role",
+  /** Notion page or database new pages are created under. */
+  notionParent: "notion_parent",
+  /** Who may publish a page into Notion with the host's identity. */
+  noteMinRole: "note_min_role",
 } as const;
 
 /** Model override for one role, e.g. `model:pal`. Empty means "use the default". */

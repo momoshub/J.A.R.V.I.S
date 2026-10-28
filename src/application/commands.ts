@@ -12,6 +12,7 @@
  */
 import { buildSystemPrompt, DEFAULT_BOT_NAME } from "../domain/personality.ts";
 import { refinePrompt } from "../domain/refinePrompt.ts";
+import { notePrompt } from "../domain/notePrompt.ts";
 import { adapterRules, isBlank } from "../domain/adapter.ts";
 import { ALWAYS_ON_BUDGET, describeCheck } from "../domain/adapterCheck.ts";
 import {
@@ -163,6 +164,8 @@ const REVIEW_TIMEOUT_MS = 900_000;
 const TICKET_TIMEOUT_MS = 900_000;
 /** A refine pass reads every file and rewrites most of them. */
 const REFINE_TIMEOUT_MS = 900_000;
+/** Publishing reads a file and builds a page; it is not a research task. */
+const NOTE_TIMEOUT_MS = 300_000;
 /** an investigation walks logs, RUM and traces across environments. */
 const INVESTIGATE_TIMEOUT_MS = 900_000;
 /** reading a conversation is bounded work, but a busy channel is a lot of it. */
@@ -816,6 +819,79 @@ export const COMMANDS: readonly CommandDef[] = [
       if (!Number.isInteger(id)) return `Which one? \`${prefix} unlearn <id>\` (see \`${prefix} learnings\`)`;
       deps.learnings.remove(id);
       return `Forgotten learning #${id}.`;
+    },
+  },
+  {
+    name: "note",
+    aliases: ["publish"],
+    // A tool, like `read`: the brain publishes mid-task and carries on with the
+    // url. The counterpart to reading, and the reason this exists at all - the
+    // bot used to finish a twenty minute job and tell someone to paste it in.
+    quiet: true,
+    minRole: "pal",
+    usage: "<file> [title] | parent <notion url> | access <role>",
+    summary: "publish a document into Notion through the account's connector",
+    run: async (ctx) => {
+      const { deps, actor, args, rest, prefix, reply } = ctx;
+      const first = (args[0] ?? "").trim();
+      const parent = deps.settings?.get(SETTING_KEYS.notionParent)?.trim() || "";
+      const floor = roleOf(deps.settings?.get(SETTING_KEYS.noteMinRole)?.trim().toLowerCase() ?? "") ?? "admin";
+
+      if (first.toLowerCase() === "parent") {
+        const url = (args[1] ?? "").trim();
+        if (!url) return `Where should pages go? \`${prefix} note parent <notion url>\` (now: ${parent || "*not set*"})`;
+        if (RANK[actor.role] < RANK.admin) return "Only admins can set where my pages go.";
+        deps.settings?.set(SETTING_KEYS.notionParent, url);
+        return `New pages will go under ${url}.`;
+      }
+
+      if (first.toLowerCase() === "access") {
+        const want = roleOf((args[1] ?? "").toLowerCase());
+        if (!want) return `Which role? \`${prefix} note access <pal|executer|admin|owner>\` (now: *${floor}*)`;
+        if (RANK[actor.role] < RANK.admin) return "Only admins can change who may publish.";
+        deps.settings?.set(SETTING_KEYS.noteMinRole, want);
+        return `\`note\` is now open to *${want}* and above. It writes under my host's Notion identity, so anyone at that level publishes as them.`;
+      }
+
+      if (RANK[actor.role] < RANK[floor]) {
+        return `I cannot publish that myself - \`note\` writes with my host's Notion identity and is limited to *${floor}* and above. Ask someone at that level to run \`${prefix} note <file>\`.`;
+      }
+      if (!first) return `Publish what? \`${prefix} note <file> [title]\``;
+      if (!parent) {
+        return `I have nowhere to put it - no Notion parent is configured. An admin can set one: \`${prefix} note parent <notion url>\``;
+      }
+      if (!deps.llm) return "My brain is not wired up right now.";
+
+      const title = rest.slice(rest.indexOf(first) + first.length).trim();
+      const full = deps.toolPolicy?.("owner") ?? { skipPermissions: true };
+      const name = botNameOf(deps);
+      const params = {
+        system: notePrompt({ path: first, title: title || undefined, parent, askedBy: actor.slackId }, name),
+        messages: [{ role: "user" as const, content: `publish ${first}${title ? ` as "${title}"` : ""}` }],
+        assistantName: name,
+        policy: { ...full, timeoutMs: NOTE_TIMEOUT_MS },
+        // Notion lives with the host's interactive login; a setup token carries
+        // no connectors at all, so this is the only credential that can write.
+        useHostLogin: true,
+      };
+
+      if (!reply) {
+        const out = await deps.llm.complete(params);
+        return out.trim() || "I could not publish that one.";
+      }
+      await reply(`📝 publishing that to Notion for <@${actor.slackId}>`);
+      let out = "";
+      try {
+        out = deps.llm.stream ? await deps.llm.stream(params, () => {}) : await deps.llm.complete(params);
+      } catch (err) {
+        if (!isAuthFailure(err)) throw err;
+        await reply(
+          "🔑 I could not publish it - the login on my host has lapsed, and Notion comes with it. Someone with access to the machine needs to run `claude` there and sign in again.",
+        );
+        return "";
+      }
+      await reply(out.trim() || "I could not publish that one.");
+      return "";
     },
   },
   {

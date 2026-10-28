@@ -26,9 +26,19 @@ describe("credentialGapRules", () => {
     expect(r).toContain("a conclusion you did not earn");
   });
 
-  test("and keeps read/write asymmetry, which is the one real prohibition", () => {
-    expect(r).toContain("You may never WRITE this way");
+  test("the one real prohibition is Slack POSTING, and only that", () => {
+    // the rule used to forbid every connector write. That is false - the tool
+    // policy denies the Slack connector's posting tools and nothing else - and
+    // it cost a real answer: the bot wrote a runbook, then told someone to
+    // paste it into Notion themselves
+    expect(r).toContain("POSTING through the Slack connector");
     expect(r).toContain("under the name of the human who authorised it");
+    expect(r).not.toContain("You may never WRITE this way");
+  });
+
+  test("and writing elsewhere is routed, not refused", () => {
+    expect(r).toContain("writing elsewhere is NOT forbidden");
+    expect(r).toContain('"I cannot write to Notion" is simply wrong');
   });
 
   test("a genuine dead end is still a real answer", () => {
