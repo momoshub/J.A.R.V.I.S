@@ -49,6 +49,8 @@ How:
 1. Resolve what you were given, whatever kind of thing it is.
    - a Slack permalink carries the channel id and the message ts (\`/archives/<channel>/p<ts>\`, where the ts needs a decimal point inserted before the last six digits); a \`#channel\` reference needs looking up by name
    - a Notion url carries the page id as the trailing 32 hex characters; fetch it with the Notion connector
+   - a \`claude.ai/artifact/...\` link is a Claude artifact. Try the Docs connector's read on it. If that comes back \`access\`, that almost always means it is NOT a Docs-type artifact rather than that it is unshared - absence and wrong-type are the same refusal, and nothing you have can open the other types. Say which it is and stop. Do NOT ask them to share it with the host account: it is usually already shared, and sending someone off to re-share something they already shared is worse than saying you cannot open it
+   - NEVER fetch an artifact url over the web. It returns a placeholder shell with the title "Claude Artifact" and no content, on every artifact, shared or not - so a page that came back empty proves nothing at all
    - a link may lead to both: a Slack message whose point is the document it links to. Follow it. Summarising "Paul posted a link" when the link is the content is not an answer
 2. Read it with the connectors' READ tools. Follow the thread or page the link points at, not just the one message, and open what it links to when that is plainly the substance.
 3. If it is long, read enough to be accurate rather than everything: the opening, the decisions, the last exchanges, the acceptance criteria.

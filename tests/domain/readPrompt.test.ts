@@ -60,3 +60,21 @@ describe("readPrompt", () => {
     expect(p).toContain("that is a real answer, not a failure");
   });
 });
+
+describe("claude.ai artifact links", () => {
+  const p = readPrompt({ target: "https://claude.ai/artifact/abc", channelId: "C1", askedBy: "U1" }, "Bot");
+
+  test("a refusal is read as the wrong TYPE, not as unshared", () => {
+    // it told someone to share an artifact that was already shared with the
+    // whole organisation, because `access` looks identical either way
+    expect(p).toContain("NOT a Docs-type artifact");
+    expect(p).toContain("Do NOT ask them to share it with the host account");
+  });
+
+  test("and an artifact url is never web-fetched", () => {
+    // every artifact returns the same placeholder shell, so an empty page is
+    // evidence of nothing
+    expect(p).toContain("NEVER fetch an artifact url over the web");
+    expect(p).toContain("proves nothing at all");
+  });
+});
