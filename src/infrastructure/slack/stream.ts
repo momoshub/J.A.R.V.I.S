@@ -28,6 +28,22 @@ export type Streamer = {
 /** How long a turn may stay silent before a "thinking" card is worth showing. */
 export const THINKING_AFTER_MS = 5_000;
 
+/**
+ * Characters of text one streamed message may carry before it is rolled over
+ * into a continuation.
+ *
+ * Slack caps a streamed message at 12,000 characters - measured, not guessed:
+ * appending 2,000 at a time succeeded through 10,005 and the next chunk failed
+ * with `msg_too_long`, and so did `stop`. That failure is not a truncation, it
+ * is a LOSS: the append throws, the stream breaks, and a long answer that took
+ * minutes to produce never arrives at all. `msg_too_long` appears dozens of
+ * times in this instance's log.
+ *
+ * So a long reply continues in a second message instead. The budget leaves
+ * headroom because task cards share the message's length allowance.
+ */
+export const STREAM_CHAR_BUDGET = 11_000;
+
 export type SlackStream = {
   sink: LlmStreamSink;
   /** Show a leading "thinking" task card now (id is reserved, auto-completes). */
@@ -43,6 +59,17 @@ export type SlackStream = {
   readonly ts: string | undefined;
   /** Await pending appends and close the stream. False if it broke or showed no content. */
   finish: () => Promise<boolean>;
+  /**
+   * Give up on this turn: cancel an armed placeholder and close anything that
+   * was already opened. Returns the ts of a message left behind that holds no
+   * real content, so the caller can take it away again.
+   *
+   * A turn that is queued or dropped used to return without touching the
+   * stream at all, leaving the armed timer to fire a few seconds later into a
+   * turn that no longer existed - which is where the stray "thinking" cards in
+   * a busy thread came from.
+   */
+  abandon: () => Promise<{ emptyTs?: string }>;
 };
 
 const THINKING_ID = "__thinking__";
@@ -61,6 +88,8 @@ export const createSlackStream = (
   let thinkingShown = false;
   let thinkingDone = false;
   let contentShown = false;
+  /** Characters appended to the CURRENT message, for the rollover. */
+  let used = 0;
   let pending: ReturnType<typeof setTimeout> | undefined;
   const fences = createFenceNormalizer();
 
@@ -85,6 +114,39 @@ export const createSlackStream = (
   const task = (chunk: TaskUpdateChunk) => {
     const s = ensure();
     enqueue(() => s.append({ chunks: [chunk] }));
+  };
+
+  /**
+   * Append text, rolling over to a fresh message before Slack would refuse it.
+   *
+   * The length check happens INSIDE the chain so it sees the real running
+   * total: appends are serialised, and deciding outside would race with
+   * whatever is still in flight.
+   */
+  const appendText = (text: string) => {
+    ensure();
+    enqueue(async () => {
+      let rest = text;
+      while (rest) {
+        if (used >= STREAM_CHAR_BUDGET && streamer) {
+          // Close this message and continue in the next one, rather than
+          // throwing away everything the turn has to say.
+          try {
+            await streamer.stop();
+          } catch {
+            // nothing more to do about it; the continuation still goes out
+          }
+          streamer = undefined;
+          used = 0;
+        }
+        const room = STREAM_CHAR_BUDGET - used;
+        const piece = rest.length <= room ? rest : rest.slice(0, room);
+        rest = rest.slice(piece.length);
+        const s = ensure();
+        used += piece.length;
+        await s.append({ markdown_text: piece });
+      }
+    });
   };
 
   const completeThinking = () => {
@@ -120,10 +182,7 @@ export const createSlackStream = (
       if (event.delta) {
         contentShown = true;
         const text = fences.push(event.delta);
-        if (text) {
-          const s = ensure();
-          enqueue(() => s.append({ markdown_text: text }));
-        }
+        if (text) appendText(text);
       }
       return;
     }
@@ -150,14 +209,28 @@ export const createSlackStream = (
     get ts() {
       return streamer?.ts;
     },
+    abandon: async () => {
+      cancelPending();
+      if (!streamer) return {};
+      completeThinking();
+      try {
+        await chain;
+      } catch {
+        // already swallowed into `broke`
+      }
+      const ts = streamer.ts;
+      try {
+        await streamer.stop();
+      } catch {
+        // closing a stream nobody will read is not worth reporting
+      }
+      return contentShown ? {} : { emptyTs: ts };
+    },
     finish: async () => {
       cancelPending();
       completeThinking();
       const tail = fences.flush();
-      if (tail) {
-        const s = ensure();
-        enqueue(() => s.append({ markdown_text: tail }));
-      }
+      if (tail) appendText(tail);
       try {
         await chain;
       } catch {

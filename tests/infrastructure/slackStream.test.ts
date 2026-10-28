@@ -217,3 +217,104 @@ describe("delayed thinking card", () => {
   });
 });
 
+
+describe("the 12,000 character wall", () => {
+  /** A streamer whose every `make` is a distinct message, so rollovers show up. */
+  const multi = () => {
+    const messages: { text: string; stopped: boolean }[] = [];
+    const make = (): Streamer => {
+      const m = { text: "", stopped: false };
+      messages.push(m);
+      return {
+        append: async (a) => {
+          if (a.markdown_text) m.text += a.markdown_text;
+          // Slack's real behaviour, measured: past 12,000 it refuses outright
+          // and the answer is lost rather than truncated.
+          if (m.text.length > 12_000) throw new Error("An API error occurred: msg_too_long");
+        },
+        stop: async () => {
+          m.stopped = true;
+        },
+      };
+    };
+    return { make, messages };
+  };
+
+  test("a long reply rolls into a second message instead of being lost", async () => {
+    const f = multi();
+    const s = createSlackStream(f.make);
+    // 20,000 characters, comfortably past one message's allowance
+    for (let i = 0; i < 20; i++) s.sink({ type: "text", delta: "x".repeat(1000) });
+    const ok = await s.finish();
+
+    expect(ok).toBe(true);
+    expect(f.messages.length).toBeGreaterThan(1);
+    // nothing dropped on the floor
+    expect(f.messages.map((m) => m.text).join("").length).toBe(20_000);
+    // and every message is within what Slack will take
+    expect(f.messages.every((m) => m.text.length <= 12_000)).toBe(true);
+  });
+
+  test("the message before a rollover is closed properly", async () => {
+    const f = multi();
+    const s = createSlackStream(f.make);
+    for (let i = 0; i < 15; i++) s.sink({ type: "text", delta: "y".repeat(1000) });
+    await s.finish();
+
+    expect(f.messages.every((m) => m.stopped)).toBe(true);
+  });
+
+  test("a single delta bigger than the budget is split, not dropped", async () => {
+    const f = multi();
+    const s = createSlackStream(f.make);
+    s.sink({ type: "text", delta: "z".repeat(30_000) });
+    await s.finish();
+
+    expect(f.messages.map((m) => m.text).join("")).toBe("z".repeat(30_000));
+  });
+});
+
+describe("abandoning a turn", () => {
+  test("an armed placeholder never fires once the turn is abandoned", async () => {
+    // a queued or dropped message used to leave the timer running, and it
+    // posted a thinking card into a turn that no longer existed
+    const f = fakeStreamer();
+    const s = createSlackStream(f.make);
+    s.showThinkingAfter("thinking...", 10);
+    await s.abandon();
+    await Bun.sleep(40);
+
+    expect(f.made()).toBe(0);
+    expect(s.started).toBe(false);
+  });
+
+  test("a placeholder that already showed is handed back for removal", async () => {
+    const f = fakeStreamer();
+    const s = createSlackStream(f.make);
+    s.showThinking("thinking...");
+    const { emptyTs } = await s.abandon();
+
+    // nothing real was ever said in it, so the caller takes the message away
+    expect(f.stopped()).toBe(1);
+    expect("emptyTs" in { emptyTs }).toBe(true);
+  });
+
+  test("a turn that said something is left alone", async () => {
+    const f = fakeStreamer();
+    const s = createSlackStream(f.make);
+    s.sink({ type: "text", delta: "half an answer" });
+    const { emptyTs } = await s.abandon();
+
+    expect(emptyTs).toBeUndefined();
+  });
+
+  test("finish cancels an armed placeholder even when nothing opened a stream", async () => {
+    const f = fakeStreamer();
+    const s = createSlackStream(f.make);
+    s.showThinkingAfter("thinking...", 10);
+    expect(await s.finish()).toBe(false);
+    await Bun.sleep(40);
+
+    expect(f.made()).toBe(0);
+  });
+});

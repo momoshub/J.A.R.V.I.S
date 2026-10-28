@@ -276,12 +276,22 @@ export const createHandler =
         stream?.sink,
       );
       log(`handled user=${msg.userId} channel=${msg.channelId} kind=${result.kind}`);
-      if (result.kind === "ignored") return;
+      if (result.kind === "ignored") {
+        // Queued, dropped, or not for us. Returning here used to leave the
+        // armed "thinking" timer to fire a few seconds later into a turn that
+        // no longer existed - which is where a busy thread collected a row of
+        // placeholder cards that never completed.
+        const { emptyTs } = (await stream?.abandon()) ?? {};
+        if (emptyTs) await deps.slack?.remove(msg.channelId, emptyTs).catch(() => undefined);
+        return;
+      }
 
       // If the reply streamed successfully, Slack already has it; otherwise post.
       // An empty reply means the command already delivered itself into the thread
       // (e.g. review posts progress + result directly), so post nothing more.
-      const streamed = stream?.started ? await stream.finish() : false;
+      // Always finish, started or not: an unfired placeholder timer is still
+      // armed, and only finishing cancels it.
+      const streamed = stream ? await stream.finish() : false;
       const broadcast = shouldBroadcast(msg);
       if (streamed) {
         // chat.startStream takes no reply_broadcast, so promote the finished
@@ -299,7 +309,9 @@ export const createHandler =
       }
     } catch (err) {
       log(`respond failed: ${err instanceof Error ? err.message : String(err)}`);
-      if (stream?.started) await stream.finish().catch(() => undefined);
+      // Not `started`: an armed-but-unfired placeholder is the exact case that
+      // leaves a stray card behind, and only finishing cancels its timer.
+      if (stream) await stream.finish().catch(() => undefined);
       // A turn reaped for running long is not a bug, and saying "I hit an error"
       // invites the same question again rather than a narrower one.
       const text = isTimeout(err)
