@@ -117,6 +117,8 @@ export type CommandDeps = {
   adapterBudget?: () => number;
   /** Host and process vitals, sampled over time. */
   system?: SystemTracker;
+  /** Absolute path of the claude.ai artifact reader, for `read`. */
+  artifactScript?: string;
   llm?: LlmPort;
   promptContext?: () => PromptContext;
   botInfo?: () => { botName: string; model: string };
@@ -935,7 +937,7 @@ export const COMMANDS: readonly CommandDef[] = [
       const full = deps.toolPolicy?.("owner") ?? { skipPermissions: true };
       const name = botNameOf(deps);
       const params = {
-        system: readPrompt({ target, note, channelId, threadTs, askedBy: actor.slackId }, name),
+        system: readPrompt({ target, note, channelId, threadTs, askedBy: actor.slackId, artifactScript: deps.artifactScript }, name),
         messages: [{ role: "user" as const, content: `read ${target}${note ? `\n\n${note}` : ""}` }],
         assistantName: name,
         policy: { ...full, timeoutMs: READ_TIMEOUT_MS },

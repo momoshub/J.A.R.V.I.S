@@ -62,25 +62,38 @@ describe("readPrompt", () => {
 });
 
 describe("claude.ai artifact links", () => {
-  const p = readPrompt({ target: "https://claude.ai/artifact/abc", channelId: "C1", askedBy: "U1" }, "Bot");
+  const target = "https://claude.ai/artifact/abc";
+  const withHelper = readPrompt(
+    { target, channelId: "C1", askedBy: "U1", artifactScript: "/bin/artifact-read.sh" },
+    "Bot",
+  );
+  const without = readPrompt({ target, channelId: "C1", askedBy: "U1" }, "Bot");
 
-  test("a refusal is read as the wrong TYPE, not as unshared", () => {
-    // it told someone to share an artifact that was already shared with the
-    // whole organisation, because `access` looks identical either way
-    expect(p).toContain("NOT a Docs-type artifact");
-    expect(p).toContain("Do NOT ask them to share it with the host account");
+  test("with the helper, it is told the one thing that CAN read an artifact", () => {
+    // the Artifact tool is absent from `claude -p` (verified by forcing a call:
+    // NO_SUCH_TOOL) but present in a full session, which the helper opens
+    expect(withHelper).toContain("/bin/artifact-read.sh");
+    expect(withHelper).toContain("three minutes");
   });
 
-  test("a dead end still ends in something they can do", () => {
-    // "I cannot open it" is true and useless on its own
-    expect(p).toContain("paste the content here");
-    expect(p).toContain("publish it as a Claude *Doc*");
+  test("without one, it says so and offers the way forward", () => {
+    expect(without).toContain("nothing here can open one");
+    expect(without).toContain("publish it as a Claude *Doc*");
+    expect(without).not.toContain("/bin/artifact-read.sh");
   });
 
-  test("and an artifact url is never web-fetched", () => {
+  test("either way it never web-fetches an artifact url", () => {
     // every artifact returns the same placeholder shell, so an empty page is
     // evidence of nothing
-    expect(p).toContain("NEVER fetch an artifact url over the web");
-    expect(p).toContain("proves nothing at all");
+    for (const p of [withHelper, without]) {
+      expect(p).toContain("NEVER fetch an artifact url over the web");
+      expect(p).toContain("proves nothing at all");
+    }
+  });
+
+  test("and never sends anyone to re-share what is already shared", () => {
+    for (const p of [withHelper, without]) {
+      expect(p).toContain("never ask anyone to re-share an artifact");
+    }
   });
 });

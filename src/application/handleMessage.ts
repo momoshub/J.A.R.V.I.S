@@ -90,6 +90,8 @@ export type HandleMessageDeps = {
   grafanaGetScript?: string;
   /** Absolute path of the read-only Slack reader, granted to every role. */
   slackReadScript?: string;
+  /** Absolute path of the claude.ai artifact reader. */
+  artifactScript?: string;
   /** Absolute path of the verify-and-restart helper. Admin+ only; see below. */
   restartScript?: string;
   /** The bot's own source tree, so it can work on itself. Admin+ only. */

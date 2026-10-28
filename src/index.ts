@@ -179,6 +179,9 @@ const main = async () => {
   const fileScript = join(import.meta.dir, "..", "bin", "slack-file.sh");
   const grafanaGetScript = join(import.meta.dir, "..", "bin", "grafana-get.sh");
   const slackReadScript = join(import.meta.dir, "..", "bin", "slack-read.sh");
+  // Reads a claude.ai artifact by opening a full session, which has the tool a
+  // `-p` spawn does not.
+  const artifactScript = join(import.meta.dir, "..", "bin", "artifact-read.sh");
   const restartScript = join(import.meta.dir, "..", "bin", "jarvis-restart.sh");
   const repoPath = join(import.meta.dir, "..");
   // Model per role: a dashboard/command override wins, otherwise the env value,
@@ -290,6 +293,7 @@ const main = async () => {
     fileScript,
     grafanaGetScript,
     slackReadScript,
+    artifactScript,
     restartScript,
     repoPath,
     draft,
