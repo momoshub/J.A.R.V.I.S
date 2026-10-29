@@ -11,6 +11,7 @@ import { runWorkflowTurn, WORKFLOW_MIN_ROLE } from "./workflow.ts";
 import { requestAccess } from "./accessRequests.ts";
 import { reviewRequestIn } from "../domain/reviewRequest.ts";
 import { busyNotice, nameOfRequest } from "../domain/runControl.ts";
+import { sessionThreadKey } from "../domain/agentSession.ts";
 import { DROP_ACTION, STOP_ACTION, type RunRegistry } from "./runRegistry.ts";
 import type { ThreadQueue } from "./threadQueue.ts";
 import type { UserRole } from "../domain/types.ts";
@@ -80,7 +81,10 @@ export const respond = async (
     const asked = reviewRequestIn(inbound.text);
     if (asked) return respond(deps, { ...inbound, text: `!${asked}` }, sink);
 
-    const key = `${inbound.channelId}:${inbound.threadTs ?? inbound.messageTs ?? ""}`;
+    // One function, shared with the agent-session stop handler: if the two ever
+    // built this string differently, Slack's stop button would silently find
+    // nothing to stop and only the spinner would tell anyone.
+    const key = sessionThreadKey(inbound.channelId, inbound.threadTs ?? inbound.messageTs ?? "");
     const what = nameOfRequest(inbound.text);
     // Track the turn so it can be stopped: a chat turn may run for the better
     // part of an hour, and waiting one out is not a way to correct course.

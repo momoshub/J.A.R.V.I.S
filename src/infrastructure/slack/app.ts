@@ -13,7 +13,13 @@ import { respond, type RespondDeps } from "../../application/respond.ts";
 import { decideAccessRequest } from "../../application/accessRequests.ts";
 import { APPROVE_ACTION, decideCommandApproval, REJECT_ACTION } from "../../application/commandLimits.ts";
 import { decideRunPress, DROP_ACTION, STOP_ACTION } from "../../application/runRegistry.ts";
-import { droppedNotice, stillStoppingNotice, stoppedNotice } from "../../domain/runControl.ts";
+import { droppedNotice, forHowLong, stillStoppingNotice, stoppedNotice } from "../../domain/runControl.ts";
+import {
+  AGENT_SESSION_STOPPED,
+  type AgentSessionStoppedEvent,
+  planSessionStop,
+  sessionStoppedNotice,
+} from "../../domain/agentSession.ts";
 import {
   decodeRequest,
   submitClaudeToken,
@@ -711,6 +717,50 @@ export const createSlackApp = (config: SlackAppConfig, deps: Deps) => {
   };
   app.action({ action_id: STOP_ACTION }, onRunButton as never);
   app.action({ action_id: DROP_ACTION }, onRunButton as never);
+
+  /**
+   * Slack's OWN stop button, on an agent session.
+   *
+   * Subscribing to this event is what makes that button interactive at all -
+   * without the subscription Slack draws a loading indicator nobody can press,
+   * which looks like a control and does nothing. Two things are owed on a
+   * press, and the second is the one easy to miss: stop the work, and close
+   * the streams Slack names, or the session sits in `processing` with no way
+   * out. The streams are closed either way, because a press with nothing left
+   * running still has to leave that state.
+   */
+  app.event(AGENT_SESSION_STOPPED as never, (async ({ event, client }: { event: unknown; client: unknown }) => {
+    const plan = planSessionStop(event as AgentSessionStoppedEvent);
+    if (plan.kind === "ignored") {
+      log(`agent session stop ignored: ${plan.why}`);
+      return;
+    }
+
+    const stopped = deps.runs?.stopThread(plan.key, plan.by);
+
+    const api = client as { apiCall: (method: string, args: Record<string, unknown>) => Promise<unknown> };
+    let closed = 0;
+    for (const ts of plan.streams) {
+      try {
+        await api.apiCall("chat.stopStream", { channel: plan.channel, ts });
+        closed += 1;
+      } catch (err) {
+        log(`stopStream failed for ${ts}: ${err instanceof Error ? err.message : String(err)}`);
+      }
+    }
+
+    // Only when something was actually stopped. Telling a thread "nothing was
+    // running" right after somebody tapped stop is noise - Slack's own UI has
+    // already shown them it stopped.
+    if (stopped) {
+      await deps.slack
+        ?.post(plan.channel, sessionStoppedNotice(stopped, plan.by, Date.now(), forHowLong), plan.threadTs)
+        .catch(() => undefined);
+    }
+    log(
+      `agent session stop by ${plan.by}: ${stopped ? `stopped ${stopped.id}` : "nothing running"}, ${closed}/${plan.streams.length} streams closed`,
+    );
+  }) as never);
 
   // The owner reacting on an access-request notice decides it.
   app.event("reaction_added", async ({ event }) => {
