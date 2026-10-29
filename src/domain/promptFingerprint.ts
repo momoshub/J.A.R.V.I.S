@@ -41,6 +41,7 @@ const SENTINELS = {
   logSources: ["grafana", "datadog"] as const,
   canRaiseTickets: true,
   commandBudget: 50,
+  following: true,
 };
 
 /**

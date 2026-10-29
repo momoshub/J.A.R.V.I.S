@@ -138,6 +138,8 @@ export type InboundMessage = {
   messageTs?: string;
   /** true when the command came in via a Slack slash command, not a message */
   viaSlash?: boolean;
+  /** An untagged reply under a thread the bot started; nobody asked it. */
+  following?: boolean;
 };
 
 export type HandleResult =
@@ -240,6 +242,7 @@ export const handleMessage = async (
     runScript: deps.runScript,
     runTicket,
     commandBudget: deps.commandBudget?.(),
+    following: inbound.following === true,
     commandPrefix: deps.commandPrefix,
     adapter: ctx.adapter,
     // Scoped memory resolves against who is actually here and where.

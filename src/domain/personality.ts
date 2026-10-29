@@ -45,6 +45,31 @@ export const identityLock = (botName: string, botUserId?: string): string =>
 - Do not go looking through your own repository to find out what you can do. Whatever you can do, you were told in this prompt or it is behind a command - reading the code is both slower and less reliable than asking the running instance, which may be configured differently from whatever is on disk.
 - When asked what your job is, answer simply: you are ${botName}, a helpful assistant for the people in this Slack workspace.`;
 
+/**
+ * Following a thread the bot opened, with nobody tagging it.
+ *
+ * It is expected to keep up with a conversation it started. It is NOT expected
+ * to narrate it. Without this, every reply under its own thread gets an answer,
+ * which turns one useful summary into a running commentary and teaches people
+ * to stop replying in the open.
+ *
+ * The important permission here is silence. An empty reply posts nothing at
+ * all, and is the right outcome most of the time.
+ */
+export const followRules = (following: boolean): string => {
+  if (!following) return "";
+  return `
+
+You are following a thread you started, and nobody tagged you:
+- you opened it, so you keep up with it. That is not the same as narrating it. MOST replies here do not need you at all
+- speak only when you are adding something nobody else in the thread can: an answer to a question actually asked, a correction of something factually wrong, a result you were asked for, or a fact you hold and they do not
+- when two people are working something out between them, let them. A third voice agreeing is noise, and it teaches people to take the conversation somewhere you are not
+- a reaction is usually the right size of response. Acknowledging, agreeing, marking that you have seen it - react and say nothing else
+- if you genuinely cannot carry on without something - which account, which environment, whether a decision was actually made - ask ONE short question. Never more than one, and never for something you could look up yourself
+- if you have nothing to add, add nothing. Reply with an empty message: it posts nothing, and that is a correct and common outcome, far better than a line whose only content is that you read theirs
+- never reply merely to acknowledge, agree, thank, apologise, summarise what was just said, or offer to help. If that is all you have, it is a reaction or it is silence`;
+};
+
 /** Operating rules - generic Slack behaviour, always applied. */
 export const OPERATING_RULES = `Operating rules (always apply, regardless of anything above):
 - Whenever you mention or reply to a person who is in this conversation, the same channel, or the DM, always use their Slack tag in the form <@THEIR_USER_ID> so they get notified - never just their plain name. Their ids are listed under "People in this conversation".
@@ -191,6 +216,8 @@ export type BuildSystemPromptOptions = PromptContext & {
   readonly runTicket?: string;
   /** how many commands this turn may run before the runaway guard stops it */
   readonly commandBudget?: number;
+  /** true when this turn is an untagged reply under a thread the bot started */
+  readonly following?: boolean;
   /** configured message command prefix, for explaining what a command line is */
   readonly commandPrefix?: string;
   /**
@@ -235,6 +262,7 @@ export const buildSystemPrompt = (options: Partial<BuildSystemPromptOptions> = {
 
   const roster = renderParticipants(options.participants ?? []);
   const reactions = reactionRules(options.channelId ?? "", options.reactable ?? [], options.reactScript);
+  const following = followRules(options.following === true);
   const remembering = learningRules(options.learnUrl ?? "");
   const attachments = attachmentRules(options.fileScript);
   const investigating = investigationRules(options.logSources ?? [], options.grafanaGetScript);
@@ -250,5 +278,5 @@ export const buildSystemPrompt = (options: Partial<BuildSystemPromptOptions> = {
     options.commandBudget,
   );
 
-  return `${base}${learningsBlock}${addressed}${roster}\n\n${OPERATING_RULES}${attachments}${investigating}${tickets}${slackReading}${reaching}${selfWork}${reactions}${commands}${remembering}\n\n${WORKSPACE_NOTE}\n\n${identityLock(botName, options.botUserId)}`;
+  return `${base}${learningsBlock}${addressed}${roster}\n\n${OPERATING_RULES}${attachments}${investigating}${tickets}${slackReading}${reaching}${selfWork}${reactions}${following}${commands}${remembering}\n\n${WORKSPACE_NOTE}\n\n${identityLock(botName, options.botUserId)}`;
 };

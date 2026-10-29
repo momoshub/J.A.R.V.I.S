@@ -1,5 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { couldFollowThread, mentionsBot } from "../../src/domain/threadFollow.ts";
+import { buildSystemPrompt } from "../../src/domain/personality.ts";
+import { promptFingerprint } from "../../src/domain/promptFingerprint.ts";
 
 const BOT = "UBOT";
 const reply = (over: Record<string, unknown> = {}) => ({
@@ -49,5 +51,42 @@ describe("couldFollowThread", () => {
     expect(couldFollowThread(reply({ subtype: "message_changed" }), BOT)).toBe(false);
     expect(couldFollowThread(reply({ text: "   " }), BOT)).toBe(false);
     expect(couldFollowThread(reply({ user: undefined }), BOT)).toBe(false);
+  });
+});
+
+describe("how it behaves once it is following", () => {
+  const on = buildSystemPrompt({ learnings: [], following: true });
+  const off = buildSystemPrompt({ learnings: [] });
+
+  test("silence is an explicit, permitted outcome", () => {
+    // without this it answers every reply under its own thread, which turns one
+    // useful summary into a running commentary
+    expect(on).toContain("if you have nothing to add, add nothing");
+    expect(on).toContain("posts nothing, and that is a correct and common outcome");
+  });
+
+  test("a reaction is offered as the usual size of response", () => {
+    expect(on).toContain("react and say nothing else");
+  });
+
+  test("it may ask ONE question, and not for something it could look up", () => {
+    expect(on).toContain("ask ONE short question");
+    expect(on).toContain("never for something you could look up yourself");
+  });
+
+  test("the noise replies are named and forbidden", () => {
+    expect(on).toContain("never reply merely to acknowledge, agree, thank");
+    expect(on).toContain("let them");
+  });
+
+  test("none of it applies when somebody actually addressed it", () => {
+    expect(off).not.toContain("MOST replies here do not need you");
+  });
+
+  test("the rule is in the session fingerprint, so live threads pick it up", () => {
+    const a = promptFingerprint(buildSystemPrompt as never, "persona");
+    expect(a).toMatch(/^[0-9a-f]{16}$/);
+    // rendered under the sentinels, so a change to its text moves the hash
+    expect(buildSystemPrompt({ learnings: [], following: true })).toContain("following a thread you started");
   });
 });

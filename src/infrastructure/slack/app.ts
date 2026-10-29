@@ -208,6 +208,8 @@ export type Incoming = {
   /** ts of this message itself, so the bot can react to it later. */
   messageTs: string;
   client: SlackClient;
+  /** An untagged reply under a thread this bot started. */
+  following?: boolean;
   say: (msg: { text: string; thread_ts?: string; reply_broadcast?: boolean }) => Promise<unknown>;
 };
 
@@ -264,7 +266,14 @@ export const createHandler =
     // Arm a thinking step for streamable, non-command messages. It only appears
     // if the turn is still silent a few seconds in - how long the answer takes
     // is the thing worth reassuring about, and message length never predicted it.
-    if (stream && deps.llm.stream && commandLineOf(text, config.commandPrefix) === undefined) {
+    // Not when following: nobody asked, so nobody is waiting, and a "thinking"
+    // card in a channel announces a turn that is quite likely to say nothing.
+    if (
+      stream &&
+      deps.llm.stream &&
+      !msg.following &&
+      commandLineOf(text, config.commandPrefix) === undefined
+    ) {
       stream.showThinkingAfter(config.thinkingLabel(), config.thinkingAfterMs);
     }
 
@@ -279,6 +288,7 @@ export const createHandler =
           threadTs: msg.threadTs,
           messageTs: msg.messageTs,
           viaSlash: false,
+          following: msg.following === true,
         },
         stream?.sink,
       );
@@ -837,6 +847,7 @@ export const createSlackApp = (config: SlackAppConfig, deps: Deps) => {
         threadTs: threadKeyOf(m),
         messageTs: m.ts,
         client: asClient(client),
+        following: true,
         say: say as Incoming["say"],
       });
       return;
