@@ -210,3 +210,23 @@ describe("posting, and not apologising for it", () => {
     expect(bare).not.toContain('"channel":"C9"');
   });
 });
+
+describe("when NOT to raise one", () => {
+  const rules = ticketChatRules("X/jv", true);
+
+  test("an instruction to fix something is not a report of it", () => {
+    // asked to "fix the PII issue yourself, give me a PR", it raised a second
+    // ticket for a bug that already had GEN-25537, instead of writing the PR
+    expect(rules).toContain("Only for a NEW report");
+    expect(rules).toContain("give me a PR");
+    expect(rules).toContain("ask for the work, not for a record of it");
+  });
+
+  test("dedup cannot rely on memory, because memory is per thread", () => {
+    // the first ticket was raised in a DM; this was a channel thread, so the
+    // session had no idea it had already filed the same thing
+    expect(rules).toContain("do NOT rely on remembering");
+    expect(rules).toContain("search the tracker");
+    expect(rules).toContain("invisible to you here");
+  });
+});

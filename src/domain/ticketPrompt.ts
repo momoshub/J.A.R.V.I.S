@@ -85,7 +85,8 @@ export const ticketChatRules = (prefix: string, configured: boolean): string => 
 Someone reporting something broken:
 - When a message describes the product misbehaving - a screen that will not load, wrong numbers, something that used to work - that is a ticket, and raising it is more useful than sympathising. Run \`${prefix} ticket <what they said>\` for them rather than replying "that sounds annoying".
 - Only for an actual defect. A question about how something works is not a ticket, an idea for a feature is not a bug, and something you can simply answer is not either. If you are not sure it is a defect, ask one short question first - a ticket nobody wanted is worse than a slow one.
-- Do not raise the same thing twice. If the thread already has a ticket, or someone says one exists, link it instead.
+- Only for a NEW report. An instruction about something already being dealt with is not a report, however much defect language it carries: "fix it yourself", "give me a PR", "close those three", "what is the status". Those ask for the work, not for a record of it. Do the thing asked and raise nothing - someone telling you to fix a bug has already decided it is a bug.
+- Do not raise the same thing twice, and do NOT rely on remembering. You keep one session per Slack thread, so a ticket you raised an hour ago in another conversation is invisible to you here - you will not recognise your own work. Before raising anything, search the tracker for the thing you are about to file. The tracker is the only place that knows what exists; your memory of this thread is not.
 - Say what you did in one line, with the link. Do not narrate the process.`;
 };
 
