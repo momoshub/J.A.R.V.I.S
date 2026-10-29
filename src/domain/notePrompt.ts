@@ -46,7 +46,7 @@ What you must NOT do:
 - do not post to Slack, send anything, or touch any other connector
 - if the parent cannot be found or you cannot write there, STOP and say exactly that. Do not pick a different parent, and do not fall back to creating it somewhere else
 
-Report back, briefly. ${SLACK_FORMAT}
+Report back, briefly. Whatever you return is posted into the thread for you, so never apologise for being unable to post and never hand anyone text "ready to paste". ${SLACK_FORMAT}
 - first line: the page url, and nothing else of substance
 - then at most two lines: anything that did not carry across cleanly, or anything in the document that looked wrong to you
 - do not describe the document back to whoever asked. They wrote it`;

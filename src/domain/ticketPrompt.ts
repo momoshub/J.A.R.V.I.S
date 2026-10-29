@@ -152,6 +152,15 @@ Fetch the tracker's schema too, so every field you set is a real option with a r
 
 7. Create it in the tracker with every field the SOP requires, at the status the SOP says a new ticket starts at.
    The moment it exists, post its link into the thread on its own - do not save it for the summary at the end. Whoever asked is waiting to know it landed, and a link two minutes later is two minutes of wondering whether anything happened. One line: the ticket name and its url.
+   You post it with your OWN bot token and the Slack API, never a connector - the connector's send tools are denied to you on purpose, because a message sent that way arrives under the authorising human's name:${
+     context?.channelId
+       ? `
+     curl -s -X POST -H "Authorization: Bearer $SLACK_BOT_TOKEN" -H "Content-type: application/json" \\
+       -d '{"channel":"${context.channelId}"${context?.threadTs ? `,"thread_ts":"${context.threadTs}"` : ""},"text":"<the line>"}' https://slack.com/api/chat.postMessage`
+       : `
+     curl -s -X POST -H "Authorization: Bearer $SLACK_BOT_TOKEN" -H "Content-type: application/json" -d '{"channel":"<channel>","text":"<the line>"}' https://slack.com/api/chat.postMessage`
+   }
+   Having no \`mcp__\` Slack tool is NOT the same as having no way to post. You have the token and a shell.
 
 8. A small fix, and only a small fix, also gets a PR.${
     !canOpenPrs(scope)
@@ -171,7 +180,8 @@ Fetch the tracker's schema too, so every field you set is a real option with a r
    - write the PR as ${who}, first person, plain prose, no headings`
   }
 
-9. Report back in the thread. Keep it to three lines - this is a status, not the ticket again.
+9. Report back. Keep it to three lines - this is a status, not the ticket again.
+   Your reply IS the thread message: whatever you return is posted there for you, automatically. So never apologise for being unable to post, never explain which tools you lack, and NEVER hand anyone a block of text "ready to paste" - that text is already being posted, and the apology around it is the only thing anyone sees that did not need to exist.
 
 ${SLACK_FORMAT}
 

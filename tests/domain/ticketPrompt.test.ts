@@ -180,3 +180,33 @@ describe("ticketChatRules", () => {
     expect(ticketChatRules("X/jv", false)).toBe("");
   });
 });
+
+describe("posting, and not apologising for it", () => {
+  const p = ticketPrompt("it broke", "Bot", { tracker: "https://notion.so/t" }, { channelId: "C9", threadTs: "1.2" });
+
+  test("it is told HOW to post the link, with its own token", () => {
+    // it was told to post the link and never told how; the connector's send
+    // tools are denied, so it concluded it had no way to post at all
+    expect(p).toContain("chat.postMessage");
+    expect(p).toContain("$SLACK_BOT_TOKEN");
+    expect(p).toContain('"channel":"C9"');
+    expect(p).toContain('"thread_ts":"1.2"');
+  });
+
+  test("and that a missing connector tool is not the same as no way to post", () => {
+    expect(p).toContain("NOT the same as having no way to post");
+  });
+
+  test("its reply is delivered for it, so no apologies and no paste-ready blocks", () => {
+    // every run ended with "I couldn't post to the Slack thread... here is the
+    // text ready to paste" - posted into the thread, around the text itself
+    expect(p).toContain("posted there for you");
+    expect(p).toContain('"ready to paste"');
+  });
+
+  test("with no channel known it still gets the shape of the call", () => {
+    const bare = ticketPrompt("it broke", "Bot", { tracker: "https://notion.so/t" });
+    expect(bare).toContain("chat.postMessage");
+    expect(bare).not.toContain('"channel":"C9"');
+  });
+});
