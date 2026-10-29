@@ -32,6 +32,8 @@ export const SETTING_KEYS = {
   notionParent: "notion_parent",
   /** Who may publish a page into Notion with the host's identity. */
   noteMinRole: "note_min_role",
+  /** Answer replies under a thread the bot itself started ("off" to disable). */
+  followOwnThreads: "follow_own_threads",
 } as const;
 
 /** Model override for one role, e.g. `model:pal`. Empty means "use the default". */

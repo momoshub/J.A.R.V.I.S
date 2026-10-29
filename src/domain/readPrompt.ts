@@ -45,12 +45,13 @@ ${req.target}
 
 ${wanted}
 
-You have the account's connectors in this session - Slack, Notion and whatever else the account has authorised - and they see what the authorising human sees, including pages and conversations your own bot token cannot touch. That is the whole reason this runs as its own job.
+You have the account's connectors in this session - Slack, Notion, Google Drive and Docs, Calendar, Gmail, and whatever else the account has authorised - and they see what the authorising human sees, including pages and conversations your own bot token cannot touch. That is the whole reason this runs as its own job.
 
 How:
 1. Resolve what you were given, whatever kind of thing it is.
    - a Slack permalink carries the channel id and the message ts (\`/archives/<channel>/p<ts>\`, where the ts needs a decimal point inserted before the last six digits); a \`#channel\` reference needs looking up by name
    - a Notion url carries the page id as the trailing 32 hex characters; fetch it with the Notion connector
+   - Google is here too: Docs, Drive, Sheets, Slides, Calendar and Gmail. Meeting notes usually live there as Drive documents titled "<meeting> - Notes by Gemini", so a request for "what we decided in standup" is a Drive SEARCH, not a missing link. You were given a description rather than a url - find it, say which document answered you, and link it
 ${
     req.artifactScript
       ? `   - a \`claude.ai/artifact/...\` link is a Claude artifact. You cannot read it with the connectors and you cannot fetch it over the web; run this instead, which can:

@@ -52,6 +52,7 @@ import {
 import { annotateMentions, extractMentionIds } from "../../domain/mentions.ts";
 import { isTimeout } from "../../domain/threadSession.ts";
 import { toMrkdwn } from "../../domain/slackFormat.ts";
+import { couldFollowThread } from "../../domain/threadFollow.ts";
 import { createSlackStream, type Streamer } from "./stream.ts";
 import {
   CONNECTION_GRACE_MS,
@@ -786,9 +787,60 @@ export const createSlackApp = (config: SlackAppConfig, deps: Deps) => {
   });
 
   // Direct messages -> reply inline. Ignore bot echoes and non-DM channels.
+  /**
+   * Who wrote a thread's parent, cached per thread.
+   *
+   * One lookup per thread, not per message: a busy thread would otherwise
+   * spend a Slack call on every line to re-learn something that cannot change.
+   */
+  const parentAuthors = new Map<string, string | undefined>();
+  const threadParentAuthor = async (
+    client: SlackClient,
+    channel: string,
+    threadTs: string,
+  ): Promise<string | undefined> => {
+    const key = `${channel}:${threadTs}`;
+    if (parentAuthors.has(key)) return parentAuthors.get(key);
+    let author: string | undefined;
+    try {
+      const res = (await (client as unknown as {
+        conversations: { replies: (a: unknown) => Promise<{ messages?: { user?: string }[] }> };
+      }).conversations.replies({ channel, ts: threadTs, limit: 1 })) ?? {};
+      author = res.messages?.[0]?.user;
+    } catch {
+      // Cannot see the thread: treat it as not ours and stay quiet.
+    }
+    // Cached either way, including the failure - retrying on every message in
+    // a thread we cannot read is a loop, not a recovery.
+    parentAuthors.set(key, author);
+    if (parentAuthors.size > 500) {
+      const oldest = parentAuthors.keys().next().value;
+      if (oldest) parentAuthors.delete(oldest);
+    }
+    return author;
+  };
+
   app.message(async ({ message, client, say, context }) => {
     const m = message as RawMessage & { channel: string; ts: string };
-    if (!shouldHandleDm(m)) return;
+    if (!shouldHandleDm(m)) {
+      // A reply under a thread this bot opened is addressed to it, tag or no
+      // tag: it started the conversation, so it is expected to keep up with it.
+      if (deps.settings?.get("follow_own_threads")?.trim().toLowerCase() === "off") return;
+      const me = await deps.slack?.botUserId().catch(() => undefined);
+      if (!couldFollowThread(m, me) || !me) return;
+      if ((await threadParentAuthor(asClient(client), m.channel, m.thread_ts!)) !== me) return;
+      await handle({
+        channelId: m.channel,
+        userId: m.user!,
+        teamId: context.teamId,
+        text: m.text!,
+        threadTs: threadKeyOf(m),
+        messageTs: m.ts,
+        client: asClient(client),
+        say: say as Incoming["say"],
+      });
+      return;
+    }
     await handle({
       channelId: m.channel,
       userId: m.user!,
