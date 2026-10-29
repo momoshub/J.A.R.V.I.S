@@ -13,6 +13,7 @@
 import { buildSystemPrompt, DEFAULT_BOT_NAME } from "../domain/personality.ts";
 import { refinePrompt } from "../domain/refinePrompt.ts";
 import { notePrompt } from "../domain/notePrompt.ts";
+import { closePrompt } from "../domain/closePrompt.ts";
 import { adapterRules, isBlank } from "../domain/adapter.ts";
 import { ALWAYS_ON_BUDGET, describeCheck } from "../domain/adapterCheck.ts";
 import {
@@ -168,6 +169,8 @@ const TICKET_TIMEOUT_MS = 900_000;
 const REFINE_TIMEOUT_MS = 900_000;
 /** Publishing reads a file and builds a page; it is not a research task. */
 const NOTE_TIMEOUT_MS = 300_000;
+/** Closing reads the page and the tracker schema, then sets one property. */
+const CLOSE_TIMEOUT_MS = 300_000;
 /** an investigation walks logs, RUM and traces across environments. */
 const INVESTIGATE_TIMEOUT_MS = 900_000;
 /** reading a conversation is bounded work, but a busy channel is a lot of it. */
@@ -834,6 +837,57 @@ export const COMMANDS: readonly CommandDef[] = [
       if (!Number.isInteger(id)) return `Which one? \`${prefix} unlearn <id>\` (see \`${prefix} learnings\`)`;
       deps.learnings.remove(id);
       return `Forgotten learning #${id}.`;
+    },
+  },
+  {
+    name: "close",
+    aliases: ["resolve"],
+    // A tool, like `note`: the brain closes a ticket mid-job and carries on.
+    quiet: true,
+    // Closing someone's ticket in the team tracker is an admin act. It is one
+    // reversible property, which is why it is not owner-only.
+    minRole: "admin",
+    usage: "<ticket url or id> <why>",
+    summary: "close a ticket in the tracker, recording who decided and why",
+    run: async (ctx) => {
+      const { deps, actor, args, rest, prefix, reply } = ctx;
+      const ref = (args[0] ?? "").trim();
+      const tracker = deps.settings?.get(SETTING_KEYS.ticketTracker)?.trim() || "";
+      if (!ref) return `Close what? \`${prefix} close <ticket url or id> <why>\``;
+      if (!tracker) return `No ticket tracker is configured, so I do not know which pages are ours to close.`;
+      const why = rest.slice(rest.indexOf(ref) + ref.length).trim();
+      if (!why) return `Why is it being closed? \`${prefix} close ${ref} <why>\` - a close with no reason is the same as one by accident.`;
+      if (!deps.llm) return "My brain is not wired up right now.";
+
+      const full = deps.toolPolicy?.("owner") ?? { skipPermissions: true };
+      const name = botNameOf(deps);
+      const params = {
+        system: closePrompt({ ref, why, tracker, askedBy: actor.slackId }, name),
+        messages: [{ role: "user" as const, content: `close ${ref}: ${why}` }],
+        assistantName: name,
+        policy: { ...full, timeoutMs: CLOSE_TIMEOUT_MS },
+        // The tracker lives behind the account's Notion connector, which a
+        // setup token does not carry.
+        useHostLogin: true,
+      };
+
+      if (!reply) {
+        const out = await deps.llm.complete(params);
+        return out.trim() || "I could not close that one.";
+      }
+      await reply(`🗂️ closing ${ref} for <@${actor.slackId}>`);
+      let out = "";
+      try {
+        out = deps.llm.stream ? await deps.llm.stream(params, () => {}) : await deps.llm.complete(params);
+      } catch (err) {
+        if (!isAuthFailure(err)) throw err;
+        await reply(
+          "🔑 I could not close it - the login on my host has lapsed, and the tracker comes with it. Someone with access to the machine needs to run `claude` there and sign in again.",
+        );
+        return "";
+      }
+      await reply(out.trim() || "I could not close that one.");
+      return "";
     },
   },
   {

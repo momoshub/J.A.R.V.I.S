@@ -81,3 +81,39 @@ describe("note", () => {
     expect(isQuietCommand("note /tmp/x.md")).toBe(true);
   });
 });
+
+describe("close", () => {
+  test("it refuses without a tracker configured", async () => {
+    expect(await run(deps(), "close GEN-1 because reasons")).toContain("which pages are ours to close");
+  });
+
+  test("a close with no reason is refused", async () => {
+    const d = deps();
+    d.settings?.set(SETTING_KEYS.ticketTracker, "https://notion.so/t");
+    expect(await run(d, "close GEN-1")).toContain("same as one by accident");
+  });
+
+  test("it runs on the HOST login and carries the tracker", async () => {
+    const seen: { useHostLogin?: boolean; system?: string }[] = [];
+    const llm: LlmPort = {
+      complete: async (p) => {
+        seen.push({ useHostLogin: (p as { useHostLogin?: boolean }).useHostLogin, system: p.system });
+        return "GEN-1 -> Obsolete";
+      },
+    };
+    const d = deps({ llm });
+    d.settings?.set(SETTING_KEYS.ticketTracker, "https://notion.so/t");
+
+    const out = await run(d, "close GEN-1 safe as deployed");
+    expect(out).toContain("Obsolete");
+    expect(seen[0]?.useHostLogin).toBe(true);
+    expect(seen[0]?.system).toContain("https://notion.so/t");
+    expect(seen[0]?.system).toContain("safe as deployed");
+  });
+
+  test("closing the team's tracker is an admin act", async () => {
+    const d = deps();
+    d.settings?.set(SETTING_KEYS.ticketTracker, "https://notion.so/t");
+    expect(await run(d, "close GEN-1 why", actor("executer"))).toContain("admin");
+  });
+});
