@@ -56,7 +56,17 @@ const deps = (over: Partial<CommandDeps> = {}): CommandDeps => {
   };
 };
 
+/** A person typing it: `respond` wires a reply, so a menu is worth posting. */
 const run = (d: CommandDeps, line: string, who = actor()) =>
+  dispatchCommand(d, who, "C1", line, {
+    prefix: "X/jv",
+    slash: "/jv",
+    threadTs: "99.1",
+    reply: async () => {},
+  });
+
+/** The brain asking itself what it can run: no reply, nothing posted. */
+const runQuiet = (d: CommandDeps, line: string, who = actor()) =>
   dispatchCommand(d, who, "C1", line, { prefix: "X/jv", slash: "/jv", threadTs: "99.1" });
 
 describe("help as a menu", () => {
@@ -112,6 +122,24 @@ describe("help as a menu", () => {
     const posted: Posted[] = [];
     await run(deps({ slack: fakeSlack(posted) }), "menu");
     expect(posted.length).toBe(1);
+  });
+
+  test("the brain gets the list back and posts NOTHING", async () => {
+    // it is told never to read its own source to find out what it can do, so
+    // it runs `help` - and the whole command list landed in the middle of a
+    // conversation, twice, with a stray pong after it
+    const posted: Posted[] = [];
+    const out = await runQuiet(deps({ slack: fakeSlack(posted) }), "help");
+
+    expect(posted.length).toBe(0);
+    expect(out).toContain("ping");
+  });
+
+  test("help is a quiet command", async () => {
+    const { isQuietCommand } = await import("../../src/application/commands.ts");
+    expect(isQuietCommand("help")).toBe(true);
+    expect(isQuietCommand("ping")).toBe(true);
+    expect(isQuietCommand("whoami")).toBe(true);
   });
 
   test("with no Slack to post into, the plain list still works", async () => {

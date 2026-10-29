@@ -396,19 +396,28 @@ export const COMMANDS: readonly CommandDef[] = [
   {
     name: "help",
     trivial: true,
+    // The brain runs this for ITSELF - it is told never to read its own source
+    // to find out what it can do, so `help` is the answer. Nobody else wants
+    // the whole command list dropped into their thread when it does. Quiet
+    // sends the list back to the brain; a person typing it still gets the menu,
+    // because `respond` wires a reply for a message command.
+    quiet: true,
     // `menu` because that is the word people reach for once it IS one.
     aliases: ["commands", "menu", "?"],
     minRole: "pal",
     usage: "",
     summary: "list the commands you can run",
-    run: async ({ deps, actor, channelId, threadTs, prefix, slash }) => {
+    run: async ({ deps, actor, channelId, threadTs, prefix, slash, reply }) => {
       // A menu where there is a Slack to put one in, the plain list everywhere
       // else - the dashboard, a test, a transport with no interactivity. The
       // list is still the fallback rather than an error, because help that
       // fails is worse than help that is merely old-fashioned.
       const menu = buildCommandMenu(listCommandInfo(), actor.role);
       const listed = renderHelp(actor.role, prefix, slash);
-      if (deps.slack && channelId && menu.groups.length > 0) {
+      // Only a person gets a menu. Without a reply wired this is the brain
+      // asking itself what it can run, and a picker posted into the thread
+      // would be the noise this command is quiet to avoid.
+      if (reply && deps.slack && channelId && menu.groups.length > 0) {
         const posted = await deps.slack
           .postMenu(
             channelId,
@@ -453,6 +462,8 @@ export const COMMANDS: readonly CommandDef[] = [
   {
     name: "ping",
     trivial: true,
+    // The brain pings to check itself; a pong in the thread is pure noise. A person typing it still sees the answer.
+    quiet: true,
     minRole: "pal",
     usage: "",
     summary: "check I am awake",
@@ -461,6 +472,8 @@ export const COMMANDS: readonly CommandDef[] = [
   {
     name: "whoami",
     trivial: true,
+    // Asked by the brain to work out who it is talking to. A person typing it still sees the answer.
+    quiet: true,
     minRole: "pal",
     usage: "",
     summary: "show your access level",
