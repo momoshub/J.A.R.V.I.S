@@ -143,7 +143,10 @@ export const respond = async (
       // just sent a follow-up actually wants: end the one in the way, or take
       // this one back. Doing nothing still queues it, which is the old
       // behaviour and the right default.
-      await announceBusy(deps, inbound, key, tracked ? runId : undefined);
+      // Not when following: nobody asked, so nobody is waiting on a place in
+      // the queue, and "yours is next" in a channel is noise about the bot's
+      // own scheduling rather than anything the thread needs.
+      if (!inbound.following) await announceBusy(deps, inbound, key, tracked ? runId : undefined);
     }
     return queue.run(key, chatTurn);
   }

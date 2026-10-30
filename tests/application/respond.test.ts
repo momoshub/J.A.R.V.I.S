@@ -242,3 +242,15 @@ describe("respond", () => {
     expect(deps.users.get("UNEW")?.role).toBe("pal");
   });
 });
+
+describe("the busy notice and following", () => {
+  test("a followed turn does not announce its place in the queue", async () => {
+    // "still working on X - yours is next" went into a public channel about a
+    // message nobody had addressed to the bot
+    const { couldFollowThread } = await import("../../src/domain/threadFollow.ts");
+    expect(couldFollowThread({ user: "U1", text: "hi", channel_type: "channel", ts: "2", thread_ts: "1" }, "UBOT")).toBe(true);
+
+    const src = await Bun.file("src/application/respond.ts").text();
+    expect(src).toContain("if (!inbound.following) await announceBusy");
+  });
+});

@@ -58,11 +58,20 @@ describe("how it behaves once it is following", () => {
   const on = buildSystemPrompt({ learnings: [], following: true });
   const off = buildSystemPrompt({ learnings: [] });
 
+  test("announcing the silence is forbidden, by name", () => {
+    // it posted "I'm staying quiet here: ... a reaction is enough" into a
+    // public channel - a message whose entire content was its decision not to
+    // send a message, which is worse than simply answering
+    expect(on).toContain("never ANNOUNCE the silence");
+    expect(on).toContain("staying quiet here");
+    expect(on).toContain("if the only content of your reply is about whether to reply");
+  });
+
   test("silence is an explicit, permitted outcome", () => {
     // without this it answers every reply under its own thread, which turns one
     // useful summary into a running commentary
-    expect(on).toContain("if you have nothing to add, add nothing");
-    expect(on).toContain("posts nothing, and that is a correct and common outcome");
+    expect(on).toContain("add NOTHING");
+    expect(on).toContain("no text, not one word");
   });
 
   test("a reaction is offered as the usual size of response", () => {
