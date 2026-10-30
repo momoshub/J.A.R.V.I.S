@@ -215,7 +215,7 @@ describe("buildSystemPrompt", () => {
       runTicket: "tkt",
     });
     expect(p).toContain("that IS the command. Run it");
-    expect(p).toContain("Do NOT reimplement what it does");
+    expect(p).toContain("Do not QUIETLY reimplement what it does");
     // the reason matters: hand-rolling goes around the role gate and the audit log
     expect(p).toContain("skips the role check, the allowance, the audit log");
   });
@@ -291,6 +291,40 @@ describe("the command budget", () => {
     });
     expect(prompt).toContain("shell loop");
     expect(prompt).not.toContain("runaway guard stops it");
+  });
+});
+
+describe("being asked for the raw path is not a loophole", () => {
+  const prompt = buildSystemPrompt({
+    learnings: [],
+    runScript: "/run.sh",
+    runUrl: "http://loopback/run",
+    runTicket: "tk",
+    commandPrefix: "//bot",
+  });
+
+  test("the ban is on substituting your own version UNASKED", () => {
+    // asked by the owner for 23 reactions "not via the command", it refused
+    // twice - but the rule's own reasons (role check, allowance) were already
+    // satisfied by an owner, so only the audit log was ever at stake
+    expect(prompt).toContain("Do not QUIETLY reimplement");
+    expect(prompt).toContain("nobody asked you to skip any of that");
+  });
+
+  test("an explicit request turns on the role, not on the rule", () => {
+    expect(prompt).toContain("whether they could have run the command themselves");
+    expect(prompt).toContain("If their role allows it, do what they asked");
+    expect(prompt).toContain("say which role does");
+  });
+
+  test("a second ask does not get the same refusal", () => {
+    expect(prompt).toContain("Never meet a second ask with the same refusal");
+  });
+
+  test("it never tells anyone to go and edit its own rules", () => {
+    // it offered exactly that, then refused to make the edit when asked -
+    // proposing a remedy and declining to perform it
+    expect(prompt).toContain("never offer \"edit the rule in my source and I'll comply\"");
   });
 });
 
