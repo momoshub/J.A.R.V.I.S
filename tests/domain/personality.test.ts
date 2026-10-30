@@ -254,7 +254,7 @@ describe("language follows the room, not the person", () => {
       base: "You are a cheerful bot. Reply in the same language the person used.",
     });
     expect(withOwnPersona).toContain("language of the CONVERSATION, not of the person");
-    expect(withOwnPersona).toContain("even for the line where you are addressing someone");
+    expect(withOwnPersona).toContain("even when you are addressing someone you usually speak another language with");
   });
 
   test("and why, plus the DM carve-out", () => {
@@ -291,5 +291,26 @@ describe("the command budget", () => {
     });
     expect(prompt).toContain("shell loop");
     expect(prompt).not.toContain("runaway guard stops it");
+  });
+});
+
+describe("the language rule points both ways", () => {
+  const prompt = buildSystemPrompt({ learnings: [] });
+
+  test("it does not only teach the English direction", () => {
+    // written to fix "Vietnamese in an English thread", the rule illustrated
+    // only that case - so in an all-Vietnamese thread, asked to explain
+    // something to a colleague, it answered in English
+    expect(prompt).toContain("BOTH directions");
+    expect(prompt).toContain("if the thread is in another language, answer in that language");
+  });
+
+  test("it names the actual mistake rather than a preferred language", () => {
+    expect(prompt).toContain("Switching because of WHO you are talking to is the mistake");
+    expect(prompt).toContain("whichever way it points");
+  });
+
+  test("a one-to-one DM still follows the person", () => {
+    expect(prompt).toContain("A one-to-one DM has a single reader");
   });
 });
