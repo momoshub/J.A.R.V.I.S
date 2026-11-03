@@ -39,8 +39,10 @@ export const THINKING_AFTER_MS = 5_000;
  * minutes to produce never arrives at all. `msg_too_long` appears dozens of
  * times in this instance's log.
  *
- * So a long reply continues in a second message instead. The budget leaves
- * headroom because task cards share the message's length allowance.
+ * So a long reply continues in a second message instead. Task cards share the
+ * same allowance, so they are counted too: a tool-heavy turn with a one-line
+ * status hit the wall on cards alone, froze the status line, and the answer
+ * never came.
  */
 export const STREAM_CHAR_BUDGET = 11_000;
 
@@ -111,9 +113,42 @@ export const createSlackStream = (
     return streamer;
   };
 
+  /** Close the current message so the next append opens a fresh one. */
+  const rollover = async (): Promise<void> => {
+    if (!streamer) return;
+    try {
+      await streamer.stop();
+    } catch {
+      // nothing more to do about it; the continuation still goes out
+    }
+    streamer = undefined;
+    used = 0;
+  };
+
+  /**
+   * Append to the current message, rolling over first when `cost` would not
+   * fit. If Slack still says `msg_too_long` - its accounting is not ours - roll
+   * over and try once more rather than breaking the stream for the whole turn.
+   */
+  const send = async (args: Parameters<Streamer["append"]>[0], cost: number): Promise<void> => {
+    if (used > 0 && used + cost > STREAM_CHAR_BUDGET) await rollover();
+    used += cost;
+    try {
+      await ensure().append(args);
+    } catch (e) {
+      if (!errMsg(e).includes("msg_too_long") || used === cost) throw e;
+      await rollover();
+      used = cost;
+      await ensure().append(args);
+    }
+  };
+
+  /** What a card costs against the allowance: its serialised size, a safe overestimate. */
+  const cardCost = (chunk: TaskUpdateChunk): number => JSON.stringify(chunk).length;
+
   const task = (chunk: TaskUpdateChunk) => {
-    const s = ensure();
-    enqueue(() => s.append({ chunks: [chunk] }));
+    ensure();
+    enqueue(() => send({ chunks: [chunk] }, cardCost(chunk)));
   };
 
   /**
@@ -128,23 +163,11 @@ export const createSlackStream = (
     enqueue(async () => {
       let rest = text;
       while (rest) {
-        if (used >= STREAM_CHAR_BUDGET && streamer) {
-          // Close this message and continue in the next one, rather than
-          // throwing away everything the turn has to say.
-          try {
-            await streamer.stop();
-          } catch {
-            // nothing more to do about it; the continuation still goes out
-          }
-          streamer = undefined;
-          used = 0;
-        }
+        if (used >= STREAM_CHAR_BUDGET) await rollover();
         const room = STREAM_CHAR_BUDGET - used;
         const piece = rest.length <= room ? rest : rest.slice(0, room);
         rest = rest.slice(piece.length);
-        const s = ensure();
-        used += piece.length;
-        await s.append({ markdown_text: piece });
+        await send({ markdown_text: piece }, piece.length);
       }
     });
   };

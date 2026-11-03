@@ -93,7 +93,9 @@ import { forHowLong, stoppedNotice } from "../domain/runControl.ts";
 import type { RunRegistry } from "./runRegistry.ts";
 import type { ThreadSessionRepo } from "../infrastructure/db/threadSessionRepo.ts";
 import type { AllowedUser, PromptContext, UserRole } from "../domain/types.ts";
-import type { ToolPolicy } from "../domain/toolPolicy.ts";
+import { NO_TOOLS, type ToolPolicy } from "../domain/toolPolicy.ts";
+import { btwRules } from "../domain/btwPrompt.ts";
+import { buildContextWindow } from "../domain/conversation.ts";
 import type { Clock, LlmPort } from "./ports.ts";
 import type { SlackAdminPort } from "./slackAdmin.ts";
 import type { GitHubPort } from "./github.ts";
@@ -184,6 +186,14 @@ const INVESTIGATE_TIMEOUT_MS = 900_000;
 const FANOUT_TIMEOUT_MS = 2_700_000;
 /** reading a conversation is bounded work, but a busy channel is a lot of it. */
 const READ_TIMEOUT_MS = 600_000;
+/**
+ * A side question has no tools and is told to answer in two sentences, so it
+ * is over in seconds. A minute is already generous, and the point of the
+ * command is that it comes back while the real work is still going.
+ */
+const BTW_TIMEOUT_MS = 90_000;
+/** How much of the thread a side question is shown. Context, not a transcript. */
+const BTW_WINDOW = 12;
 
 /** Public metadata for one command, for the dashboard. */
 export type CommandInfo = {
@@ -591,6 +601,51 @@ export const COMMANDS: readonly CommandDef[] = [
         bill: { actor: actor.slackId, kind: "ask", channel: channelId },
       });
       return reply.trim() || "I do not have anything useful to add there.";
+    },
+  },
+  {
+    name: "btw",
+    aliases: ["side"],
+    minRole: "pal",
+    usage: "<question>",
+    summary: "a quick side question - answered without disturbing the work in this thread",
+    run: async ({ deps, actor, channelId, threadTs, rest, prefix }) => {
+      const question = rest.trim();
+      if (!question) return `What is the side question? \`${prefix} btw <question>\``;
+      if (!deps.llm) return "My brain is not wired up right now.";
+      const ctx = deps.promptContext?.() ?? { learnings: [] };
+      // Read the thread, do NOT join it: stored history, never the session.
+      // Resuming would put the aside into the context the real work runs in,
+      // which is the one thing this command exists to avoid.
+      const history = threadTs
+        ? deps.messages.recentForThread(channelId, threadTs, BTW_WINDOW)
+        : deps.messages.recentForChannel(channelId, BTW_WINDOW);
+      const system =
+        buildSystemPrompt({ botName: ctx.botName, base: ctx.base, learnings: ctx.learnings }) + btwRules();
+      // No tools, by DENIAL. An allow-list pre-approves what is on it and does
+      // not refuse what is off it (measured), so an empty allow-list would be
+      // no restriction at all - and the running turn shares this machine.
+      const sandbox = deps.toolPolicy?.("pal", channelId);
+      const policy: ToolPolicy = {
+        skipPermissions: false,
+        disallowedTools: NO_TOOLS,
+        timeoutMs: BTW_TIMEOUT_MS,
+        ...(sandbox?.cwd ? { cwd: sandbox.cwd } : {}),
+      };
+      const reply = await deps.llm.complete({
+        system,
+        messages: [
+          ...buildContextWindow(history, BTW_WINDOW),
+          { role: "user" as const, content: question, speakerId: actor.slackId },
+        ],
+        assistantName: ctx.botName,
+        policy,
+        oauthToken: tokenFor(deps, actor),
+        bill: { actor: actor.slackId, kind: "btw", channel: channelId },
+      });
+      // Nothing is appended to `messages` on the way out, so the thread's next
+      // real turn never sees this exchange in its unseen turns.
+      return reply.trim() || "Nothing useful to add on that one.";
     },
   },
   {

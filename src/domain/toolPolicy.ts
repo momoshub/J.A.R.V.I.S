@@ -87,6 +87,30 @@ export const ALWAYS_DISALLOW: readonly string[] = [
   "Bash(aws cloudwatch:*)",
 ];
 
+/**
+ * Tools a side question may use: none.
+ *
+ * It has to be a DENY list. `--allowedTools` pre-approves what is on it and
+ * does NOT restrict what is off it - measured against this CLI with the exact
+ * flags a `pal` turn is given: a bare `uname -n` ran, returned the real
+ * hostname, and reported no permission denial, despite `Bash` appearing in the
+ * allow-list only as specific `Bash(gh ...)` patterns. `--disallowedTools` is
+ * the lever that actually refuses (same measurement: zero tool calls, and the
+ * model itself says it has no Bash tool).
+ *
+ * Checking which tools the model SAYS it has is not a test, and neither is
+ * reading an answer it could have fabricated - the first version of this
+ * measurement asked for a string that was already in the prompt, so the model
+ * simply wrote it back and looked like it had run the command. Count the
+ * `tool_use` blocks.
+ */
+export const NO_TOOLS: readonly string[] = [
+  "Bash", "Task", "Agent",
+  "Read", "Write", "Edit", "MultiEdit", "NotebookEdit", "NotebookRead",
+  "Glob", "Grep", "LS", "TodoWrite",
+  "WebFetch", "WebSearch",
+];
+
 /** Additionally denied to sandboxed roles: writes and secret reads. */
 export const SANDBOX_DISALLOW: readonly string[] = [
   ...ALWAYS_DISALLOW,

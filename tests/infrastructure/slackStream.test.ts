@@ -274,6 +274,61 @@ describe("the 12,000 character wall", () => {
   });
 });
 
+describe("task cards against the wall", () => {
+  /** Slack counts cards toward the same 12,000 as text. */
+  const multi = (cap = 12_000) => {
+    const messages: { size: number; stopped: boolean }[] = [];
+    const make = (): Streamer => {
+      const m = { size: 0, stopped: false };
+      messages.push(m);
+      return {
+        append: async (a) => {
+          const add = (a.markdown_text?.length ?? 0) + (a.chunks ? JSON.stringify(a.chunks).length : 0);
+          if (m.size + add > cap) throw new Error("An API error occurred: msg_too_long");
+          m.size += add;
+        },
+        stop: async () => {
+          m.stopped = true;
+        },
+      };
+    };
+    return { make, messages };
+  };
+
+  test("a tool-heavy turn rolls over instead of breaking the stream", async () => {
+    const f = multi();
+    const s = createSlackStream(f.make);
+    s.sink({ type: "text", delta: "digging in" });
+    for (let i = 0; i < 60; i++) {
+      s.sink({ type: "tool", id: `t${i}`, title: "run: query", details: "q".repeat(400), status: "in_progress" });
+    }
+    s.sink({ type: "text", delta: "the answer" });
+    const ok = await s.finish();
+
+    expect(ok).toBe(true);
+    expect(f.messages.length).toBeGreaterThan(1);
+    expect(f.messages.every((m) => m.stopped)).toBe(true);
+  });
+
+  test("a msg_too_long Slack counts differently is retried in a fresh message", async () => {
+    // a tighter cap than our budget: our arithmetic says it fits, Slack disagrees
+    const f = multi(5_000);
+    const s = createSlackStream(f.make);
+    for (let i = 0; i < 8; i++) s.sink({ type: "text", delta: "x".repeat(1000) });
+    const ok = await s.finish();
+
+    expect(ok).toBe(true);
+    expect(f.messages.reduce((n, m) => n + m.size, 0)).toBe(8_000);
+  });
+
+  test("a payload too big even for a fresh message still fails cleanly", async () => {
+    const f = multi(100);
+    const s = createSlackStream(f.make);
+    s.sink({ type: "text", delta: "x".repeat(500) });
+    expect(await s.finish()).toBe(false);
+  });
+});
+
 describe("abandoning a turn", () => {
   test("an armed placeholder never fires once the turn is abandoned", async () => {
     // a queued or dropped message used to leave the timer running, and it

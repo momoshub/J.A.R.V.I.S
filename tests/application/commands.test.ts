@@ -371,6 +371,55 @@ describe("dispatchCommand", () => {
     expect(out).toBe("drafted answer");
   });
 
+  test("btw answers from the thread without joining it", async () => {
+    const deps = build();
+    deps.messages.append(
+      { channelId: "C1", slackUserId: "U1", role: "user", content: "we are migrating the orders table", slackTs: "1.1", threadTs: "9.9" },
+      1,
+    );
+    let seen: { system: string; messages: { content: string }[]; policy?: { disallowedTools?: readonly string[] }; session?: unknown } | undefined;
+    const llm: LlmPort = {
+      complete: async (p) => {
+        seen = p as never;
+        return "short answer";
+      },
+    };
+    const out = await dispatchCommand({ ...deps, llm }, actor(), "C1", "btw what is a CTE again?", {
+      threadTs: "9.9",
+    });
+
+    expect(out).toBe("short answer");
+    // it READ the thread
+    expect(seen?.messages.some((m) => m.content.includes("migrating the orders table"))).toBe(true);
+    expect(seen?.messages[seen.messages.length - 1]?.content).toBe("what is a CTE again?");
+    // and did not join it: no session to resume, nothing written back
+    expect(seen?.session).toBeUndefined();
+    expect(deps.messages.recentForThread("C1", "9.9", 10)).toHaveLength(1);
+  });
+
+  test("btw has no tools, by denial rather than by an allow-list", async () => {
+    // an allow-list pre-approves what is on it and does not refuse what is off
+    // it, measured against the CLI - so an empty one would deny nothing
+    const deps = build();
+    let policy: { disallowedTools?: readonly string[]; skipPermissions?: boolean } | undefined;
+    const llm: LlmPort = {
+      complete: async (p) => {
+        policy = p.policy as never;
+        return "answer";
+      },
+    };
+    await dispatchCommand({ ...deps, llm }, actor(), "C1", "btw anything");
+    expect(policy?.skipPermissions).toBe(false);
+    expect(policy?.disallowedTools).toContain("Bash");
+    expect(policy?.disallowedTools).toContain("Read");
+    expect(policy?.disallowedTools).toContain("WebFetch");
+  });
+
+  test("btw with no question asks for one rather than spending a turn", async () => {
+    const out = await dispatchCommand(build(), actor(), "C1", "btw");
+    expect(out).toContain("side question");
+  });
+
   test("spend says who spent it and on what, at list price", async () => {
     const deps = build();
     const usage = createUsageRepo(db);

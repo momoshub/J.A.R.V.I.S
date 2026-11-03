@@ -195,6 +195,9 @@ describe("createClaudeCliLlm", () => {
       `#!/usr/bin/env bash\ncat > /dev/null\necho "{\\"type\\":\\"result\\",\\"subtype\\":\\"success\\",\\"is_error\\":false,\\"result\\":\\"[$JARVIS_RUN_TICKET]\\"}"`,
     );
     const llm = createClaudeCliLlm({ binPath: bin });
+    // run from inside a turn (as Jarvis does before a restart), the suite
+    // inherits that turn's ticket, which is not the "no ticket" case under test
+    delete process.env.JARVIS_RUN_TICKET;
 
     const withTicket = await llm.complete({
       system: "s",
