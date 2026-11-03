@@ -61,6 +61,7 @@ export const runWorkflowTurn = async (
     session: { id: workflow.sessionId, resume: !first },
     oauthToken: tokenFor(deps, actor),
     signal,
+    bill: { actor: actor.slackId, kind: "workflow", channel: workflow.channelId },
   };
 
   const out = (

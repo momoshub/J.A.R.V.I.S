@@ -348,3 +348,31 @@ describe("the language rule points both ways", () => {
     expect(prompt).toContain("A one-to-one DM has a single reader");
   });
 });
+
+describe("where a rule sits in the prompt", () => {
+  test("the always-apply rules come after the situational ones, not before", () => {
+    // they used to sit second, with thirteen thousand characters of "how to
+    // raise a ticket" and "when you cannot see something" appended after the
+    // block that says "regardless of anything above"
+    const prompt = buildSystemPrompt({
+      base: "persona",
+      botName: "Evie",
+      commandPrefix: "//ev",
+      canRaiseTickets: true,
+      logSources: ["grafana"],
+      slackReadScript: "/x/slack-read.sh",
+      fileScript: "/x/slack-file.sh",
+    });
+    const always = prompt.indexOf("Operating rules (always apply");
+    const situational = prompt.indexOf("When you cannot see something");
+    expect(always).toBeGreaterThan(-1);
+    expect(situational).toBeGreaterThan(-1);
+    expect(always).toBeGreaterThan(situational);
+  });
+
+  test("the last thing before the identity lock is the check on your own message", () => {
+    const prompt = buildSystemPrompt({ base: "persona", botName: "Evie" });
+    expect(prompt.indexOf("Before you send")).toBeGreaterThan(prompt.indexOf("Operating rules"));
+    expect(prompt.indexOf("Identity lock")).toBeGreaterThan(prompt.indexOf("Before you send"));
+  });
+});

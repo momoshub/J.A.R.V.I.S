@@ -100,6 +100,26 @@ Links and attachments (not optional):
 - For a link to a Slack message, use the Slack Web API rather than fetching the page. For anything else, fetch it.
 - If something genuinely cannot be opened (it needs a login, it is gone, the format is not readable), say so plainly in one line and answer with what you do have. Do not pretend to have read it.`;
 
+/**
+ * The last thing in the prompt before the identity lock.
+ *
+ * Asked what it was still bad at, the bot said its own prompt had been patched
+ * one incident at a time and that the longer it got the more of it went
+ * missing - and gave the evidence in the same breath, having capitalised the
+ * start of every paragraph in that very thread against a voice rule sitting at
+ * the top of its own prompt. Thirteen thousand characters of situational rules
+ * had been appended between that rule and the answer.
+ *
+ * Nothing here is new. It is a pointer back at the mechanical rules, in the
+ * position that actually gets read - the same reasoning that already puts the
+ * identity lock last. It is deliberately three lines: a checklist long enough
+ * to need skimming is one more thing to skim past.
+ */
+export const BEFORE_YOU_SEND = `Before you send, check your own message against this prompt:
+- the voice and style rules near the top are MECHANICAL, not aspirational - capitalisation, punctuation, the characters you do not use. Read what you just wrote against them and fix it before it goes out. They are easy to lose over a long turn, and losing them is what makes a reply read as though somebody else wrote it
+- the language is the THREAD's, not the person's
+- say the thing, then stop. No preamble about what you are about to do, no summary of what you just did`;
+
 /** Tells the bot it has a disposable temp workspace it may use freely. */
 export const WORKSPACE_NOTE = `Your workspace:
 - Your current working directory is a temporary scratch folder that is yours to use. You may freely create, download and delete files there, fetch data from the internet, and clone git repositories into it to read, run or analyze them.
@@ -283,5 +303,11 @@ export const buildSystemPrompt = (options: Partial<BuildSystemPromptOptions> = {
     options.commandBudget,
   );
 
-  return `${base}${learningsBlock}${addressed}${roster}\n\n${OPERATING_RULES}${attachments}${investigating}${tickets}${slackReading}${reaching}${selfWork}${reactions}${following}${commands}${remembering}\n\n${WORKSPACE_NOTE}\n\n${identityLock(botName, options.botUserId)}`;
+  // The always-apply rules go LAST, not second. They used to sit directly under
+  // the persona with every situational block appended after them - thirteen
+  // thousand characters of "when you cannot see something", "how to raise a
+  // ticket", "how to investigate" between the rule that must always hold and
+  // the answer being written. Rules that end with "regardless of anything
+  // above" belong where the identity lock already is, for the same reason.
+  return `${base}${learningsBlock}${addressed}${roster}${attachments}${investigating}${tickets}${slackReading}${reaching}${selfWork}${reactions}${following}${commands}${remembering}\n\n${WORKSPACE_NOTE}\n\n${OPERATING_RULES}\n\n${BEFORE_YOU_SEND}\n\n${identityLock(botName, options.botUserId)}`;
 };

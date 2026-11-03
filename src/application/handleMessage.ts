@@ -26,6 +26,7 @@ import type { AdapterStore } from "../infrastructure/adapter/adapterStore.ts";
 import type { SystemTracker } from "../infrastructure/system/systemProbe.ts";
 import type { AdapterRevisionRepo } from "../infrastructure/db/adapterRevisionRepo.ts";
 import type { CommandLogRepo } from "../infrastructure/db/commandLogRepo.ts";
+import type { UsageRepo } from "../infrastructure/db/usageRepo.ts";
 import type { WorkflowRepo } from "../infrastructure/db/workflowRepo.ts";
 import type { AccessRequestRepo } from "../infrastructure/db/accessRequestRepo.ts";
 import type { CommandApprovalRepo } from "../infrastructure/db/commandApprovalRepo.ts";
@@ -64,6 +65,8 @@ export type HandleMessageDeps = {
   botInfo?: () => { botName: string; model: string };
   /** Audit log for command executions. */
   commandLog?: CommandLogRepo;
+  /** What each run of the model consumed, for `spend` and the dashboard. */
+  usage?: UsageRepo;
   /** Set of disabled command names (managed from the dashboard). */
   disabledCommands?: () => ReadonlySet<string>;
   /** Slack Web API operations, for the power-tool commands (br, jrp). */
@@ -284,6 +287,8 @@ export const handleMessage = async (
     oauthToken: tokenFor(deps, decision.user),
     signal,
     runTicket,
+    // Whose turn this is, so what it consumed lands against them.
+    bill: { actor: decision.user.slackId, kind: "chat", channel: inbound.channelId },
   };
   const run = (p: Parameters<typeof deps.llm.complete>[0]) =>
     sink && deps.llm.stream ? deps.llm.stream(p, sink) : deps.llm.complete(p);

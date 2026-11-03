@@ -5,6 +5,7 @@
  */
 import { WebClient } from "@slack/web-api";
 import { splitForBlocks, toMrkdwn } from "../../domain/slackFormat.ts";
+import { type MessageBlock, visibleText } from "../../domain/slackMessageText.ts";
 import type {
   SlackAdminPort,
   SlackConversation,
@@ -19,6 +20,12 @@ type RawMessage = {
   subtype?: string;
   reply_count?: number;
   thread_ts?: string;
+  /**
+   * Present on a message the bot streamed into. `text` is Slack's flattened
+   * fallback and runs the tool cards together with the reply, so the blocks are
+   * what says which part of it was a tool call.
+   */
+  blocks?: MessageBlock[];
   files?: { name?: string; mimetype?: string; url_private?: string; size?: number }[];
 };
 
@@ -99,15 +106,19 @@ export const createSlackAdmin = (client: WebClient): SlackAdminPort => {
 
   const toMessage = async (m: RawMessage, botId: string): Promise<SlackMessage> => {
     const userId = m.user ?? "";
+    // What the message SAYS - a streamed reply's fallback text carries the
+    // bot's own tool-card titles, which nobody in Slack ever sees and which the
+    // bot would otherwise read back as words it had written.
+    const text = visibleText(m);
     return {
       ts: m.ts ?? "",
       userId,
       userName: m.bot_id && !m.user ? "bot" : await userName(userId),
-      text: m.text ?? "",
+      text,
       replyCount: m.reply_count ?? 0,
       threadTs: m.thread_ts,
       own: userId === botId,
-      mentionsBot: botId ? MENTION(botId).test(m.text ?? "") : false,
+      mentionsBot: botId ? MENTION(botId).test(text) : false,
       ...(m.files && m.files.length > 0
         ? {
             files: m.files.map((f) => ({

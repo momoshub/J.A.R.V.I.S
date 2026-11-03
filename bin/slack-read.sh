@@ -17,6 +17,14 @@
 # fail, it joins (the token has channels:join) and retries, and says so on
 # stderr - a join is visible to everyone in the channel, so it is never silent.
 # A PRIVATE channel it was not invited to stays refused, which is correct.
+#
+# History and replies are CLEANED before they are printed. A message the bot
+# streamed into carries a `task_card` block per tool call, and Slack's flattened
+# `text` runs those titles together with the actual reply - invisible in Slack,
+# but read back here it looks exactly as though the bot had typed its own shell
+# commands into the channel. The blocks themselves are dropped too: they are the
+# bulk of the payload (a 12-message thread came back at 47KB) and they say
+# nothing the text does not.
 set -uo pipefail
 
 api() {
@@ -51,9 +59,48 @@ read_with_join() {
   printf '%s' "$out"
 }
 
+# Drop the rendering, keep the conversation: tool-card titles out of `text`,
+# `blocks` and `bot_profile` out of every message. Anything unparseable is
+# passed through untouched, because a cleaner is never worth a lost read.
+clean() {
+  python3 -c '
+import json, sys
+raw = sys.stdin.read()
+try:
+    d = json.loads(raw)
+    for m in d.get("messages", []):
+        text = m.get("text", "")
+        at = 0
+        for b in m.get("blocks", []) or []:
+            if b.get("type") != "task_card":
+                continue
+            title = (b.get("title") or "").strip()
+            if not title:
+                continue
+            i = text.find(title, at)
+            if i == -1:
+                continue
+            end = i + len(title)
+            if text[end:end + 1] == " ":
+                end += 1
+            elif i > 0 and text[i - 1] == " ":
+                i -= 1
+            text = text[:i] + text[end:]
+            at = i
+        m["text"] = text.strip()
+        m.pop("blocks", None)
+        m.pop("bot_profile", None)
+        if "root" in m:
+            m["root"].pop("blocks", None)
+    json.dump(d, sys.stdout, ensure_ascii=False)
+except Exception:
+    sys.stdout.write(raw)
+'
+}
+
 case "${1:-}" in
-  history) read_with_join conversations.history -d "channel=${2:?channel}" -d "limit=${3:-20}" ${4:+-d "latest=$4"} ${4:+-d "inclusive=true"} ;;
-  replies) read_with_join conversations.replies -d "channel=${2:?channel}" -d "ts=${3:?thread ts}" -d "limit=${4:-50}" ;;
+  history) read_with_join conversations.history -d "channel=${2:?channel}" -d "limit=${3:-20}" ${4:+-d "latest=$4"} ${4:+-d "inclusive=true"} | clean ;;
+  replies) read_with_join conversations.replies -d "channel=${2:?channel}" -d "ts=${3:?thread ts}" -d "limit=${4:-50}" | clean ;;
   info)    api conversations.info -d "channel=${2:?channel}" ;;
   user)    api users.info -d "user=${2:?user id}" ;;
   find)    api conversations.list -d "types=public_channel" -d "limit=1000" -d "exclude_archived=true" ;;

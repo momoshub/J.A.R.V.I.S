@@ -35,6 +35,48 @@ export type LlmStreamEvent =
 export type LlmStreamSink = (event: LlmStreamEvent) => void;
 
 /**
+ * What one run of the model actually cost.
+ *
+ * Every turn spawns a CLI process and some of them run for ten minutes, and
+ * until now nothing anywhere recorded what that came to - not per person, not
+ * per command, not in total. "We have no idea what this costs" is a bad answer
+ * to the only question a finance team ever asks about an AI tool.
+ *
+ * `costUsd` is the CLI's own figure at LIST price (its `total_cost_usd`). On a
+ * subscription credential nobody is literally invoiced that, so it is an
+ * estimate of consumption rather than a bill, and it is labelled that way
+ * wherever it is shown.
+ */
+export type LlmUsage = {
+  readonly model: string;
+  readonly inputTokens: number;
+  readonly outputTokens: number;
+  readonly cacheReadTokens: number;
+  readonly cacheWriteTokens: number;
+  readonly costUsd: number;
+  readonly durationMs: number;
+};
+
+/** Who a run is charged to, and what it was for. */
+export type BillingContext = {
+  /** Slack id of the person whose request this is. */
+  readonly actor: string;
+  /** `chat`, `workflow`, or the command's name. */
+  readonly kind: string;
+  readonly channel?: string;
+};
+
+/** Whose credential paid: the bot's own, the caller's token, or the host login. */
+export type UsagePayer = "bot" | "caller" | "host";
+
+/** Told about every finished run; wired at the composition root. */
+export type UsageSink = (
+  usage: LlmUsage,
+  payer: UsagePayer,
+  bill: BillingContext | undefined,
+) => void;
+
+/**
  * A durable CLI session. The first turn creates it, later turns resume it, so
  * the model keeps its own context (and its files) between messages instead of
  * being replayed a transcript each time.
@@ -88,6 +130,12 @@ export type LlmCompleteParams = {
   readonly runTicket?: string;
   /** Continue a durable session instead of a one-shot call (CLI adapter only). */
   readonly session?: LlmSession;
+  /**
+   * Who this run is for, so what it cost can be attributed. Optional because a
+   * run that cannot say whose it is should still happen - it is recorded
+   * without an owner rather than not recorded at all.
+   */
+  readonly bill?: BillingContext;
 };
 
 /** Anything that can turn a system prompt + history into a reply. */

@@ -34,6 +34,7 @@ import {
 } from "./application/adapterMemory.ts";
 import { createAdapterRevisionRepo } from "./infrastructure/db/adapterRevisionRepo.ts";
 import { createCommandLogRepo } from "./infrastructure/db/commandLogRepo.ts";
+import { createUsageRepo } from "./infrastructure/db/usageRepo.ts";
 import { createWorkflowRepo } from "./infrastructure/db/workflowRepo.ts";
 import { createAccessRequestRepo } from "./infrastructure/db/accessRequestRepo.ts";
 import { createCommandApprovalRepo } from "./infrastructure/db/commandApprovalRepo.ts";
@@ -57,7 +58,7 @@ import { dispatchCommand, isQuietCommand } from "./application/commands.ts";
 import { createCommandTickets, refusalMessage } from "./application/commandTickets.ts";
 import { createActivityLog } from "./infrastructure/logger.ts";
 import type { CommandLogRepo } from "./infrastructure/db/commandLogRepo.ts";
-import type { LlmPort } from "./application/ports.ts";
+import type { LlmPort, UsageSink } from "./application/ports.ts";
 import type { RespondDeps } from "./application/respond.ts";
 
 /**
@@ -71,7 +72,7 @@ const ensureDir = (path: string): string => {
 };
 
 /** Pick the brain based on config: the local Claude Code CLI or the API. */
-const buildLlm = (config: AppConfig, cwd: string): LlmPort =>
+const buildLlm = (config: AppConfig, cwd: string, onUsage?: UsageSink): LlmPort =>
   config.llmProvider === "claude-cli"
     ? createClaudeCliLlm({
         binPath: config.claudeBin,
@@ -79,6 +80,7 @@ const buildLlm = (config: AppConfig, cwd: string): LlmPort =>
         skipPermissions: config.claudeSkipPermissions,
         cwd,
         timeoutMs: config.claudeTimeoutMs,
+        onUsage,
       })
     : createAnthropicLlm({
         // guaranteed present for this provider by config validation
@@ -104,6 +106,7 @@ const main = async () => {
   // without an adapter.yaml at this path the bot keeps using `learnings`.
   const adapterStore = createAdapterStore(config.adapterPath);
   const adapterRevisions = createAdapterRevisionRepo(db);
+  const usage = createUsageRepo(db);
   const adapterDeps = () => ({
     store: adapterStore,
     revisions: adapterRevisions,
@@ -212,7 +215,28 @@ const main = async () => {
         .filter(Boolean),
     });
 
-  const llm = buildLlm(config, fullCwd);
+  // Every finished run is recorded: who asked, what for, what it consumed.
+  // Accounting is wired HERE rather than inside the adapter so the adapter
+  // stays a pure port - it reports, it does not own a database.
+  const recordUsage: UsageSink = (u, payer, bill) =>
+    usage.add(
+      {
+        slackUserId: bill?.actor ?? "",
+        kind: bill?.kind ?? "chat",
+        channelId: bill?.channel ?? "",
+        model: u.model,
+        payer,
+        inputTokens: u.inputTokens,
+        outputTokens: u.outputTokens,
+        cacheRead: u.cacheReadTokens,
+        cacheWrite: u.cacheWriteTokens,
+        costUsd: u.costUsd,
+        durationMs: u.durationMs,
+      },
+      clock(),
+    );
+
+  const llm = buildLlm(config, fullCwd, recordUsage);
   console.log(`[llm] ${profile().name}'s brain: ${modelLabel(config)}`);
 
   // Slack Web API + AI drafting, shared by the console and the power-tool commands.
@@ -263,6 +287,7 @@ const main = async () => {
     adapterBudget: () => config.adapterBudget,
     botInfo: () => ({ botName: profile().name, model: modelLabel(config) }),
     commandLog,
+    usage,
     disabledCommands,
     slack: slackAdmin,
     // `review` approves through this directly, before the brain starts.
@@ -379,6 +404,7 @@ const main = async () => {
       slack: slackAdmin,
       draft,
       commandLog,
+      usage,
       // Lets the brain run a real command when a chat request is really one.
       // The actor's own role decides what is allowed - nothing is elevated by
       // going through here.

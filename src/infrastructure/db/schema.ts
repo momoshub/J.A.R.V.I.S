@@ -83,6 +83,45 @@ export const migrate = (db: Database): void => {
   migrateThreadSessions(db);
   migrateSessionPromptHash(db);
   migrateAdapterRevisions(db);
+  migrateLlmUsage(db);
+};
+
+/**
+ * Migration v12: what each run of the model consumed.
+ *
+ * Every turn spawns a CLI process, a long review runs for ten minutes, and
+ * nothing anywhere recorded what any of it came to - not per person, not per
+ * command, not in total. Asked what it was still bad at, the bot put this
+ * first: "no dashboard says what the tokens cost, per person or per command".
+ *
+ * `cost_usd` is the CLI's own list-price figure. On a subscription credential
+ * nobody is invoiced it, so it measures consumption rather than money, and
+ * `payer` records whose credential carried it: the bot's own, the caller's
+ * token (a review), or the host login (a ticket).
+ */
+const migrateLlmUsage = (db: Database): void => {
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS llm_usage (
+      id            INTEGER PRIMARY KEY AUTOINCREMENT,
+      slack_user_id TEXT NOT NULL DEFAULT '',
+      kind          TEXT NOT NULL DEFAULT 'chat',
+      channel_id    TEXT NOT NULL DEFAULT '',
+      model         TEXT NOT NULL DEFAULT '',
+      payer         TEXT NOT NULL DEFAULT 'bot',
+      input_tokens  INTEGER NOT NULL DEFAULT 0,
+      output_tokens INTEGER NOT NULL DEFAULT 0,
+      cache_read    INTEGER NOT NULL DEFAULT 0,
+      cache_write   INTEGER NOT NULL DEFAULT 0,
+      cost_usd      REAL NOT NULL DEFAULT 0,
+      duration_ms   INTEGER NOT NULL DEFAULT 0,
+      created_at    INTEGER NOT NULL
+    );
+  `);
+  db.exec("CREATE INDEX IF NOT EXISTS idx_llm_usage_time ON llm_usage (created_at);");
+  const { user_version } = db.query<{ user_version: number }, []>("PRAGMA user_version").get() ?? {
+    user_version: 0,
+  };
+  if (user_version < 12) db.exec("PRAGMA user_version = 12;");
 };
 
 /**

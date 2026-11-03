@@ -56,6 +56,7 @@ import {
   parseLogSources,
 } from "../domain/investigation.ts";
 import { investigatePrompt } from "../domain/investigatePrompt.ts";
+import { fanoutPrompt } from "../domain/fanoutPrompt.ts";
 import { readPrompt } from "../domain/readPrompt.ts";
 import {
   asReviewPolicy,
@@ -85,7 +86,9 @@ import {
   type TotpPort,
 } from "./totp.ts";
 import { normaliseLabel, secondsLeft, totpCode } from "../domain/totp.ts";
-import { isAuthFailure, tierOf } from "../domain/threadSession.ts";
+import { isAuthFailure, isTimeout, tierOf } from "../domain/threadSession.ts";
+import { asksForHelp, commandHelp } from "../domain/commandHelp.ts";
+import { nearestCommand } from "../domain/commandSuggest.ts";
 import { forHowLong, stoppedNotice } from "../domain/runControl.ts";
 import type { RunRegistry } from "./runRegistry.ts";
 import type { ThreadSessionRepo } from "../infrastructure/db/threadSessionRepo.ts";
@@ -99,6 +102,8 @@ import type { MessageRepo } from "../infrastructure/db/messageRepo.ts";
 import type { UserRepo } from "../infrastructure/db/userRepo.ts";
 import type { LearningsRepo } from "../infrastructure/db/learningsRepo.ts";
 import type { CommandLogRepo } from "../infrastructure/db/commandLogRepo.ts";
+import type { UsageRepo } from "../infrastructure/db/usageRepo.ts";
+import { spendReport } from "../domain/spendReport.ts";
 import type { WorkflowRepo } from "../infrastructure/db/workflowRepo.ts";
 import type { CommandApprovalRepo } from "../infrastructure/db/commandApprovalRepo.ts";
 import { modelKey, reviewPolicyKey, SETTING_KEYS, type SettingsRepo } from "../infrastructure/db/settingsRepo.ts";
@@ -126,6 +131,8 @@ export type CommandDeps = {
   commandLog?: CommandLogRepo;
   /** Names of disabled commands (managed from the dashboard). */
   disabledCommands?: () => ReadonlySet<string>;
+  /** What each run of the model consumed, for `spend` and the dashboard. */
+  usage?: UsageRepo;
   /** Slack Web API operations, for the power tools (bomb, reply). */
   slack?: SlackAdminPort;
   /** GitHub actions the bot takes itself - the up-front approve in `review`. */
@@ -173,6 +180,8 @@ const NOTE_TIMEOUT_MS = 300_000;
 const CLOSE_TIMEOUT_MS = 300_000;
 /** an investigation walks logs, RUM and traces across environments. */
 const INVESTIGATE_TIMEOUT_MS = 900_000;
+/** a fanout waits on several agents doing real coding work. */
+const FANOUT_TIMEOUT_MS = 2_700_000;
 /** reading a conversation is bounded work, but a busy channel is a lot of it. */
 const READ_TIMEOUT_MS = 600_000;
 
@@ -234,6 +243,12 @@ type CommandDef = {
    * this is about a stray press, not about second-guessing the command.
    */
   destructive?: boolean;
+  /**
+   * This command answers `help` itself, and better than the generic card can
+   * (`review help` explains the whole flow, and `review prompt` prints the
+   * real system prompt). Everything else gets the card.
+   */
+  ownHelp?: boolean;
   run: (ctx: Context) => string | Promise<string>;
 };
 
@@ -265,6 +280,22 @@ const slackIdOf = (token?: string): string | undefined => mentionedId(token);
 
 const roleOf = (token?: string): UserRole | undefined =>
   token === "owner" || token === "admin" || token === "executer" || token === "pal" ? token : undefined;
+
+/**
+ * `24h`, `7d`, `90m`, or a bare number of hours. Undefined when it is not a
+ * window at all, so the caller can fall back rather than reporting on zero.
+ */
+export const parseWindow = (token?: string): number | undefined => {
+  const t = (token ?? "").trim().toLowerCase();
+  if (!t) return undefined;
+  const m = t.match(/^(\d+(?:\.\d+)?)\s*([mhdw])?$/);
+  if (!m) return undefined;
+  const n = Number(m[1]);
+  if (!Number.isFinite(n) || n <= 0) return undefined;
+  const unit = m[2] ?? "h";
+  const ms = unit === "m" ? 60_000 : unit === "d" ? 86_400_000 : unit === "w" ? 7 * 86_400_000 : 3_600_000;
+  return n * ms;
+};
 
 /** The policy a PR's repository is on, defaulting when nothing is configured. */
 const reviewPolicyOf = (deps: CommandDeps, prUrl: string): ReviewPolicy => {
@@ -557,6 +588,7 @@ export const COMMANDS: readonly CommandDef[] = [
         assistantName: ctx.botName,
         policy: deps.toolPolicy?.(actor.role, channelId),
         oauthToken: tokenFor(deps, actor),
+        bill: { actor: actor.slackId, kind: "ask", channel: channelId },
       });
       return reply.trim() || "I do not have anything useful to add there.";
     },
@@ -570,6 +602,30 @@ export const COMMANDS: readonly CommandDef[] = [
     run: ({ deps, channelId }) => {
       const removed = deps.messages.clearChannel(channelId);
       return removed > 0 ? `Forgotten. Wiped ${removed} turns from this channel.` : "Nothing to forget here.";
+    },
+  },
+  {
+    name: "spend",
+    aliases: ["cost", "tokens"],
+    // It names people and what they cost, which is nobody's business at pal
+    // level, and it describes the bill for somebody's own account.
+    minRole: "admin",
+    usage: "[hours|7d]",
+    summary: "what the model has cost, by person and by command",
+    run: ({ deps, args }) => {
+      if (!deps.usage) return "I am not recording what runs cost right now.";
+      const windowMs = parseWindow(args[0]) ?? 24 * 60 * 60_000;
+      const since = deps.clock() - windowMs;
+      const names = new Map(
+        deps.users.list().map((u) => [u.slackId, u.displayName || `<@${u.slackId}>`] as const),
+      );
+      return spendReport(
+        deps.usage.totals(since),
+        deps.usage.byUser(since, 15),
+        deps.usage.byKind(since, 15),
+        windowMs,
+        names,
+      );
     },
   },
   {
@@ -641,7 +697,7 @@ export const COMMANDS: readonly CommandDef[] = [
     usage: "[status|check|history|refine [note]|revert <id>|migrate]",
     summary: "inspect and curate what I remember",
     run: async (ctx) => {
-      const { deps, actor, args, rest, prefix, reply } = ctx;
+      const { deps, actor, args, rest, prefix, reply, channelId } = ctx;
       const a = adapterDepsOf(deps);
       if (!a) return "No memory adapter is configured, so I am still on the flat learnings list.";
       const sub = (args[0] ?? "status").toLowerCase();
@@ -712,6 +768,7 @@ export const COMMANDS: readonly CommandDef[] = [
         messages: [{ role: "user" as const, content: note || "Curate my memory." }],
         assistantName: name,
         policy: { ...full, cwd: staging, timeoutMs: REFINE_TIMEOUT_MS },
+        bill: { actor: actor.slackId, kind: "adapter", channel: channelId },
       };
 
       if (reply) await reply("🧹 going through what I remember");
@@ -850,7 +907,7 @@ export const COMMANDS: readonly CommandDef[] = [
     usage: "<ticket url or id> <why>",
     summary: "close a ticket in the tracker, recording who decided and why",
     run: async (ctx) => {
-      const { deps, actor, args, rest, prefix, reply } = ctx;
+      const { deps, actor, args, rest, prefix, reply, channelId } = ctx;
       const ref = (args[0] ?? "").trim();
       const tracker = deps.settings?.get(SETTING_KEYS.ticketTracker)?.trim() || "";
       if (!ref) return `Close what? \`${prefix} close <ticket url or id> <why>\``;
@@ -869,6 +926,7 @@ export const COMMANDS: readonly CommandDef[] = [
         // The tracker lives behind the account's Notion connector, which a
         // setup token does not carry.
         useHostLogin: true,
+        bill: { actor: actor.slackId, kind: "close", channel: channelId },
       };
 
       if (!reply) {
@@ -901,7 +959,7 @@ export const COMMANDS: readonly CommandDef[] = [
     usage: "<file> [title] | parent <notion url> | access <role>",
     summary: "publish a document into Notion through the account's connector",
     run: async (ctx) => {
-      const { deps, actor, args, rest, prefix, reply } = ctx;
+      const { deps, actor, args, rest, prefix, reply, channelId } = ctx;
       const first = (args[0] ?? "").trim();
       const parent = deps.settings?.get(SETTING_KEYS.notionParent)?.trim() || "";
       const floor = roleOf(deps.settings?.get(SETTING_KEYS.noteMinRole)?.trim().toLowerCase() ?? "") ?? "admin";
@@ -942,6 +1000,7 @@ export const COMMANDS: readonly CommandDef[] = [
         // Notion lives with the host's interactive login; a setup token carries
         // no connectors at all, so this is the only credential that can write.
         useHostLogin: true,
+        bill: { actor: actor.slackId, kind: "note", channel: channelId },
       };
 
       if (!reply) {
@@ -1011,6 +1070,7 @@ export const COMMANDS: readonly CommandDef[] = [
         // The connector lives with the host's interactive login; a setup token
         // carries none, so this is the only credential that can see it.
         useHostLogin: true,
+        bill: { actor: actor.slackId, kind: "read", channel: channelId },
       };
 
       if (!reply) {
@@ -1069,6 +1129,7 @@ export const COMMANDS: readonly CommandDef[] = [
         assistantName: name,
         policy: { ...full, timeoutMs: INVESTIGATE_TIMEOUT_MS },
         useHostLogin: true,
+        bill: { actor: actor.slackId, kind: "investigate", channel: channelId },
       };
 
       if (!reply) {
@@ -1106,6 +1167,54 @@ export const COMMANDS: readonly CommandDef[] = [
         return "";
       }
       await reply(out.trim() || "I could not get to the bottom of that one.");
+      return "";
+    },
+  },
+  {
+    name: "fanout",
+    aliases: ["orca"],
+    // the workers are Claude Code sessions Orca starts on the host, billed to
+    // whoever is signed in there, so this is not a pal-level button
+    minRole: "admin",
+    usage: "<job to split across agents>",
+    summary: "split a coding job across parallel Claude Code agents in Orca, one worktree each",
+    run: async (ctx) => {
+      const { deps, actor, channelId, threadTs, rest, prefix, reply } = ctx;
+      const task = rest.trim();
+      if (!task) return `What should the agents work on? \`${prefix} fanout <job>\``;
+      if (!deps.llm) return "My brain is not wired up right now.";
+
+      const full = deps.toolPolicy?.("owner") ?? { skipPermissions: true };
+      const name = botNameOf(deps);
+      const params = {
+        system: fanoutPrompt(task, name, { channelId, threadTs, askedBy: actor.slackId }),
+        messages: [{ role: "user" as const, content: task }],
+        assistantName: name,
+        policy: { ...full, timeoutMs: FANOUT_TIMEOUT_MS },
+        bill: { actor: actor.slackId, kind: "fanout", channel: channelId },
+      };
+
+      if (!reply) {
+        const out = await deps.llm.complete(params);
+        return out.trim() || "The agents came back with nothing to report.";
+      }
+
+      await reply(`🐋 splitting that across agents in Orca for <@${actor.slackId}>`);
+      let out = "";
+      if (deps.llm.stream) {
+        const started = new Set<string>();
+        out = await deps.llm.stream(params, (ev) => {
+          if (ev.type !== "tool" || ev.status !== "complete") return;
+          const ran = ev.command ?? ev.title;
+          const slug = /orca worktree create\b.*?--name\s+['"]?([\w.-]+)/.exec(ran)?.[1];
+          if (!slug || started.has(slug)) return;
+          started.add(slug);
+          void reply(`🤖 started worker \`${slug}\``);
+        });
+      } else {
+        out = await deps.llm.complete(params);
+      }
+      await reply(out.trim() || "The agents came back with nothing to report.");
       return "";
     },
   },
@@ -1166,6 +1275,7 @@ export const COMMANDS: readonly CommandDef[] = [
         // authorisation at all (verified: zero mcp__ tools under one). Only the
         // host's interactive login has the connectors, so this one task uses it.
         useHostLogin: true,
+        bill: { actor: actor.slackId, kind: "ticket", channel: channelId },
       };
 
       if (!reply) {
@@ -1207,13 +1317,56 @@ export const COMMANDS: readonly CommandDef[] = [
     },
   },
   {
+    name: "approve",
+    minRole: "pal",
+    usage: "<pr-url> [pr-url...]",
+    summary: "approve a PR without reviewing it",
+    /**
+     * The most-guessed command that did not exist. Five people-months of log
+     * say `approve <pr-url>`, every time answered with "I do not recognise
+     * `approve`", once typed as "approvel without review please".
+     *
+     * It is not a new power: `review` approves up front already, in code,
+     * before the brain is spawned - this is that same step with the review
+     * left off, and it refuses exactly where `review` refuses. A repository
+     * set to approve only AFTER a clean review is an admin's decision about
+     * that repository, so a bare approval there is not on offer at any role.
+     *
+     * No brain, so no Claude token and no cost. The pal allowance is what
+     * bounds it, which is also what makes it auditable: every approval is a
+     * row in the command log against the person who asked for it.
+     */
+    run: async ({ deps, args, prefix }) => {
+      if (!deps.github) return "I have no GitHub access wired up right now.";
+      const urls = [...new Set(args.flatMap((a) => a.match(PR_URL) ?? []))];
+      if (urls.length === 0) return `Which PR? \`${prefix} approve <pr-url>\``;
+      const held = urls.filter((u) => reviewPolicyOf(deps, u) === "approve-after");
+      const lines: string[] = [];
+      for (const url of urls) {
+        if (held.includes(url)) {
+          lines.push(`⚠️ ${url} - that repo approves only after a clean review. \`${prefix} review ${url}\``);
+          continue;
+        }
+        const res = await deps.github.approve(url);
+        lines.push(res.ok ? `✅ approved ${url}` : `⚠️ could not approve ${url} - ${res.error}`);
+      }
+      // Say what it did NOT do. An approval with no review behind it is worth
+      // one line of honesty, not a silent green tick.
+      if (lines.some((l) => l.startsWith("✅"))) {
+        lines.push(`_approved as asked, nobody read it - \`${prefix} review <pr-url>\` if you want that too_`);
+      }
+      return lines.join("\n");
+    },
+  },
+  {
     name: "review",
     aliases: ["rv"],
+    ownHelp: true,
     minRole: "pal",
     usage: "<pr-url> [pr-url...] [--policy first|after] [what to look at]",
     summary: "review a PR: approve it, then post the review to GitHub and here",
     run: async (ctx) => {
-      const { deps, actor, args, prefix, reply } = ctx;
+      const { deps, actor, args, prefix, reply, channelId } = ctx;
       if (args.length === 0) return `Which PR? \`${prefix} review <pr-url>\``;
       if (!deps.llm) return "My brain is not wired up right now.";
       // A review runs on the caller's own Claude Code credential, never the
@@ -1303,6 +1456,7 @@ export const COMMANDS: readonly CommandDef[] = [
         assistantName: name,
         policy,
         oauthToken,
+        bill: { actor: actor.slackId, kind: "review", channel: channelId },
       };
 
       // No live destination (tests / slack off): one-shot, return the text.
@@ -1943,15 +2097,30 @@ export const dispatchCommand = async (
   const slash = opts.slash ?? DEFAULT_SLASH_COMMAND;
   const trimmed = line.trim();
   const name = (trimmed.split(/\s+/)[0] || "help").toLowerCase();
-  const rest = trimmed.slice(name.length).trim();
+  // `//bot <pr-url>` is not a typo, it is somebody asking for a review and
+  // leaving the verb out. It was typed that way five times and answered with
+  // "I do not recognise https://github.com/..." every time. The whole line is
+  // then the review's arguments, url included.
+  const unnamedReview = !byName.has(name) && (PR_URL.test(name) || /^[\w.-]+\/[\w.-]+#\d+$/.test(name));
+  const rest = unnamedReview ? trimmed : trimmed.slice(name.length).trim();
   const args = rest.length ? rest.split(/\s+/) : [];
 
   const log = (command: string, ok: boolean, result: string) =>
     deps.commandLog?.add({ slackUserId: actor.slackId, command, args: rest, channelId, ok, result }, deps.clock());
 
-  const command = byName.get(name);
+  const command = unnamedReview ? byName.get("review") : byName.get(name);
   if (!command) {
-    const msg = `I do not recognise \`${name}\`. Try \`${prefix} help\`.`;
+    // Name the near miss rather than sending someone to read forty lines to
+    // find the word they almost typed. Only commands their role can actually
+    // run, so a suggestion is never a door that turns out to be locked.
+    const reachable = COMMANDS.filter((c) => RANK[actor.role] >= RANK[c.minRole]).flatMap((c) => [
+      c.name,
+      ...(c.aliases ?? []),
+    ]);
+    const near = nearestCommand(name, reachable);
+    const msg = near
+      ? `I do not recognise \`${name}\`. Did you mean \`${prefix} ${near}\`? \`${prefix} help\` has the rest.`
+      : `I do not recognise \`${name}\`. Try \`${prefix} help\`.`;
     log(name, false, msg);
     return msg;
   }
@@ -1959,6 +2128,20 @@ export const dispatchCommand = async (
     const msg = `That command needs *${command.minRole}* access. You are *${actor.role}*.`;
     log(command.name, false, msg);
     return msg;
+  }
+  // What it does, without doing it. `ticket help` used to spawn a full
+  // host-login ticket run with "help" as the bug report and die at the timeout.
+  if (!command.ownHelp && command.name !== "help" && asksForHelp(args)) {
+    return commandHelp(
+      {
+        name: command.name,
+        usage: command.usage,
+        summary: command.summary,
+        minRole: command.minRole,
+        aliases: command.aliases,
+      },
+      prefix,
+    );
   }
   if (command.name !== "help" && deps.disabledCommands?.().has(command.name)) {
     const msg = `\`${command.name}\` is currently disabled.`;
@@ -1997,7 +2180,12 @@ export const dispatchCommand = async (
     log(command.name, true, result);
     return result;
   } catch (e) {
-    const msg = `That command failed: ${e instanceof Error ? e.message : String(e)}`;
+    // A killed run is out of TIME, not broken. "That command failed: claude CLI
+    // exited with code 143: no output" reads as a bug and invites the same
+    // expensive thing again; saying it ran long invites a narrower one.
+    const msg = isTimeout(e)
+      ? `\`${command.name}\` ran past its time limit and I killed it, so nothing came back. Narrow it down and try again.`
+      : `That command failed: ${e instanceof Error ? e.message : String(e)}`;
     log(command.name, false, msg);
     return msg;
   }

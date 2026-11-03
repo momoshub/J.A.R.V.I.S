@@ -6,6 +6,7 @@ import { createLearningsRepo } from "../../src/infrastructure/db/learningsRepo.t
 import { createSettingsRepo } from "../../src/infrastructure/db/settingsRepo.ts";
 import type { ClaudeTokenPort } from "../../src/application/claudeTokens.ts";
 import { createThreadSessionRepo } from "../../src/infrastructure/db/threadSessionRepo.ts";
+import { createUsageRepo } from "../../src/infrastructure/db/usageRepo.ts";
 import { createRunRegistry } from "../../src/application/runRegistry.ts";
 import { commandLineOf, dispatchCommand, type CommandDeps, isQuietCommand } from "../../src/application/commands.ts";
 import { respond, type RespondDeps } from "../../src/application/respond.ts";
@@ -155,6 +156,45 @@ describe("dispatchCommand", () => {
 
   test("unknown command is reported", async () => {
     expect(await dispatchCommand(build(), actor(), "C1", "frobnicate")).toContain("do not recognise");
+  });
+
+  test("a near miss is named instead of sending them to read the list", async () => {
+    // every one of these is in the real command log, answered with nothing
+    const deps = build();
+    expect(await dispatchCommand(deps, actor(), "C1", "hel[")).toContain("help");
+    expect(await dispatchCommand(deps, actor(), "C1", "who")).toContain("whoami");
+    expect(await dispatchCommand(deps, actor(), "C1", "approvel https://github.com/o/r/pull/1")).toContain(
+      "approve",
+    );
+  });
+
+  test("a suggestion is never a door that turns out to be locked", async () => {
+    // `promote` is owner-only, so a pal who nearly types it is not pointed at it
+    const out = await dispatchCommand(build(), actor({ slackId: "U3", role: "pal" }), "C1", "promot");
+    expect(out).not.toContain("Did you mean");
+  });
+
+  test("a bare PR url is a review nobody bothered to name", async () => {
+    const deps = build();
+    const out = await dispatchCommand(deps, actor(), "C1", "https://github.com/o/r/pull/7");
+    expect(out).not.toContain("do not recognise");
+    // it reached `review`, which asks for a token or gets on with it
+    expect(out.toLowerCase()).not.toContain("which pr");
+  });
+
+  test("`<command> help` explains it instead of running it", async () => {
+    const deps = build();
+    const out = await dispatchCommand(deps, actor(), "C1", "ticket help");
+    expect(out).toContain("ticket");
+    expect(out).toContain("needs");
+    // and nothing was spawned to answer it
+    expect(slackCalls.posts).toEqual([]);
+  });
+
+  test("review keeps its own, better help", async () => {
+    const out = await dispatchCommand(build(), actor(), "C1", "review help");
+    expect(out).toContain("review");
+    expect(out).not.toContain("needs *pal* access");
   });
 
   test("role gate blocks under-privileged users", async () => {
@@ -329,6 +369,93 @@ describe("dispatchCommand", () => {
   test("rv reviews a PR via the brain", async () => {
     const out = await dispatchCommand(build(), actor(), "C1", "rv https://github.com/o/r/pull/1");
     expect(out).toBe("drafted answer");
+  });
+
+  test("spend says who spent it and on what, at list price", async () => {
+    const deps = build();
+    const usage = createUsageRepo(db);
+    const add = (slackUserId: string, kind: string, costUsd: number) =>
+      usage.add(
+        {
+          slackUserId,
+          kind,
+          channelId: "C1",
+          model: "claude-opus-5-5",
+          payer: "bot",
+          inputTokens: 1,
+          outputTokens: 1,
+          cacheRead: 0,
+          cacheWrite: 0,
+          costUsd,
+          durationMs: 1000,
+        },
+        40, // deps.clock() is 42, so this is inside any window
+      );
+    add(OWNER, "review", 3);
+    add("U3", "chat", 1);
+    deps.users.upsert(actor());
+
+    const out = await dispatchCommand({ ...deps, usage }, actor(), "C1", "spend");
+    expect(out).toContain("list price");
+    expect(out).toContain("$4.00");
+    expect(out).toContain("review");
+    expect(out).toContain("Kai"); // the owner's display name, not a raw id
+  });
+
+  test("spend without a recorder says so instead of reporting zero", async () => {
+    const out = await dispatchCommand(build(), actor(), "C1", "spend");
+    expect(out).toContain("not recording");
+  });
+
+  test("approve approves, with no brain and no review", async () => {
+    // five attempts in the real log at `approve <pr-url>`, all of them answered
+    // with "I do not recognise `approve`"
+    const PR = "https://github.com/o/r/pull/1";
+    const approved: string[] = [];
+    const github: GitHubPort = {
+      whoami: async () => ({ login: "kai-at-acme", name: "Kai" }),
+      reviewDecision: async () => undefined,
+      approve: async (url) => {
+        approved.push(url);
+        return { ok: true };
+      },
+    };
+    const brainRan = { yes: false };
+    const watch: LlmPort = {
+      complete: async () => {
+        brainRan.yes = true;
+        return "";
+      },
+    };
+    const out = await dispatchCommand(
+      { ...build(), github, llm: watch },
+      actor(),
+      "C1",
+      `approve <${PR}|o/r#1>`,
+    );
+    expect(approved).toEqual([PR]);
+    expect(brainRan.yes).toBe(false);
+    expect(out).toContain("approved");
+    expect(out).toContain("nobody read it"); // it says what it did not do
+  });
+
+  test("approve will not go round a repo that approves only after a clean review", async () => {
+    const PR = "https://github.com/o/strict/pull/2";
+    const approved: string[] = [];
+    const github: GitHubPort = {
+      whoami: async () => ({ login: "kai", name: "Kai" }),
+      reviewDecision: async () => undefined,
+      approve: async (url) => {
+        approved.push(url);
+        return { ok: true };
+      },
+    };
+    const deps = { ...build(), github };
+    deps.settings = createSettingsRepo(db);
+    deps.settings.set("review_policy:o/strict", "approve-after");
+    const out = await dispatchCommand(deps, actor(), "C1", `approve ${PR}`);
+    expect(approved).toEqual([]);
+    expect(out).toContain("only after a clean review");
   });
 
   test("rv approves in code before the brain runs, and says so first", async () => {
@@ -934,6 +1061,36 @@ describe("reviews run on the caller's own Claude token", () => {
     deps.settings!.set("log_sources", "");
     const noSources = { ...deps, settings: { ...deps.settings!, get: () => "" } } as typeof deps;
     expect(await dispatchCommand(noSources, actor(), "C1", "investigate why")).not.toContain("What should I look into?");
+  });
+
+  test("fanout hands the job to the coordinator prompt", async () => {
+    const { deps } = withTokens({ [OWNER]: TOKEN });
+    let system = "";
+    deps.llm = {
+      complete: async (p) => {
+        system = p.system ?? "";
+        return "two workers done";
+      },
+    };
+    const out = await dispatchCommand(deps, actor(), "C1", "fanout fix the flaky login tests");
+    expect(system).toContain("fix the flaky login tests");
+    expect(system).toContain("orca worktree create");
+    expect(out).toBe("two workers done");
+  });
+
+  test("fanout needs a job", async () => {
+    const { deps } = withTokens({ [OWNER]: TOKEN });
+    expect(await dispatchCommand(deps, actor(), "C1", "fanout")).toContain("What should the agents work on?");
+  });
+
+  test("fanout is not open to a pal, since workers bill the host login", async () => {
+    const { deps } = withTokens({ [OWNER]: TOKEN });
+    let called = false;
+    deps.llm = { complete: async () => { called = true; return "x"; } };
+    const pal = actor({ slackId: "U0PAL0001", role: "pal" });
+    deps.users.upsert(pal);
+    await dispatchCommand(deps, pal, "C1", "fanout do things");
+    expect(called).toBe(false);
   });
 
   test("a ticket runs on the host login, never on a setup token", async () => {

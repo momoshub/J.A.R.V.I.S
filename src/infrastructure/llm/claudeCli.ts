@@ -13,7 +13,15 @@
  * - `stream` uses `--output-format stream-json --include-partial-messages` and
  *   forwards text deltas and tool-call progress to a sink as they arrive.
  */
-import type { LlmCompleteParams, LlmPort, LlmSession, LlmStreamSink } from "../../application/ports.ts";
+import type {
+  LlmCompleteParams,
+  LlmPort,
+  LlmSession,
+  LlmStreamSink,
+  LlmUsage,
+  UsagePayer,
+  UsageSink,
+} from "../../application/ports.ts";
 import type { PromptMessage } from "../../domain/types.ts";
 import type { ToolPolicy } from "../../domain/toolPolicy.ts";
 import { redactSecrets } from "../../domain/toolVisibility.ts";
@@ -30,6 +38,12 @@ export type ClaudeCliConfig = {
   cwd?: string;
   /** Hard timeout for a single invocation, ms. Default 120000. */
   timeoutMs?: number;
+  /**
+   * Told what each finished run consumed. The CLI reports its own token counts
+   * and list-price cost on the final `result` line, which is the only place
+   * that number exists - nothing downstream can reconstruct it.
+   */
+  onUsage?: UsageSink;
 };
 
 const speakerLabel = (m: PromptMessage, assistantName: string): string =>
@@ -103,6 +117,46 @@ export const summarizeTool = (
 };
 
 type CliResult = { subtype?: string; is_error?: boolean; result?: string };
+
+/** The usage fields of the CLI's final `result` line (verified against it). */
+type ResultUsage = {
+  total_cost_usd?: number;
+  duration_ms?: number;
+  usage?: {
+    input_tokens?: number;
+    output_tokens?: number;
+    cache_read_input_tokens?: number;
+    cache_creation_input_tokens?: number;
+  };
+  modelUsage?: Record<string, unknown>;
+};
+
+const num = (v: unknown): number => (typeof v === "number" && Number.isFinite(v) ? v : 0);
+
+/**
+ * What a finished run consumed, or undefined when the line carries no usage at
+ * all. The model name comes from `modelUsage`, whose single key is the model
+ * that actually served the run - which is not always the one that was asked
+ * for, and the difference is the whole point of recording it.
+ */
+export const usageOf = (result: Record<string, unknown>): LlmUsage | undefined => {
+  const r = result as ResultUsage;
+  if (!r.usage && r.total_cost_usd === undefined) return undefined;
+  const u = r.usage ?? {};
+  return {
+    model: Object.keys(r.modelUsage ?? {})[0] ?? "",
+    inputTokens: num(u.input_tokens),
+    outputTokens: num(u.output_tokens),
+    cacheReadTokens: num(u.cache_read_input_tokens),
+    cacheWriteTokens: num(u.cache_creation_input_tokens),
+    costUsd: num(r.total_cost_usd),
+    durationMs: num(r.duration_ms),
+  };
+};
+
+/** Whose credential paid for a run. */
+export const payerOf = (oauthToken?: string, useHostLogin?: boolean): UsagePayer =>
+  oauthToken ? "caller" : useHostLogin ? "host" : "bot";
 
 const buildArgs = (
   config: ClaudeCliConfig,
@@ -192,7 +246,24 @@ const hostLoginEnv = (oauthToken?: string, useHostLogin?: boolean): Record<strin
 };
 
 export const createClaudeCliLlm = (config: ClaudeCliConfig = {}): LlmPort => {
-  const complete = async ({ system, messages, assistantName, policy, session, oauthToken, useHostLogin, signal, runTicket }: LlmCompleteParams) => {
+  const report = (
+    result: Record<string, unknown>,
+    oauthToken: string | undefined,
+    useHostLogin: boolean | undefined,
+    bill: LlmCompleteParams["bill"],
+  ): void => {
+    if (!config.onUsage) return;
+    const usage = usageOf(result);
+    if (!usage) return;
+    // Accounting must never be able to take a turn down with it.
+    try {
+      config.onUsage(usage, payerOf(oauthToken, useHostLogin), bill);
+    } catch {
+      // nothing here is worth the answer
+    }
+  };
+
+  const complete = async ({ system, messages, assistantName, policy, session, oauthToken, useHostLogin, signal, runTicket, bill }: LlmCompleteParams) => {
     const proc = spawnClaude(config, [...buildArgs(config, false, policy, session), "--append-system-prompt", system], renderPrompt(messages, assistantName), policy, oauthToken, useHostLogin, signal, runTicket);
     const [stdout, stderr, exitCode] = await Promise.all([
       new Response(proc.stdout).text(),
@@ -208,13 +279,14 @@ export const createClaudeCliLlm = (config: ClaudeCliConfig = {}): LlmPort => {
     } catch {
       throw new Error(`claude CLI returned non-JSON output: ${stdout.slice(0, 500)}`);
     }
+    report(parsed as Record<string, unknown>, oauthToken, useHostLogin, bill);
     if (parsed.is_error || parsed.subtype !== "success") {
       throw new Error(`claude CLI error (${parsed.subtype ?? "unknown"}): ${parsed.result ?? ""}`);
     }
     return (parsed.result ?? "").trim();
   };
 
-  const stream = async ({ system, messages, assistantName, policy, session, oauthToken, useHostLogin, signal, runTicket }: LlmCompleteParams, sink: LlmStreamSink) => {
+  const stream = async ({ system, messages, assistantName, policy, session, oauthToken, useHostLogin, signal, runTicket, bill }: LlmCompleteParams, sink: LlmStreamSink) => {
     const proc = spawnClaude(config, [...buildArgs(config, true, policy, session), "--append-system-prompt", system], renderPrompt(messages, assistantName), policy, oauthToken, useHostLogin, signal, runTicket);
     const stderrPromise = new Response(proc.stderr).text();
 
@@ -295,8 +367,11 @@ export const createClaudeCliLlm = (config: ClaudeCliConfig = {}): LlmPort => {
             });
           }
         }
-      } else if (e.type === "result" && typeof e.result === "string") {
-        finalText = e.result;
+      } else if (e.type === "result") {
+        // Recorded even when the run errored: a turn that burned nine minutes
+        // and then failed cost exactly as much as one that worked.
+        report(e, oauthToken, useHostLogin, bill);
+        if (typeof e.result === "string") finalText = e.result;
       }
     };
 

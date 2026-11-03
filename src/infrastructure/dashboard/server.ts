@@ -18,6 +18,7 @@ import { listCommandInfo } from "../../application/commands.ts";
 import { PAL_TOOLS } from "../../domain/toolPolicy.ts";
 import type { Clock } from "../../application/ports.ts";
 import type { CommandLogRepo } from "../db/commandLogRepo.ts";
+import type { UsageRepo } from "../db/usageRepo.ts";
 import type { MessageRepo } from "../db/messageRepo.ts";
 import type { UserRepo } from "../db/userRepo.ts";
 import type { LearningsRepo } from "../db/learningsRepo.ts";
@@ -82,6 +83,8 @@ export type DashboardDeps = {
   draft?: DraftReply;
   /** Command execution audit log. */
   commandLog?: CommandLogRepo;
+  /** What each run of the model consumed, for the spend page. */
+  usage?: UsageRepo;
   /**
    * Whether the bot can currently hear Slack. Read through a getter because the
    * Slack app is built after this server; "deaf" must be visible from outside
@@ -268,6 +271,25 @@ export const createDashboard = (config: DashboardConfig, deps: DashboardDeps) =>
           });
         case "/api/command-log":
           return Response.json(deps.commandLog?.recent(200) ?? []);
+        case "/api/usage": {
+          // One window per request: the page asks for the one it is showing,
+          // rather than the server guessing and the two disagreeing.
+          if (!deps.usage) return Response.json({ recording: false });
+          const hours = Number(url.searchParams.get("hours") ?? "24");
+          const windowMs = (Number.isFinite(hours) && hours > 0 ? Math.min(hours, 24 * 365) : 24) * 3_600_000;
+          const since = deps.clock() - windowMs;
+          const names = Object.fromEntries(
+            deps.users.list().map((u) => [u.slackId, u.displayName || u.slackId]),
+          );
+          return Response.json({
+            recording: true,
+            windowMs,
+            totals: deps.usage.totals(since),
+            byUser: deps.usage.byUser(since, 25),
+            byKind: deps.usage.byKind(since, 25),
+            names,
+          });
+        }
         case "/api/conversations":
           return Response.json(deps.messages.channels());
         case "/api/conversation": {

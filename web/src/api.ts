@@ -36,6 +36,26 @@ export type Overview = {
   /** True when memory is an adapter, so `learnings` counts memory items. */
   memory?: boolean;
 };
+/** One line of a spend breakdown: a person, or a command. */
+export type UsageSlice = {
+  key: string;
+  runs: number;
+  costUsd: number;
+  inputTokens: number;
+  outputTokens: number;
+  cacheRead: number;
+  cacheWrite: number;
+  durationMs: number;
+};
+export type UsageView = {
+  recording: boolean;
+  windowMs?: number;
+  totals: Omit<UsageSlice, "key">;
+  byUser: UsageSlice[];
+  byKind: UsageSlice[];
+  /** Slack id -> display name, so a table is not a wall of U0ABC123. */
+  names: Record<string, string>;
+};
 export type UserRole = "owner" | "admin" | "executer" | "pal";
 export type AllowedUser = {
   name?: string;

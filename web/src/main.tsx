@@ -28,9 +28,11 @@ import {
   type Learning,
   type Message,
   type Overview,
+  type UsageView,
 } from "./api.ts";
 import { ConsolePage } from "./console.tsx";
 import { CommandsPage } from "./commands.tsx";
+import { SpendPage } from "./spend.tsx";
 import "./styles.css";
 
 /** Wrap an action so thrown API errors surface as `{ error }` instead of crashing. */
@@ -52,6 +54,7 @@ const NAV = [
   { to: "/conversations", label: "Conversations" },
   { to: "/console", label: "Console" },
   { to: "/commands", label: "Commands" },
+  { to: "/spend", label: "Spend" },
 ];
 
 function Layout() {
@@ -560,6 +563,14 @@ const router = createBrowserRouter([
           return { ok: true };
         }),
         element: <CommandsPage />,
+      },
+      {
+        path: "spend",
+        loader: async ({ request }) => {
+          const hours = new URL(request.url).searchParams.get("hours") ?? "24";
+          return get<UsageView>(`usage?hours=${encodeURIComponent(hours)}`);
+        },
+        element: <SpendPage />,
       },
       {
         path: "conversations/:channel",

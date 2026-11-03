@@ -2,7 +2,13 @@ import { describe, expect, test } from "bun:test";
 import { mkdtempSync, writeFileSync, chmodSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { createClaudeCliLlm, renderPrompt, summarizeTool } from "../../src/infrastructure/llm/claudeCli.ts";
+import {
+  createClaudeCliLlm,
+  payerOf,
+  renderPrompt,
+  summarizeTool,
+  usageOf,
+} from "../../src/infrastructure/llm/claudeCli.ts";
 import type { PromptMessage } from "../../src/domain/types.ts";
 import type { LlmStreamEvent } from "../../src/application/ports.ts";
 
@@ -343,5 +349,103 @@ describe("createClaudeCliLlm.stream", () => {
     await llm.stream!({ system: "s", messages: [{ role: "user", content: "hi" }] }, (e) => seen.push(e));
     const errored = seen.find((e) => e.type === "tool" && e.status === "error");
     expect(errored).toBeDefined();
+  });
+});
+
+describe("recording what a run cost", () => {
+  const RESULT_LINE =
+    '{"type":"result","subtype":"success","is_error":false,"result":"done",' +
+    '"total_cost_usd":0.5,"duration_ms":1234,' +
+    '"usage":{"input_tokens":3,"output_tokens":7,"cache_read_input_tokens":11,"cache_creation_input_tokens":13},' +
+    '"modelUsage":{"claude-opus-5-5":{"costUSD":0.5}}}';
+
+  test("a completed run reports itself, with whose turn it was", async () => {
+    const bin = fakeBin(`#!/usr/bin/env bash\ncat > /dev/null\necho '${RESULT_LINE}'`);
+    const seen: { usage: unknown; payer: string; bill: unknown }[] = [];
+    const llm = createClaudeCliLlm({
+      binPath: bin,
+      onUsage: (usage, payer, bill) => seen.push({ usage, payer, bill }),
+    });
+    await llm.complete({
+      system: "sys",
+      messages: [{ role: "user", content: "hi" }],
+      bill: { actor: "U1", kind: "review", channel: "C9" },
+      oauthToken: "sk-ant-oat01-x",
+    });
+    expect(seen).toHaveLength(1);
+    expect(seen[0]?.payer).toBe("caller");
+    expect(seen[0]?.bill).toEqual({ actor: "U1", kind: "review", channel: "C9" });
+    expect((seen[0]?.usage as { costUsd: number }).costUsd).toBe(0.5);
+  });
+
+  test("a recorder that throws never takes the turn down with it", async () => {
+    const bin = fakeBin(`#!/usr/bin/env bash\ncat > /dev/null\necho '${RESULT_LINE}'`);
+    const llm = createClaudeCliLlm({
+      binPath: bin,
+      onUsage: () => {
+        throw new Error("the accountant exploded");
+      },
+    });
+    const out = await llm.complete({ system: "sys", messages: [{ role: "user", content: "hi" }] });
+    expect(out).toBe("done");
+  });
+});
+
+describe("usageOf", () => {
+  /**
+   * The real shape, captured from `claude -p --output-format stream-json`
+   * rather than guessed at: that is the only way to know `total_cost_usd` is
+   * top level while the token counts sit under `usage`, and that the model
+   * that actually served the run is the single key of `modelUsage`.
+   */
+  const REAL_RESULT = {
+    type: "result",
+    subtype: "success",
+    is_error: false,
+    duration_ms: 2557,
+    duration_api_ms: 2219,
+    num_turns: 1,
+    total_cost_usd: 0.119019,
+    usage: {
+      input_tokens: 2,
+      cache_creation_input_tokens: 14216,
+      cache_read_input_tokens: 10815,
+      output_tokens: 156,
+    },
+    modelUsage: { "claude-opus-5-5": { costUSD: 0.119019 } },
+    result: "hi",
+  };
+
+  test("reads what the run actually cost", () => {
+    expect(usageOf(REAL_RESULT)).toEqual({
+      model: "claude-opus-5-5",
+      inputTokens: 2,
+      outputTokens: 156,
+      cacheReadTokens: 10815,
+      cacheWriteTokens: 14216,
+      costUsd: 0.119019,
+      durationMs: 2557,
+    });
+  });
+
+  test("a line with no usage on it is not a run worth recording", () => {
+    expect(usageOf({ type: "result", result: "hi" })).toBeUndefined();
+  });
+
+  test("missing numbers are zero, never NaN - a NaN would poison every total", () => {
+    const u = usageOf({ total_cost_usd: 1, usage: {} });
+    expect(u?.inputTokens).toBe(0);
+    expect(u?.model).toBe("");
+    expect(u?.costUsd).toBe(1);
+  });
+});
+
+describe("payerOf", () => {
+  test("whoever's credential carried it", () => {
+    expect(payerOf("sk-ant-oat01-x", false)).toBe("caller");
+    expect(payerOf(undefined, true)).toBe("host");
+    expect(payerOf(undefined, false)).toBe("bot");
+    // the caller's token replaces the bot's in the spawn env, so it wins
+    expect(payerOf("sk-ant-oat01-x", true)).toBe("caller");
   });
 });
