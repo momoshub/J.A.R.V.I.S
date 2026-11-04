@@ -95,6 +95,7 @@ import type { ThreadSessionRepo } from "../infrastructure/db/threadSessionRepo.t
 import type { AllowedUser, PromptContext, UserRole } from "../domain/types.ts";
 import { NO_TOOLS, type ToolPolicy } from "../domain/toolPolicy.ts";
 import { btwRules } from "../domain/btwPrompt.ts";
+import { parseNoteArgs } from "../domain/noteTarget.ts";
 import { buildContextWindow } from "../domain/conversation.ts";
 import type { Clock, LlmPort } from "./ports.ts";
 import type { SlackAdminPort } from "./slackAdmin.ts";
@@ -1011,10 +1012,10 @@ export const COMMANDS: readonly CommandDef[] = [
     // bot used to finish a twenty minute job and tell someone to paste it in.
     quiet: true,
     minRole: "pal",
-    usage: "<file> [title] | parent <notion url> | access <role>",
-    summary: "publish a document into Notion through the account's connector",
+    usage: "<file> [title | <notion url> | --append <notion url>] | parent <notion url> | access <role>",
+    summary: "publish a document into Notion, or update a page that is already there",
     run: async (ctx) => {
-      const { deps, actor, args, rest, prefix, reply, channelId } = ctx;
+      const { deps, actor, args, prefix, reply, channelId } = ctx;
       const first = (args[0] ?? "").trim();
       const parent = deps.settings?.get(SETTING_KEYS.notionParent)?.trim() || "";
       const floor = roleOf(deps.settings?.get(SETTING_KEYS.noteMinRole)?.trim().toLowerCase() ?? "") ?? "admin";
@@ -1039,17 +1040,32 @@ export const COMMANDS: readonly CommandDef[] = [
         return `I cannot publish that myself - \`note\` writes with my host's Notion identity and is limited to *${floor}* and above. Ask someone at that level to run \`${prefix} note <file>\`.`;
       }
       if (!first) return `Publish what? \`${prefix} note <file> [title]\``;
-      if (!parent) {
+      // Creating needs somewhere to put it; updating already knows where it is
+      // going, so a missing parent must not stand in the way of an edit.
+      const aim = parseNoteArgs(args);
+      if (!aim.ok) return `${aim.error}. \`${prefix} note <file> [title]\`, or \`${prefix} note <file> <notion url>\` to update that page.`;
+      if (aim.mode === "create" && !parent) {
         return `I have nowhere to put it - no Notion parent is configured. An admin can set one: \`${prefix} note parent <notion url>\``;
       }
       if (!deps.llm) return "My brain is not wired up right now.";
 
-      const title = rest.slice(rest.indexOf(first) + first.length).trim();
+      const title = aim.title;
       const full = deps.toolPolicy?.("owner") ?? { skipPermissions: true };
       const name = botNameOf(deps);
       const params = {
-        system: notePrompt({ path: first, title: title || undefined, parent, askedBy: actor.slackId }, name),
-        messages: [{ role: "user" as const, content: `publish ${first}${title ? ` as "${title}"` : ""}` }],
+        system: notePrompt(
+          { path: aim.path, title, parent, askedBy: actor.slackId, mode: aim.mode, target: aim.target },
+          name,
+        ),
+        messages: [
+          {
+            role: "user" as const,
+            content:
+              aim.mode === "create"
+                ? `publish ${aim.path}${title ? ` as "${title}"` : ""}`
+                : `${aim.mode === "append" ? "append" : "update"} ${aim.target} from ${aim.path}`,
+          },
+        ],
         assistantName: name,
         policy: { ...full, timeoutMs: NOTE_TIMEOUT_MS },
         // Notion lives with the host's interactive login; a setup token carries
@@ -1062,7 +1078,11 @@ export const COMMANDS: readonly CommandDef[] = [
         const out = await deps.llm.complete(params);
         return out.trim() || "I could not publish that one.";
       }
-      await reply(`📝 publishing that to Notion for <@${actor.slackId}>`);
+      await reply(
+        aim.mode === "create"
+          ? `📝 publishing that to Notion for <@${actor.slackId}>`
+          : `📝 ${aim.mode === "append" ? "adding that to" : "updating"} ${aim.target} for <@${actor.slackId}>`,
+      );
       let out = "";
       try {
         out = deps.llm.stream ? await deps.llm.stream(params, () => {}) : await deps.llm.complete(params);

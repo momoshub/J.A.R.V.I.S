@@ -44,6 +44,52 @@ describe("notePrompt", () => {
   });
 });
 
+describe("notePrompt, updating a page that already exists", () => {
+  const page = "https://notion.so/Runbook-1a2b3c4d5e6f7081920a1b2c3d4e5f60";
+  const upd = { ...req, mode: "replace" as const, target: page };
+
+  test("it edits the page it was given, and says which", () => {
+    const p = notePrompt(upd, "Bot");
+    expect(p).toContain("updating a document in Notion");
+    expect(p).toContain(page);
+  });
+
+  test("it reads the page BEFORE changing it", () => {
+    // so it can report what it replaced, and notice a wrong target
+    expect(notePrompt(upd, "Bot")).toContain("read what is there NOW");
+  });
+
+  test("the duplicate is forbidden in the exact words of the complaint", () => {
+    const p = notePrompt(upd, "Bot");
+    expect(p).toContain("do NOT create a new page");
+    expect(p).toContain("Not as a draft, not as a copy");
+    // and the create-mode instruction that caused it is gone from this mode
+    expect(p).not.toContain("Create ONE page under the parent");
+  });
+
+  test("an unreachable page STOPS it, rather than falling back to creating one", () => {
+    expect(notePrompt(upd, "Bot")).toContain("STOP and say exactly that");
+  });
+
+  test("it must not quietly merge what the document leaves out", () => {
+    const p = notePrompt(upd, "Bot");
+    expect(p).toContain("do not quietly merge it");
+    expect(p).toContain("was on the page before and is not in the document");
+  });
+
+  test("appending leaves everything above it alone", () => {
+    const p = notePrompt({ ...req, mode: "append", target: page }, "Bot");
+    expect(p).toContain("adding to a document in Notion");
+    expect(p).toContain("END of that page");
+    expect(p).toContain("do not edit, reorder or tidy anything that was already on the page");
+    expect(p).not.toContain("Replace that page's body");
+  });
+
+  test("creating is still the default when no mode is given", () => {
+    expect(notePrompt(req, "Bot")).toContain("publishing a document into Notion");
+  });
+});
+
 describe("the connector-write rule", () => {
   test("only Slack POSTING is described as denied", () => {
     // the blanket version turned a missing command into a flat refusal: the bot

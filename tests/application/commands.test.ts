@@ -371,6 +371,54 @@ describe("dispatchCommand", () => {
     expect(out).toBe("drafted answer");
   });
 
+  test("note with a page url updates that page instead of making another", async () => {
+    const PAGE = "https://notion.so/Runbook-1a2b3c4d5e6f7081920a1b2c3d4e5f60";
+    const deps = build();
+    deps.settings = createSettingsRepo(db);
+    deps.settings.set("notion_parent", "https://notion.so/parent");
+    let system = "";
+    const llm: LlmPort = {
+      complete: async (p) => {
+        system = p.system;
+        return PAGE;
+      },
+    };
+    await dispatchCommand({ ...deps, llm }, actor(), "C1", `note /tmp/doc.md <${PAGE}|Runbook>`);
+    expect(system).toContain("updating a document in Notion");
+    expect(system).toContain(PAGE);
+    expect(system).toContain("do NOT create a new page");
+  });
+
+  test("note with no page url still just publishes one", async () => {
+    const deps = build();
+    deps.settings = createSettingsRepo(db);
+    deps.settings.set("notion_parent", "https://notion.so/parent");
+    let system = "";
+    const llm: LlmPort = { complete: async (p) => ((system = p.system), "ok") };
+    await dispatchCommand({ ...deps, llm }, actor(), "C1", "note /tmp/doc.md Deployment Runbook");
+    expect(system).toContain("publishing a document into Notion");
+    expect(system).toContain("Title: Deployment Runbook");
+  });
+
+  test("an update does not need a configured parent - it knows where it is going", async () => {
+    const PAGE = "1a2b3c4d5e6f7081920a1b2c3d4e5f60";
+    const deps = build();
+    deps.settings = createSettingsRepo(db); // no notion_parent set
+    let system = "";
+    const llm: LlmPort = { complete: async (p) => ((system = p.system), "ok") };
+    const out = await dispatchCommand({ ...deps, llm }, actor(), "C1", `note /tmp/doc.md --into ${PAGE}`);
+    expect(out).not.toContain("nowhere to put it");
+    expect(system).toContain("updating a document in Notion");
+  });
+
+  test("a target that is not a page is refused rather than published somewhere", async () => {
+    const deps = build();
+    deps.settings = createSettingsRepo(db);
+    deps.settings.set("notion_parent", "https://notion.so/parent");
+    const out = await dispatchCommand(deps, actor(), "C1", "note /tmp/doc.md --into the-runbook");
+    expect(out).toContain("not a Notion page");
+  });
+
   test("btw answers from the thread without joining it", async () => {
     const deps = build();
     deps.messages.append(
