@@ -53,6 +53,7 @@ import { annotateMentions, extractMentionIds } from "../../domain/mentions.ts";
 import { isTimeout } from "../../domain/threadSession.ts";
 import { toMrkdwn } from "../../domain/slackFormat.ts";
 import { couldFollowThread } from "../../domain/threadFollow.ts";
+import { isSilenceNote } from "../../domain/silence.ts";
 import { createSlackStream, type Streamer } from "./stream.ts";
 import {
   CONNECTION_GRACE_MS,
@@ -248,7 +249,9 @@ export const createHandler =
     const displayName = await resolveName(msg.client, msg.userId);
     const text = await annotate(msg.client, msg.text);
 
-    const stream = config.streamUpdates
+    // Not when following: nobody is waiting on it, and a streamed reply is in
+    // the channel before anyone can check it is not a note about staying quiet.
+    const stream = config.streamUpdates && !msg.following
       ? createSlackStream(
           () =>
             msg.client.chatStream({
@@ -318,7 +321,7 @@ export const createHandler =
             .update({ channel: msg.channelId, ts: stream.ts, reply_broadcast: true })
             .catch((e: unknown) => log(`broadcast failed: ${e instanceof Error ? e.message : String(e)}`));
         }
-      } else if (result.text.trim()) {
+      } else if (result.text.trim() && !isSilenceNote(result.text)) {
         // Converted at the boundary, not merely asked for in the prompt: a rule
         // the model may ignore is not a guarantee, and what it ignores is the
         // one thing the reader sees.

@@ -102,7 +102,7 @@ export type DashboardDeps = {
    * composition root, where the full command dependencies live; the brain
    * reaches it through this endpoint when a chat request is really a command.
    */
-  runCommand?: (req: RunCommandRequest) => Promise<string>;
+  runCommand?: (req: RunCommandRequest) => Promise<{ result: string; posted: boolean }>;
   /**
    * Exit so the supervisor restarts us, after a delay long enough for the reply
    * that asked for it to land. Absent means self-restart is not wired up.
@@ -423,7 +423,7 @@ export const createDashboard = (config: DashboardConfig, deps: DashboardDeps) =>
           const line = String(body.line ?? "").trim();
           if (!ticket || !line) return jsonError("ticket and line are required");
           try {
-            return Response.json({ ok: true, result: await deps.runCommand({ ticket, line }) });
+            return Response.json({ ok: true, ...(await deps.runCommand({ ticket, line })) });
           } catch (e) {
             return jsonError(e instanceof Error ? e.message : String(e), 500);
           }

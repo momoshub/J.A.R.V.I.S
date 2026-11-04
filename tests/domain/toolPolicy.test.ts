@@ -1,5 +1,11 @@
 import { describe, expect, test } from "bun:test";
-import { PAL_TOOLS, SANDBOX_DISALLOW, toolPolicyFor } from "../../src/domain/toolPolicy.ts";
+import {
+  DB_MCP_SERVERS,
+  NO_TOOLS,
+  PAL_TOOLS,
+  SANDBOX_DISALLOW,
+  toolPolicyFor,
+} from "../../src/domain/toolPolicy.ts";
 
 const REACT = "/opt/jarvis/bin/slack-react.sh";
 const opts = { fullCwd: "/work", sandboxCwd: "/scratch", reactScript: REACT };
@@ -174,3 +180,38 @@ describe("model per role", () => {
   });
 });
 
+
+describe("database MCP servers", () => {
+  test("a sandboxed role is DENIED them, not merely not granted them", () => {
+    // absence from an allow-list is not a denial - the allow-list does not
+    // restrict at all, measured against the CLI
+    for (const role of ["pal", "executer"] as const) {
+      const p = toolPolicyFor(role, { sandboxCwd: "/tmp/box" });
+      for (const server of DB_MCP_SERVERS) {
+        expect(p.disallowedTools).toContain(server);
+      }
+    }
+  });
+
+  test("full-access roles keep them - investigate is the reason they are here", () => {
+    for (const role of ["admin", "owner"] as const) {
+      const p = toolPolicyFor(role, { fullCwd: "/tmp/full" });
+      for (const server of DB_MCP_SERVERS) {
+        expect(p.disallowedTools ?? []).not.toContain(server);
+      }
+    }
+  });
+
+  test("a side question cannot run a production query", () => {
+    for (const server of DB_MCP_SERVERS) expect(NO_TOOLS).toContain(server);
+  });
+
+  test("each entry names a whole server, because a bare prefix denies nothing", () => {
+    // `--disallowedTools mcp__` was measured and the query still ran
+    for (const server of DB_MCP_SERVERS) {
+      expect(server.startsWith("mcp__")).toBe(true);
+      expect(server).not.toBe("mcp__");
+      expect(server.length).toBeGreaterThan("mcp__".length);
+    }
+  });
+});

@@ -88,6 +88,29 @@ export const ALWAYS_DISALLOW: readonly string[] = [
 ];
 
 /**
+ * Local database MCP servers configured on the host.
+ *
+ * These are NOT claude.ai connectors, and the difference matters: a
+ * `claude setup-token` credential strips the claude.ai ones (verified - zero
+ * `mcp__` tools under one), but a LOCAL stdio server is just a process, and it
+ * loads whatever credential the turn holds. Measured after installing these: a
+ * setup-token turn ran `select 1` against the production read replica and got
+ * its row back. So every turn reaches production SQL unless something refuses
+ * it, and an allow-list does not refuse (see NO_TOOLS).
+ *
+ * They must be named one by one. A bare `mcp__` prefix denies NOTHING -
+ * measured with exactly that flag, and the query ran anyway - so a denial has
+ * to name the server. Which means this list does not maintain itself: a new
+ * database server added to `~/.claude.json` is reachable by every role until
+ * its name is added here.
+ */
+export const DB_MCP_SERVERS: readonly string[] = [
+  "mcp__pg-prod",
+  "mcp__pg-prod-2",
+  "mcp__pg-staging",
+];
+
+/**
  * Tools a side question may use: none.
  *
  * It has to be a DENY list. `--allowedTools` pre-approves what is on it and
@@ -109,13 +132,25 @@ export const NO_TOOLS: readonly string[] = [
   "Read", "Write", "Edit", "MultiEdit", "NotebookEdit", "NotebookRead",
   "Glob", "Grep", "LS", "TodoWrite",
   "WebFetch", "WebSearch",
+  // A side question running a production query is the opposite of an aside.
+  ...DB_MCP_SERVERS,
 ];
 
-/** Additionally denied to sandboxed roles: writes and secret reads. */
+/**
+ * Additionally denied to sandboxed roles: writes, secret reads, and the
+ * databases.
+ *
+ * The database servers are here rather than merely absent from `PAL_TOOLS`
+ * because absence is not a denial - that is the whole lesson of `NO_TOOLS`.
+ * A `pal` is the lowest trust level the bot has and most of the workspace is
+ * one; arbitrary SQL against the production replica is not theirs to run, and
+ * `investigate` (host login, admin-gated) is the route when it is needed.
+ */
 export const SANDBOX_DISALLOW: readonly string[] = [
   ...ALWAYS_DISALLOW,
   "Write", "Edit", "MultiEdit", "NotebookEdit",
   "Bash(aws secretsmanager:*)", "Bash(aws ssm get-parameter:*)", "Bash(aws kms:*)",
+  ...DB_MCP_SERVERS,
 ];
 
 export type ToolPolicyOptions = {

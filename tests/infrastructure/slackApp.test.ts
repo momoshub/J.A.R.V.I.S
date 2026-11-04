@@ -170,6 +170,24 @@ describe("createHandler streaming truth table", () => {
     expect(said).toHaveLength(0);
   });
 
+  test("following a thread never streams, and a note about staying quiet is not posted", async () => {
+    const { handle, msg, said, rec } = build({
+      llm: streamingLlm("(empty reply — nothing to add here)", [
+        { type: "text", delta: "(empty reply — nothing to add here)" },
+      ]),
+      streamUpdates: true,
+    });
+    await handle({ ...msg("hi", "000.9"), following: true });
+    expect(rec.appends).toHaveLength(0);
+    expect(said).toHaveLength(0);
+  });
+
+  test("following a thread still posts a real answer", async () => {
+    const { handle, msg, said } = build({ llm: streamingLlm("the index is missing"), streamUpdates: true });
+    await handle({ ...msg("hi", "000.9"), following: true });
+    expect(said).toEqual([{ text: "the index is missing" }]);
+  });
+
   test("no broadcast when the reply is a plain post inside an existing thread", async () => {
     const { handle, msg, said } = build({ llm: streamingLlm("plain post"), streamUpdates: false });
     await handle(msg("hi", "000.9"));

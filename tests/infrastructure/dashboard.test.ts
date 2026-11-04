@@ -287,7 +287,7 @@ describe("running a command through the API", () => {
         runCommand: async (req) => {
           seen.push(req);
           if (req.ticket === "stale") throw new Error("that ticket is not valid any more");
-          return `ran ${req.line}`;
+          return { result: `ran ${req.line}`, posted: true };
         },
       },
     );
@@ -306,7 +306,7 @@ describe("running a command through the API", () => {
       }),
     );
     expect(res.status).toBe(200);
-    expect(await res.json()).toEqual({ ok: true, result: "ran review https://github.com/o/r/pull/1" });
+    expect(await res.json()).toEqual({ ok: true, result: "ran review https://github.com/o/r/pull/1", posted: true });
     expect(seen[0]).toEqual({ ticket: "tkt123", line: "review https://github.com/o/r/pull/1" });
   });
 

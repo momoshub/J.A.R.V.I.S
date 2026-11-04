@@ -54,6 +54,7 @@ import { createDraftReply } from "./application/draftReply.ts";
 import { toolPolicyFor } from "./domain/toolPolicy.ts";
 import { logSourceOrder } from "./domain/investigation.ts";
 import { createDashboard } from "./infrastructure/dashboard/server.ts";
+import { runForBrain } from "./application/brainRun.ts";
 import { dispatchCommand, isQuietCommand } from "./application/commands.ts";
 import { createCommandTickets, refusalMessage } from "./application/commandTickets.ts";
 import { createActivityLog } from "./infrastructure/logger.ts";
@@ -415,43 +416,14 @@ const main = async () => {
         const user = users.get(ctx.actor);
         if (!user) throw new Error("whoever asked is not on the access list");
 
-        // A tool-like command answers its CALLER. No `reply`, so it returns the
-        // content instead of posting it, and no handoff, because the caller is
-        // waiting on that content to carry on with. The chat turn has far more
-        // time than the command does, so waiting is safe here in a way it is
-        // not for a `review` nobody is holding a line open for.
-        if (isQuietCommand(line)) {
-          return dispatchCommand(deps, user, ctx.channel, line, {
-            prefix: config.commandPrefix,
-            slash: config.slashCommand,
-            threadTs: ctx.threadTs,
-          });
-        }
-
-        const run = dispatchCommand(deps, user, ctx.channel, line, {
-          prefix: config.commandPrefix,
-          slash: config.slashCommand,
-          threadTs: ctx.threadTs,
-          reply: (text: string) => slackAdmin.post(ctx.channel, text, ctx.threadTs),
+        const opts = { prefix: config.commandPrefix, slash: config.slashCommand, threadTs: ctx.threadTs };
+        return runForBrain({
+          quiet: isQuietCommand(line),
+          start: (reply) => dispatchCommand(deps, user, ctx.channel, line, reply ? { ...opts, reply } : opts),
+          post: async (text) => void (await slackAdmin.post(ctx.channel, text, ctx.threadTs)),
+          handoffMs: RUN_HANDOFF_MS,
+          onLateError: (e) => activity.error("command_failed", { command: line, result: String(e) }),
         });
-
-        // Do not make the caller wait. The chat turn that triggers a command is
-        // itself a CLI process on a chat-length timeout, and a `review` or
-        // `ticket` runs for minutes - blocking here kills that turn with a
-        // SIGTERM and posts "I hit an error" over a command that is working
-        // perfectly. The command reports into the thread itself, so there is
-        // nothing for the caller to relay anyway.
-        const settled = await Promise.race([
-          run.then((text) => ({ done: true as const, text })),
-          new Promise<{ done: false }>((r) => setTimeout(() => r({ done: false }), RUN_HANDOFF_MS)),
-        ]);
-        if (settled.done) return settled.text;
-        run
-          .then((text) => {
-            if (text.trim()) return slackAdmin.post(ctx.channel, text, ctx.threadTs);
-          })
-          .catch((e) => activity.error("command_failed", { command: line, result: String(e) }));
-        return "started - it reports into the thread as it goes";
       },
     },
   );
