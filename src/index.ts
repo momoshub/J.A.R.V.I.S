@@ -36,6 +36,9 @@ import { createAdapterRevisionRepo } from "./infrastructure/db/adapterRevisionRe
 import { createCommandLogRepo } from "./infrastructure/db/commandLogRepo.ts";
 import { createUsageRepo } from "./infrastructure/db/usageRepo.ts";
 import { createTurnLogRepo } from "./infrastructure/db/turnLogRepo.ts";
+import { createWatchRepo } from "./infrastructure/db/watchRepo.ts";
+import { createWatcher } from "./application/watcher.ts";
+import { createShellCheck } from "./infrastructure/system/shellCheck.ts";
 
 import { createWorkflowRepo } from "./infrastructure/db/workflowRepo.ts";
 import { createAccessRequestRepo } from "./infrastructure/db/accessRequestRepo.ts";
@@ -99,6 +102,13 @@ const buildLlm = (config: AppConfig, cwd: string, onUsage?: UsageSink): LlmPort 
  */
 const RUN_HANDOFF_MS = 20_000;
 
+/**
+ * How often the watcher looks for a due check. Slightly under the fastest
+ * interval a watch may ask for, so `--every 15s` is roughly honoured rather
+ * than quietly becoming 30.
+ */
+const WATCH_TICK_MS = 10_000;
+
 const main = async () => {
   const config = loadConfig();
 
@@ -112,6 +122,7 @@ const main = async () => {
   const adapterRevisions = createAdapterRevisionRepo(db);
   const usage = createUsageRepo(db);
   const turns = createTurnLogRepo(db);
+  const watches = createWatchRepo(db);
   const adapterDeps = () => ({
     store: adapterStore,
     revisions: adapterRevisions,
@@ -294,6 +305,7 @@ const main = async () => {
     commandLog,
     usage,
     turns,
+    watches,
     // Re-run a dead turn, or nudge a quiet thread, from `mindful`. It goes
     // through the ordinary respond path on purpose: same queue, same session,
     // same role checks - a retry that took a shortcut would not be a retry of
@@ -488,8 +500,25 @@ const main = async () => {
     console.log(`[ui] ${line}`);
   });
 
+  // The thing that actually waits. It polls outside every turn and session, so
+  // a thread waiting on a build is not a thread that has stopped working - and
+  // a turn that said it would carry on afterwards now does.
+  const watcher = createWatcher({
+    watches,
+    clock,
+    check: createShellCheck(fullCwd),
+    runTurn: deps.runTurn!,
+    say: async (channel, text, thread) => void (await slackAdmin.post(channel, text, thread)),
+    log: (msg) => console.error(`[watch] ${msg}`),
+  });
+  const waiting = watches.waiting().length;
+  if (waiting > 0) console.log(`[watch] carrying on with ${waiting} watch(es) from before the restart`);
+  const watchTimer = setInterval(() => void watcher.tick(), WATCH_TICK_MS);
+  (watchTimer as { unref?: () => void }).unref?.();
+
   const shutdown = async () => {
     console.log("\nShutting down ...");
+    clearInterval(watchTimer);
     dashboard.stop();
     await slack.stop();
     db.close();

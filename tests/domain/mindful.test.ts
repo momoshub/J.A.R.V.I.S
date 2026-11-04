@@ -60,6 +60,27 @@ describe("mindfulReport", () => {
     expect(out).not.toContain("failed:");
   });
 
+  test("what it is waiting on is part of the picture", () => {
+    const out = mindfulReport({
+      ...base,
+      watching: [
+        {
+          id: 3,
+          channelId: "C1",
+          threadTs: "9.9",
+          check: "gh run view 1 | grep -q completed",
+          note: "promote",
+          deadlineAt: NOW + 1_800_000,
+          attempts: 4,
+        },
+      ],
+    });
+    expect(out).toContain("waiting on");
+    expect(out).toContain("4 checks");
+    expect(out).toContain("gives up in 30m");
+    expect(out).not.toContain("nothing running, nothing stuck");
+  });
+
   test("the counts and the spend close it out", () => {
     const out = mindfulReport({
       ...base,

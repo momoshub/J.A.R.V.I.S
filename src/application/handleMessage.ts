@@ -28,6 +28,7 @@ import type { AdapterRevisionRepo } from "../infrastructure/db/adapterRevisionRe
 import type { CommandLogRepo } from "../infrastructure/db/commandLogRepo.ts";
 import type { UsageRepo } from "../infrastructure/db/usageRepo.ts";
 import type { TurnLogRepo } from "../infrastructure/db/turnLogRepo.ts";
+import type { WatchRepo } from "../infrastructure/db/watchRepo.ts";
 import type { WorkflowRepo } from "../infrastructure/db/workflowRepo.ts";
 import type { AccessRequestRepo } from "../infrastructure/db/accessRequestRepo.ts";
 import type { CommandApprovalRepo } from "../infrastructure/db/commandApprovalRepo.ts";
@@ -70,6 +71,8 @@ export type HandleMessageDeps = {
   usage?: UsageRepo;
   /** How each turn ended, for `mindful` and for continuing a failed thread. */
   turns?: TurnLogRepo;
+  /** Things the bot is waiting for, so a turn knows it can set one. */
+  watches?: WatchRepo;
   /** The workspace domain, so `mindful` can print clickable thread links. */
   slackTeam?: () => string | undefined;
   /** Run a chat turn in a thread from outside the Slack handler (`mindful`). */
@@ -257,6 +260,10 @@ export const handleMessage = async (
     runScript: deps.runScript,
     runTicket,
     commandBudget: deps.commandBudget?.(),
+    // A watch belongs to a thread it can come back to, and setting one needs
+    // the role that `watch` is gated on - offering it to anyone else would be
+    // describing a door that is locked.
+    canWatch: !!deps.watches && !!inbound.threadTs && canTeach(decision.user.role),
     following: inbound.following === true,
     commandPrefix: deps.commandPrefix,
     adapter: ctx.adapter,

@@ -85,6 +85,45 @@ export const migrate = (db: Database): void => {
   migrateAdapterRevisions(db);
   migrateLlmUsage(db);
   migrateTurnLog(db);
+  migrateWatches(db);
+};
+
+/**
+ * Migration v14: things the bot is waiting for.
+ *
+ * A turn cannot wait - it ends - so anything promised "once the build is done"
+ * never happened, and the thread sat on "waiting on it before promoting" until
+ * a person came back. The row outlives the turn: a predicate polled on a timer
+ * outside any session, and a follow-up turn when it finally passes.
+ *
+ * `next_at` is indexed because the poller asks one question on every tick -
+ * what is due - and asks it for as long as the bot is up.
+ */
+const migrateWatches = (db: Database): void => {
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS watches (
+      id            INTEGER PRIMARY KEY AUTOINCREMENT,
+      channel_id    TEXT NOT NULL,
+      thread_ts     TEXT NOT NULL,
+      slack_user_id TEXT NOT NULL,
+      note          TEXT NOT NULL,
+      check_cmd     TEXT NOT NULL DEFAULT '',
+      every_ms      INTEGER NOT NULL,
+      deadline_at   INTEGER NOT NULL,
+      next_at       INTEGER NOT NULL,
+      state         TEXT NOT NULL DEFAULT 'waiting',
+      attempts      INTEGER NOT NULL DEFAULT 0,
+      errors        INTEGER NOT NULL DEFAULT 0,
+      last_error    TEXT NOT NULL DEFAULT '',
+      created_at    INTEGER NOT NULL,
+      updated_at    INTEGER NOT NULL
+    );
+  `);
+  db.exec("CREATE INDEX IF NOT EXISTS idx_watches_due ON watches (state, next_at);");
+  const { user_version } = db.query<{ user_version: number }, []>("PRAGMA user_version").get() ?? {
+    user_version: 0,
+  };
+  if (user_version < 14) db.exec("PRAGMA user_version = 14;");
 };
 
 /**

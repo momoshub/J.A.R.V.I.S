@@ -1,0 +1,149 @@
+/**
+ * The thing that actually waits.
+ *
+ * It runs outside every turn and every session: a timer in the bot process
+ * that asks each due watch "are you ready yet" by running its shell predicate,
+ * and when one finally says yes, hands the thread a fresh turn that carries on
+ * from where the last one stopped.
+ *
+ * Polling here costs nothing - no model, no session, no queue slot - which is
+ * the whole reason the waiting does not happen inside the turn. A turn asleep
+ * for twenty minutes burns its own timeout AND blocks the thread it is in,
+ * because the queue runs one at a time.
+ *
+ * Every exit tells the thread something. A watch that quietly stopped would
+ * reproduce the exact failure it was built to fix, so there are only three
+ * ends: it fired, it ran out of time, or its check kept erroring - and all
+ * three post.
+ */
+import {
+  gaveUpMessage,
+  MAX_CONSECUTIVE_ERRORS,
+  readyMessage,
+  type WatchState,
+} from "../domain/watch.ts";
+import type { Watch, WatchRepo } from "../infrastructure/db/watchRepo.ts";
+import type { Clock } from "./ports.ts";
+
+/** Result of running a watch's predicate. */
+export type CheckResult = {
+  /** Exit code; 0 means ready. */
+  readonly code: number;
+  readonly output: string;
+  /** Set when the command could not be run at all. */
+  readonly error?: string;
+};
+
+export type WatcherDeps = {
+  watches: WatchRepo;
+  clock: Clock;
+  /** Run a predicate. Bounded by the adapter, never here. */
+  check: (cmd: string, timeoutMs: number) => Promise<CheckResult>;
+  /** Start the follow-up turn in the watched thread. */
+  runTurn: (req: {
+    channelId: string;
+    threadTs: string;
+    slackUserId: string;
+    text: string;
+  }) => Promise<void>;
+  /** Say something in the thread without spending a turn. */
+  say?: (channelId: string, text: string, threadTs: string) => Promise<void>;
+  log?: (msg: string) => void;
+};
+
+/** How long one predicate may run before it is treated as an error. */
+export const CHECK_TIMEOUT_MS = 30_000;
+
+export type Watcher = {
+  /** Check everything that is due. Safe to call on a timer. */
+  tick: () => Promise<void>;
+};
+
+export const createWatcher = (deps: WatcherDeps): Watcher => {
+  const log = deps.log ?? (() => {});
+  // A tick that overruns its interval must not have a second one land on top
+  // of it: two ticks would run the same due watch twice and fire it twice.
+  let running = false;
+
+  const finish = async (w: Watch, state: WatchState, text: string, error?: string): Promise<void> => {
+    deps.watches.settle(w.id, state, deps.clock(), error);
+    try {
+      await deps.runTurn({
+        channelId: w.channelId,
+        threadTs: w.threadTs,
+        slackUserId: w.slackUserId,
+        text,
+      });
+    } catch (e) {
+      // The turn is the point of the watch, so losing it is worth a word in
+      // the thread rather than only a line in the log.
+      const msg = e instanceof Error ? e.message : String(e);
+      log(`watch ${w.id} could not start its turn: ${msg}`);
+      await deps
+        .say?.(w.channelId, `I finished waiting but could not pick the thread back up: ${msg}`, w.threadTs)
+        .catch(() => {});
+    }
+  };
+
+  const one = async (w: Watch): Promise<void> => {
+    const now = deps.clock();
+    const waited = now - w.createdAt;
+
+    // A watch with no predicate is a plain timer: the deadline IS the event.
+    if (!w.check.trim()) {
+      if (now >= w.deadlineAt) await finish(w, "fired", readyMessage(w.note, waited));
+      else deps.watches.reschedule(w.id, Math.min(now + w.everyMs, w.deadlineAt), now);
+      return;
+    }
+
+    const res = await deps.check(w.check, CHECK_TIMEOUT_MS);
+
+    if (res.error) {
+      const errors = w.errors + 1;
+      deps.watches.reschedule(w.id, now + w.everyMs, now, res.error);
+      if (errors >= MAX_CONSECUTIVE_ERRORS) {
+        await finish(
+          w,
+          "failed",
+          gaveUpMessage(w.note, waited, `the check kept failing to run (${res.error})`),
+          res.error,
+        );
+      }
+      return;
+    }
+
+    if (res.code === 0) {
+      await finish(w, "fired", readyMessage(w.note, waited, res.output));
+      return;
+    }
+
+    if (now >= w.deadlineAt) {
+      await finish(w, "expired", gaveUpMessage(w.note, waited, "it never became ready"));
+      return;
+    }
+    // Not ready, not out of time: ask again later. A non-zero exit is the
+    // normal answer here, so it clears the error streak rather than feeding it.
+    deps.watches.reschedule(w.id, now + w.everyMs, now);
+  };
+
+  return {
+    tick: async () => {
+      if (running) return;
+      running = true;
+      try {
+        const due = deps.watches.due(deps.clock());
+        for (const w of due) {
+          try {
+            await one(w);
+          } catch (e) {
+            // One bad watch must never stop the others being checked.
+            log(`watch ${w.id} failed: ${e instanceof Error ? e.message : String(e)}`);
+            deps.watches.reschedule(w.id, deps.clock() + w.everyMs, deps.clock(), "tick failed");
+          }
+        }
+      } finally {
+        running = false;
+      }
+    },
+  };
+};

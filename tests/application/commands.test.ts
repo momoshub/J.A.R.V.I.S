@@ -8,6 +8,7 @@ import type { ClaudeTokenPort } from "../../src/application/claudeTokens.ts";
 import { createThreadSessionRepo } from "../../src/infrastructure/db/threadSessionRepo.ts";
 import { createUsageRepo } from "../../src/infrastructure/db/usageRepo.ts";
 import { createTurnLogRepo } from "../../src/infrastructure/db/turnLogRepo.ts";
+import { createWatchRepo } from "../../src/infrastructure/db/watchRepo.ts";
 import { createRunRegistry } from "../../src/application/runRegistry.ts";
 import { commandLineOf, dispatchCommand, type CommandDeps, isQuietCommand } from "../../src/application/commands.ts";
 import { respond, type RespondDeps } from "../../src/application/respond.ts";
@@ -370,6 +371,66 @@ describe("dispatchCommand", () => {
   test("rv reviews a PR via the brain", async () => {
     const out = await dispatchCommand(build(), actor(), "C1", "rv https://github.com/o/r/pull/1");
     expect(out).toBe("drafted answer");
+  });
+
+  test("watch stores the wait instead of holding the turn open", async () => {
+    const deps = build();
+    const watches = createWatchRepo(db);
+    const out = await dispatchCommand(
+      { ...deps, watches },
+      actor(),
+      "C1",
+      "watch --every 1m --until 30m promote be US then SG -- gh run view 1 | grep -q completed",
+      { threadTs: "9.9" },
+    );
+    expect(out).toContain("watching");
+    const [w] = watches.waiting();
+    expect(w?.note).toBe("promote be US then SG");
+    expect(w?.check).toBe("gh run view 1 | grep -q completed");
+    expect(w?.threadTs).toBe("9.9");
+    // the first check waits an interval - the thing has only just started
+    expect(w?.nextAt).toBe(deps.clock() + 60_000);
+  });
+
+  test("a watch needs a thread to come back to", async () => {
+    const out = await dispatchCommand(
+      { ...build(), watches: createWatchRepo(db) },
+      actor(),
+      "C1",
+      "watch do the thing -- true",
+    );
+    expect(out).toContain("belongs to a thread");
+  });
+
+  test("setting a shell check on a timer is admin and up", async () => {
+    const out = await dispatchCommand(
+      { ...build(), watches: createWatchRepo(db) },
+      actor({ slackId: "U3", role: "pal" }),
+      "C1",
+      "watch do it -- true",
+      { threadTs: "9.9" },
+    );
+    expect(out).toContain("needs *admin*");
+  });
+
+  test("watch cancel ends the ones on this thread", async () => {
+    const deps = build();
+    const watches = createWatchRepo(db);
+    const d = { ...deps, watches };
+    await dispatchCommand(d, actor(), "C1", "watch promote it -- true", { threadTs: "9.9" });
+    const out = await dispatchCommand(d, actor(), "C1", "watch cancel", { threadTs: "9.9" });
+    expect(out).toContain("stopped 1 watch");
+    expect(watches.waiting()).toHaveLength(0);
+  });
+
+  test("watch list says what it is waiting for, or that it is not", async () => {
+    const deps = build();
+    const watches = createWatchRepo(db);
+    expect(await dispatchCommand({ ...deps, watches }, actor(), "C1", "watch list")).toContain(
+      "not waiting for anything",
+    );
+    await dispatchCommand({ ...deps, watches }, actor(), "C1", "watch promote it -- true", { threadTs: "9.9" });
+    expect(await dispatchCommand({ ...deps, watches }, actor(), "C1", "watch list")).toContain("every 1m");
   });
 
   test("mindful leads with what is stuck, not with what is busy", async () => {

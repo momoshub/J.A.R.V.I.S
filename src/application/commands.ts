@@ -107,6 +107,8 @@ import type { LearningsRepo } from "../infrastructure/db/learningsRepo.ts";
 import type { CommandLogRepo } from "../infrastructure/db/commandLogRepo.ts";
 import type { UsageRepo } from "../infrastructure/db/usageRepo.ts";
 import type { TurnLogRepo } from "../infrastructure/db/turnLogRepo.ts";
+import type { WatchRepo } from "../infrastructure/db/watchRepo.ts";
+import { humanDuration, parseWatchArgs } from "../domain/watch.ts";
 import {
   mindfulReport,
   teamFromPermalink,
@@ -145,6 +147,8 @@ export type CommandDeps = {
   usage?: UsageRepo;
   /** How each turn ended, for `mindful` and for continuing a failed thread. */
   turns?: TurnLogRepo;
+  /** Things the bot is waiting for, polled outside any turn. */
+  watches?: WatchRepo;
   /** The workspace domain, so `mindful` can print clickable thread links. */
   slackTeam?: () => string | undefined;
   /**
@@ -684,6 +688,64 @@ export const COMMANDS: readonly CommandDef[] = [
     },
   },
   {
+    name: "watch",
+    aliases: ["waitfor"],
+    // The predicate is a shell command that runs as the bot, on a timer,
+    // outside any turn. That is the same authority a full-access turn has, so
+    // it takes the same trust - and it is the gate that stops a sandboxed
+    // session from scheduling itself a shell.
+    minRole: "admin",
+    usage: "[--every 1m] [--until 45m] <what to do when ready> [-- <shell check>] | list | cancel",
+    summary: "wait for something to finish, then carry on in this thread by itself",
+    run: async ({ deps, actor, args, rest, prefix, threadTs, channelId }) => {
+      if (!deps.watches) return "I have nowhere to keep a watch right now.";
+      const sub = (args[0] ?? "").toLowerCase();
+
+      if (sub === "list") {
+        const waiting = deps.watches.waiting(20);
+        if (waiting.length === 0) return "I am not waiting for anything.";
+        const now = deps.clock();
+        return waiting
+          .map(
+            (w) =>
+              `- #${w.id} <#${w.channelId}> ${w.check ? `\`${w.check.slice(0, 60)}\`` : "timer"} - every ${humanDuration(w.everyMs)}, ${humanDuration(Math.max(0, w.deadlineAt - now))} left, ${w.attempts} checks`,
+          )
+          .join("\n");
+      }
+
+      if (sub === "cancel" || sub === "stop") {
+        if (!threadTs) return "Cancel which thread's watch? Run it in the thread.";
+        const n = deps.watches.cancelThread(channelId, threadTs, deps.clock());
+        return n > 0 ? `stopped ${n} watch${n === 1 ? "" : "es"} here` : "nothing was being watched here.";
+      }
+
+      if (!threadTs) {
+        return "A watch belongs to a thread - run it in the one that should carry on.";
+      }
+      const parsed = parseWatchArgs(rest);
+      if (!parsed.ok) {
+        return `${parsed.error}. \`${prefix} watch --every 1m --until 45m <what to do> -- <shell check>\``;
+      }
+      const now = deps.clock();
+      const w = deps.watches.add(
+        {
+          channelId,
+          threadTs,
+          slackUserId: actor.slackId,
+          note: parsed.note,
+          check: parsed.check,
+          everyMs: parsed.everyMs,
+          deadlineAt: now + parsed.deadlineMs,
+          createdAt: now,
+        },
+        now,
+      );
+      return parsed.check
+        ? `⏳ watching: \`${parsed.check.slice(0, 80)}\`\nevery ${humanDuration(parsed.everyMs)}, giving up after ${humanDuration(parsed.deadlineMs)}. I will carry on here by myself when it passes. (\`${prefix} watch cancel\`, #${w.id})`
+        : `⏳ I will pick this up again in ${humanDuration(parsed.deadlineMs)}. (\`${prefix} watch cancel\`, #${w.id})`;
+    },
+  },
+  {
     name: "mindful",
     aliases: ["mind", "whatsup"],
     // It names people, quotes what they asked, and spans every conversation
@@ -763,6 +825,15 @@ export const COMMANDS: readonly CommandDef[] = [
           error: t.error,
           outcome: t.outcome,
           endedAt: t.endedAt,
+        })),
+        watching: (deps.watches?.waiting(15) ?? []).map((w) => ({
+          id: w.id,
+          channelId: w.channelId,
+          threadTs: w.threadTs,
+          check: w.check,
+          note: w.note,
+          deadlineAt: w.deadlineAt,
+          attempts: w.attempts,
         })),
         workflows: (deps.workflows?.listActive() ?? []).map((w) => ({
           channelId: w.channelId,

@@ -183,6 +183,8 @@ export const commandRules = (
   prefix: string,
   /** Commands this turn may run before the runaway guard stops it. */
   budget?: number,
+  /** True when a `watch` can be set, so the turn is told not to sit waiting. */
+  waiting = false,
 ): string => {
   if (!runScript || !runUrl || !canRun) return "";
   return `
@@ -204,7 +206,19 @@ Running my own commands (when a request is really one):
       ? `\n- One turn may run *${budget}* commands before a runaway guard stops it. That is plenty for real work, so do not ration it - but if a job plainly needs more, say so BEFORE you start and ask how they want it split. If you do hit it you will be told in those words; finish, report what is done and what is left, and never fall back to raw API calls to get around it.`
       : ""
   }
-- For an ordinary question, answer it yourself. This is only for requests that map onto a real command.`;
+- For an ordinary question, answer it yourself. This is only for requests that map onto a real command.${
+    waiting
+      ? `
+
+Waiting for something to finish:
+- You cannot wait. Your turn ENDS when you stop writing, so "I'll promote once the build is done" is a promise nobody is around to keep - the thread stops there until a person comes back and prods you. That stall is the single most annoying thing you do.
+- So the moment you catch yourself about to say you are waiting, monitoring, or will do something "once X finishes", set a watch instead: \`${prefix} watch --every <interval> --until <give up after> <what you will do next> -- <shell command that exits 0 when ready>\`
+- The check is a shell command and its EXIT CODE is the answer - \`grep -q\`, \`test\`, \`gh run view ... | grep -q completed\`. It is run for you on a timer, outside any turn, and when it passes you are handed this thread again with your own note, and you carry on from there. Polling costs nothing and does not block the thread, so you can still be talked to the whole time.
+- Then say in ONE line what you are waiting for and roughly how long you will give it. Do not narrate the wait after that, and never sit in a loop sleeping - that burns your own time limit and blocks the thread behind you.
+- With no sensible check, a plain \`${prefix} watch --until <time> <what to do>\` picks the thread back up after that long, and you look again then.
+- When the watch hands you back the thread, finish the job. Do not start it over, do not re-verify what you already verified, and do not ask whether you should still do it.`
+      : ""
+  }`;
 };
 
 export type BuildSystemPromptOptions = PromptContext & {
@@ -241,6 +255,12 @@ export type BuildSystemPromptOptions = PromptContext & {
   readonly runTicket?: string;
   /** how many commands this turn may run before the runaway guard stops it */
   readonly commandBudget?: number;
+  /**
+   * True when this turn can set a watch, so it is told to do that instead of
+   * ending on "waiting for the build". Off for a turn with no thread to come
+   * back to.
+   */
+  readonly canWatch?: boolean;
   /** true when this turn is an untagged reply under a thread the bot started */
   readonly following?: boolean;
   /** configured message command prefix, for explaining what a command line is */
@@ -301,6 +321,7 @@ export const buildSystemPrompt = (options: Partial<BuildSystemPromptOptions> = {
     !!options.runTicket,
     options.commandPrefix ?? "//bot",
     options.commandBudget,
+    options.canWatch === true,
   );
 
   // The always-apply rules go LAST, not second. They used to sit directly under

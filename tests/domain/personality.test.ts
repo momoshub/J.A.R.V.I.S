@@ -376,3 +376,28 @@ describe("where a rule sits in the prompt", () => {
     expect(prompt.indexOf("Identity lock")).toBeGreaterThan(prompt.indexOf("Before you send"));
   });
 });
+
+describe("the rule against sitting and waiting", () => {
+  const withWatch = (canWatch: boolean) =>
+    buildSystemPrompt({
+      base: "p",
+      botName: "Evie",
+      commandPrefix: "//ev",
+      runScript: "/x/run.sh",
+      runUrl: "http://x",
+      runTicket: "t",
+      canWatch,
+    });
+
+  test("a turn that can set one is told to, and told why sleeping is wrong", () => {
+    const p = withWatch(true);
+    expect(p).toContain("You cannot wait");
+    expect(p).toContain("//ev watch");
+    expect(p).toContain("never sit in a loop sleeping");
+    expect(p).toContain("Do not start it over");
+  });
+
+  test("a turn that cannot set one is not told about a door that is locked", () => {
+    expect(withWatch(false)).not.toContain("Waiting for something to finish");
+  });
+});

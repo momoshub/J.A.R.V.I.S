@@ -47,9 +47,20 @@ export type OpenWorkflow = {
   readonly lastTurnAt: number;
 };
 
+export type Watching = {
+  readonly id: number;
+  readonly channelId: string;
+  readonly threadTs: string;
+  readonly check: string;
+  readonly note: string;
+  readonly deadlineAt: number;
+  readonly attempts: number;
+};
+
 export type MindfulView = {
   readonly now: number;
   readonly live: readonly LiveRun[];
+  readonly watching?: readonly Watching[];
   readonly stuck: readonly StuckTurn[];
   readonly workflows: readonly OpenWorkflow[];
   /** Turns that ended in the window, for the success/failure count. */
@@ -96,7 +107,8 @@ export const mindfulReport = (view: MindfulView, team?: string): string => {
   const lines: string[] = [];
   const { done } = view;
 
-  if (view.stuck.length === 0 && view.live.length === 0 && view.workflows.length === 0) {
+  const watching = view.watching ?? [];
+  if (view.stuck.length === 0 && view.live.length === 0 && view.workflows.length === 0 && watching.length === 0) {
     lines.push("nothing running, nothing stuck");
   }
 
@@ -117,6 +129,16 @@ export const mindfulReport = (view: MindfulView, team?: string): string => {
       const where = r.threadTs ? threadRef(r.channelId, r.threadTs, team) : `<#${r.channelId}>`;
       lines.push(
         `- ${r.state === "running" ? "▶︎" : r.state === "queued" ? "⏸" : "◼︎"} ${where} <@${r.actor}> ${ago(view.now - r.startedAt)} - "${clip(r.what, 50)}"`,
+      );
+    }
+    lines.push("");
+  }
+
+  if (watching.length > 0) {
+    lines.push(`*waiting on* - ${watching.length}`);
+    for (const w of watching) {
+      lines.push(
+        `- ${threadRef(w.channelId, w.threadTs, team)} ${w.check ? `\`${clip(w.check, 45)}\`` : "timer"} - ${w.attempts} checks, gives up in ${ago(Math.max(0, w.deadlineAt - view.now))}`,
       );
     }
     lines.push("");
