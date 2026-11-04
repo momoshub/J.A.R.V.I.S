@@ -392,6 +392,51 @@ describe("dispatchCommand", () => {
     expect(w?.nextAt).toBe(deps.clock() + 60_000);
   });
 
+  test("watch pr builds its own predicate - no shell to invent", async () => {
+    const deps = build();
+    const watches = createWatchRepo(db);
+    const out = await dispatchCommand(
+      { ...deps, watches },
+      actor(),
+      "C1",
+      "watch pr <https://github.com/o/r/pull/9|o/r#9> promote it",
+      { threadTs: "9.9" },
+    );
+    expect(out).toContain("to be merged");
+    expect(out).toContain("you can still talk to me");
+    const [w] = watches.waiting();
+    expect(w?.check).toContain("gh pr view 'https://github.com/o/r/pull/9'");
+    expect(w?.note).toBe("promote it");
+  });
+
+  test("watch reply waits for an answer in a thread, from now on", async () => {
+    const deps = build();
+    const watches = createWatchRepo(db);
+    const out = await dispatchCommand(
+      { ...deps, watches, slackWaitScript: "/x/slack-wait.sh" },
+      actor(),
+      "C1",
+      "watch reply https://x.slack.com/archives/C7/p1793700990971739 from <@U2> use what they say",
+      { threadTs: "9.9" },
+    );
+    expect(out).toContain("a reply in that thread");
+    expect(out).toContain("<@U2>");
+    const [w] = watches.waiting();
+    expect(w?.check).toContain("/x/slack-wait.sh 'C7' '1793700990.971739'");
+    expect(w?.check).toContain("'U2'");
+  });
+
+  test("a named wait with the wrong sort of target is refused", async () => {
+    const out = await dispatchCommand(
+      { ...build(), watches: createWatchRepo(db) },
+      actor(),
+      "C1",
+      "watch pr the-big-one do it",
+      { threadTs: "9.9" },
+    );
+    expect(out).toContain("needs a GitHub pull request url");
+  });
+
   test("a watch needs a thread to come back to", async () => {
     const out = await dispatchCommand(
       { ...build(), watches: createWatchRepo(db) },

@@ -8,6 +8,8 @@ import {
   parseDuration,
   parseWatchArgs,
   readyMessage,
+  builtinCheck,
+  shellQuote,
 } from "../../src/domain/watch.ts";
 
 describe("parseDuration", () => {
@@ -117,5 +119,83 @@ describe("humanDuration", () => {
     expect(humanDuration(MIN_EVERY_MS)).toBe("15s");
     expect(humanDuration(600_000)).toBe("10m");
     expect(humanDuration(MAX_DEADLINE_MS)).toBe("6h00m");
+  });
+});
+
+describe("named waits", () => {
+  const PR = "https://github.com/acme/acme-be/pull/14538";
+
+  test("a PR it opened: merged", () => {
+    const r = builtinCheck("pr", PR);
+    expect("check" in r && r.check).toContain("gh pr view");
+    expect("check" in r && r.check).toContain("grep -qx MERGED");
+  });
+
+  test("CI: waits for it to STOP being pending, so a failure is heard too", () => {
+    // measured: gh pr checks exits 8 while pending, 1 on failure, 0 when green
+    const r = builtinCheck("checks", PR);
+    expect("check" in r && r.check).toContain("-ne 8");
+  });
+
+  test("an answer owed by somebody else", () => {
+    const r = builtinCheck("reply", "", {
+      slackWaitScript: "/x/slack-wait.sh",
+      channel: "C1",
+      threadTs: "9.9",
+      afterTs: "1793783000.000000",
+      from: "U2",
+    });
+    expect("check" in r && r.check).toBe("/x/slack-wait.sh 'C1' '9.9' '1793783000.000000' 'U2'");
+  });
+
+  test("a deployment, once there is something to curl", () => {
+    const r = builtinCheck("url", "https://api.test/health");
+    expect("check" in r && r.check).toContain("curl -sfS");
+  });
+
+  test("a target that is not what the kind needs is refused, not guessed", () => {
+    expect("error" in builtinCheck("pr", "the big one")).toBe(true);
+    expect("error" in builtinCheck("url", "not-a-url")).toBe(true);
+    expect("error" in builtinCheck("reply", "", {})).toBe(true);
+  });
+
+  test("a url with a shell character cannot become a second command", () => {
+    const r = builtinCheck("url", "https://x.test/?a=1&b=2; rm -rf /");
+    expect("check" in r && r.check).toContain("'https://x.test/?a=1&b=2; rm -rf /'");
+    expect(shellQuote("it's")).toBe("'it'\\''s'");
+  });
+});
+
+describe("parsing a named wait", () => {
+  test("kind, target, and what to do after", () => {
+    const a = parseWatchArgs("pr https://github.com/o/r/pull/1 promote it");
+    expect(a.ok && a.kind).toBe("pr");
+    expect(a.ok && a.target).toBe("https://github.com/o/r/pull/1");
+    expect(a.ok && a.note).toBe("promote it");
+  });
+
+  test("Slack's link wrapping does not reach the target", () => {
+    const a = parseWatchArgs("pr <https://github.com/o/r/pull/1|o/r#1> promote it");
+    expect(a.ok && a.target).toBe("https://github.com/o/r/pull/1");
+  });
+
+  test("waiting on one person in particular", () => {
+    const a = parseWatchArgs("reply https://x.slack.com/archives/C1/p1 from <@U2> use what they say");
+    expect(a.ok && a.kind).toBe("reply");
+    expect(a.ok && a.from).toBe("U2");
+    expect(a.ok && a.note).toBe("use what they say");
+  });
+
+  test("a kind word in the middle of a sentence is just a word", () => {
+    // "watch the pr" must not silently become a pull request watch
+    const a = parseWatchArgs("tell me when the pr lands -- true");
+    expect(a.ok && a.kind).toBeUndefined();
+    expect(a.ok && a.note).toBe("tell me when the pr lands");
+  });
+
+  test("flags still work alongside a named wait", () => {
+    const a = parseWatchArgs("--every 2m --until 1h checks https://github.com/o/r/pull/9 report CI");
+    expect(a.ok && a.kind).toBe("checks");
+    expect(a.ok && a.everyMs).toBe(120_000);
   });
 });

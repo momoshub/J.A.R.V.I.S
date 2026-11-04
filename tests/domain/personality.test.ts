@@ -394,6 +394,11 @@ describe("the rule against sitting and waiting", () => {
     expect(p).toContain("You cannot wait");
     expect(p).toContain("//ev watch");
     expect(p).toContain("never sit in a loop sleeping");
+    // the named forms, so it does not have to invent a predicate
+    expect(p).toContain("//ev watch pr");
+    expect(p).toContain("//ev watch reply");
+    // and that waiting is not a mode that stops it talking
+    expect(p).toContain("People can keep talking to you the whole time");
     expect(p).toContain("Do not start it over");
   });
 

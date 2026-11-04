@@ -108,6 +108,8 @@ export type HandleMessageDeps = {
   grafanaGetScript?: string;
   /** Absolute path of the read-only Slack reader, granted to every role. */
   slackReadScript?: string;
+  /** Absolute path of the "has anything new been said" helper, for `watch reply`. */
+  slackWaitScript?: string;
   /** Absolute path of the claude.ai artifact reader. */
   artifactScript?: string;
   /** Absolute path of the verify-and-restart helper. Admin+ only; see below. */

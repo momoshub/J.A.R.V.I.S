@@ -198,6 +198,8 @@ const main = async () => {
   const fileScript = join(import.meta.dir, "..", "bin", "slack-file.sh");
   const grafanaGetScript = join(import.meta.dir, "..", "bin", "grafana-get.sh");
   const slackReadScript = join(import.meta.dir, "..", "bin", "slack-read.sh");
+  // How `watch reply` asks whether anybody has answered yet.
+  const slackWaitScript = join(import.meta.dir, "..", "bin", "slack-wait.sh");
   // Reads a claude.ai artifact by opening a full session, which has the tool a
   // `-p` spawn does not.
   const artifactScript = join(import.meta.dir, "..", "bin", "artifact-read.sh");
@@ -306,6 +308,7 @@ const main = async () => {
     usage,
     turns,
     watches,
+    slackWaitScript,
     // Re-run a dead turn, or nudge a quiet thread, from `mindful`. It goes
     // through the ordinary respond path on purpose: same queue, same session,
     // same role checks - a retry that took a shortcut would not be a retry of

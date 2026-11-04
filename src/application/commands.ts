@@ -108,7 +108,7 @@ import type { CommandLogRepo } from "../infrastructure/db/commandLogRepo.ts";
 import type { UsageRepo } from "../infrastructure/db/usageRepo.ts";
 import type { TurnLogRepo } from "../infrastructure/db/turnLogRepo.ts";
 import type { WatchRepo } from "../infrastructure/db/watchRepo.ts";
-import { humanDuration, parseWatchArgs } from "../domain/watch.ts";
+import { builtinCheck, humanDuration, parseWatchArgs } from "../domain/watch.ts";
 import {
   mindfulReport,
   teamFromPermalink,
@@ -137,6 +137,8 @@ export type CommandDeps = {
   system?: SystemTracker;
   /** Absolute path of the claude.ai artifact reader, for `read`. */
   artifactScript?: string;
+  /** Absolute path of the "has anything new been said" helper, for `watch reply`. */
+  slackWaitScript?: string;
   llm?: LlmPort;
   promptContext?: () => PromptContext;
   botInfo?: () => { botName: string; model: string };
@@ -695,8 +697,8 @@ export const COMMANDS: readonly CommandDef[] = [
     // it takes the same trust - and it is the gate that stops a sandboxed
     // session from scheduling itself a shell.
     minRole: "admin",
-    usage: "[--every 1m] [--until 45m] <what to do when ready> [-- <shell check>] | list | cancel",
-    summary: "wait for something to finish, then carry on in this thread by itself",
+    usage: "pr|checks|reply|url <target> <what to do> | <what to do> -- <shell check> | list | cancel",
+    summary: "wait for a PR, CI, a reply or a url, then carry on in this thread by itself",
     run: async ({ deps, actor, args, rest, prefix, threadTs, channelId }) => {
       if (!deps.watches) return "I have nowhere to keep a watch right now.";
       const sub = (args[0] ?? "").toLowerCase();
@@ -724,24 +726,58 @@ export const COMMANDS: readonly CommandDef[] = [
       }
       const parsed = parseWatchArgs(rest);
       if (!parsed.ok) {
-        return `${parsed.error}. \`${prefix} watch --every 1m --until 45m <what to do> -- <shell check>\``;
+        return `${parsed.error}. \`${prefix} watch pr <url> <what to do>\`, or \`${prefix} watch <what to do> -- <shell check>\``;
       }
       const now = deps.clock();
+      // A named wait builds its own predicate. The raw `-- <shell>` form still
+      // wins if both were given: somebody who wrote a command meant it.
+      let check = parsed.check;
+      if (!check && parsed.kind) {
+        const ref = parsed.kind === "reply" ? parseMessageLink(parsed.target ?? "") : undefined;
+        const built = builtinCheck(parsed.kind, parsed.target ?? "", {
+          slackWaitScript: deps.slackWaitScript,
+          channel: ref?.channel,
+          threadTs: ref?.ts,
+          // Only what is said from NOW counts; the thread's existing replies
+          // are not an answer to a question asked after them.
+          afterTs: (now / 1000).toFixed(6),
+          from: parsed.from,
+        });
+        if ("error" in built) return built.error;
+        check = built.check;
+      }
+      if (!check && !parsed.kind) {
+        // A plain timer, which is allowed - but say so, because "watch" with
+        // no check reads like it is watching something.
+      }
       const w = deps.watches.add(
         {
           channelId,
           threadTs,
           slackUserId: actor.slackId,
           note: parsed.note,
-          check: parsed.check,
+          check,
           everyMs: parsed.everyMs,
           deadlineAt: now + parsed.deadlineMs,
           createdAt: now,
         },
         now,
       );
-      return parsed.check
-        ? `⏳ watching: \`${parsed.check.slice(0, 80)}\`\nevery ${humanDuration(parsed.everyMs)}, giving up after ${humanDuration(parsed.deadlineMs)}. I will carry on here by myself when it passes. (\`${prefix} watch cancel\`, #${w.id})`
+      const what =
+        parsed.kind === "pr"
+          ? `${parsed.target} to be merged`
+          : parsed.kind === "checks"
+            ? `CI on ${parsed.target}`
+            : parsed.kind === "reply"
+              ? `a reply in that thread${parsed.from ? ` from <@${parsed.from}>` : ""}`
+              : parsed.kind === "url"
+                ? parsed.target
+                : "";
+      if (what) {
+        return `⏳ waiting for ${what}, checking every ${humanDuration(parsed.everyMs)} and giving up after ${humanDuration(parsed.deadlineMs)}. I will carry on here by myself - you can still talk to me meanwhile. (\`${prefix} watch cancel\`, #${w.id})`;
+      }
+      return check
+        ? `⏳ watching: \`${check.slice(0, 80)}\`\nevery ${humanDuration(parsed.everyMs)}, giving up after ${humanDuration(parsed.deadlineMs)}. I will carry on here by myself when it passes. (\`${prefix} watch cancel\`, #${w.id})`
         : `⏳ I will pick this up again in ${humanDuration(parsed.deadlineMs)}. (\`${prefix} watch cancel\`, #${w.id})`;
     },
   },
