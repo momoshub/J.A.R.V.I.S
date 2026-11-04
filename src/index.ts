@@ -35,6 +35,8 @@ import {
 import { createAdapterRevisionRepo } from "./infrastructure/db/adapterRevisionRepo.ts";
 import { createCommandLogRepo } from "./infrastructure/db/commandLogRepo.ts";
 import { createUsageRepo } from "./infrastructure/db/usageRepo.ts";
+import { createTurnLogRepo } from "./infrastructure/db/turnLogRepo.ts";
+
 import { createWorkflowRepo } from "./infrastructure/db/workflowRepo.ts";
 import { createAccessRequestRepo } from "./infrastructure/db/accessRequestRepo.ts";
 import { createCommandApprovalRepo } from "./infrastructure/db/commandApprovalRepo.ts";
@@ -45,6 +47,7 @@ import { createAnthropicLlm } from "./infrastructure/llm/anthropic.ts";
 import { createClaudeCliLlm } from "./infrastructure/llm/claudeCli.ts";
 import { WebClient } from "@slack/web-api";
 import { createSlackApp } from "./infrastructure/slack/app.ts";
+import { respond } from "./application/respond.ts";
 import type { ConnectionHealth } from "./domain/connectionHealth.ts";
 import { createUiAccessProbe } from "./infrastructure/system/uiAccessProbe.ts";
 import { describeUiAccess, needsAttention } from "./domain/uiAccess.ts";
@@ -108,6 +111,7 @@ const main = async () => {
   const adapterStore = createAdapterStore(config.adapterPath);
   const adapterRevisions = createAdapterRevisionRepo(db);
   const usage = createUsageRepo(db);
+  const turns = createTurnLogRepo(db);
   const adapterDeps = () => ({
     store: adapterStore,
     revisions: adapterRevisions,
@@ -289,6 +293,35 @@ const main = async () => {
     botInfo: () => ({ botName: profile().name, model: modelLabel(config) }),
     commandLog,
     usage,
+    turns,
+    // Re-run a dead turn, or nudge a quiet thread, from `mindful`. It goes
+    // through the ordinary respond path on purpose: same queue, same session,
+    // same role checks - a retry that took a shortcut would not be a retry of
+    // the thing that failed.
+    runTurn: async ({
+      channelId,
+      threadTs,
+      slackUserId,
+      text,
+    }: {
+      channelId: string;
+      threadTs: string;
+      slackUserId: string;
+      text: string;
+    }) => {
+      const result = await respond(deps, {
+        channelId,
+        slackUserId,
+        text,
+        threadTs,
+        messageTs: threadTs,
+        viaSlash: false,
+        following: false,
+      });
+      if (result.kind !== "ignored" && result.text.trim()) {
+        await slackAdmin.post(channelId, result.text, threadTs);
+      }
+    },
     disabledCommands,
     slack: slackAdmin,
     // `review` approves through this directly, before the brain starts.

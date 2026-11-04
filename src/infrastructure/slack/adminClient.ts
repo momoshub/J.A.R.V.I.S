@@ -179,6 +179,15 @@ export const createSlackAdmin = (client: WebClient): SlackAdminPort => {
       return Promise.all((res.messages ?? []).map((m) => toMessage(m, botId)));
     },
 
+    permalink: async (channel, ts) => {
+      try {
+        const res = (await client.chat.getPermalink({ channel, message_ts: ts })) as { permalink?: string };
+        return res.permalink;
+      } catch {
+        return undefined; // a link is a convenience, never a reason to fail
+      }
+    },
+
     update: async (channel, ts, text) => {
       await client.chat.update({ channel, ts, text });
     },

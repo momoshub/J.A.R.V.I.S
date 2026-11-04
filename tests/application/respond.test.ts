@@ -5,6 +5,7 @@ import { createMessageRepo } from "../../src/infrastructure/db/messageRepo.ts";
 import { respond, type RespondDeps } from "../../src/application/respond.ts";
 import { createThreadQueue } from "../../src/application/threadQueue.ts";
 import { createRunRegistry } from "../../src/application/runRegistry.ts";
+import { createTurnLogRepo } from "../../src/infrastructure/db/turnLogRepo.ts";
 import type { SlackAdminPort, InteractiveAction } from "../../src/application/slackAdmin.ts";
 import type { LlmPort } from "../../src/application/ports.ts";
 
@@ -252,5 +253,53 @@ describe("the busy notice and following", () => {
 
     const src = await Bun.file("src/application/respond.ts").text();
     expect(src).toContain("if (!inbound.following) await announceBusy");
+  });
+});
+
+describe("recording how a turn ended", () => {
+  const withTurns = (llmPort: LlmPort) => {
+    const deps = build(llmPort);
+    const db = openDatabase(":memory:");
+    const turns = createTurnLogRepo(db);
+    return { deps: { ...deps, turns } as RespondDeps, turns };
+  };
+
+  const inbound = {
+    channelId: "C1",
+    slackUserId: OWNER,
+    text: "why is the form slow",
+    threadTs: "9.9",
+    messageTs: "9.9",
+    viaSlash: false,
+  };
+
+  test("a turn that worked is written down", async () => {
+    const { deps, turns } = withTurns(llm("because of FINAL"));
+    await respond(deps, inbound);
+    const [t] = turns.since(0);
+    expect(t?.outcome).toBe("ok");
+    expect(t?.request).toBe("why is the form slow");
+    expect(t?.threadTs).toBe("9.9");
+    expect(t?.slackUserId).toBe(OWNER);
+  });
+
+  test("a turn that threw is written down WITH the error, not just lost to stderr", async () => {
+    const { deps, turns } = withTurns({
+      complete: async () => {
+        throw new Error("disk I/O error");
+      },
+    });
+    await expect(respond(deps, inbound)).rejects.toThrow("disk I/O error");
+    const [t] = turns.since(0);
+    expect(t?.outcome).toBe("failed");
+    expect(t?.error).toContain("disk I/O error");
+    // and it is the thing `mindful continue` will re-run
+    expect(turns.stuckThreads(0)).toHaveLength(1);
+  });
+
+  test("an instance with no turn log still answers", async () => {
+    const deps = build(llm("fine"));
+    const out = await respond(deps, inbound);
+    expect(out.kind).toBe("reply");
   });
 });

@@ -90,6 +90,12 @@ export type SlackAdminPort = {
   history: (channel: string, limit: number, cursor?: string) => Promise<HistoryPage>;
   /** Full thread for a root message, oldest first. */
   replies: (channel: string, threadTs: string) => Promise<SlackMessage[]>;
+  /**
+   * A clickable link to one message. `team.info` would give the workspace
+   * domain directly but needs a scope this token does not have; this one works
+   * with `chat:write`, so it is how a thread link gets built at all.
+   */
+  permalink?: (channel: string, ts: string) => Promise<string | undefined>;
   /** Edit one of the bot's own messages. */
   update: (channel: string, ts: string, text: string) => Promise<void>;
   /** Delete one of the bot's own messages. */

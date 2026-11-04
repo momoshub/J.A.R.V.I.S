@@ -106,6 +106,13 @@ import type { UserRepo } from "../infrastructure/db/userRepo.ts";
 import type { LearningsRepo } from "../infrastructure/db/learningsRepo.ts";
 import type { CommandLogRepo } from "../infrastructure/db/commandLogRepo.ts";
 import type { UsageRepo } from "../infrastructure/db/usageRepo.ts";
+import type { TurnLogRepo } from "../infrastructure/db/turnLogRepo.ts";
+import {
+  mindfulReport,
+  teamFromPermalink,
+  type LiveRun,
+  type MindfulView,
+} from "../domain/mindful.ts";
 import { spendReport } from "../domain/spendReport.ts";
 import type { WorkflowRepo } from "../infrastructure/db/workflowRepo.ts";
 import type { CommandApprovalRepo } from "../infrastructure/db/commandApprovalRepo.ts";
@@ -136,6 +143,22 @@ export type CommandDeps = {
   disabledCommands?: () => ReadonlySet<string>;
   /** What each run of the model consumed, for `spend` and the dashboard. */
   usage?: UsageRepo;
+  /** How each turn ended, for `mindful` and for continuing a failed thread. */
+  turns?: TurnLogRepo;
+  /** The workspace domain, so `mindful` can print clickable thread links. */
+  slackTeam?: () => string | undefined;
+  /**
+   * Run a chat turn in a thread, as somebody, from outside the Slack handler.
+   * Wired at the composition root for the same reason `runCommand` is: the
+   * full respond path lives above this module, and `mindful continue` needs
+   * exactly it - re-running a dead turn with its own session and thread.
+   */
+  runTurn?: (req: {
+    channelId: string;
+    threadTs: string;
+    slackUserId: string;
+    text: string;
+  }) => Promise<void>;
   /** Slack Web API operations, for the power tools (bomb, reply). */
   slack?: SlackAdminPort;
   /** GitHub actions the bot takes itself - the up-front approve in `review`. */
@@ -658,6 +681,120 @@ export const COMMANDS: readonly CommandDef[] = [
     run: ({ deps, channelId }) => {
       const removed = deps.messages.clearChannel(channelId);
       return removed > 0 ? `Forgotten. Wiped ${removed} turns from this channel.` : "Nothing to forget here.";
+    },
+  },
+  {
+    name: "mindful",
+    aliases: ["mind", "whatsup"],
+    // It names people, quotes what they asked, and spans every conversation
+    // the bot can see - DMs and private channels the reader may not be in.
+    minRole: "admin",
+    usage: "[hours] | continue <thread link> | reply <thread link> [what to say]",
+    summary: "everything I am doing: what is stuck, what is running, what it cost",
+    run: async (ctx) => {
+      const { deps, actor, args, prefix, channelId } = ctx;
+      const sub = (args[0] ?? "").toLowerCase();
+      const team = deps.slackTeam?.();
+
+      if (sub === "continue" || sub === "retry" || sub === "reply") {
+        if (!deps.runTurn) return "I cannot start a turn from here right now.";
+        const ref = parseMessageLink((args[1] ?? "").replace(/^<|>$/g, ""));
+        if (!ref) return `Which thread? \`${prefix} mindful ${sub} <thread link>\``;
+        const said = args.slice(2).join(" ").trim();
+
+        if (sub === "reply") {
+          // Nudging a thread it has gone quiet in. With nothing said, it is
+          // told to catch up and answer only if it has something - the same
+          // judgement it uses when following its own threads.
+          const text =
+            said ||
+            "Read this thread from the start, then reply only if you have something it needs. If you do not, say nothing.";
+          await deps.runTurn({ channelId: ref.channel, threadTs: ref.ts, slackUserId: actor.slackId, text });
+          return `nudged that thread${said ? "" : " - it will answer only if it has something"} 🫧`;
+        }
+
+        // Continue: run the dead turn again, as the person who asked for it
+        // the first time. Their request is in the turn log precisely so this
+        // does not depend on a `messages` table a `forget` can empty.
+        const last = deps.turns?.latestInThread(ref.channel, ref.ts);
+        if (!last) return "I have no record of a turn in that thread.";
+        if (last.outcome === "ok" && !said) {
+          return `The last turn there finished fine. \`${prefix} mindful reply <link> <what to ask>\` if you want something new.`;
+        }
+        const text = said || last.request;
+        if (!text.trim()) return "That turn left nothing to run again.";
+        await deps.runTurn({
+          channelId: ref.channel,
+          threadTs: ref.ts,
+          slackUserId: last.slackUserId || actor.slackId,
+          text,
+        });
+        return `running that one again for <@${last.slackUserId || actor.slackId}> 🔁`;
+      }
+
+      const windowMs = parseWindow(args[0]) ?? 4 * 60 * 60_000;
+      const since = deps.clock() - windowMs;
+
+      const live: LiveRun[] = (deps.runs?.all() ?? []).map((r) => ({
+        id: r.id,
+        channelId: r.channelId,
+        threadTs: r.threadTs,
+        actor: r.actor,
+        what: r.what,
+        startedAt: r.startedAt,
+        state: r.state,
+      }));
+
+      const recent = deps.turns?.since(since, 500) ?? [];
+      const done = {
+        ok: recent.filter((t) => t.outcome === "ok").length,
+        failed: recent.filter((t) => t.outcome === "failed").length,
+        stopped: recent.filter((t) => t.outcome === "stopped").length,
+      };
+
+      const view: MindfulView = {
+        now: deps.clock(),
+        live,
+        stuck: (deps.turns?.stuckThreads(since, 12) ?? []).map((t) => ({
+          channelId: t.channelId,
+          threadTs: t.threadTs,
+          slackUserId: t.slackUserId,
+          request: t.request,
+          error: t.error,
+          outcome: t.outcome,
+          endedAt: t.endedAt,
+        })),
+        workflows: (deps.workflows?.listActive() ?? []).map((w) => ({
+          channelId: w.channelId,
+          threadTs: w.threadTs,
+          task: w.task,
+          lastTurnAt: w.updatedAt,
+        })),
+        done,
+        spend: deps.usage?.totals(since) ?? {
+          runs: 0,
+          costUsd: 0,
+          inputTokens: 0,
+          outputTokens: 0,
+          cacheRead: 0,
+          cacheWrite: 0,
+          durationMs: 0,
+        },
+        windowMs,
+      };
+
+      // One permalink resolves the workspace domain; every other link is then
+      // built from ids rather than costing an API call of its own.
+      const anchor = view.stuck[0] ?? view.workflows[0];
+      const resolved =
+        team ??
+        (anchor && deps.slack?.permalink
+          ? teamFromPermalink(await deps.slack.permalink(anchor.channelId, anchor.threadTs))
+          : undefined);
+      const report = mindfulReport(view, resolved);
+      const hint = view.stuck.length > 0 ? `\n\n_\`${prefix} mindful continue <thread link>\` runs a stuck one again_` : "";
+      void channelId;
+      return `${report}${hint}`;
     },
   },
   {

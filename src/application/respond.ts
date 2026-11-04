@@ -16,6 +16,7 @@ import { DROP_ACTION, STOP_ACTION, type RunRegistry } from "./runRegistry.ts";
 import type { ThreadQueue } from "./threadQueue.ts";
 import type { UserRole } from "../domain/types.ts";
 import type { PostedRef } from "./slackAdmin.ts";
+import type { TurnOutcome } from "../infrastructure/db/turnLogRepo.ts";
 import { handleMessage, type HandleMessageDeps, type HandleResult, type InboundMessage } from "./handleMessage.ts";
 import type { LlmStreamSink } from "./ports.ts";
 
@@ -103,6 +104,24 @@ export const respond = async (
       // Called off while it waited its turn, so it never spawns anything.
       if (tracked?.signal.aborted) return { kind: "ignored" };
       tracked?.running();
+      const startedAt = deps.clock();
+      // How this ended, recorded whichever way it ends. Nothing used to write
+      // this down: a failed chat turn left a line on stderr and an apology in
+      // a thread, so "what broke this afternoon, and where" had no answer.
+      const record = (outcome: TurnOutcome, error = ""): void => {
+        deps.turns?.add({
+          runId,
+          channelId: inbound.channelId,
+          threadTs: inbound.threadTs ?? inbound.messageTs ?? "",
+          slackUserId: inbound.slackUserId,
+          kind: "chat",
+          request: cleanInboundText(inbound.text),
+          outcome,
+          error,
+          startedAt,
+          endedAt: deps.clock(),
+        });
+      };
       try {
         // A thread driving a workflow keeps talking to that session, not to the
         // ordinary chat brain - the session is the one holding the task.
@@ -115,18 +134,25 @@ export const respond = async (
           // do not get to steer the task.
           if (who.allowed && RANK[who.user.role] >= RANK[WORKFLOW_MIN_ROLE]) {
             const text = cleanInboundText(inbound.text);
-            return {
-              kind: "reply",
-              text: await runWorkflowTurn(deps, workflow, who.user, text, false, sink, tracked?.signal),
-            };
+            const out = await runWorkflowTurn(deps, workflow, who.user, text, false, sink, tracked?.signal);
+            record("ok");
+            return { kind: "reply", text: out };
           }
         }
-        return await handleMessage(deps, inbound, sink, tracked?.signal);
+        const result = await handleMessage(deps, inbound, sink, tracked?.signal);
+        // "ignored" is not a turn that happened - it was not for us, or it was
+        // dropped before it began - so there is nothing to record about it.
+        if (result.kind !== "ignored") record("ok");
+        return result;
       } catch (err) {
         // A stopped run is killed exactly as the timeout kills one, so without
         // this it would be reported as a turn that ran out of time. The thread
         // has already been told it was stopped, by whoever stopped it.
-        if (tracked?.signal.aborted) return { kind: "ignored" };
+        if (tracked?.signal.aborted) {
+          record("stopped", "stopped before it finished");
+          return { kind: "ignored" };
+        }
+        record("failed", err instanceof Error ? err.message : String(err));
         throw err;
       } finally {
         tracked?.done();

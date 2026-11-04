@@ -7,6 +7,7 @@ import { createSettingsRepo } from "../../src/infrastructure/db/settingsRepo.ts"
 import type { ClaudeTokenPort } from "../../src/application/claudeTokens.ts";
 import { createThreadSessionRepo } from "../../src/infrastructure/db/threadSessionRepo.ts";
 import { createUsageRepo } from "../../src/infrastructure/db/usageRepo.ts";
+import { createTurnLogRepo } from "../../src/infrastructure/db/turnLogRepo.ts";
 import { createRunRegistry } from "../../src/application/runRegistry.ts";
 import { commandLineOf, dispatchCommand, type CommandDeps, isQuietCommand } from "../../src/application/commands.ts";
 import { respond, type RespondDeps } from "../../src/application/respond.ts";
@@ -369,6 +370,87 @@ describe("dispatchCommand", () => {
   test("rv reviews a PR via the brain", async () => {
     const out = await dispatchCommand(build(), actor(), "C1", "rv https://github.com/o/r/pull/1");
     expect(out).toBe("drafted answer");
+  });
+
+  test("mindful leads with what is stuck, not with what is busy", async () => {
+    const deps = build();
+    const turns = createTurnLogRepo(db);
+    turns.add({
+      runId: "r1", channelId: "C9", threadTs: "5.5", slackUserId: "U7", kind: "chat",
+      request: "why is form-analytics slow", outcome: "failed", error: "disk I/O error",
+      startedAt: 1, endedAt: 2,
+    });
+    const out = await dispatchCommand({ ...deps, turns }, actor(), "C1", "mindful");
+    expect(out).toContain("stuck");
+    expect(out).toContain("why is form-analytics slow");
+    expect(out).toContain("disk I/O error");
+    expect(out).toContain("mindful continue"); // tells you what to do about it
+  });
+
+  test("mindful is admin and up only - it quotes people across every channel", async () => {
+    const out = await dispatchCommand(build(), actor({ slackId: "U3", role: "pal" }), "C1", "mindful");
+    expect(out).toContain("needs *admin*");
+  });
+
+  test("mindful continue runs the dead turn again, as whoever asked for it", async () => {
+    const deps = build();
+    const turns = createTurnLogRepo(db);
+    turns.add({
+      runId: "r1", channelId: "C9", threadTs: "1793700990.971739", slackUserId: "U7", kind: "chat",
+      request: "fix the view", outcome: "failed", error: "boom", startedAt: 1, endedAt: 2,
+    });
+    const ran: unknown[] = [];
+    const out = await dispatchCommand(
+      { ...deps, turns, runTurn: async (r) => void ran.push(r) },
+      actor(),
+      "C1",
+      "mindful continue https://x.slack.com/archives/C9/p1793700990971739",
+    );
+    expect(ran).toEqual([
+      { channelId: "C9", threadTs: "1793700990.971739", slackUserId: "U7", text: "fix the view" },
+    ]);
+    expect(out).toContain("<@U7>");
+  });
+
+  test("mindful continue refuses a thread that is fine, rather than repeating work", async () => {
+    const deps = build();
+    const turns = createTurnLogRepo(db);
+    turns.add({
+      runId: "r", channelId: "C9", threadTs: "1793700990.971739", slackUserId: "U7", kind: "chat",
+      request: "done already", outcome: "ok", error: "", startedAt: 1, endedAt: 2,
+    });
+    const ran: unknown[] = [];
+    const out = await dispatchCommand(
+      { ...deps, turns, runTurn: async (r) => void ran.push(r) },
+      actor(),
+      "C1",
+      "mindful continue https://x.slack.com/archives/C9/p1793700990971739",
+    );
+    expect(ran).toHaveLength(0);
+    expect(out).toContain("finished fine");
+  });
+
+  test("mindful reply nudges a thread, and says nothing is guaranteed", async () => {
+    const ran: { text: string }[] = [];
+    const out = await dispatchCommand(
+      { ...build(), runTurn: async (r) => void ran.push(r) },
+      actor(),
+      "C1",
+      "mindful reply https://x.slack.com/archives/C9/p1793700990971739",
+    );
+    expect(ran[0]?.text).toContain("reply only if you have something");
+    expect(out).toContain("only if it has something");
+  });
+
+  test("mindful reply carries what you told it to say", async () => {
+    const ran: { text: string }[] = [];
+    await dispatchCommand(
+      { ...build(), runTurn: async (r) => void ran.push(r) },
+      actor(),
+      "C1",
+      "mindful reply https://x.slack.com/archives/C9/p1793700990971739 ask Bea about the mirror",
+    );
+    expect(ran[0]?.text).toBe("ask Bea about the mirror");
   });
 
   test("note with a page url updates that page instead of making another", async () => {

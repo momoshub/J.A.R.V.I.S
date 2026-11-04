@@ -27,6 +27,7 @@ import type { SystemTracker } from "../infrastructure/system/systemProbe.ts";
 import type { AdapterRevisionRepo } from "../infrastructure/db/adapterRevisionRepo.ts";
 import type { CommandLogRepo } from "../infrastructure/db/commandLogRepo.ts";
 import type { UsageRepo } from "../infrastructure/db/usageRepo.ts";
+import type { TurnLogRepo } from "../infrastructure/db/turnLogRepo.ts";
 import type { WorkflowRepo } from "../infrastructure/db/workflowRepo.ts";
 import type { AccessRequestRepo } from "../infrastructure/db/accessRequestRepo.ts";
 import type { CommandApprovalRepo } from "../infrastructure/db/commandApprovalRepo.ts";
@@ -67,6 +68,17 @@ export type HandleMessageDeps = {
   commandLog?: CommandLogRepo;
   /** What each run of the model consumed, for `spend` and the dashboard. */
   usage?: UsageRepo;
+  /** How each turn ended, for `mindful` and for continuing a failed thread. */
+  turns?: TurnLogRepo;
+  /** The workspace domain, so `mindful` can print clickable thread links. */
+  slackTeam?: () => string | undefined;
+  /** Run a chat turn in a thread from outside the Slack handler (`mindful`). */
+  runTurn?: (req: {
+    channelId: string;
+    threadTs: string;
+    slackUserId: string;
+    text: string;
+  }) => Promise<void>;
   /** Set of disabled command names (managed from the dashboard). */
   disabledCommands?: () => ReadonlySet<string>;
   /** Slack Web API operations, for the power-tool commands (br, jrp). */

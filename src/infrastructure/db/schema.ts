@@ -84,6 +84,45 @@ export const migrate = (db: Database): void => {
   migrateSessionPromptHash(db);
   migrateAdapterRevisions(db);
   migrateLlmUsage(db);
+  migrateTurnLog(db);
+};
+
+/**
+ * Migration v13: how each turn ENDED.
+ *
+ * Nothing recorded this. A command's outcome went to `command_log`, a run's
+ * tokens now go to `llm_usage`, and the live registry knows what is in flight -
+ * but a chat turn that failed left only a line on stderr and an apology in a
+ * thread, so "what went wrong this afternoon, and where" could not be answered
+ * at all without reading the log by hand.
+ *
+ * The request text is kept (truncated) rather than looked up in `messages`,
+ * because the one thing worth doing with a failed turn is running it again,
+ * and a retry that depends on a table a `forget` can empty is a retry that
+ * stops working exactly when someone needs it.
+ */
+const migrateTurnLog = (db: Database): void => {
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS turn_log (
+      id            INTEGER PRIMARY KEY AUTOINCREMENT,
+      run_id        TEXT NOT NULL DEFAULT '',
+      channel_id    TEXT NOT NULL,
+      thread_ts     TEXT NOT NULL DEFAULT '',
+      slack_user_id TEXT NOT NULL DEFAULT '',
+      kind          TEXT NOT NULL DEFAULT 'chat',
+      request       TEXT NOT NULL DEFAULT '',
+      outcome       TEXT NOT NULL DEFAULT 'ok',
+      error         TEXT NOT NULL DEFAULT '',
+      started_at    INTEGER NOT NULL,
+      ended_at      INTEGER NOT NULL
+    );
+  `);
+  db.exec("CREATE INDEX IF NOT EXISTS idx_turn_log_time ON turn_log (ended_at);");
+  db.exec("CREATE INDEX IF NOT EXISTS idx_turn_log_thread ON turn_log (channel_id, thread_ts);");
+  const { user_version } = db.query<{ user_version: number }, []>("PRAGMA user_version").get() ?? {
+    user_version: 0,
+  };
+  if (user_version < 13) db.exec("PRAGMA user_version = 13;");
 };
 
 /**
