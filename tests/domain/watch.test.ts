@@ -94,6 +94,17 @@ describe("the messages a watch sends back", () => {
     expect(m).toContain("completed");
   });
 
+  test("ready says DO IT, because handing the work back is the failure", () => {
+    // the turn that set the watch was already asking a human to run the
+    // promote; forty minutes later that person is no longer reading
+    const m = readyMessage("promote be US then SG", 600_000);
+    expect(m).toContain("Do it yourself, now");
+    expect(m).toContain("do not ask whether to go ahead");
+    expect(m).toContain("do not hand the steps back");
+    // but a genuine blocker is still reportable
+    expect(m).toContain("what blocked it");
+  });
+
   test("giving up is explicit that nothing was done", () => {
     const m = gaveUpMessage("promote it", 2_700_000, "the build never finished");
     expect(m).toContain("I have not done it");

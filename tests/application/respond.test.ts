@@ -6,6 +6,8 @@ import { respond, type RespondDeps } from "../../src/application/respond.ts";
 import { createThreadQueue } from "../../src/application/threadQueue.ts";
 import { createRunRegistry } from "../../src/application/runRegistry.ts";
 import { createTurnLogRepo } from "../../src/infrastructure/db/turnLogRepo.ts";
+import { createWatchRepo } from "../../src/infrastructure/db/watchRepo.ts";
+import { createCommandTickets } from "../../src/application/commandTickets.ts";
 import type { SlackAdminPort, InteractiveAction } from "../../src/application/slackAdmin.ts";
 import type { LlmPort } from "../../src/application/ports.ts";
 
@@ -301,5 +303,76 @@ describe("recording how a turn ended", () => {
     const deps = build(llm("fine"));
     const out = await respond(deps, inbound);
     expect(out.kind).toBe("reply");
+  });
+});
+
+describe("a turn started by a watch can actually DO things", () => {
+  /**
+   * The follow-up turn a watch hands back is an ordinary turn in every way
+   * that matters, and the ways that matter are easy to lose: without a command
+   * ticket it can only talk about promoting, and without the command rules it
+   * does not know the helper exists. Both arrive through `handleMessage`, so
+   * both are checked here rather than assumed from the wiring.
+   */
+  const build2 = () => {
+    const db = openDatabase(":memory:");
+    let t = 1;
+    const users = createUserRepo(db);
+    users.upsert({
+      slackId: "U7",
+      role: "admin",
+      displayName: "Kai",
+      addedBy: "system",
+      createdAt: 0,
+    });
+    const seen: { system: string; runTicket?: string }[] = [];
+    const deps: RespondDeps = {
+      users,
+      messages: createMessageRepo(db),
+      llm: {
+        complete: async (p) => {
+          seen.push({ system: p.system, runTicket: p.runTicket });
+          return "promoting now";
+        },
+      },
+      clock: () => t++,
+      ownerSlackId: OWNER,
+      contextWindow: 10,
+      commandTickets: createCommandTickets(() => 1, () => "TICKET"),
+      runScript: "/x/jarvis-run.sh",
+      runUrl: "http://localhost/api/commands/run",
+      commandPrefix: "//ev",
+      watches: createWatchRepo(db),
+    };
+    return { deps, seen };
+  };
+
+  const fired = {
+    channelId: "C1",
+    slackUserId: "U7",
+    text: "The thing you were waiting for is ready. Carry on with exactly this: promote be US then SG",
+    threadTs: "9.9",
+    messageTs: "9.9",
+    viaSlash: false,
+  };
+
+  test("it gets a command ticket, so it can run them itself", async () => {
+    const { deps, seen } = build2();
+    await respond(deps, fired);
+    expect(seen[0]?.runTicket).toBe("TICKET");
+  });
+
+  test("and it is told how, so it does not hand the job back", async () => {
+    const { deps, seen } = build2();
+    await respond(deps, fired);
+    expect(seen[0]?.system).toContain("/x/jarvis-run.sh");
+    expect(seen[0]?.system).toContain("//ev");
+  });
+
+  test("it can set another watch, so a chain of waits does not need a person", async () => {
+    // wait for the build, promote, then wait for the deploy
+    const { deps, seen } = build2();
+    await respond(deps, fired);
+    expect(seen[0]?.system).toContain("Waiting for something to finish");
   });
 });

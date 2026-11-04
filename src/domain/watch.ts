@@ -117,12 +117,23 @@ export const parseWatchArgs = (rest: string): WatchArgs => {
   return { ok: true, check, everyMs, deadlineMs, note };
 };
 
-/** The line the thread gets when a watch comes good. */
+/**
+ * The line the thread gets when a watch comes good.
+ *
+ * It has to say DO IT, in those words. The turn that set the watch was already
+ * trying to hand the work back - "anh promote giúp em", "tell me the right
+ * command and I'll run it" - and a hand-back after a forty minute wait is
+ * worse than one before it, because the person has stopped watching the thread
+ * by then. The escape hatch is kept deliberately narrow: name the obstacle, do
+ * not ask for permission you were already given.
+ */
 export const readyMessage = (note: string, waited: number, output?: string): string => {
   const tail = (output ?? "").trim().split("\n").slice(-3).join("\n").slice(0, 400);
   return [
     `The thing you were waiting for is ready (after ${humanDuration(waited)}). Carry on with exactly this, and do not start it over:`,
     note,
+    "",
+    "Do it yourself, now, with the commands and tools you already have. This was agreed before the wait - you are finishing a job, not proposing one, so do not ask whether to go ahead and do not hand the steps back for someone else to type. If something genuinely stops you, say in one line what you tried and what blocked it.",
     tail ? `\nWhat the check last printed:\n${tail}` : "",
   ]
     .join("\n")
