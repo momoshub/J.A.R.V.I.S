@@ -38,6 +38,12 @@ export const SETTING_KEYS = {
   noteMinRole: "note_min_role",
   /** Answer replies under a thread the bot itself started ("off" to disable). */
   followOwnThreads: "follow_own_threads",
+  /** Channel the inner child announces and runs its self-fixes in. Empty = off. */
+  innerChildChannel: "inner_child_channel",
+  /** "off" pauses the inner child without forgetting its channel. */
+  innerChild: "inner_child",
+  /** Where its last triage stopped (ms), so a restart neither re-reads nor skips. */
+  innerChildCursor: "inner_child_cursor",
 } as const;
 
 /** Model override for one role, e.g. `model:pal`. Empty means "use the default". */

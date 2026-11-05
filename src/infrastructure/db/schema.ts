@@ -88,6 +88,38 @@ export const migrate = (db: Database): void => {
   migrateWatches(db);
   migrateFollowedThreads(db);
   migrateReminders(db);
+  migrateSelfIssues(db);
+};
+
+/**
+ * Migration v17: defects the inner child found in the bot itself.
+ *
+ * `fingerprint` is unique so the same defect is filed once, whatever the
+ * triage calls it next time. `state` runs
+ * `queued -> fixing -> fixed|not_fixed|failed`: one fix runs at a time.
+ */
+const migrateSelfIssues = (db: Database): void => {
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS self_issues (
+      id             INTEGER PRIMARY KEY AUTOINCREMENT,
+      fingerprint    TEXT NOT NULL UNIQUE,
+      title          TEXT NOT NULL,
+      severity       TEXT NOT NULL,
+      evidence       TEXT NOT NULL DEFAULT '',
+      source_channel TEXT NOT NULL,
+      source_thread  TEXT NOT NULL DEFAULT '',
+      fix_channel    TEXT NOT NULL DEFAULT '',
+      fix_thread     TEXT NOT NULL DEFAULT '',
+      state          TEXT NOT NULL DEFAULT 'queued',
+      started_at     INTEGER NOT NULL DEFAULT 0,
+      created_at     INTEGER NOT NULL,
+      updated_at     INTEGER NOT NULL
+    );
+  `);
+  const { user_version } = db.query<{ user_version: number }, []>("PRAGMA user_version").get() ?? {
+    user_version: 0,
+  };
+  if (user_version < 17) db.exec("PRAGMA user_version = 17;");
 };
 
 /**

@@ -40,6 +40,9 @@ import { createWatchRepo } from "./infrastructure/db/watchRepo.ts";
 import { createReminderRepo } from "./infrastructure/db/reminderRepo.ts";
 import { createFollowRepo } from "./infrastructure/db/followRepo.ts";
 import { createWatcher } from "./application/watcher.ts";
+import { createInnerChild } from "./application/innerChild.ts";
+import { createSelfIssueRepo } from "./infrastructure/db/selfIssueRepo.ts";
+import { NO_TOOLS } from "./domain/toolPolicy.ts";
 import { createReminderSender } from "./application/reminders.ts";
 import { createShellCheck } from "./infrastructure/system/shellCheck.ts";
 
@@ -564,9 +567,55 @@ const main = async () => {
   if (pendingReminders > 0) console.log(`[remind] ${pendingReminders} reminder(s) waiting from before the restart`);
   const waiting = watches.waiting().length;
   if (waiting > 0) console.log(`[watch] carrying on with ${waiting} watch(es) from before the restart`);
+  // The inner child: watches the bot's own turns and fixes the bot in its
+  // channel, announced before and after. Off until a channel is set.
+  const innerChildChannel = () => settings.get(SETTING_KEYS.innerChildChannel)?.trim() ?? "";
+  const innerChild = createInnerChild({
+    turns,
+    messages,
+    issues: createSelfIssueRepo(db),
+    llm,
+    clock,
+    get channelId() {
+      return innerChildChannel();
+    },
+    ownerSlackId: config.ownerSlackId,
+    botName: () => profile().name,
+    sourceDir: repoPath,
+    restartScript,
+    noTools: NO_TOOLS,
+    enabled: () =>
+      !!innerChildChannel() && settings.get(SETTING_KEYS.innerChild)?.trim().toLowerCase() !== "off",
+    cursor: {
+      get: () => {
+        const v = Number(settings.get(SETTING_KEYS.innerChildCursor));
+        return Number.isFinite(v) && v > 0 ? v : undefined;
+      },
+      set: (at) => settings.set(SETTING_KEYS.innerChildCursor, String(at)),
+    },
+    post: async (channel, text, thread) => (await slackAdmin.post(channel, text, thread)) ?? undefined,
+    // The ordinary respond path, as the owner: same queue, same session, same
+    // full access a fix needs. Its reply is posted like any turn's.
+    runFix: async ({ channelId, threadTs, slackUserId, text }) => {
+      const result = await respond(deps, {
+        channelId,
+        slackUserId,
+        text,
+        threadTs,
+        messageTs: syntheticTs(clock()),
+        viaSlash: false,
+        following: false,
+      });
+      if (result.kind === "ignored") return "";
+      if (result.text.trim()) await slackAdmin.post(channelId, result.text, threadTs);
+      return result.text;
+    },
+    log: (msg) => console.error(`[inner-child] ${msg}`),
+  });
   const watchTimer = setInterval(() => {
     void watcher.tick();
     void reminderSender.tick();
+    void innerChild.tick();
   }, WATCH_TICK_MS);
   (watchTimer as { unref?: () => void }).unref?.();
 
