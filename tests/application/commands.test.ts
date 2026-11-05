@@ -1274,6 +1274,19 @@ describe("reviews run on the caller's own Claude token", () => {
     expect(isQuietCommand("investigate why")).toBe(false);
   });
 
+  test("watch is quiet too: its confirmation goes back to the brain, not the thread", () => {
+    expect(isQuietCommand("watch checks https://github.com/o/r/pull/1 post the result")).toBe(true);
+    expect(isQuietCommand("watch list")).toBe(true);
+  });
+
+  test("any command's help is quiet, so the brain reads it without posting it", () => {
+    expect(isQuietCommand("bomb help")).toBe(true);
+    expect(isQuietCommand("review help")).toBe(true);
+    expect(isQuietCommand("ticket --help")).toBe(true);
+    expect(isQuietCommand("help")).toBe(true);
+    expect(isQuietCommand("ticket help me the page is broken")).toBe(false);
+  });
+
   test("read's floor is configurable, and a refusal says who can run it", async () => {
     // owner-only made it useless for the case it exists for: a teammate asking
     // it to follow a document the team shares

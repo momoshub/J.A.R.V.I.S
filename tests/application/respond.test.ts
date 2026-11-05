@@ -8,7 +8,7 @@ import { createRunRegistry } from "../../src/application/runRegistry.ts";
 import { createTurnLogRepo } from "../../src/infrastructure/db/turnLogRepo.ts";
 import { createWatchRepo } from "../../src/infrastructure/db/watchRepo.ts";
 import { createCommandTickets } from "../../src/application/commandTickets.ts";
-import type { SlackAdminPort, InteractiveAction } from "../../src/application/slackAdmin.ts";
+import type { SlackAdminPort } from "../../src/application/slackAdmin.ts";
 import type { LlmPort } from "../../src/application/ports.ts";
 
 const OWNER = "U0OWNER0001";
@@ -182,8 +182,10 @@ describe("respond", () => {
     expect(await turn).toEqual({ kind: "ignored" });
   });
 
-  test("a busy thread is offered the two ways out, on the notice", async () => {
-    const posted: { text: string; actions: readonly InteractiveAction[] }[] = [];
+  test("a busy thread is told what is in the way, in plain text", async () => {
+    // the notice used to carry Stop and Never-mind buttons. Slack now draws a
+    // native stop control on the session itself, so the home-made pair went
+    const posted: string[] = [];
     const deps = build({
       complete: async () => {
         await new Promise((r) => setTimeout(r, 30));
@@ -194,9 +196,9 @@ describe("respond", () => {
     deps.runs = createRunRegistry();
     deps.slack = {
       ...quietSlack,
-      postInteractive: async (_c, text, actions) => {
-        posted.push({ text, actions });
-        return { channel: "C1", ts: "n1" };
+      post: async (_c, text) => void posted.push(text),
+      postInteractive: async () => {
+        throw new Error("the busy notice must not post buttons any more");
       },
     };
 
@@ -207,9 +209,7 @@ describe("respond", () => {
 
     await Promise.all([first, second]);
     expect(posted).toHaveLength(1);
-    expect(posted[0]!.text).toContain("the long one"); // names what is in the way
-    const labels = posted[0]!.actions.map((a) => a.label);
-    expect(labels).toEqual(["Stop that one", "Never mind"]);
+    expect(posted[0]).toContain("the long one"); // names what is in the way
   });
 
   test("a message dropped before it ran never reaches the brain", async () => {

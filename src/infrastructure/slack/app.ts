@@ -12,8 +12,7 @@ import type { WebClient } from "@slack/web-api";
 import { respond, type RespondDeps } from "../../application/respond.ts";
 import { decideAccessRequest } from "../../application/accessRequests.ts";
 import { APPROVE_ACTION, decideCommandApproval, REJECT_ACTION } from "../../application/commandLimits.ts";
-import { decideRunPress, DROP_ACTION, STOP_ACTION } from "../../application/runRegistry.ts";
-import { droppedNotice, forHowLong, stillStoppingNotice, stoppedNotice } from "../../domain/runControl.ts";
+import { forHowLong } from "../../domain/runControl.ts";
 import {
   AGENT_SESSION_STOPPED,
   type AgentSessionStoppedEvent,
@@ -52,7 +51,7 @@ import {
 import { annotateMentions, extractMentionIds } from "../../domain/mentions.ts";
 import { isTimeout } from "../../domain/threadSession.ts";
 import { toMrkdwn } from "../../domain/slackFormat.ts";
-import { couldFollowThread, shouldFollowThread } from "../../domain/threadFollow.ts";
+import { couldFollowThread, isOneOnOneThread, shouldFollowThread } from "../../domain/threadFollow.ts";
 import { isSilenceNote } from "../../domain/silence.ts";
 import { createSlackStream, type Streamer } from "./stream.ts";
 import {
@@ -345,9 +344,6 @@ export const createHandler =
     }
   };
 };
-
-/** admin or owner, for the one rule the transport has to apply itself. */
-const RANK_ADMIN = (role?: string): boolean => role === "admin" || role === "owner";
 
 export const createSlackApp = (config: SlackAppConfig, deps: Deps) => {
   const log = deps.log ?? ((m: string) => console.log(`[slack] ${m}`));
@@ -700,39 +696,6 @@ export const createSlackApp = (config: SlackAppConfig, deps: Deps) => {
     await runFromMenu(by, req.channelId, req.threadTs, `${req.command} ${args}`.trim());
   }) as never);
 
-  // Stop / never mind, on the "still busy" notice. The turn is killed the same
-  // way the timeout kills one; the thread is told which one went and why.
-  const onRunButton = async ({ ack, body, action }: ApprovalArgs) => {
-    await ack();
-    const by = body.user?.id;
-    const value = action?.value;
-    if (!by || !value || !deps.runs) return;
-    const outcome = decideRunPress(deps.runs, {
-      actionId: action.action_id ?? "",
-      value,
-      by,
-      isAdmin: RANK_ADMIN(deps.users.get(by)?.role),
-    });
-    if (outcome.kind === "ignored") return;
-
-    const settled =
-      outcome.kind === "stopped"
-        ? stoppedNotice(outcome.run, by, Date.now())
-        : outcome.kind === "dropped"
-          ? droppedNotice(outcome.run.what, by)
-          : outcome.kind === "stopping"
-            ? stillStoppingNotice(outcome.run, Date.now())
-            : outcome.kind === "refused"
-              ? "that one is not yours to stop - ask an admin, or whoever started it"
-              : "that one had already finished";
-    log(`run button ${outcome.kind}`);
-    // Replace the buttons so a settled notice cannot be clicked twice.
-    if (body.channel?.id && body.message?.ts) {
-      await deps.slack?.settleInteractive(body.channel.id, body.message.ts, settled).catch(() => undefined);
-    }
-  };
-  app.action({ action_id: STOP_ACTION }, onRunButton as never);
-  app.action({ action_id: DROP_ACTION }, onRunButton as never);
 
   /**
    * Slack's OWN stop button, on an agent session.
@@ -803,57 +766,66 @@ export const createSlackApp = (config: SlackAppConfig, deps: Deps) => {
 
   // Direct messages -> reply inline. Ignore bot echoes and non-DM channels.
   /**
-   * Who wrote a thread's parent, cached per thread.
+   * Who wrote a thread's parent, and who has written in it, cached per thread.
    *
-   * One lookup per thread, not per message: a busy thread would otherwise
-   * spend a Slack call on every line to re-learn something that cannot change.
+   * One lookup answers both: the parent message carries `reply_users`. The
+   * author cannot change, but the participants can, so an entry only lives
+   * for a short while - long enough that a busy thread does not spend a Slack
+   * call on every line, short enough that a second person joining ends a
+   * one-on-one within seconds.
    */
-  const parentAuthors = new Map<string, string | undefined>();
-  const threadParentAuthor = async (
-    client: SlackClient,
-    channel: string,
-    threadTs: string,
-  ): Promise<string | undefined> => {
+  type ThreadInfo = { author?: string; participants: string[]; at: number };
+  const threadInfos = new Map<string, ThreadInfo>();
+  const THREAD_INFO_TTL_MS = 30_000;
+  const threadInfo = async (client: SlackClient, channel: string, threadTs: string): Promise<ThreadInfo> => {
     const key = `${channel}:${threadTs}`;
-    if (parentAuthors.has(key)) return parentAuthors.get(key);
-    let author: string | undefined;
+    const cached = threadInfos.get(key);
+    if (cached && Date.now() - cached.at < THREAD_INFO_TTL_MS) return cached;
+    let info: ThreadInfo = { participants: [], at: Date.now() };
     try {
       const res = (await (client as unknown as {
-        conversations: { replies: (a: unknown) => Promise<{ messages?: { user?: string }[] }> };
+        conversations: {
+          replies: (a: unknown) => Promise<{ messages?: { user?: string; reply_users?: string[] }[] }>;
+        };
       }).conversations.replies({ channel, ts: threadTs, limit: 1 })) ?? {};
-      author = res.messages?.[0]?.user;
+      const parent = res.messages?.[0];
+      const participants = [...(parent?.user ? [parent.user] : []), ...(parent?.reply_users ?? [])];
+      info = { author: parent?.user, participants, at: Date.now() };
     } catch {
       // Cannot see the thread: treat it as not ours and stay quiet.
     }
     // Cached either way, including the failure - retrying on every message in
     // a thread we cannot read is a loop, not a recovery.
-    parentAuthors.set(key, author);
-    if (parentAuthors.size > 500) {
-      const oldest = parentAuthors.keys().next().value;
-      if (oldest) parentAuthors.delete(oldest);
+    threadInfos.delete(key);
+    threadInfos.set(key, info);
+    if (threadInfos.size > 500) {
+      const oldest = threadInfos.keys().next().value;
+      if (oldest) threadInfos.delete(oldest);
     }
-    return author;
+    return info;
   };
 
   app.message(async ({ message, client, say, context }) => {
     const m = message as RawMessage & { channel: string; ts: string };
     if (!shouldHandleDm(m)) {
-      // Two ways a thread is one it keeps up with, tag or no tag. It OPENED
+      // Three ways a thread is one it keeps up with, tag or no tag. It OPENED
       // this one - it started the conversation, so it is expected to follow
       // it. Or somebody ASKED it to, with `follow`, which is how a thread
-      // started by a person gets the same treatment.
+      // started by a person gets the same treatment. Or it is just it and
+      // one person talking, who should not have to tag it on every line.
       const me = await deps.slack?.botUserId().catch(() => undefined);
       if (!couldFollowThread(m, me) || !me) return;
       const asked = deps.follows?.isFollowed(m.channel, m.thread_ts!) === true;
       const ownThreadsOff =
         deps.settings?.get("follow_own_threads")?.trim().toLowerCase() === "off";
-      // Only look the parent up when the answer could still depend on it: the
-      // lookup is a Slack call, and an explicit follow already settles it.
-      const ownThread =
-        !asked && !ownThreadsOff
-          ? (await threadParentAuthor(asClient(client), m.channel, m.thread_ts!)) === me
-          : false;
-      if (!shouldFollowThread({ asked, ownThread, ownThreadsOff })) return;
+      // Only look the thread up when the answer could still depend on it: the
+      // lookup is a Slack call, and an explicit follow already settles it. A
+      // thread that is just it and one person is followed too, setting or not.
+      const info = asked ? undefined : await threadInfo(asClient(client), m.channel, m.thread_ts!);
+      const ownThread = !!info && !ownThreadsOff && info.author === me;
+      const oneOnOne =
+        !!info && isOneOnOneThread({ participants: info.participants, author: m.user!, botUserId: me });
+      if (!shouldFollowThread({ asked, ownThread, ownThreadsOff, oneOnOne })) return;
       await handle({
         channelId: m.channel,
         userId: m.user!,

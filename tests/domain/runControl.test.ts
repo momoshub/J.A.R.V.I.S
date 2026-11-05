@@ -1,7 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import {
   busyNotice,
-  droppedNotice,
   forHowLong,
   nameOfRequest,
   stoppedNotice,
@@ -48,10 +47,6 @@ describe("the notices", () => {
     const run = { what: "the big review", startedAt: 0, actor: "U1" };
     expect(stoppedNotice(run, "U1", 60_000)).toBe("⏹ stopped *the big review* after 1m");
     expect(stoppedNotice(run, "U2", 60_000)).toBe("⏹ stopped *the big review* by <@U2> after 1m");
-  });
-
-  test("dropped is about something that never ran", () => {
-    expect(droppedNotice("that query", "U2")).toContain("before I got to it");
   });
 });
 

@@ -50,9 +50,6 @@ export const stillStoppingNotice = (
   return `⏹ already stopping *${run.what}*${waited}. It has not let go yet; I am killing it harder.`;
 };
 
-/** What a dropped-before-it-ran message is told. */
-export const droppedNotice = (what: string, by: string): string =>
-  `✖ dropped *${what}* - <@${by}> called it off before I got to it`;
 
 /**
  * A request shortened to something that fits on a button's worth of context.

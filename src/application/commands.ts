@@ -91,7 +91,7 @@ import { normaliseLabel, secondsLeft, totpCode } from "../domain/totp.ts";
 import { isAuthFailure, isTimeout, tierOf } from "../domain/threadSession.ts";
 import { asksForHelp, commandHelp } from "../domain/commandHelp.ts";
 import { nearestCommand } from "../domain/commandSuggest.ts";
-import { forHowLong, stoppedNotice } from "../domain/runControl.ts";
+import { forHowLong, stillStoppingNotice, stoppedNotice } from "../domain/runControl.ts";
 import type { RunRegistry } from "./runRegistry.ts";
 import type { ThreadSessionRepo } from "../infrastructure/db/threadSessionRepo.ts";
 import type { AllowedUser, PromptContext, UserRole } from "../domain/types.ts";
@@ -763,6 +763,9 @@ export const COMMANDS: readonly CommandDef[] = [
     // it takes the same trust - and it is the gate that stops a sandboxed
     // session from scheduling itself a shell.
     minRole: "admin",
+    // The confirmation is for the brain, not the thread: it already says what
+    // it is waiting for in its own words, and a second notice is just noise.
+    quiet: true,
     usage: "pr|checks|reply|url <target> <what to do> | <what to do> -- <shell check> | list | cancel",
     summary: "wait for a PR, CI, a reply or a url, then carry on in this thread by itself",
     run: async ({ deps, actor, args, rest, prefix, threadTs, channelId }) => {
@@ -2055,7 +2058,7 @@ export const COMMANDS: readonly CommandDef[] = [
         // different things to read when you are watching something misbehave.
         const waiting = deps.runs.inThread(key).length;
         return waiting > 0
-          ? `Nothing is running yet - ${waiting} ${waiting === 1 ? "turn is" : "turns are"} waiting. Use the buttons on my notice to drop one.`
+          ? `Nothing is running yet - ${waiting} ${waiting === 1 ? "turn is" : "turns are"} waiting behind it.`
           : "Nothing is running in this thread.";
       }
       // Your own turn is yours to stop; someone else's takes an admin, since a
@@ -2063,8 +2066,14 @@ export const COMMANDS: readonly CommandDef[] = [
       if (running.actor !== actor.slackId && RANK[actor.role] < RANK.admin) {
         return `That one is <@${running.actor}>'s, and it has been going ${forHowLong(deps.clock() - running.startedAt)}. Only they or an admin can stop it.`;
       }
-      deps.runs.stop(running.id, actor.slackId);
-      return stoppedNotice(running, actor.slackId, deps.clock());
+      // A stop is a REQUEST. Asking twice must not read as two successful
+      // stops - that is the lie the `stopping` state exists to prevent, and
+      // this path had it too: the result of `stop` was thrown away and the
+      // notice written regardless.
+      if (running.state === "stopping") return stillStoppingNotice(running, deps.clock());
+      const stopped = deps.runs.stop(running.id, actor.slackId);
+      if (!stopped) return "that one finished on its own just now.";
+      return stoppedNotice(stopped, actor.slackId, deps.clock());
     },
   },
   {
@@ -2457,8 +2466,12 @@ export const TRIVIAL_COMMANDS: readonly string[] = COMMANDS.filter((c) => c.triv
 
 /** Whether this line runs a tool-like command: result to the caller, not the thread. */
 export const isQuietCommand = (line: string): boolean => {
-  const name = (line.trim().split(/\s+/)[0] || "").toLowerCase();
-  return byName.get(name)?.quiet === true;
+  const [first = "", ...args] = line.trim().split(/\s+/);
+  const command = byName.get(first.toLowerCase());
+  // A help card is a guide for whoever asked. When the brain asks, it reads it
+  // for itself: a menu dropped into a conversation is noise nobody wanted.
+  if (command && asksForHelp(args)) return true;
+  return command?.quiet === true;
 };
 
 export const notifiesOwner = (line: string): boolean => {

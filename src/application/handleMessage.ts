@@ -11,6 +11,7 @@ import {
   cleanInboundText,
   ATTACHMENT_MARKER,
   DEFAULT_CONTEXT_WINDOW,
+  endAtTrigger,
   reactableMessages,
 } from "../domain/conversation.ts";
 import { buildSystemPrompt } from "../domain/personality.ts";
@@ -113,6 +114,8 @@ export type HandleMessageDeps = {
   slackReadScript?: string;
   /** Absolute path of the "has anything new been said" helper, for `watch reply`. */
   slackWaitScript?: string;
+  /** Absolute path of the desktop driver (`bin/mac-ui.js`). */
+  macUiScript?: string;
   /** Absolute path of the claude.ai artifact reader. */
   artifactScript?: string;
   /** Absolute path of the verify-and-restart helper. Admin+ only; see below. */
@@ -182,6 +185,9 @@ export const handleMessage = async (
 
   const decision = decideAccess(inbound.slackUserId, deps.ownerSlackId, deps.users.get);
   if (!decision.allowed) {
+    // Following a thread, nobody asked: a stranger chatting there is not a
+    // request, and answering each of them is just noise.
+    if (inbound.following) return { kind: "ignored" };
     // Ask the owner rather than turning them away.
     const asked = await requestAccess(
       deps,
@@ -252,6 +258,9 @@ export const handleMessage = async (
     canRaiseTickets: deps.canRaiseTickets?.(),
     grafanaGetScript: deps.grafanaGetScript,
     slackReadScript: deps.slackReadScript,
+    // It drives the real screen somebody is sitting at, so it is offered only
+    // to the roles that already run with full tool access.
+    macUiScript: canTeach(decision.user.role) ? deps.macUiScript : undefined,
     // ... and keep a durable fact, but only when talking to someone who could
     // have taught it one by hand. Learnings apply to everyone, everywhere.
     learnUrl: canTeach(decision.user.role) ? deps.learnUrl : undefined,
@@ -387,7 +396,7 @@ const loadThread = async (
   }
   if (thread.length === 0) return undefined;
 
-  const turns = thread
+  const read = thread
     .filter((m) => m.text.trim().length > 0 || (m.files?.length ?? 0) > 0)
     .map((m, i) => ({
       id: i,
@@ -399,6 +408,7 @@ const loadThread = async (
       slackTs: m.ts,
       threadTs: inbound.threadTs,
     }));
+  const turns = endAtTrigger(read, inbound.messageTs);
 
   // Slack can lag a beat on the message that triggered us; it has to be last.
   if (!turns.some((t) => t.slackTs === inbound.messageTs)) {

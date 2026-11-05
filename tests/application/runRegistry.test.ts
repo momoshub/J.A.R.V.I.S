@@ -1,9 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import {
   createRunRegistry,
-  decideRunPress,
-  DROP_ACTION,
-  STOP_ACTION,
 } from "../../src/application/runRegistry.ts";
 
 const run = (over: Partial<Parameters<ReturnType<typeof createRunRegistry>["track"]>[0]> = {}) => ({
@@ -65,53 +62,6 @@ describe("createRunRegistry", () => {
   });
 });
 
-describe("decideRunPress", () => {
-  const press = (over: Partial<Parameters<typeof decideRunPress>[1]> = {}) => ({
-    actionId: STOP_ACTION,
-    value: "r1",
-    by: "U1",
-    isAdmin: false,
-    ...over,
-  });
-
-  test("stopping your own running turn", () => {
-    const runs = createRunRegistry();
-    runs.track(run()).running();
-    const out = decideRunPress(runs, press());
-    expect(out.kind).toBe("stopped");
-  });
-
-  test("dropping one that had not started yet", () => {
-    const runs = createRunRegistry();
-    runs.track(run()); // queued, never ran
-    const out = decideRunPress(runs, press({ actionId: DROP_ACTION }));
-    expect(out.kind).toBe("dropped");
-  });
-
-  test("someone else's turn takes an admin - it is their work and their money", () => {
-    const runs = createRunRegistry();
-    const t = runs.track(run({ actor: "U-other" }));
-    t.running();
-
-    expect(decideRunPress(runs, press({ by: "U1" })).kind).toBe("refused");
-    expect(t.signal.aborted).toBe(false); // refused means untouched
-
-    expect(decideRunPress(runs, press({ by: "U1", isAdmin: true })).kind).toBe("stopped");
-    expect(t.signal.aborted).toBe(true);
-  });
-
-  test("a button that outlived its run says so instead of failing", () => {
-    // it sat in the channel while the work finished on its own, which is fine
-    const runs = createRunRegistry();
-    expect(decideRunPress(runs, press()).kind).toBe("gone");
-  });
-
-  test("another button's press is not ours to act on", () => {
-    const runs = createRunRegistry();
-    runs.track(run()).running();
-    expect(decideRunPress(runs, press({ actionId: "command_approve" })).kind).toBe("ignored");
-  });
-});
 
 describe("stopping is a request, not an event", () => {
   const track = (runs: ReturnType<typeof createRunRegistry>, id: string, actor = "U1") => {
@@ -124,31 +74,35 @@ describe("stopping is a request, not an event", () => {
     const runs = createRunRegistry(() => 1000);
     track(runs, "r1");
 
-    const first = decideRunPress(runs, { actionId: STOP_ACTION, value: "r1", by: "U1", isAdmin: false });
-    expect(first.kind).toBe("stopped");
-
+    expect(runs.stop("r1", "U1")).toBeDefined();
     // the process may take a moment to die, or never die at all. Reporting a
     // fresh successful stop each time is how four presses produced four
     // confident "stopped" lines while nothing was actually dying.
-    const second = decideRunPress(runs, { actionId: STOP_ACTION, value: "r1", by: "U1", isAdmin: false });
-    expect(second.kind).toBe("stopping");
+    expect(runs.stop("r1", "U1")).toBeUndefined();
+    expect(runs.byId("r1")?.state).toBe("stopping");
   });
 
   test("a stopped run records when it was asked, so the wait can be reported", () => {
     const runs = createRunRegistry(() => 7000);
     track(runs, "r2");
-    decideRunPress(runs, { actionId: STOP_ACTION, value: "r2", by: "U1", isAdmin: false });
+    runs.stop("r2", "U1");
 
     expect(runs.byId("r2")?.state).toBe("stopping");
     expect(runs.byId("r2")?.stoppedAt).toBe(7000);
   });
 
-  test("it is still gone once the turn actually unwinds", () => {
+  test("asking twice does not stop it twice - the second ask gets nothing", () => {
+    // the lie that made four presses read as four successful stops
     const runs = createRunRegistry(() => 0);
-    const h = track(runs, "r3");
-    decideRunPress(runs, { actionId: STOP_ACTION, value: "r3", by: "U1", isAdmin: false });
-    h.done();
+    track(runs, "r3");
+    expect(runs.stop("r3", "U1")).toBeDefined();
+    expect(runs.stop("r3", "U1")).toBeUndefined();
+  });
 
-    expect(decideRunPress(runs, { actionId: STOP_ACTION, value: "r3", by: "U1", isAdmin: false }).kind).toBe("gone");
+  test("it is gone once the turn actually unwinds", () => {
+    const runs = createRunRegistry(() => 0);
+    const h = track(runs, "r4");
+    h.done();
+    expect(runs.stop("r4", "U1")).toBeUndefined();
   });
 });

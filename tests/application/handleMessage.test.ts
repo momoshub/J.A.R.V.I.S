@@ -604,9 +604,10 @@ describe("handleMessage", () => {
     await handleMessage(deps, {
       channelId: "D1",
       slackUserId: OWNER,
-      text: "why does this fail",
+      text: "here is the trace",
       threadTs: "100.1",
-      messageTs: "100.1",
+      // the file-only follow-up is what woke it; the window ends there
+      messageTs: "100.2",
     });
 
     const texts = seen.map((m) => m.content);

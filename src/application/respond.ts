@@ -12,7 +12,7 @@ import { requestAccess } from "./accessRequests.ts";
 import { reviewRequestIn } from "../domain/reviewRequest.ts";
 import { busyNotice, nameOfRequest } from "../domain/runControl.ts";
 import { sessionThreadKey } from "../domain/agentSession.ts";
-import { DROP_ACTION, STOP_ACTION, type RunRegistry } from "./runRegistry.ts";
+import type { RunRegistry } from "./runRegistry.ts";
 import type { ThreadQueue } from "./threadQueue.ts";
 import type { UserRole } from "../domain/types.ts";
 import type { PostedRef } from "./slackAdmin.ts";
@@ -34,32 +34,21 @@ export type RespondDeps = HandleMessageDeps & {
 const RANK: Record<UserRole, number> = { pal: 0, executer: 1, admin: 2, owner: 3 };
 
 /**
- * Tell a thread it is busy, with the two ways out on the message.
+ * Tell a thread it is busy.
  *
- * Falls back to plain text when there are no buttons to be had (no Slack wired
- * up, or interactivity off), because the sentence is the part that matters.
+ * It used to carry its own Stop and Never-mind buttons. Slack now draws a
+ * native stop control on any session the bot is streaming into
+ * (`agent_session_stopped`), so a second pair of buttons beside it was two
+ * mechanisms for one job - and the home-made one was the weaker, since it only
+ * existed on this notice and only while somebody was queued behind a turn.
+ * The sentence was always the part that mattered.
  */
-const announceBusy = async (
-  deps: RespondDeps,
-  inbound: InboundMessage,
-  key: string,
-  queuedId?: string,
-): Promise<void> => {
+const announceBusy = async (deps: RespondDeps, inbound: InboundMessage, key: string): Promise<void> => {
   const running = deps.runs?.current(key);
   const text = running
     ? busyNotice(running, deps.clock())
     : "⏳ still on the one before this, I will pick it up next";
-  const actions = [
-    ...(running
-      ? [{ actionId: STOP_ACTION, label: "Stop that one", value: running.id, style: "danger" as const }]
-      : []),
-    ...(queuedId ? [{ actionId: DROP_ACTION, label: "Never mind", value: queuedId }] : []),
-  ];
   try {
-    if (actions.length > 0 && deps.slack?.postInteractive) {
-      const posted = await deps.slack.postInteractive(inbound.channelId, text, actions, inbound.threadTs);
-      if (posted) return;
-    }
     await deps.slack?.post(inbound.channelId, text, inbound.threadTs);
   } catch {
     // A notice that cannot be posted must not take the turn down with it.
@@ -172,7 +161,7 @@ export const respond = async (
       // Not when following: nobody asked, so nobody is waiting on a place in
       // the queue, and "yours is next" in a channel is noise about the bot's
       // own scheduling rather than anything the thread needs.
-      if (!inbound.following) await announceBusy(deps, inbound, key, tracked ? runId : undefined);
+      if (!inbound.following) await announceBusy(deps, inbound, key);
     }
     return queue.run(key, chatTurn);
   }

@@ -13,11 +13,6 @@
  * never spawns anything at all.
  */
 
-/** Button on the "I am still busy" notice: end the running turn. */
-export const STOP_ACTION = "run_stop";
-/** Button on the same notice: drop the message that was just queued. */
-export const DROP_ACTION = "run_drop";
-
 /**
  * `stopping` is its own state because a stop is a REQUEST, not an event. The
  * process may take a moment to die, or - as happened - never die at all, and a
@@ -136,29 +131,3 @@ export type RunPressOutcome =
   | { kind: "refused" }
   | { kind: "ignored" };
 
-/**
- * What a press of one of these buttons means.
- *
- * Kept out of the transport so the rule - your own turn, or an admin's say - is
- * stated once and can be tested without a Slack in the way. A button that
- * outlived its run is not an error: it sat in the channel while the work
- * finished on its own, which is the happy ending.
- */
-export const decideRunPress = (
-  runs: RunRegistry,
-  press: { actionId: string; value: string; by: string; isAdmin: boolean },
-): RunPressOutcome => {
-  if (press.actionId !== STOP_ACTION && press.actionId !== DROP_ACTION) return { kind: "ignored" };
-  const run = runs.byId(press.value);
-  if (!run) return { kind: "gone" };
-  // Anyone may stop what they asked for; stopping someone else's takes an admin,
-  // because a turn is somebody's work and often their money.
-  if (run.actor !== press.by && !press.isAdmin) return { kind: "refused" };
-  // Already asked. Saying "stopped" again would be the lie that made four
-  // presses look like four successful stops while nothing was dying.
-  if (run.state === "stopping") return { kind: "stopping", run };
-  const wasRunning = run.state === "running";
-  const stopped = runs.stop(press.value, press.by);
-  if (!stopped) return { kind: "gone" };
-  return wasRunning ? { kind: "stopped", run: stopped } : { kind: "dropped", run: stopped };
-};
