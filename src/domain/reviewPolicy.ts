@@ -30,6 +30,29 @@ export const repoRefOf = (token: string): string | undefined => {
   return /^[\w.-]+\/[\w.-]+$/.test(cleaned) ? cleaned.toLowerCase() : undefined;
 };
 
+/**
+ * A PR author's login, normalised so the spellings `gh` and the API hand back
+ * agree: `app/morcela-agent` (gh) and `morcela-agent[bot]` (the API) are the
+ * same GitHub App. Undefined for anything that is not a login.
+ */
+export const authorRefOf = (token: string): string | undefined => {
+  const cleaned = token
+    .trim()
+    .replace(/^@/, "")
+    .replace(/^app\//i, "")
+    .replace(/\[bot\]$/i, "")
+    .toLowerCase();
+  return /^[a-z\d](?:[a-z\d-]*[a-z\d])?$/.test(cleaned) ? cleaned : undefined;
+};
+
+/**
+ * The stricter of two policies. A PR is held for a clean review when either its
+ * repository or its author says so - one of them saying "approve up front" never
+ * overrules the other asking for a review first.
+ */
+export const stricterPolicy = (a: ReviewPolicy, b: ReviewPolicy | undefined): ReviewPolicy =>
+  a === "approve-after" || b === "approve-after" ? "approve-after" : "approve-first";
+
 /** Read a stored value back, tolerating anything that is not a known policy. */
 export const asReviewPolicy = (value: string | undefined): ReviewPolicy | undefined =>
   value === "approve-after" || value === "approve-first" ? value : undefined;

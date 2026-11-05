@@ -64,6 +64,16 @@ export const createGhCli = (config: GhCliConfig = {}): GitHubPort => {
       }
     },
 
+    author: async (prUrl: string): Promise<string | undefined> => {
+      try {
+        const { code, out } = await run(["pr", "view", prUrl, "--json", "author", "--jq", ".author.login"]);
+        if (code !== 0) return undefined;
+        return out.trim() || undefined;
+      } catch {
+        return undefined;
+      }
+    },
+
     approve: async (prUrl: string): Promise<ApproveResult> => {
       try {
         const { code, out, err } = await run(["pr", "review", prUrl, "--approve"]);

@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { asReviewPolicy, DEFAULT_REVIEW_POLICY, looksLikePrRef, parsePolicyArg, repoOf, repoRefOf } from "../../src/domain/reviewPolicy.ts";
+import { asReviewPolicy, authorRefOf, DEFAULT_REVIEW_POLICY, stricterPolicy, looksLikePrRef, parsePolicyArg, repoOf, repoRefOf } from "../../src/domain/reviewPolicy.ts";
 
 describe("repoOf", () => {
   test("reads owner/repo out of a PR url", () => {
@@ -118,5 +118,25 @@ describe("looksLikePrRef", () => {
     expect(looksLikePrRef("the")).toBe(false);
     expect(looksLikePrRef("acme-be")).toBe(false);
     expect(looksLikePrRef("")).toBe(false);
+  });
+});
+
+describe("authorRefOf", () => {
+  test("gh, API and typed spellings of one login agree", () => {
+    for (const t of ["app/morcela-agent", "morcela-agent[bot]", "@Morcela-Agent", "morcela-agent"]) {
+      expect(authorRefOf(t)).toBe("morcela-agent");
+    }
+  });
+
+  test("junk is not a login", () => {
+    for (const junk of ["", "a b", "-x", "o/r/c"]) expect(authorRefOf(junk)).toBeUndefined();
+  });
+});
+
+describe("stricterPolicy", () => {
+  test("either side asking for a review first wins", () => {
+    expect(stricterPolicy("approve-first", "approve-after")).toBe("approve-after");
+    expect(stricterPolicy("approve-after", "approve-first")).toBe("approve-after");
+    expect(stricterPolicy("approve-first", undefined)).toBe("approve-first");
   });
 });

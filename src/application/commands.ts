@@ -60,9 +60,11 @@ import { fanoutPrompt } from "../domain/fanoutPrompt.ts";
 import { readPrompt } from "../domain/readPrompt.ts";
 import {
   asReviewPolicy,
+  authorRefOf,
   DEFAULT_REVIEW_POLICY,
   looksLikePrRef,
   parsePolicyArg,
+  stricterPolicy,
   repoOf,
   repoRefOf,
   type ReviewPolicy,
@@ -119,7 +121,7 @@ import {
 import { spendReport } from "../domain/spendReport.ts";
 import type { WorkflowRepo } from "../infrastructure/db/workflowRepo.ts";
 import type { CommandApprovalRepo } from "../infrastructure/db/commandApprovalRepo.ts";
-import { modelKey, reviewPolicyKey, SETTING_KEYS, type SettingsRepo } from "../infrastructure/db/settingsRepo.ts";
+import { authorReviewPolicyKey, modelKey, reviewPolicyKey, SETTING_KEYS, type SettingsRepo } from "../infrastructure/db/settingsRepo.ts";
 
 /** Neutral fallbacks; the real prefix/slash come from config (see index.ts). */
 export const DEFAULT_COMMAND_PREFIX = "//bot";
@@ -341,11 +343,32 @@ export const parseWindow = (token?: string): number | undefined => {
 };
 
 /** The policy a PR's repository is on, defaulting when nothing is configured. */
-const reviewPolicyOf = (deps: CommandDeps, prUrl: string): ReviewPolicy => {
+const repoPolicyOf = (deps: CommandDeps, prUrl: string): ReviewPolicy => {
   const repo = repoOf(prUrl);
   if (!repo) return DEFAULT_REVIEW_POLICY;
   return asReviewPolicy(deps.settings?.get(reviewPolicyKey(repo))) ?? DEFAULT_REVIEW_POLICY;
 };
+
+const AUTHOR_POLICY_PREFIX = "review_policy_author:";
+
+/**
+ * The policy a PR is on: its repository's, made stricter by its author's when
+ * that author is configured. GitHub is only asked who wrote the PR when some
+ * author policy exists, so the common case costs no extra `gh` call.
+ */
+const reviewPolicyOf = async (deps: CommandDeps, prUrl: string): Promise<ReviewPolicy> => {
+  const repo = repoPolicyOf(deps, prUrl);
+  if (repo === "approve-after") return repo;
+  const anyAuthor = deps.settings?.list?.()?.some((e) => e.key.startsWith(AUTHOR_POLICY_PREFIX) && asReviewPolicy(e.value));
+  if (!anyAuthor || !deps.github?.author) return repo;
+  const login = authorRefOf((await deps.github.author(prUrl)) ?? "");
+  if (!login) return repo;
+  return stricterPolicy(repo, asReviewPolicy(deps.settings?.get(authorReviewPolicyKey(login))));
+};
+
+/** Every url's policy, looked up once and in parallel. */
+const reviewPoliciesOf = async (deps: CommandDeps, urls: readonly string[]): Promise<Map<string, ReviewPolicy>> =>
+  new Map(await Promise.all(urls.map(async (u) => [u, await reviewPolicyOf(deps, u)] as const)));
 
 /**
  * Ask someone for their own Claude Code token, with the button that opens the
@@ -1702,11 +1725,12 @@ export const COMMANDS: readonly CommandDef[] = [
       if (!deps.github) return "I have no GitHub access wired up right now.";
       const urls = [...new Set(args.flatMap((a) => a.match(PR_URL) ?? []))];
       if (urls.length === 0) return `Which PR? \`${prefix} approve <pr-url>\``;
-      const held = urls.filter((u) => reviewPolicyOf(deps, u) === "approve-after");
+      const policies = await reviewPoliciesOf(deps, urls);
+      const held = urls.filter((u) => policies.get(u) === "approve-after");
       const lines: string[] = [];
       for (const url of urls) {
         if (held.includes(url)) {
-          lines.push(`⚠️ ${url} - that repo approves only after a clean review. \`${prefix} review ${url}\``);
+          lines.push(`⚠️ ${url} - that repo or author approves only after a clean review. \`${prefix} review ${url}\``);
           continue;
         }
         const res = await deps.github.approve(url);
@@ -1793,11 +1817,12 @@ export const COMMANDS: readonly CommandDef[] = [
       // Asking for a stricter run is anyone's call. Asking for a looser one -
       // approving up front on a repository that deliberately waits for a clean
       // review - is overruling an admin's decision, so it takes one.
-      const loosened = override === "approve-first" && urls.some((u) => reviewPolicyOf(deps, u) === "approve-after");
+      const configured = await reviewPoliciesOf(deps, urls);
+      const loosened = override === "approve-first" && urls.some((u) => configured.get(u) === "approve-after");
       if (loosened && RANK[actor.role] < RANK.admin) {
-        return "That repo is set to approve only after a clean review, and only an admin can override that for a run.";
+        return "That repo or author is set to approve only after a clean review, and only an admin can override that for a run.";
       }
-      const policyFor = (url: string): ReviewPolicy => override ?? reviewPolicyOf(deps, url);
+      const policyFor = (url: string): ReviewPolicy => override ?? configured.get(url) ?? DEFAULT_REVIEW_POLICY;
       // Repositories on `approve-after` are left alone until the review is in.
       const afterReview = urls.filter((u) => policyFor(u) === "approve-after");
       for (const url of urls) {
@@ -1949,8 +1974,8 @@ export const COMMANDS: readonly CommandDef[] = [
     name: "review-policy",
     aliases: ["rvpolicy", "repo-policy"],
     minRole: "pal",
-    usage: "[owner/repo] [first|after|default]",
-    summary: "how a repo gets approved: up front, or only after a clean review",
+    usage: "[owner/repo | author:<login>] [first|after|default]",
+    summary: "how a repo or PR author gets approved: up front, or only after a clean review",
     run: (ctx) => {
       const { deps, actor, args, prefix } = ctx;
       const describe = (p: ReviewPolicy) =>
@@ -1963,17 +1988,33 @@ export const COMMANDS: readonly CommandDef[] = [
         const configured = deps.settings
           ? deps.settings
               .list?.()
-              ?.filter((e) => e.key.startsWith("review_policy:") && asReviewPolicy(e.value))
-              .map((e) => `- \`${e.key.slice("review_policy:".length)}\`: ${asReviewPolicy(e.value)}`)
+              ?.filter(
+                (e) =>
+                  (e.key.startsWith("review_policy:") || e.key.startsWith(AUTHOR_POLICY_PREFIX)) &&
+                  asReviewPolicy(e.value),
+              )
+              .map((e) =>
+                e.key.startsWith(AUTHOR_POLICY_PREFIX)
+                  ? `- author \`${e.key.slice(AUTHOR_POLICY_PREFIX.length)}\`: ${asReviewPolicy(e.value)}`
+                  : `- \`${e.key.slice("review_policy:".length)}\`: ${asReviewPolicy(e.value)}`,
+              )
           : undefined;
         const list = configured && configured.length > 0 ? `\n${configured.join("\n")}` : "\nNothing configured - every repo is on the default.";
         return `Default: *${DEFAULT_REVIEW_POLICY}* - ${describe(DEFAULT_REVIEW_POLICY)}.${list}`;
       }
 
-      const repo = repoRefOf(args[0] ?? "");
+      // A PR author is named `author:<login>` (or `@login`); anything else is a repo.
+      const first = args[0] ?? "";
+      const authorArg = /^author:(.+)$/i.exec(first)?.[1] ?? (first.startsWith("@") ? first : undefined);
+      const login = authorArg !== undefined ? authorRefOf(authorArg) : undefined;
+      if (authorArg !== undefined && !login) {
+        return `Which author? \`${prefix} review-policy author:<github-login> [first|after|default]\``;
+      }
+      const repo = login ? `author ${login}` : repoRefOf(first);
       if (!repo) return `Which repo? \`${prefix} review-policy owner/repo [first|after|default]\``;
+      const key = login ? authorReviewPolicyKey(login) : reviewPolicyKey(repo);
       if (args.length === 1) {
-        const own = asReviewPolicy(deps.settings?.get(reviewPolicyKey(repo)));
+        const own = asReviewPolicy(deps.settings?.get(key));
         return own
           ? `\`${repo}\` is on *${own}* - ${describe(own)}.`
           : `\`${repo}\` uses the default, *${DEFAULT_REVIEW_POLICY}* - ${describe(DEFAULT_REVIEW_POLICY)}.`;
@@ -1982,7 +2023,7 @@ export const COMMANDS: readonly CommandDef[] = [
       if (RANK[actor.role] < RANK.admin) return "Only admins can change a review policy.";
       const want = (args[1] ?? "").toLowerCase();
       if (want === "default" || want === "reset") {
-        deps.settings?.set(reviewPolicyKey(repo), "");
+        deps.settings?.set(key, "");
         return `\`${repo}\` is back on the default, *${DEFAULT_REVIEW_POLICY}*.`;
       }
       const policy: ReviewPolicy | undefined =
@@ -1992,9 +2033,9 @@ export const COMMANDS: readonly CommandDef[] = [
             ? "approve-first"
             : undefined;
       if (!policy || args.length > 2) {
-        return `First or after? \`${prefix} review-policy ${repo} <first|after|default>\``;
+        return `First or after? \`${prefix} review-policy ${first} <first|after|default>\``;
       }
-      deps.settings?.set(reviewPolicyKey(repo), policy);
+      deps.settings?.set(key, policy);
       return `\`${repo}\` is now *${policy}* - ${describe(policy)}.`;
     },
   },

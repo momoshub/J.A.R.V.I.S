@@ -14,6 +14,7 @@
  */
 import type { TaskUpdateChunk } from "@slack/types";
 import { isHiddenAction } from "../../domain/toolVisibility.ts";
+import { MAX_SILENCE_NOTE } from "../../domain/silence.ts";
 import { createFenceNormalizer } from "./fences.ts";
 import type { LlmStreamEvent, LlmStreamSink } from "../../application/ports.ts";
 
@@ -78,11 +79,28 @@ const THINKING_ID = "__thinking__";
 
 const errMsg = (e: unknown): string => (e instanceof Error ? e.message : String(e));
 
+export type SlackStreamOptions = {
+  /**
+   * Open nothing until the turn is plainly doing something: a visible tool
+   * call, or more text than a silence note could be. Text before that is held
+   * and sent when the stream opens.
+   *
+   * For a followed thread. Most of those turns say nothing, and a stream opened
+   * at the start leaves a message behind for each of them - or shows "nothing
+   * to add" to the channel before the boundary can drop it. Not streaming at
+   * all was the other failure: a turn asked to fix something worked for
+   * minutes with no sign it had heard. A turn that never opens is posted
+   * plainly by the caller, which is where the silence check runs.
+   */
+  holdUntilWorking?: boolean;
+};
+
 export const createSlackStream = (
   makeStreamer: () => Streamer,
   log: (msg: string) => void = () => {},
   /** Title the thinking card flips to once real content arrives. */
   thinkingDoneLabel = "✅",
+  options: SlackStreamOptions = {},
 ): SlackStream => {
   let streamer: Streamer | undefined;
   let chain: Promise<unknown> = Promise.resolve();
@@ -195,10 +213,7 @@ export const createSlackStream = (
     (pending as { unref?: () => void }).unref?.();
   };
 
-  const sink: LlmStreamSink = (event: LlmStreamEvent) => {
-    // Hidden actions (reacting, remembering, anything on the local host) leave no
-    // trace here: no card, and they do not count as content or end the thinking step.
-    if (event.type === "tool" && isHiddenAction(event.command)) return;
+  const forward = (event: LlmStreamEvent): void => {
     cancelPending(); // something arrived, so no placeholder is needed
     completeThinking(); // first real content ends the thinking step
     if (event.type === "text") {
@@ -220,6 +235,31 @@ export const createSlackStream = (
       status: event.status,
       ...(event.details ? { details: event.details } : {}),
     });
+  };
+
+  let holding = options.holdUntilWorking === true;
+  let held = "";
+
+  const sink: LlmStreamSink = (event: LlmStreamEvent) => {
+    // Hidden actions (reacting, remembering, anything on the local host) leave no
+    // trace here: no card, and they do not count as content or end the thinking step.
+    if (event.type === "tool" && isHiddenAction(event.command)) return;
+    if (holding) {
+      if (event.type === "aborted") return;
+      if (event.type === "text") {
+        held += event.delta;
+        if (held.trim().length <= MAX_SILENCE_NOTE) return;
+      }
+      holding = false;
+      const text = held;
+      held = "";
+      if (event.type === "text") {
+        forward({ type: "text", delta: text });
+        return;
+      }
+      if (text) forward({ type: "text", delta: text });
+    }
+    forward(event);
   };
 
   return {

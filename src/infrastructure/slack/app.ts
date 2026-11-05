@@ -249,9 +249,10 @@ export const createHandler =
     const displayName = await resolveName(msg.client, msg.userId);
     const text = await annotate(msg.client, msg.text);
 
-    // Not when following: nobody is waiting on it, and a streamed reply is in
-    // the channel before anyone can check it is not a note about staying quiet.
-    const stream = config.streamUpdates && !msg.following
+    // When following, held until the turn is plainly working: most of those
+    // say nothing, and a stream opened up front is in the channel before
+    // anyone can check it is not a note about staying quiet.
+    const stream = config.streamUpdates
       ? createSlackStream(
           () =>
             msg.client.chatStream({
@@ -263,6 +264,7 @@ export const createHandler =
             }) as Streamer,
           log,
           config.thinkingDoneLabel(),
+          { holdUntilWorking: msg.following === true },
         )
       : undefined;
 

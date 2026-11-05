@@ -170,7 +170,7 @@ describe("createHandler streaming truth table", () => {
     expect(said).toHaveLength(0);
   });
 
-  test("following a thread never streams, and a note about staying quiet is not posted", async () => {
+  test("following a thread streams nothing for a note about staying quiet, and posts nothing", async () => {
     const { handle, msg, said, rec } = build({
       llm: streamingLlm("(empty reply — nothing to add here)", [
         { type: "text", delta: "(empty reply — nothing to add here)" },
@@ -179,6 +179,19 @@ describe("createHandler streaming truth table", () => {
     });
     await handle({ ...msg("hi", "000.9"), following: true });
     expect(rec.appends).toHaveLength(0);
+    expect(said).toHaveLength(0);
+  });
+
+  test("following a thread streams once the turn is plainly working", async () => {
+    const { handle, msg, said, rec } = build({
+      llm: streamingLlm("fixed the conflicts", [
+        { type: "tool", id: "t1", title: "run: gh pr view", status: "in_progress" },
+        { type: "text", delta: "fixed the conflicts" },
+      ]),
+      streamUpdates: true,
+    });
+    await handle({ ...msg("hi", "000.9"), following: true });
+    expect(rec.appends.length).toBeGreaterThan(0);
     expect(said).toHaveLength(0);
   });
 

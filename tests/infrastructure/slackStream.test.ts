@@ -373,3 +373,58 @@ describe("abandoning a turn", () => {
     expect(f.made()).toBe(0);
   });
 });
+
+describe("holding until the turn is working", () => {
+  const hold = { holdUntilWorking: true };
+
+  test("a short reply opens nothing, so the caller posts it or drops it", async () => {
+    const f = fakeStreamer();
+    const s = createSlackStream(f.make, () => {}, "✅", hold);
+    s.sink({ type: "text", delta: "nothing to add" });
+    expect(await s.finish()).toBe(false);
+    expect(f.made()).toBe(0);
+  });
+
+  test("a hidden action does not open it", async () => {
+    const f = fakeStreamer();
+    const s = createSlackStream(f.make, () => {}, "✅", hold);
+    s.sink({
+      type: "tool",
+      id: "r",
+      title: "react",
+      command: "/x/bin/slack-react.sh C1 1.2 eyes",
+      status: "complete",
+    });
+    expect(await s.finish()).toBe(false);
+    expect(f.made()).toBe(0);
+  });
+
+  test("a visible tool opens it, with the held text first", async () => {
+    const f = fakeStreamer();
+    const s = createSlackStream(f.make, () => {}, "✅", hold);
+    s.sink({ type: "text", delta: "on it" });
+    expect(f.made()).toBe(0);
+    s.sink({ type: "tool", id: "t1", title: "run: gh pr view", status: "in_progress" });
+    expect(await s.finish()).toBe(true);
+    expect(f.appends[0]).toEqual({ markdown_text: "on it" });
+    expect(f.appends[1]?.chunks).toHaveLength(1);
+  });
+
+  test("text longer than a silence note opens it, all of it", async () => {
+    const f = fakeStreamer();
+    const s = createSlackStream(f.make, () => {}, "✅", hold);
+    s.sink({ type: "text", delta: "a".repeat(50) });
+    expect(f.made()).toBe(0);
+    s.sink({ type: "text", delta: "b".repeat(50) });
+    s.sink({ type: "text", delta: "c" });
+    expect(await s.finish()).toBe(true);
+    expect(f.appends.map((a) => a.markdown_text).join("")).toBe(`${"a".repeat(50)}${"b".repeat(50)}c`);
+  });
+
+  test("without the option it opens on the first event, as before", () => {
+    const f = fakeStreamer();
+    const s = createSlackStream(f.make);
+    s.sink({ type: "text", delta: "hi" });
+    expect(f.made()).toBe(1);
+  });
+});

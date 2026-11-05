@@ -27,6 +27,12 @@ export type GitHubPort = {
    * think the review said.
    */
   reviewDecision: (prUrl: string) => Promise<string | undefined>;
+  /**
+   * The PR author's login, or undefined when it cannot be read. Never throws.
+   * Asked before approving up front, because some authors (a coding agent) are
+   * held for a review whatever their repository is on.
+   */
+  author?: (prUrl: string) => Promise<string | undefined>;
   /** The authenticated account, or undefined if it cannot be resolved. Never throws. */
   whoami: () => Promise<Reviewer | undefined>;
 };

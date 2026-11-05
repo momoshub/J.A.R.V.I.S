@@ -12,11 +12,11 @@ const SILENCE =
   /^(?:empty reply|no reply(?: needed| required)?|no response(?: needed| required)?|nothing (?:to add|further|more to add)|staying (?:quiet|silent)|silence|(?:a )?reaction is enough|not for me)\b/;
 
 /** Longest note still treated as a placeholder rather than an answer. */
-const MAX_NOTE = 80;
+export const MAX_SILENCE_NOTE = 80;
 
 export const isSilenceNote = (text: string): boolean => {
   const t = text.trim();
-  if (!t || t.length > MAX_NOTE) return false;
+  if (!t || t.length > MAX_SILENCE_NOTE) return false;
   const bare = t
     .replace(/^[\s([_*~`"']+|[\s)\]_*~`"'.!]+$/g, "")
     .toLowerCase();

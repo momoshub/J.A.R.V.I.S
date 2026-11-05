@@ -1775,6 +1775,50 @@ describe("per-repo review policy", () => {
     expect(await dispatchCommand(deps, pal, "C1", "review-policy acme/x")).toContain("uses the default");
   });
 
+  test("an author on approve-after is reviewed first, whatever the repo is on", async () => {
+    const { deps, calls, lines, reply } = withPolicy(undefined);
+    deps.github!.author = async (url) => (url === PR ? "app/morcela-agent" : "kai");
+    // the API spelling of the same app, so either one sets it
+    await dispatchCommand(deps, actor(), "C1", "review-policy author:morcela-agent[bot] after");
+
+    await dispatchCommand(deps, actor(), "C1", `rv ${PR}`, { reply });
+    expect(lines[0]).toContain("reviewing"); // no approval up front
+    expect(calls).toEqual([PR]); // approved only once the review came back clean
+
+    // someone else's PR is still on the repo's policy
+    lines.length = 0;
+    await dispatchCommand(deps, actor(), "C1", `rv ${OTHER}`, { reply });
+    expect(lines[0]).toBe(`✅ approved ${OTHER}`);
+  });
+
+  test("an author hold blocks a bare approve and a pal's --policy first", async () => {
+    const { deps, calls, reply } = withPolicy(undefined);
+    deps.github!.author = async () => "app/morcela-agent";
+    await dispatchCommand(deps, actor(), "C1", "review-policy @morcela-agent after");
+    const pal = actor({ slackId: "U0PAL0007", role: "pal" });
+    deps.users.upsert(pal);
+
+    expect(await dispatchCommand(deps, actor(), "C1", `approve ${PR}`)).toContain("only after a clean review");
+    expect(await dispatchCommand(deps, pal, "C1", `rv ${PR} --policy first`, { reply })).toContain("only an admin");
+    expect(calls).toEqual([]);
+  });
+
+  test("author policies are listed, read back, and reset", async () => {
+    const deps = build();
+    deps.settings = createSettingsRepo(db);
+    await dispatchCommand(deps, actor(), "C1", "review-policy author:app/morcela-agent after");
+    expect(deps.settings.get("review_policy_author:morcela-agent")).toBe("approve-after");
+    expect(await dispatchCommand(deps, actor(), "C1", "review-policy")).toContain("author `morcela-agent`");
+    expect(await dispatchCommand(deps, actor(), "C1", "review-policy author:morcela-agent")).toContain(
+      "approve-after",
+    );
+    expect(await dispatchCommand(deps, actor(), "C1", "review-policy author:-bad-")).toContain("Which author?");
+    await dispatchCommand(deps, actor(), "C1", "review-policy author:morcela-agent default");
+    expect(await dispatchCommand(deps, actor(), "C1", "review-policy author:morcela-agent")).toContain(
+      "uses the default",
+    );
+  });
+
   test("a PR url works as the repo argument too", async () => {
     const deps = build();
     deps.settings = createSettingsRepo(db);

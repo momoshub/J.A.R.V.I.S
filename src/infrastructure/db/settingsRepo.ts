@@ -41,6 +41,8 @@ export const modelKey = (role: string): string => `model:${role}`;
 
 /** Review policy for one repository, e.g. `review_policy:owner/repo`. */
 export const reviewPolicyKey = (repo: string): string => `review_policy:${repo.toLowerCase()}`;
+/** Same, keyed by PR author login (already normalised by `authorRefOf`). */
+export const authorReviewPolicyKey = (login: string): string => `review_policy_author:${login.toLowerCase()}`;
 
 export type SettingsRepo = {
   get: (key: string) => string | undefined;
