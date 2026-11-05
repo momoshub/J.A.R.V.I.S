@@ -118,6 +118,12 @@ export type SlackStreamOptions = {
    * plainly by the caller, which is where the silence check runs.
    */
   holdUntilWorking?: boolean;
+  /**
+   * Called once per message the reply opens, with its ts. Lets the caller
+   * remember where a half-written reply is, so it can be tidied up if the
+   * process dies before the stream is closed.
+   */
+  onOpen?: (ts: string) => void;
 };
 
 export const createSlackStream = (
@@ -154,6 +160,8 @@ export const createSlackStream = (
 
   /** Per opened message: the streamer, and the text it was sent. */
   const opened: { streamer: Streamer; text: string }[] = [];
+  /** Message ts already reported through `onOpen`. */
+  const announced = new Set<string>();
   const ensure = (): Streamer => {
     if (!streamer) {
       streamer = makeStreamer();
@@ -191,6 +199,15 @@ export const createSlackStream = (
       await ensure().append(args);
     }
     record(args);
+    const ts = streamer?.ts;
+    if (ts && !announced.has(ts)) {
+      announced.add(ts);
+      try {
+        options.onOpen?.(ts);
+      } catch (e) {
+        log(`onOpen failed: ${errMsg(e)}`);
+      }
+    }
   };
 
   /** Note what the current message now shows, so it can be rebuilt without its cards. */

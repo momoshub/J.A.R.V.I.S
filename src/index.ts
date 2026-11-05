@@ -53,6 +53,9 @@ import { createAnthropicLlm } from "./infrastructure/llm/anthropic.ts";
 import { createClaudeCliLlm } from "./infrastructure/llm/claudeCli.ts";
 import { WebClient } from "@slack/web-api";
 import { createSlackApp } from "./infrastructure/slack/app.ts";
+import { createInboxReceiver, tidyInterrupted } from "./infrastructure/slack/inboxReceiver.ts";
+import { interruptedNotice } from "./domain/inbox.ts";
+import { openInbox } from "./infrastructure/inbox/inboxRepo.ts";
 import { respond } from "./application/respond.ts";
 import type { ConnectionHealth } from "./domain/connectionHealth.ts";
 import { createUiAccessProbe } from "./infrastructure/system/uiAccessProbe.ts";
@@ -271,7 +274,8 @@ const main = async () => {
 
   // Slack Web API + AI drafting, shared by the console and the power-tool commands.
   // retries: 0 so a rate-limited call fails fast instead of hanging.
-  const slackAdmin = createSlackAdmin(new WebClient(config.slackBotToken, { retryConfig: { retries: 0 } }));
+  const slackWeb = new WebClient(config.slackBotToken, { retryConfig: { retries: 0 } });
+  const slackAdmin = createSlackAdmin(slackWeb);
   const promptContext = () => ({
     botName: profile().name,
     base: settings.get(SETTING_KEYS.systemPrompt),
@@ -283,7 +287,7 @@ const main = async () => {
   // Filled in once the Slack app exists, so /health and `sys` can report the
   // socket from the moment it does and never trip over the order things are
   // built in.
-  let slackApp: { health: () => ConnectionHealth } | undefined;
+  let slackApp: { health: () => ConnectionHealth; inFlight: () => number } | undefined;
   const runs = createRunRegistry();
   // Vitals, sampled on a timer: a snapshot answers "is it bad now", a short
   // history answers "has it been bad for a while", which is the question
@@ -425,7 +429,9 @@ const main = async () => {
       requestRestart: (reason: string) => {
         activity.line(`restart requested: ${reason}`);
         restartWhenIdle({
-          isIdle: () => runs.all().length === 0,
+          // An envelope still being handled is work too - a slash command or
+          // a button press is not a tracked run, and exiting under it loses it.
+          isIdle: () => runs.all().length === 0 && (slackApp?.inFlight() ?? 0) === 0,
           exit: () => {
             console.log("Restarting on request ...");
             process.exit(0);
@@ -499,8 +505,19 @@ const main = async () => {
   );
   dashboard.start();
 
+  // With a gateway, Slack traffic arrives through its inbox and the socket is
+  // not ours to open - a restart here then costs a short wait, not lost messages.
+  const inbox = config.slackTransport === "inbox" ? openInbox(config.inboxDatabasePath) : undefined;
   const slack = createSlackApp(
     {
+      inbox: inbox
+        ? createInboxReceiver({
+            inbox,
+            log: (l) => activity.line(`inbox: ${l}`),
+            onInterrupted: (row) =>
+              tidyInterrupted(slackWeb, row, interruptedNotice(row.outcome), (l) => activity.line(`inbox: ${l}`)),
+          })
+        : undefined,
       botToken: config.slackBotToken,
       appToken: config.slackAppToken,
       streamUpdates: config.slackStreamUpdates,
@@ -558,6 +575,7 @@ const main = async () => {
     clearInterval(watchTimer);
     dashboard.stop();
     await slack.stop();
+    inbox?.close();
     db.close();
     process.exit(0);
   };

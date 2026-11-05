@@ -34,3 +34,8 @@ data/tokens.key
 
 # per-thread tool traces (full tool input/output), host-only
 logs/threads/
+
+# the gateway inbox: transient traffic between two processes, host-only
+data/inbox.db
+data/inbox.db-shm
+data/inbox.db-wal

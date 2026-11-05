@@ -58,6 +58,7 @@ import { collapsedBlocks, collapseSteps } from "../../domain/collapseSteps.ts";
 import { usageFooter } from "../../domain/usageFooter.ts";
 import { isSilenceNote } from "../../domain/silence.ts";
 import { createSlackStream, type Streamer } from "./stream.ts";
+import type { InboxContext, InboxReceiver } from "./inboxReceiver.ts";
 import {
   CONNECTION_GRACE_MS,
   describeConnection,
@@ -96,6 +97,12 @@ export type SlackAppConfig = {
    * supervisor restarts into a fresh connection; tests pass their own.
    */
   onConnectionLost?: (health: ConnectionHealth) => void;
+  /**
+   * Read envelopes from the gateway's inbox instead of opening a socket here.
+   * The gateway then owns the connection and its watchdog, so this process
+   * never exits over a deaf socket - restarting it would not fix one.
+   */
+  inbox?: InboxReceiver;
 };
 
 type Deps = RespondDeps & {
@@ -218,6 +225,8 @@ export type Incoming = {
   client: SlackClient;
   /** An untagged reply under a thread this bot started. */
   following?: boolean;
+  /** Set when it came from the gateway inbox: which row, and which attempt at it. */
+  inbox?: { rowId: number; attempt: number };
   say: (msg: { text: string; blocks?: Block[]; thread_ts?: string; reply_broadcast?: boolean }) => Promise<unknown>;
 };
 
@@ -271,7 +280,15 @@ export const createHandler =
             }) as Streamer,
           log,
           config.thinkingDoneLabel(),
-          { holdUntilWorking: msg.following === true },
+          {
+            holdUntilWorking: msg.following === true,
+            // Remember where the reply is being written, so a crash mid-stream
+            // can be tidied up by the next process instead of left half done.
+            onOpen:
+              msg.inbox && config.inbox
+                ? (ts) => config.inbox!.recordStream(msg.inbox!.rowId, msg.channelId, ts)
+                : undefined,
+          },
         )
       : undefined;
 
@@ -301,6 +318,7 @@ export const createHandler =
           messageTs: msg.messageTs,
           viaSlash: false,
           following: msg.following === true,
+          interrupted: (msg.inbox?.attempt ?? 1) > 1,
         },
         stream?.sink,
       );
@@ -405,7 +423,9 @@ export const createHandler =
 
 export const createSlackApp = (config: SlackAppConfig, deps: Deps) => {
   const log = deps.log ?? ((m: string) => console.log(`[slack] ${m}`));
-  const app = new App({ token: config.botToken, appToken: config.appToken, socketMode: true });
+  const app = config.inbox
+    ? new App({ token: config.botToken, receiver: config.inbox as never })
+    : new App({ token: config.botToken, appToken: config.appToken, socketMode: true });
 
   // Socket Mode goes deaf silently: the process lives, the supervisor sees it
   // running, and nothing distinguishes "nobody is talking to me" from "I cannot
@@ -418,9 +438,13 @@ export const createSlackApp = (config: SlackAppConfig, deps: Deps) => {
     health.since = Date.now();
     log(`socket ${state}`);
   };
-  const socket = (app as unknown as { receiver?: { client?: { on?: (e: string, f: () => void) => void } } })
+  const socket = config.inbox
+    ? undefined
+    : (app as unknown as { receiver?: { client?: { on?: (e: string, f: () => void) => void } } })
     .receiver?.client;
-  if (socket?.on) {
+  if (config.inbox) {
+    log("reading the gateway inbox - the socket and its watchdog live in the gateway");
+  } else if (socket?.on) {
     socket.on("connected", () => enter("connected"));
     socket.on("connecting", () => enter("connecting"));
     socket.on("reconnecting", () => enter("reconnecting"));
@@ -442,6 +466,11 @@ export const createSlackApp = (config: SlackAppConfig, deps: Deps) => {
     });
   let watchdog: ReturnType<typeof setInterval> | undefined;
   const handle = createHandler(config, deps, log);
+  /** Which inbox row a listener is handling, read from Bolt's context. */
+  const inboxOf = (context: InboxContext): Incoming["inbox"] =>
+    typeof context.inboxRowId === "number"
+      ? { rowId: context.inboxRowId, attempt: context.inboxAttempt ?? 1 }
+      : undefined;
   // The real WebClient is a superset of the minimal SlackClient seam.
   const asClient = (client: WebClient) => client as unknown as SlackClient;
 
@@ -453,6 +482,7 @@ export const createSlackApp = (config: SlackAppConfig, deps: Deps) => {
       channelId: e.channel,
       userId: e.user,
       teamId: context.teamId,
+      inbox: inboxOf(context as InboxContext),
       text: e.text,
       threadTs: threadKeyOf(e),
       messageTs: e.ts,
@@ -918,6 +948,7 @@ export const createSlackApp = (config: SlackAppConfig, deps: Deps) => {
         channelId: m.channel,
         userId: m.user!,
         teamId: context.teamId,
+        inbox: inboxOf(context as InboxContext),
         text: m.text!,
         threadTs: threadKeyOf(m),
         messageTs: m.ts,
@@ -931,6 +962,7 @@ export const createSlackApp = (config: SlackAppConfig, deps: Deps) => {
       channelId: m.channel,
       userId: m.user!,
       teamId: context.teamId,
+      inbox: inboxOf(context as InboxContext),
       text: m.text!,
       threadTs: threadKeyOf(m),
       messageTs: m.ts,
@@ -987,7 +1019,7 @@ export const createSlackApp = (config: SlackAppConfig, deps: Deps) => {
       await app.start();
       // `start()` resolving means the socket opened, even if the event did not
       // reach us before this point.
-      if (health.state === "unknown") enter("connected");
+      if (!config.inbox && health.state === "unknown") enter("connected");
       if (socket?.on) {
         watchdog = setInterval(() => {
           if (shouldGiveUp(health, Date.now(), graceMs)) giveUp(health);
@@ -995,13 +1027,15 @@ export const createSlackApp = (config: SlackAppConfig, deps: Deps) => {
         // A watchdog is not a reason to keep an otherwise-finished process alive.
         watchdog.unref?.();
       }
-      log(`${config.botName} is online via Socket Mode.${config.streamUpdates ? " streaming on." : ""}`);
+      log(`${config.botName} is online via ${config.inbox ? "the gateway inbox" : "Socket Mode"}.${config.streamUpdates ? " streaming on." : ""}`);
     },
     stop: async () => {
       if (watchdog) clearInterval(watchdog);
       await app.stop();
     },
     /** Whether the bot can currently hear Slack, for the dashboard. */
-    health: () => ({ ...health }),
+    health: () => (config.inbox ? config.inbox.health() : { ...health }),
+    /** Envelopes being handled right now; zero when not reading an inbox. */
+    inFlight: () => config.inbox?.inFlight() ?? 0,
   };
 };

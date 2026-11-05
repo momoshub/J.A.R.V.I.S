@@ -18,6 +18,13 @@ const schema = z
     SLACK_APP_TOKEN: z.string().min(1, "SLACK_APP_TOKEN is required"),
     // Stream replies live via chat.startStream (tool calls shown as a timeline).
     SLACK_STREAM_UPDATES: boolFromString(true),
+    // Where Slack traffic comes from. `socket` opens Socket Mode in this
+    // process; `inbox` reads what the separate gateway (src/gateway.ts) wrote,
+    // so a restart of the bot never drops the connection.
+    SLACK_TRANSPORT: z.enum(["socket", "inbox"]).default("socket"),
+    // The gateway's queue. Its own file: two processes write it and it must
+    // never be committed. Gitignored.
+    INBOX_DATABASE_PATH: z.string().default("data/inbox.db"),
 
     // Bot identity defaults. These only bootstrap a fresh database; once set, the
     // dashboard-managed DB settings take precedence, so the code stays generic.
@@ -84,6 +91,8 @@ export type AppConfig = {
   slackBotToken: string;
   slackAppToken: string;
   slackStreamUpdates: boolean;
+  slackTransport: "socket" | "inbox";
+  inboxDatabasePath: string;
   botName: string;
   botThinkingLabel: string;
   botThinkingDoneLabel: string;
@@ -131,6 +140,8 @@ export const loadConfig = (source: Record<string, string | undefined> = process.
     slackBotToken: env.SLACK_BOT_TOKEN,
     slackAppToken: env.SLACK_APP_TOKEN,
     slackStreamUpdates: env.SLACK_STREAM_UPDATES,
+    slackTransport: env.SLACK_TRANSPORT,
+    inboxDatabasePath: env.INBOX_DATABASE_PATH,
     botName: env.BOT_NAME,
     botThinkingLabel: env.BOT_THINKING_LABEL,
     botThinkingDoneLabel: env.BOT_THINKING_DONE_LABEL,

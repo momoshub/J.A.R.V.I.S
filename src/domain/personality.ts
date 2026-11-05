@@ -58,6 +58,22 @@ export const identityLock = (botName: string, botUserId?: string): string =>
  * The important permission here is silence. An empty reply posts nothing at
  * all, and is the right outcome most of the time.
  */
+/**
+ * Told to a turn that is a SECOND attempt: the first died with the process,
+ * part way through. It resumes the same session, so it can see what it had
+ * already done - and without this it would read the request as new and do it
+ * all again, a second branch, a second PR, a second deploy.
+ */
+export const interruptedRules = (interrupted: boolean): string =>
+  interrupted
+    ? `
+
+This message is being handled a SECOND time:
+- your first attempt was cut off part way through, because the process running you restarted. Whatever you had already said in reply to it was lost
+- before doing anything, check what the first attempt already did - your own earlier tool calls in this session, branches, PRs, commits, posted messages, anything you started. Do not repeat a step that already happened: continue from where it stopped
+- answer the message in full, as if the cut-off reply had never been posted. Mention the restart in at most one short line, and only if it changes what the person should expect`
+    : "";
+
 export const followRules = (following: boolean): string => {
   if (!following) return "";
   return `
@@ -277,6 +293,8 @@ export type BuildSystemPromptOptions = PromptContext & {
   readonly canWatch?: boolean;
   /** true when this turn is an untagged reply under a thread the bot started */
   readonly following?: boolean;
+  /** true when this message is being retried after a restart cut the first attempt off */
+  readonly interrupted?: boolean;
   /** configured message command prefix, for explaining what a command line is */
   readonly commandPrefix?: string;
   /**
@@ -321,7 +339,7 @@ export const buildSystemPrompt = (options: Partial<BuildSystemPromptOptions> = {
 
   const roster = renderParticipants(options.participants ?? []);
   const reactions = reactionRules(options.channelId ?? "", options.reactable ?? [], options.reactScript);
-  const following = followRules(options.following === true);
+  const following = followRules(options.following === true) + interruptedRules(options.interrupted === true);
   const remembering = learningRules(options.learnUrl ?? "");
   const attachments = attachmentRules(options.fileScript);
   const investigating = investigationRules(options.logSources ?? [], options.grafanaGetScript);

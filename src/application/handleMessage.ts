@@ -169,6 +169,8 @@ export type InboundMessage = {
   viaSlash?: boolean;
   /** An untagged reply under a thread the bot started; nobody asked it. */
   following?: boolean;
+  /** A retry: a restart cut the first attempt at this message off part way. */
+  interrupted?: boolean;
 };
 
 export type HandleResult =
@@ -282,6 +284,7 @@ export const handleMessage = async (
     // describing a door that is locked.
     canWatch: !!deps.watches && !!inbound.threadTs && canTeach(decision.user.role),
     following: inbound.following === true,
+    interrupted: inbound.interrupted === true,
     commandPrefix: deps.commandPrefix,
     adapter: ctx.adapter,
     // Scoped memory resolves against who is actually here and where.
