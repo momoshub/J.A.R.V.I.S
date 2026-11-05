@@ -5,6 +5,7 @@
  */
 import { WebClient } from "@slack/web-api";
 import { splitForBlocks, toMrkdwn } from "../../domain/slackFormat.ts";
+import { toBlockMessage } from "../../domain/blockKit.ts";
 import { type MessageBlock, visibleText } from "../../domain/slackMessageText.ts";
 import type {
   SlackAdminPort,
@@ -197,11 +198,13 @@ export const createSlackAdmin = (client: WebClient): SlackAdminPort => {
     },
 
     post: async (channel, text, threadTs) => {
-      const posted = (await client.chat.postMessage({
-        channel,
-        text: toMrkdwn(text),
-        ...(threadTs ? { thread_ts: threadTs } : {}),
-      })) as { ts?: string };
+      const thread = threadTs ? { thread_ts: threadTs } : {};
+      const plain = () => client.chat.postMessage({ channel, text: toMrkdwn(text), ...thread });
+      const rich = toBlockMessage(text, toMrkdwn);
+      // A block Slack refuses falls back to the plain post rather than losing the message.
+      const posted = (await (rich ? client.chat.postMessage({ channel, ...rich, ...thread }).catch(plain) : plain())) as {
+        ts?: string;
+      };
       return posted.ts ? { channel, ts: posted.ts } : undefined;
     },
 

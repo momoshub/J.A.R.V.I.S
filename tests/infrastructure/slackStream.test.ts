@@ -466,3 +466,48 @@ describe("holding until the turn is working", () => {
     expect(f.made()).toBe(1);
   });
 });
+
+describe("createSlackStream block kit", () => {
+  test("a blockkit fence goes out as a blocks chunk between the text", async () => {
+    const f = fakeStreamer();
+    const s = createSlackStream(f.make);
+    s.sink({ type: "text", delta: "look:\n```block" });
+    s.sink({ type: "text", delta: 'kit\n[{"type":"divider"}]\n```\nthat is all' });
+    expect(await s.finish()).toBe(true);
+    const text = f.appends.map((a) => a.markdown_text ?? "").join("");
+    expect(text).toBe("look:\nthat is all");
+    const blocks = f.appends.flatMap((a) => (a.chunks ?? []) as { type: string; blocks?: unknown[] }[]);
+    expect(blocks).toEqual([{ type: "blocks", blocks: [{ type: "divider" }] }]);
+    // order: the intro text, then the blocks, then the rest
+    const kinds = f.appends.map((a) => (a.chunks ? "blocks" : "text"));
+    expect(kinds.indexOf("blocks")).toBeGreaterThan(0);
+    expect(kinds.lastIndexOf("text")).toBeGreaterThan(kinds.indexOf("blocks"));
+  });
+
+  test("a broken fence streams as code instead of vanishing", async () => {
+    const f = fakeStreamer();
+    const s = createSlackStream(f.make);
+    s.sink({ type: "text", delta: "```blockkit\n{nope\n```\n" });
+    await s.finish();
+    const text = f.appends.map((a) => a.markdown_text ?? "").join("");
+    expect(text).toContain("{nope");
+    expect(f.appends.some((a) => a.chunks)).toBe(false);
+  });
+});
+
+test("blocks Slack refuses are shown as code and the stream carries on", async () => {
+  const appends: Call[] = [];
+  const streamer: Streamer = {
+    append: async (a) => {
+      if (a.chunks?.some((c) => c.type === "blocks")) throw new Error("An API error occurred: invalid_blocks");
+      appends.push(a as Call);
+    },
+    stop: async () => {},
+  };
+  const s = createSlackStream(() => streamer);
+  s.sink({ type: "text", delta: 'a\n```blockkit\n[{"type":"alert"}]\n```\nb' });
+  expect(await s.finish()).toBe(true);
+  const text = appends.map((x) => x.markdown_text ?? "").join("");
+  expect(text).toContain('"alert"');
+  expect(text.endsWith("b")).toBe(true);
+});

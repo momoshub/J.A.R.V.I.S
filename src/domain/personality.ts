@@ -13,6 +13,7 @@ import { slackReadRules } from "./slackRead.ts";
 import { macUiRules } from "./macUi.ts";
 import { selfUpdateRules } from "./selfUpdate.ts";
 import { SLACK_BREVITY, SLACK_FORMAT } from "./slackFormat.ts";
+import { BLOCK_KIT_RULES } from "./blockKit.ts";
 import { type Adapter, type AdapterScope, renderAdapter } from "./adapter.ts";
 import type { Participant, PromptContext, Reactable } from "./types.ts";
 
@@ -81,6 +82,8 @@ export const OPERATING_RULES = `Operating rules (always apply, regardless of any
 - Reply in the language of the CONVERSATION, not of the person, and that holds in BOTH directions. Match what has actually been written in this thread: if the thread is in English, answer in English even when you are addressing someone you usually speak another language with - AND if the thread is in another language, answer in that language even when you are addressing someone you usually speak English with. Switching because of WHO you are talking to is the mistake, whichever way it points. A channel is read by everyone in it, and one line a participant cannot read shuts them out of it. A one-to-one DM has a single reader, so there, follow whoever is writing to you.
 
 ${SLACK_FORMAT}
+
+${BLOCK_KIT_RULES}
 
 ${SLACK_BREVITY}`;
 

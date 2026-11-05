@@ -51,6 +51,7 @@ import {
 import { annotateMentions, extractMentionIds } from "../../domain/mentions.ts";
 import { isTimeout } from "../../domain/threadSession.ts";
 import { toMrkdwn } from "../../domain/slackFormat.ts";
+import { toBlockMessage, type Block } from "../../domain/blockKit.ts";
 import { couldFollowThread, followVerdict, isOneOnOneThread } from "../../domain/threadFollow.ts";
 import { isSilenceNote } from "../../domain/silence.ts";
 import { createSlackStream, type Streamer } from "./stream.ts";
@@ -210,7 +211,7 @@ export type Incoming = {
   client: SlackClient;
   /** An untagged reply under a thread this bot started. */
   following?: boolean;
-  say: (msg: { text: string; thread_ts?: string; reply_broadcast?: boolean }) => Promise<unknown>;
+  say: (msg: { text: string; blocks?: Block[]; thread_ts?: string; reply_broadcast?: boolean }) => Promise<unknown>;
 };
 
 /**
@@ -326,7 +327,14 @@ export const createHandler =
         // Converted at the boundary, not merely asked for in the prompt: a rule
         // the model may ignore is not a guarantee, and what it ignores is the
         // one thing the reader sees.
-        await msg.say({ text: toMrkdwn(result.text), thread_ts: msg.threadTs, ...(broadcast ? { reply_broadcast: true } : {}) });
+        // A reply carrying a ```blockkit fence posts as blocks, its prose in
+        // markdown blocks around them; anything else stays a plain text post.
+        // Blocks Slack refuses (`invalid_blocks`) fall back to the plain post.
+        const rich = toBlockMessage(result.text, toMrkdwn);
+        const extra = { thread_ts: msg.threadTs, ...(broadcast ? { reply_broadcast: true } : {}) };
+        const plain = () => msg.say({ text: toMrkdwn(result.text), ...extra });
+        if (rich) await msg.say({ ...rich, ...extra }).catch(plain);
+        else await plain();
       }
     } catch (err) {
       log(`respond failed: ${err instanceof Error ? err.message : String(err)}`);

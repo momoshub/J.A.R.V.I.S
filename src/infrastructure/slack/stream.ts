@@ -11,16 +11,21 @@
  * The caller can arm a "thinking" step (`showThinkingAfter`), which appears only
  * if the turn is still silent when the delay is up and auto-completes as soon as
  * real content arrives - so a quick answer never flashes a placeholder.
+ *
+ * A ```blockkit fence in the text is lifted out and sent as a `blocks` chunk in
+ * its place (see `domain/blockKit.ts`), so tables, alerts and cards stream
+ * inline with the prose around them.
  */
-import type { TaskUpdateChunk } from "@slack/types";
+import type { AnyChunk, TaskUpdateChunk } from "@slack/types";
 import { isHiddenAction } from "../../domain/toolVisibility.ts";
 import { MAX_SILENCE_NOTE } from "../../domain/silence.ts";
 import { createFenceNormalizer } from "./fences.ts";
+import { createBlockKitExtractor, type Block, type Segment } from "../../domain/blockKit.ts";
 import type { LlmStreamEvent, LlmStreamSink } from "../../application/ports.ts";
 
 /** The slice of Slack's ChatStreamer we depend on (kept minimal for testing). */
 export type Streamer = {
-  append: (args: { markdown_text?: string; chunks?: TaskUpdateChunk[] }) => Promise<unknown>;
+  append: (args: { markdown_text?: string; chunks?: AnyChunk[] }) => Promise<unknown>;
   stop: (args?: { markdown_text?: string }) => Promise<unknown>;
   /** ts of the streamed message; undefined until the first flush opens it. */
   readonly ts?: string;
@@ -112,6 +117,7 @@ export const createSlackStream = (
   let used = 0;
   let pending: ReturnType<typeof setTimeout> | undefined;
   const fences = createFenceNormalizer();
+  const kit = createBlockKitExtractor();
 
   const cancelPending = (): void => {
     if (pending === undefined) return;
@@ -190,6 +196,48 @@ export const createSlackStream = (
     });
   };
 
+  /**
+   * Send a run of blocks as one chunk, in order with the text around it.
+   *
+   * Slack refuses a block it does not support in a message (`alert` is
+   * rejected with `invalid_blocks` even though the SDK types it), and a refusal
+   * would otherwise break the stream for the whole turn. So a refused chunk is
+   * shown as its JSON in a code block instead: the content survives, and the
+   * rest of the reply keeps streaming.
+   */
+  const appendBlocks = (blocks: Block[]) => {
+    ensure();
+    const chunk = { type: "blocks", blocks } as AnyChunk;
+    enqueue(async () => {
+      try {
+        await send({ chunks: [chunk] }, JSON.stringify(chunk).length);
+      } catch (e) {
+        if (!errMsg(e).includes("invalid_blocks")) throw e;
+        log(`blocks refused, shown as code: ${errMsg(e)}`);
+        const code = `\n\`\`\`\n${JSON.stringify(blocks, null, 2)}\n\`\`\`\n`;
+        await send({ markdown_text: code }, code.length);
+      }
+    });
+  };
+
+  /**
+   * Route extracted segments: prose through the fence normaliser, blocks as a
+   * chunk. Whatever the normaliser held back goes out first, or a block would
+   * overtake the end of the sentence that introduced it.
+   */
+  const emitSegments = (segs: Segment[]) => {
+    for (const seg of segs) {
+      if (seg.kind === "text") {
+        const text = fences.push(seg.text);
+        if (text) appendText(text);
+        continue;
+      }
+      const held = fences.flush();
+      if (held) appendText(held);
+      appendBlocks(seg.blocks);
+    }
+  };
+
   const completeThinking = () => {
     if (!thinkingShown || thinkingDone) return;
     thinkingDone = true;
@@ -219,8 +267,7 @@ export const createSlackStream = (
     if (event.type === "text") {
       if (event.delta) {
         contentShown = true;
-        const text = fences.push(event.delta);
-        if (text) appendText(text);
+        emitSegments(kit.push(event.delta));
       }
       return;
     }
@@ -347,6 +394,7 @@ export const createSlackStream = (
     finish: async () => {
       cancelPending();
       completeThinking();
+      emitSegments(kit.flush());
       const tail = fences.flush();
       if (tail) appendText(tail);
       try {
