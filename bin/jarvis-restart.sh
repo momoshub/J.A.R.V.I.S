@@ -5,8 +5,8 @@
 #
 # The restart is NOT done here. A `launchctl kickstart` from inside a turn kills
 # the turn that asked for it, so the reply never lands. Instead this asks the
-# running bot, over loopback, to exit a few seconds from now - after its reply
-# has posted - and launchd brings it straight back.
+# running bot, over loopback, to exit once it is idle - after its reply has
+# posted and no turn is running in any thread - and launchd brings it back.
 #
 # Typecheck and tests both have to pass. Restarting into code that does not
 # compile means crash-looping every fifteen seconds with no way back from Slack.
@@ -37,7 +37,7 @@ echo "== asking the bot to restart"
 out=$(curl -s --max-time 10 -X POST "http://127.0.0.1:${PORT}/api/restart" \
   -H 'content-type: application/json' -d '{}')
 if printf '%s' "$out" | grep -q '"ok":true'; then
-  echo "checks passed; restarting in a few seconds (reply will land first)"
+  echo "checks passed; restarting once idle (reply lands first, running turns finish)"
 else
   echo "checks passed, but the restart request failed: $out" >&2
   exit 1

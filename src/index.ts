@@ -13,7 +13,7 @@ import { loadConfig, modelLabel, type AppConfig } from "./config/env.ts";
 import { openDatabase } from "./infrastructure/db/client.ts";
 import { createThreadSessionRepo } from "./infrastructure/db/threadSessionRepo.ts";
 import { createThreadQueue } from "./application/threadQueue.ts";
-import { RESTART_DELAY_MS } from "./domain/selfUpdate.ts";
+import { restartWhenIdle } from "./domain/selfUpdate.ts";
 import { createRunRegistry } from "./application/runRegistry.ts";
 import { createSystemProbe, createSystemTracker } from "./infrastructure/system/systemProbe.ts";
 import { createTotpRepo } from "./infrastructure/db/totpRepo.ts";
@@ -417,13 +417,20 @@ const main = async () => {
       // bot that cannot hear Slack is down however well /health answers.
       slackHealth: () => slackApp?.health(),
       // Exit, and let launchd bring us back. Deferred so the reply that asked
-      // for it has landed before the process goes.
+      // for it has landed, and held until no turn is running anywhere.
       requestRestart: (reason: string) => {
         activity.line(`restart requested: ${reason}`);
-        setTimeout(() => {
-          console.log("Restarting on request ...");
-          process.exit(0);
-        }, RESTART_DELAY_MS).unref?.();
+        restartWhenIdle({
+          isIdle: () => runs.all().length === 0,
+          exit: () => {
+            console.log("Restarting on request ...");
+            process.exit(0);
+          },
+          schedule: (fn, ms) => {
+            setTimeout(fn, ms).unref?.();
+          },
+          log: (line) => activity.line(line),
+        });
       },
       uiAccess: uiAccess.read,
       users,
