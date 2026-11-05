@@ -3,7 +3,7 @@
  *
  * - owner / admin: full access (skip permissions, any tool, the normal cwd)
  * - pal: sandboxed read-only tools in a fixed scratch dir (may still use `review`)
- * - executer: sandboxed, tools assigned from the control deck
+ * - executer: sandboxed, tools assigned from the control deck, plus the read-only databases
  *
  * When `skipPermissions` is false the CLI runs with an `--allowedTools` allow-list
  * and no permission bypass, so anything off the list is denied.
@@ -108,6 +108,22 @@ export const DB_MCP_SERVERS: readonly string[] = [
   "mcp__pg-prod",
   "mcp__pg-prod-2",
   "mcp__pg-staging",
+  "mcp__clickhouse-us-prod",
+  "mcp__clickhouse-sg-prod",
+  "mcp__clickhouse-sg-stg",
+];
+
+/**
+ * The database servers an executer may query: only those whose credential is
+ * read only on the server side (dbhub `readonly = true`, ClickHouse readonly
+ * users). `clickhouse-sg-stg` logs in as a write user, so it stays denied.
+ */
+export const EXECUTER_DB_SERVERS: readonly string[] = [
+  "mcp__pg-prod",
+  "mcp__pg-prod-2",
+  "mcp__pg-staging",
+  "mcp__clickhouse-us-prod",
+  "mcp__clickhouse-sg-prod",
 ];
 
 /**
@@ -152,6 +168,11 @@ export const SANDBOX_DISALLOW: readonly string[] = [
   "Bash(aws secretsmanager:*)", "Bash(aws ssm get-parameter:*)", "Bash(aws kms:*)",
   ...DB_MCP_SERVERS,
 ];
+
+/** Sandbox denials minus the read-only databases an executer is granted. */
+export const EXECUTER_DISALLOW: readonly string[] = SANDBOX_DISALLOW.filter(
+  (t) => !EXECUTER_DB_SERVERS.includes(t),
+);
 
 export type ToolPolicyOptions = {
   /** cwd for full-access roles (owner/admin). */
@@ -235,10 +256,13 @@ export const toolPolicyFor = (role: UserRole, opts: ToolPolicyOptions): ToolPoli
         skipPermissions: false,
         cwd: opts.sandboxCwd,
         allowedTools: withHelpers(
-          opts.executerTools && opts.executerTools.length > 0 ? opts.executerTools : PAL_TOOLS,
+          [
+            ...(opts.executerTools && opts.executerTools.length > 0 ? opts.executerTools : PAL_TOOLS),
+            ...EXECUTER_DB_SERVERS,
+          ],
           opts,
         ),
-        disallowedTools: SANDBOX_DISALLOW,
+        disallowedTools: EXECUTER_DISALLOW,
         model: modelOf("executer", opts),
       };
     case "pal":

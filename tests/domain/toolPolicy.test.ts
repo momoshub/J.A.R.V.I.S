@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import {
   DB_MCP_SERVERS,
+  EXECUTER_DB_SERVERS,
   NO_TOOLS,
   PAL_TOOLS,
   SANDBOX_DISALLOW,
@@ -99,6 +100,25 @@ describe("toolPolicyFor", () => {
     }
   });
 
+  test("an executer queries the read-only databases, a pal queries none", () => {
+    const exe = toolPolicyFor("executer", opts);
+    for (const db of ["mcp__pg-prod", "mcp__pg-prod-2", "mcp__pg-staging",
+      "mcp__clickhouse-us-prod", "mcp__clickhouse-sg-prod"]) {
+      expect(exe.allowedTools).toContain(db);
+      expect(exe.disallowedTools).not.toContain(db);
+    }
+    // logs in as a write user, so it stays denied
+    expect(exe.allowedTools).not.toContain("mcp__clickhouse-sg-stg");
+    expect(exe.disallowedTools).toContain("mcp__clickhouse-sg-stg");
+    // and an assigned list does not drop them
+    const assigned = toolPolicyFor("executer", { ...opts, executerTools: ["Read"] }).allowedTools;
+    expect(assigned).toContain("mcp__pg-prod");
+
+    const pal = toolPolicyFor("pal", opts);
+    for (const db of DB_MCP_SERVERS) expect(pal.disallowedTools).toContain(db);
+    expect(DB_MCP_SERVERS).toContain("mcp__clickhouse-sg-stg");
+  });
+
   test("pal can read github, notion and the web", () => {
     const tools = toolPolicyFor("pal", opts).allowedTools ?? [];
     // github
@@ -128,7 +148,7 @@ describe("toolPolicyFor", () => {
 
   test("an executer's assigned list still gets reactions appended", () => {
     const tools = toolPolicyFor("executer", { ...opts, executerTools: ["Read", "Bash(gh pr view:*)"] }).allowedTools;
-    expect(tools).toEqual(["Read", "Bash(gh pr view:*)", `Bash(${REACT}:*)`]);
+    expect(tools).toEqual(["Read", "Bash(gh pr view:*)", ...EXECUTER_DB_SERVERS, `Bash(${REACT}:*)`]);
   });
 
   test("without a helper path nothing extra is granted", () => {
@@ -185,11 +205,12 @@ describe("database MCP servers", () => {
   test("a sandboxed role is DENIED them, not merely not granted them", () => {
     // absence from an allow-list is not a denial - the allow-list does not
     // restrict at all, measured against the CLI
-    for (const role of ["pal", "executer"] as const) {
-      const p = toolPolicyFor(role, { sandboxCwd: "/tmp/box" });
-      for (const server of DB_MCP_SERVERS) {
-        expect(p.disallowedTools).toContain(server);
-      }
+    const pal = toolPolicyFor("pal", { sandboxCwd: "/tmp/box" });
+    for (const server of DB_MCP_SERVERS) expect(pal.disallowedTools).toContain(server);
+    // an executer is granted the read-only ones and denied the rest
+    const exe = toolPolicyFor("executer", { sandboxCwd: "/tmp/box" });
+    for (const server of DB_MCP_SERVERS.filter((s) => !EXECUTER_DB_SERVERS.includes(s))) {
+      expect(exe.disallowedTools).toContain(server);
     }
   });
 

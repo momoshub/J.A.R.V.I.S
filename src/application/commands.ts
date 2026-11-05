@@ -768,7 +768,7 @@ export const COMMANDS: readonly CommandDef[] = [
     aliases: ["autoreply"],
     // It makes the bot speak in a room without being spoken to, which is a
     // standing decision about a shared space rather than a one-off reply.
-    minRole: "admin",
+    minRole: "executer",
     usage: "[<thread link>] | off [<thread link>] | list",
     summary: "keep up with a thread without being tagged in every message",
     run: ({ deps, actor, args, rest, prefix, threadTs, channelId }) => {
@@ -810,7 +810,7 @@ export const COMMANDS: readonly CommandDef[] = [
     // outside any turn. That is the same authority a full-access turn has, so
     // it takes the same trust - and it is the gate that stops a sandboxed
     // session from scheduling itself a shell.
-    minRole: "admin",
+    minRole: "executer",
     // The confirmation is for the brain, not the thread: it already says what
     // it is waiting for in its own words, and a second notice is just noise.
     quiet: true,
@@ -1274,7 +1274,7 @@ export const COMMANDS: readonly CommandDef[] = [
   },
   {
     name: "learn",
-    minRole: "admin",
+    minRole: "executer",
     usage: "<fact>",
     summary: "teach me a durable fact",
     run: ({ deps, actor, rest, prefix }) => {
@@ -1303,7 +1303,7 @@ export const COMMANDS: readonly CommandDef[] = [
   },
   {
     name: "learnings",
-    minRole: "admin",
+    minRole: "executer",
     usage: "",
     summary: "list what I have learned",
     run: ({ deps, prefix }) => {
@@ -1333,7 +1333,7 @@ export const COMMANDS: readonly CommandDef[] = [
   {
     name: "relearn",
     aliases: ["edit-learning"],
-    minRole: "admin",
+    minRole: "executer",
     usage: "<id> <new wording>",
     summary: "reword something I have learned",
     run: ({ deps, args, rest, prefix }) => {
@@ -1353,7 +1353,7 @@ export const COMMANDS: readonly CommandDef[] = [
   },
   {
     name: "unlearn",
-    minRole: "admin",
+    minRole: "executer",
     usage: "<id>",
     summary: "make me forget a learning",
     run: ({ deps, args, prefix }) => {

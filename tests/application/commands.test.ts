@@ -293,10 +293,18 @@ describe("dispatchCommand", () => {
     expect(deps.learnings!.list()[0]?.content).toBe("a fact"); // untouched throughout
   });
 
-  test("relearn is admin-gated", async () => {
+  test("relearn is executer-gated", async () => {
     const deps = build();
     const pal = actor({ slackId: "U0PAL0001", role: "pal" });
     expect(await dispatchCommand(deps, pal, "C1", "relearn 1 anything")).toContain("access");
+  });
+
+  test("an executer may follow, watch and curate learnings", async () => {
+    const deps = build();
+    const executer = actor({ slackId: "U0EXE0001", role: "executer" });
+    for (const line of ["learn a fact", "learnings", "relearn 999 hello", "unlearn 999", "follow list", "watch list"]) {
+      expect(await dispatchCommand(deps, executer, "C1", line)).not.toContain("needs *admin* access");
+    }
   });
 
   test("ask calls the brain", async () => {
@@ -487,7 +495,7 @@ describe("dispatchCommand", () => {
     expect(out).toContain("belongs to a thread");
   });
 
-  test("setting a shell check on a timer is admin and up", async () => {
+  test("setting a shell check on a timer is executer and up", async () => {
     const out = await dispatchCommand(
       { ...build(), watches: createWatchRepo(db) },
       actor({ slackId: "U3", role: "pal" }),
@@ -495,7 +503,7 @@ describe("dispatchCommand", () => {
       "watch do it -- true",
       { threadTs: "9.9" },
     );
-    expect(out).toContain("needs *admin*");
+    expect(out).toContain("needs *executer*");
   });
 
   test("watch cancel ends the ones on this thread", async () => {
@@ -2192,7 +2200,7 @@ describe("follow", () => {
     expect(out).toContain("was not following");
   });
 
-  test("it is admin and up - the bot speaks in a shared room unprompted", async () => {
+  test("it is executer and up - the bot speaks in a shared room unprompted", async () => {
     const out = await dispatchCommand(
       { ...build(), follows: createFollowRepo(db) },
       actor({ slackId: "U3", role: "pal" }),
@@ -2200,7 +2208,7 @@ describe("follow", () => {
       "follow",
       { threadTs: "1.1" },
     );
-    expect(out).toContain("needs *admin*");
+    expect(out).toContain("needs *executer*");
   });
 
   test("list names what it is keeping up with", async () => {
