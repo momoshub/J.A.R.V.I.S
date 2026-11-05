@@ -9,6 +9,7 @@ import { createThreadSessionRepo } from "../../src/infrastructure/db/threadSessi
 import { createUsageRepo } from "../../src/infrastructure/db/usageRepo.ts";
 import { createTurnLogRepo } from "../../src/infrastructure/db/turnLogRepo.ts";
 import { createWatchRepo } from "../../src/infrastructure/db/watchRepo.ts";
+import { createFollowRepo } from "../../src/infrastructure/db/followRepo.ts";
 import { createRunRegistry } from "../../src/application/runRegistry.ts";
 import { commandLineOf, dispatchCommand, type CommandDeps, isQuietCommand } from "../../src/application/commands.ts";
 import { respond, type RespondDeps } from "../../src/application/respond.ts";
@@ -2016,5 +2017,84 @@ describe("2fa", () => {
     const expected = totpCode(parseTotpInput(SEED)!, 45_000);
     expect(await dispatchCommand(deps, actor(), "C1", "otp demo")).toContain(expected);
     expect(await dispatchCommand(deps, actor(), "C1", "totp demo")).toContain(expected);
+  });
+});
+
+describe("follow", () => {
+  test("a thread it did not start can be opted in, and out again", async () => {
+    const deps = build();
+    const follows = createFollowRepo(db);
+    const d = { ...deps, follows };
+
+    expect(follows.isFollowed("C7", "5.5")).toBe(false);
+    const on = await dispatchCommand(d, actor(), "C7", "follow", { threadTs: "5.5" });
+    expect(on).toContain("following that thread now");
+    expect(on).toContain("staying quiet"); // it is judgement, not narration
+    expect(follows.isFollowed("C7", "5.5")).toBe(true);
+
+    const off = await dispatchCommand(d, actor(), "C7", "follow off", { threadTs: "5.5" });
+    expect(off).toContain("stopped following");
+    expect(follows.isFollowed("C7", "5.5")).toBe(false);
+  });
+
+  test("a link follows that thread rather than the one you typed in", async () => {
+    const deps = build();
+    const follows = createFollowRepo(db);
+    await dispatchCommand(
+      { ...deps, follows },
+      actor(),
+      "C1",
+      "follow https://x.slack.com/archives/C9/p1793844324845749",
+      { threadTs: "1.1" },
+    );
+    expect(follows.isFollowed("C9", "1793844324.845749")).toBe(true);
+    expect(follows.isFollowed("C1", "1.1")).toBe(false);
+  });
+
+  test("it needs a thread, and says so rather than following nothing", async () => {
+    const out = await dispatchCommand({ ...build(), follows: createFollowRepo(db) }, actor(), "C1", "follow");
+    expect(out).toContain("Which thread?");
+  });
+
+  test("a bad link is refused, not treated as the current thread", async () => {
+    const out = await dispatchCommand(
+      { ...build(), follows: createFollowRepo(db) },
+      actor(),
+      "C1",
+      "follow https://example.com/nope",
+      { threadTs: "1.1" },
+    );
+    expect(out).toContain("not a Slack thread link");
+  });
+
+  test("turning it off when it was never on says so", async () => {
+    const out = await dispatchCommand(
+      { ...build(), follows: createFollowRepo(db) },
+      actor(),
+      "C1",
+      "follow off",
+      { threadTs: "1.1" },
+    );
+    expect(out).toContain("was not following");
+  });
+
+  test("it is admin and up - the bot speaks in a shared room unprompted", async () => {
+    const out = await dispatchCommand(
+      { ...build(), follows: createFollowRepo(db) },
+      actor({ slackId: "U3", role: "pal" }),
+      "C1",
+      "follow",
+      { threadTs: "1.1" },
+    );
+    expect(out).toContain("needs *admin*");
+  });
+
+  test("list names what it is keeping up with", async () => {
+    const deps = build();
+    const follows = createFollowRepo(db);
+    const d = { ...deps, follows };
+    expect(await dispatchCommand(d, actor(), "C1", "follow list")).toContain("not following any");
+    await dispatchCommand(d, actor(), "C7", "follow", { threadTs: "5.5" });
+    expect(await dispatchCommand(d, actor(), "C1", "follow list")).toContain("<#C7>");
   });
 });

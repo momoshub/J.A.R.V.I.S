@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { couldFollowThread, mentionsBot } from "../../src/domain/threadFollow.ts";
+import { couldFollowThread, mentionsBot, shouldFollowThread } from "../../src/domain/threadFollow.ts";
 import { buildSystemPrompt } from "../../src/domain/personality.ts";
 import { promptFingerprint } from "../../src/domain/promptFingerprint.ts";
 
@@ -96,6 +96,46 @@ describe("how it behaves once it is following", () => {
     const a = promptFingerprint(buildSystemPrompt as never, "persona");
     expect(a).toMatch(/^[0-9a-f]{16}$/);
     // rendered under the sentinels, so a change to its text moves the hash
-    expect(buildSystemPrompt({ learnings: [], following: true })).toContain("following a thread you started");
+    expect(buildSystemPrompt({ learnings: [], following: true })).toContain("You are following this thread");
+  });
+});
+
+describe("being asked to follow somebody else's thread", () => {
+  test("the rule no longer claims it opened the thread", () => {
+    // it can be following because it was ASKED to, and a rule that tells it
+    // it started a conversation it did not start is a rule it will argue with
+    const p = buildSystemPrompt({ learnings: [], following: true });
+    expect(p).toContain("either because you started it or because somebody asked you");
+    expect(p).not.toContain("you opened it, so you keep up with it");
+  });
+
+  test("silence is still the common outcome, whoever started it", () => {
+    const p = buildSystemPrompt({ learnings: [], following: true });
+    expect(p).toContain("MOST replies here do not need you at all");
+    expect(p).toContain("never ANNOUNCE the silence");
+  });
+});
+
+describe("shouldFollowThread", () => {
+  const f = (o: Partial<Parameters<typeof shouldFollowThread>[0]> = {}) =>
+    shouldFollowThread({ asked: false, ownThread: false, ownThreadsOff: false, ...o });
+
+  test("a thread it opened, by default", () => {
+    expect(f({ ownThread: true })).toBe(true);
+    expect(f({ ownThread: false })).toBe(false);
+  });
+
+  test("a thread somebody asked it to follow", () => {
+    expect(f({ asked: true })).toBe(true);
+  });
+
+  test("an explicit follow outranks the blanket setting", () => {
+    // turning off the default and then pointing at one conversation means
+    // exactly what it says
+    expect(f({ asked: true, ownThreadsOff: true })).toBe(true);
+  });
+
+  test("the setting still silences its OWN threads", () => {
+    expect(f({ ownThread: true, ownThreadsOff: true })).toBe(false);
   });
 });

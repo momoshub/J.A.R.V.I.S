@@ -52,7 +52,7 @@ import {
 import { annotateMentions, extractMentionIds } from "../../domain/mentions.ts";
 import { isTimeout } from "../../domain/threadSession.ts";
 import { toMrkdwn } from "../../domain/slackFormat.ts";
-import { couldFollowThread } from "../../domain/threadFollow.ts";
+import { couldFollowThread, shouldFollowThread } from "../../domain/threadFollow.ts";
 import { isSilenceNote } from "../../domain/silence.ts";
 import { createSlackStream, type Streamer } from "./stream.ts";
 import {
@@ -836,12 +836,22 @@ export const createSlackApp = (config: SlackAppConfig, deps: Deps) => {
   app.message(async ({ message, client, say, context }) => {
     const m = message as RawMessage & { channel: string; ts: string };
     if (!shouldHandleDm(m)) {
-      // A reply under a thread this bot opened is addressed to it, tag or no
-      // tag: it started the conversation, so it is expected to keep up with it.
-      if (deps.settings?.get("follow_own_threads")?.trim().toLowerCase() === "off") return;
+      // Two ways a thread is one it keeps up with, tag or no tag. It OPENED
+      // this one - it started the conversation, so it is expected to follow
+      // it. Or somebody ASKED it to, with `follow`, which is how a thread
+      // started by a person gets the same treatment.
       const me = await deps.slack?.botUserId().catch(() => undefined);
       if (!couldFollowThread(m, me) || !me) return;
-      if ((await threadParentAuthor(asClient(client), m.channel, m.thread_ts!)) !== me) return;
+      const asked = deps.follows?.isFollowed(m.channel, m.thread_ts!) === true;
+      const ownThreadsOff =
+        deps.settings?.get("follow_own_threads")?.trim().toLowerCase() === "off";
+      // Only look the parent up when the answer could still depend on it: the
+      // lookup is a Slack call, and an explicit follow already settles it.
+      const ownThread =
+        !asked && !ownThreadsOff
+          ? (await threadParentAuthor(asClient(client), m.channel, m.thread_ts!)) === me
+          : false;
+      if (!shouldFollowThread({ asked, ownThread, ownThreadsOff })) return;
       await handle({
         channelId: m.channel,
         userId: m.user!,

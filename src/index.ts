@@ -37,6 +37,7 @@ import { createCommandLogRepo } from "./infrastructure/db/commandLogRepo.ts";
 import { createUsageRepo } from "./infrastructure/db/usageRepo.ts";
 import { createTurnLogRepo } from "./infrastructure/db/turnLogRepo.ts";
 import { createWatchRepo } from "./infrastructure/db/watchRepo.ts";
+import { createFollowRepo } from "./infrastructure/db/followRepo.ts";
 import { createWatcher } from "./application/watcher.ts";
 import { createShellCheck } from "./infrastructure/system/shellCheck.ts";
 
@@ -123,6 +124,7 @@ const main = async () => {
   const usage = createUsageRepo(db);
   const turns = createTurnLogRepo(db);
   const watches = createWatchRepo(db);
+  const follows = createFollowRepo(db);
   const adapterDeps = () => ({
     store: adapterStore,
     revisions: adapterRevisions,
@@ -308,6 +310,7 @@ const main = async () => {
     usage,
     turns,
     watches,
+    follows,
     slackWaitScript,
     // Re-run a dead turn, or nudge a quiet thread, from `mindful`. It goes
     // through the ordinary respond path on purpose: same queue, same session,

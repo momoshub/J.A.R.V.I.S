@@ -52,3 +52,29 @@ export const couldFollowThread = (m: FollowCandidate, botUserId?: string): boole
   // would answer the same message twice.
   return !mentionsBot(m.text, botUserId);
 };
+
+/**
+ * Does this untagged thread message get an answer?
+ *
+ * Two routes in, and they are not the same decision. The bot follows a thread
+ * it OPENED by default, which `follow_own_threads=off` turns off wholesale.
+ * It also follows one somebody ASKED it to (`follow`), and that is a decision
+ * about a single thread - so it outranks the blanket setting rather than
+ * being swept away by it. Someone who turns off the default and then points
+ * at one conversation means exactly what they said.
+ *
+ * `couldFollowThread` has already decided the message is eligible at all;
+ * this only decides whose thread it is.
+ */
+export const shouldFollowThread = (opts: {
+  /** Somebody ran `follow` on this thread. */
+  readonly asked: boolean;
+  /** The thread's parent was posted by the bot. */
+  readonly ownThread: boolean;
+  /** `follow_own_threads` is off. */
+  readonly ownThreadsOff: boolean;
+}): boolean => {
+  if (opts.asked) return true;
+  if (opts.ownThreadsOff) return false;
+  return opts.ownThread;
+};

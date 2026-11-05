@@ -108,6 +108,7 @@ import type { CommandLogRepo } from "../infrastructure/db/commandLogRepo.ts";
 import type { UsageRepo } from "../infrastructure/db/usageRepo.ts";
 import type { TurnLogRepo } from "../infrastructure/db/turnLogRepo.ts";
 import type { WatchRepo } from "../infrastructure/db/watchRepo.ts";
+import type { FollowRepo } from "../infrastructure/db/followRepo.ts";
 import { builtinCheck, humanDuration, parseWatchArgs } from "../domain/watch.ts";
 import {
   mindfulReport,
@@ -151,6 +152,8 @@ export type CommandDeps = {
   turns?: TurnLogRepo;
   /** Things the bot is waiting for, polled outside any turn. */
   watches?: WatchRepo;
+  /** Threads it was asked to keep up with, tag or no tag. */
+  follows?: FollowRepo;
   /** The workspace domain, so `mindful` can print clickable thread links. */
   slackTeam?: () => string | undefined;
   /**
@@ -687,6 +690,46 @@ export const COMMANDS: readonly CommandDef[] = [
     run: ({ deps, channelId }) => {
       const removed = deps.messages.clearChannel(channelId);
       return removed > 0 ? `Forgotten. Wiped ${removed} turns from this channel.` : "Nothing to forget here.";
+    },
+  },
+  {
+    name: "follow",
+    aliases: ["autoreply"],
+    // It makes the bot speak in a room without being spoken to, which is a
+    // standing decision about a shared space rather than a one-off reply.
+    minRole: "admin",
+    usage: "[<thread link>] | off [<thread link>] | list",
+    summary: "keep up with a thread without being tagged in every message",
+    run: ({ deps, actor, args, rest, prefix, threadTs, channelId }) => {
+      if (!deps.follows) return "I cannot keep track of followed threads right now.";
+      const sub = (args[0] ?? "").toLowerCase();
+
+      if (sub === "list") {
+        const all = deps.follows.list(30);
+        if (all.length === 0) return "I am not following any thread I did not start.";
+        return all
+          .map((f) => `- <#${f.channelId}> \`${f.threadTs}\` - added by <@${f.addedBy}>`)
+          .join("\n");
+      }
+
+      const off = sub === "off" || sub === "stop" || sub === "no";
+      const linkArg = off ? (args[1] ?? "") : (args[0] ?? "");
+      const ref = linkArg ? parseMessageLink(linkArg.replace(/^<|>$/g, "")) : undefined;
+      if (linkArg && !ref) return `That is not a Slack thread link. \`${prefix} follow <thread link>\``;
+      // A link wins; otherwise it is the thread this was typed in.
+      const target = ref ?? (threadTs ? { channel: channelId, ts: threadTs } : undefined);
+      if (!target) {
+        return `Which thread? Run it in the thread, or \`${prefix} follow <thread link>\``;
+      }
+
+      if (off) {
+        return deps.follows.remove(target.channel, target.ts)
+          ? "stopped following that one - I will only answer there when tagged now 🫧"
+          : "I was not following that thread.";
+      }
+      deps.follows.add(target.channel, target.ts, actor.slackId, deps.clock());
+      void rest;
+      return `following that thread now - I will read every message in it and answer when I actually have something, without being tagged. Most of the time that means staying quiet. \`${prefix} follow off\` to stop 👀`;
     },
   },
   {

@@ -86,6 +86,38 @@ export const migrate = (db: Database): void => {
   migrateLlmUsage(db);
   migrateTurnLog(db);
   migrateWatches(db);
+  migrateFollowedThreads(db);
+};
+
+/**
+ * Migration v15: threads it was ASKED to follow.
+ *
+ * Following was ownership and nothing else - a reply under a thread the bot
+ * opened is addressed to it, anything else needs a tag. That is the right
+ * default for a room it is a guest in, and it is not what somebody means by
+ * "auto reply to this thread": they are pointing at a conversation started by
+ * a person, and asking the bot to keep up with it without being tagged on
+ * every line. Asked for that twice, it answered "I can't auto-reply to every
+ * message in a thread", which was true and useless.
+ *
+ * One row per thread, added deliberately and removed the same way. There is
+ * no expiry: a thread that goes quiet costs nothing, and a follow that
+ * silently lapsed would be worse than one that has to be turned off.
+ */
+const migrateFollowedThreads = (db: Database): void => {
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS followed_threads (
+      channel_id TEXT NOT NULL,
+      thread_ts  TEXT NOT NULL,
+      added_by   TEXT NOT NULL DEFAULT '',
+      created_at INTEGER NOT NULL,
+      PRIMARY KEY (channel_id, thread_ts)
+    );
+  `);
+  const { user_version } = db.query<{ user_version: number }, []>("PRAGMA user_version").get() ?? {
+    user_version: 0,
+  };
+  if (user_version < 15) db.exec("PRAGMA user_version = 15;");
 };
 
 /**
