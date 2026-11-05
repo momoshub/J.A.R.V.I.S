@@ -30,6 +30,10 @@ export const SETTING_KEYS = {
   readMinRole: "read_min_role",
   /** Notion page or database new pages are created under. */
   notionParent: "notion_parent",
+  /** Slack ids turned away for good: answered, never raised as a request. */
+  snubbed: "snubbed",
+  /** What those people are told. Empty falls back to a neutral refusal. */
+  snubReply: "snub_reply",
   /** Who may publish a page into Notion with the host's identity. */
   noteMinRole: "note_min_role",
   /** Answer replies under a thread the bot itself started ("off" to disable). */

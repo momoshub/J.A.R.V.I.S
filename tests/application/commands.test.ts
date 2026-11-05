@@ -10,6 +10,7 @@ import { createUsageRepo } from "../../src/infrastructure/db/usageRepo.ts";
 import { createTurnLogRepo } from "../../src/infrastructure/db/turnLogRepo.ts";
 import { createWatchRepo } from "../../src/infrastructure/db/watchRepo.ts";
 import { createFollowRepo } from "../../src/infrastructure/db/followRepo.ts";
+import { DEFAULT_SNUB_REPLY } from "../../src/domain/snub.ts";
 import { createRunRegistry } from "../../src/application/runRegistry.ts";
 import { commandLineOf, dispatchCommand, type CommandDeps, isQuietCommand } from "../../src/application/commands.ts";
 import { respond, type RespondDeps } from "../../src/application/respond.ts";
@@ -2153,5 +2154,48 @@ describe("follow", () => {
     expect(await dispatchCommand(d, actor(), "C1", "follow list")).toContain("not following any");
     await dispatchCommand(d, actor(), "C7", "follow", { threadTs: "5.5" });
     expect(await dispatchCommand(d, actor(), "C1", "follow list")).toContain("<#C7>");
+  });
+});
+
+describe("snub", () => {
+  const withSettings = () => {
+    const deps = build();
+    deps.settings = createSettingsRepo(db);
+    return deps;
+  };
+
+  test("adds, lists and removes, all in settings rather than source", async () => {
+    const deps = withSettings();
+    expect(await dispatchCommand(deps, actor(), "C1", "snub list")).toContain("Nobody is snubbed");
+
+    const on = await dispatchCommand(deps, actor(), "C1", "snub <@U0NUISANCE>");
+    expect(on).toContain("turned away");
+    expect(deps.settings!.get("snubbed")).toBe("U0NUISANCE");
+
+    expect(await dispatchCommand(deps, actor(), "C1", "snub list")).toContain("<@U0NUISANCE>");
+
+    const off = await dispatchCommand(deps, actor(), "C1", "snub off <@U0NUISANCE>");
+    expect(off).toContain("can ask again");
+    expect(deps.settings!.get("snubbed")).toBe("");
+  });
+
+  test("the line they are told is configurable, and defaults to naming nobody", async () => {
+    const deps = withSettings();
+    await dispatchCommand(deps, actor(), "C1", "snub <@U0NUISANCE>");
+    // with nothing configured they are turned away without anyone being named
+    expect(await dispatchCommand(deps, actor(), "C1", "snub list")).toContain(DEFAULT_SNUB_REPLY);
+    await dispatchCommand(deps, actor(), "C1", "snub reply ask me again next year 😏");
+    expect(deps.settings!.get("snub_reply")).toBe("ask me again next year 😏");
+  });
+
+  test("snubbing somebody already on the allowlist is a contradiction", async () => {
+    const deps = withSettings();
+    deps.users.upsert(actor({ slackId: "U0FRIEND", role: "pal" }));
+    expect(await dispatchCommand(deps, actor(), "C1", "snub <@U0FRIEND>")).toContain("already on the list");
+  });
+
+  test("it is admin and up", async () => {
+    const out = await dispatchCommand(withSettings(), actor({ slackId: "U3", role: "pal" }), "C1", "snub list");
+    expect(out).toContain("needs *admin*");
   });
 });

@@ -3,7 +3,9 @@ import { openDatabase } from "../../src/infrastructure/db/client.ts";
 import { createUserRepo } from "../../src/infrastructure/db/userRepo.ts";
 import { createMessageRepo } from "../../src/infrastructure/db/messageRepo.ts";
 import { createAccessRequestRepo } from "../../src/infrastructure/db/accessRequestRepo.ts";
-import { decideAccessRequest, GRANTED_ROLE, REJECTED_COOLDOWN_MS, requestAccess, SNUBBED, SNUB_REPLY } from "../../src/application/accessRequests.ts";
+import { decideAccessRequest, GRANTED_ROLE, REJECTED_COOLDOWN_MS, requestAccess } from "../../src/application/accessRequests.ts";
+import { DEFAULT_SNUB_REPLY } from "../../src/domain/snub.ts";
+import { createSettingsRepo } from "../../src/infrastructure/db/settingsRepo.ts";
 import { handleMessage } from "../../src/application/handleMessage.ts";
 import type { SlackAdminPort } from "../../src/application/slackAdmin.ts";
 import type { LlmPort } from "../../src/application/ports.ts";
@@ -310,12 +312,31 @@ describe("admins decide too", () => {
 });
 
 describe("a snubbed person asking", () => {
-  test("gets the joke, and no notice reaches the deciders", async () => {
+  const snubbing = (ids: string, reply?: string) => {
     const { deps, posts } = build();
-    const reply = await requestAccess(deps, { ...who, slackUserId: SNUBBED[0]! }, "nope");
-    expect(reply).toBe(SNUB_REPLY);
+    const settings = createSettingsRepo(openDatabase(":memory:"));
+    settings.set("snubbed", ids);
+    if (reply !== undefined) settings.set("snub_reply", reply);
+    return { deps: { ...deps, settings }, posts, requests: deps.accessRequests };
+  };
+
+  test("is answered, and no notice reaches the deciders", async () => {
+    const { deps, posts, requests } = snubbing("U0SNUBBED", "not today 😏");
+    const reply = await requestAccess(deps, { ...who, slackUserId: "U0SNUBBED" }, "nope");
+    expect(reply).toBe("not today 😏");
     expect(posts.filter((p) => p.channel === OWNER)).toHaveLength(0);
-    expect(deps.accessRequests.pendingFor(SNUBBED[0]!)).toBeUndefined();
+    expect(requests.pendingFor("U0SNUBBED")).toBeUndefined();
+  });
+
+  test("with no line configured, they are turned away without naming anyone", async () => {
+    const { deps } = snubbing("U0SNUBBED");
+    expect(await requestAccess(deps, { ...who, slackUserId: "U0SNUBBED" }, "nope")).toBe(DEFAULT_SNUB_REPLY);
+  });
+
+  test("nobody is snubbed when the setting is empty - the stock behaviour", async () => {
+    const { deps, posts } = snubbing("");
+    await requestAccess(deps, { ...who, slackUserId: "U0SNUBBED" }, "please");
+    expect(posts.filter((p) => p.channel === OWNER).length).toBeGreaterThan(0);
   });
 });
 

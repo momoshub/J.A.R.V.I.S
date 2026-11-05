@@ -112,6 +112,7 @@ import type { TurnLogRepo } from "../infrastructure/db/turnLogRepo.ts";
 import type { WatchRepo } from "../infrastructure/db/watchRepo.ts";
 import type { FollowRepo } from "../infrastructure/db/followRepo.ts";
 import { builtinCheck, humanDuration, parseWatchArgs } from "../domain/watch.ts";
+import { DEFAULT_SNUB_REPLY, formatSnubbed, parseSnubbed } from "../domain/snub.ts";
 import {
   mindfulReport,
   teamFromPermalink,
@@ -713,6 +714,47 @@ export const COMMANDS: readonly CommandDef[] = [
     run: ({ deps, channelId }) => {
       const removed = deps.messages.clearChannel(channelId);
       return removed > 0 ? `Forgotten. Wiped ${removed} turns from this channel.` : "Nothing to forget here.";
+    },
+  },
+  {
+    name: "snub",
+    minRole: "admin",
+    usage: "[@user] | off <@user> | reply <what to tell them> | list",
+    summary: "turn someone away for good, so their asking stops reaching the deciders",
+    run: ({ deps, args, rest, prefix }) => {
+      if (!deps.settings) return "I have nowhere to keep that right now.";
+      const current = parseSnubbed(deps.settings.get(SETTING_KEYS.snubbed));
+      const sub = (args[0] ?? "").toLowerCase();
+
+      if (!sub || sub === "list") {
+        const line = deps.settings.get(SETTING_KEYS.snubReply)?.trim() || DEFAULT_SNUB_REPLY;
+        return current.length === 0
+          ? `Nobody is snubbed. \`${prefix} snub @user\` to add one.`
+          : `${current.map((id) => `- <@${id}>`).join("\n")}\n\nthey are told: _${line}_`;
+      }
+
+      if (sub === "reply") {
+        const line = rest.slice(rest.indexOf(args[0] ?? "") + (args[0] ?? "").length).trim();
+        if (!line) return `What should they be told? \`${prefix} snub reply <line>\``;
+        deps.settings.set(SETTING_KEYS.snubReply, line);
+        return `they will be told: _${line}_`;
+      }
+
+      const off = sub === "off" || sub === "remove" || sub === "un";
+      const who = parseSnubbed(off ? (args[1] ?? "") : (args[0] ?? ""))[0];
+      if (!who) return `Which person? \`${prefix} snub ${off ? "off " : ""}@user\``;
+
+      if (off) {
+        if (!current.includes(who)) return "they were not snubbed.";
+        deps.settings.set(SETTING_KEYS.snubbed, formatSnubbed(current.filter((id) => id !== who)));
+        return `<@${who}> can ask again.`;
+      }
+      // Snubbing someone on the allowlist would be a contradiction: they are
+      // already in, and the snub only ever answers a REQUEST for access.
+      if (deps.users.get(who)) return `<@${who}> is already on the list - \`${prefix} kick\` is what you want.`;
+      if (current.includes(who)) return "they are already snubbed.";
+      deps.settings.set(SETTING_KEYS.snubbed, formatSnubbed([...current, who]));
+      return `<@${who}> will be turned away without troubling anyone 😏`;
     },
   },
   {

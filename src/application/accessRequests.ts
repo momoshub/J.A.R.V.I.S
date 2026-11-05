@@ -11,6 +11,8 @@
  */
 import type { AccessRequest, UserRole } from "../domain/types.ts";
 import type { Clock } from "./ports.ts";
+import { DEFAULT_SNUB_REPLY, isSnubbed, parseSnubbed } from "../domain/snub.ts";
+import { SETTING_KEYS, type SettingsRepo } from "../infrastructure/db/settingsRepo.ts";
 import type { SlackAdminPort } from "./slackAdmin.ts";
 import type { AccessRequestRepo } from "../infrastructure/db/accessRequestRepo.ts";
 import type { UserRepo } from "../infrastructure/db/userRepo.ts";
@@ -25,15 +27,6 @@ export const GRANTED_ROLE: UserRole = "pal";
 /** Roles that may decide an access request. */
 export const DECIDERS: readonly UserRole[] = ["owner", "admin"];
 
-/**
- * People the owner has already turned away for good. They get a joke instead of
- * a request: no notice is raised, so asking again costs the deciders nothing.
- */
-export const SNUBBED: readonly string[] = ["U0ALEX00001", "U0USER00002"];
-
-export const SNUB_REPLY =
-  "please grant access to <@U0USER00003> for <@U0OWNER0001> first, then we will consider granting permissions for you 😏";
-
 /** Excerpt of the message quoted to the owner. */
 const ASKED_CHARS = 200;
 
@@ -46,6 +39,12 @@ export type AccessRequestDeps = {
   slack?: SlackAdminPort;
   clock: Clock;
   ownerSlackId: string;
+  /**
+   * Who is turned away for good, and what they are told. Settings rather than
+   * source: a list of Slack ids and a line aimed at named colleagues is one
+   * instance's business, and `src/` carries no instance identity.
+   */
+  settings?: SettingsRepo;
 };
 
 export type Requester = {
@@ -82,7 +81,10 @@ export const requestAccess = async (
   who: Requester,
   fallback: string,
 ): Promise<string | undefined> => {
-  if (SNUBBED.includes(who.slackUserId)) return SNUB_REPLY;
+  // Turned away for good: answered, never raised. Asking again costs nobody.
+  if (isSnubbed(parseSnubbed(deps.settings?.get(SETTING_KEYS.snubbed)), who.slackUserId)) {
+    return deps.settings?.get(SETTING_KEYS.snubReply)?.trim() || DEFAULT_SNUB_REPLY;
+  }
   if (!deps.accessRequests || !deps.slack) return fallback;
 
   // Already waiting: they have been told once, and nothing has changed.
