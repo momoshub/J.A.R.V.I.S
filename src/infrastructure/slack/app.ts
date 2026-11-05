@@ -53,6 +53,7 @@ import { isTimeout } from "../../domain/threadSession.ts";
 import { toMrkdwn } from "../../domain/slackFormat.ts";
 import { toBlockMessage, type Block } from "../../domain/blockKit.ts";
 import { couldFollowThread, followVerdict, isOneOnOneThread } from "../../domain/threadFollow.ts";
+import { collapsedBlocks, collapseSteps } from "../../domain/collapseSteps.ts";
 import { isSilenceNote } from "../../domain/silence.ts";
 import { createSlackStream, type Streamer } from "./stream.ts";
 import {
@@ -322,6 +323,23 @@ export const createHandler =
           await msg.client.chat
             .update({ channel: msg.channelId, ts: stream.ts, reply_broadcast: true })
             .catch((e: unknown) => log(`broadcast failed: ${e instanceof Error ? e.message : String(e)}`));
+        }
+        // The work is done, so the column of tool cards above the answer is
+        // just something to scroll past. Replace it with one line, keeping any
+        // step that FAILED - that is the part somebody may have to act on.
+        // Watching the cards arrive is how anyone knows the turn is alive, so
+        // this only ever happens after it has finished.
+        const collapsed = stream?.ts ? collapseSteps(stream.steps) : undefined;
+        if (collapsed && stream?.ts) {
+          const body = toMrkdwn(result.text);
+          const rich = toBlockMessage(result.text, toMrkdwn);
+          const blocks = rich?.blocks
+            ? [...rich.blocks, ...collapsedBlocks("", collapsed)]
+            : collapsedBlocks(body, collapsed);
+          await msg.client.chat
+            .update({ channel: msg.channelId, ts: stream.ts, text: body, blocks })
+            // A tidy-up that fails must leave the answer exactly as it was.
+            .catch((e: unknown) => log(`collapse failed: ${e instanceof Error ? e.message : String(e)}`));
         }
       } else if (result.text.trim() && !isSilenceNote(result.text)) {
         // Converted at the boundary, not merely asked for in the prompt: a rule

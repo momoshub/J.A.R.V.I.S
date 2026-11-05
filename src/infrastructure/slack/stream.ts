@@ -20,6 +20,7 @@ import type { AnyChunk, TaskUpdateChunk } from "@slack/types";
 import { isHiddenAction } from "../../domain/toolVisibility.ts";
 import { MAX_SILENCE_NOTE } from "../../domain/silence.ts";
 import { createFenceNormalizer } from "./fences.ts";
+import type { FinishedStep } from "../../domain/collapseSteps.ts";
 import { createBlockKitExtractor, type Block, type Segment } from "../../domain/blockKit.ts";
 import type { LlmStreamEvent, LlmStreamSink } from "../../application/ports.ts";
 
@@ -65,6 +66,11 @@ export type SlackStream = {
   readonly started: boolean;
   /** ts of the streamed message, once Slack has assigned one. */
   readonly ts: string | undefined;
+  /**
+   * The tool steps this message showed, with how each ended. Read after
+   * `finish` to collapse the column of cards into one line.
+   */
+  readonly steps: readonly FinishedStep[];
   /** Await pending appends and close the stream. False if it broke or showed no content. */
   finish: () => Promise<boolean>;
   /**
@@ -275,6 +281,11 @@ export const createSlackStream = (
     // there is no card to draw for it.
     if (event.type === "aborted") return;
     contentShown = true;
+    // What the column showed, so it can be collapsed once the turn is done.
+    // The thinking card is the bot's own placeholder, not a step anyone did.
+    if (event.id !== THINKING_ID) {
+      shown.set(event.id, { title: event.title, failed: event.status === "error" });
+    }
     task({
       type: "task_update",
       id: event.id,
@@ -296,6 +307,12 @@ export const createSlackStream = (
   type Group = { id: string; title: string; details?: string; count: number; open: number; failed: boolean };
   const groups = new Map<string, Group>();
   const groupOf = new Map<string, Group>();
+  /**
+   * Every step that got a card, by card id, with how it ended. Keyed so a
+   * step that is drawn in progress and then completed counts once - the
+   * column has one card for it, so the summary must count one.
+   */
+  const shown = new Map<string, FinishedStep>();
   const runsLabel = (title: string, count: number): string => {
     const suffix = ` (${count} runs)`;
     return title.length + suffix.length > 200 ? `${title.slice(0, 197 - suffix.length)}...${suffix}` : title + suffix;
@@ -373,6 +390,9 @@ export const createSlackStream = (
     },
     get ts() {
       return streamer?.ts;
+    },
+    get steps() {
+      return [...shown.values()];
     },
     abandon: async () => {
       cancelPending();

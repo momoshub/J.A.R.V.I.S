@@ -511,3 +511,31 @@ test("blocks Slack refuses are shown as code and the stream carries on", async (
   expect(text).toContain('"alert"');
   expect(text.endsWith("b")).toBe(true);
 });
+
+describe("the steps a finished message showed", () => {
+  test("each card counts once, however often it is updated", () => {
+    const stream = createSlackStream(fakeStreamer().make);
+    stream.sink({ type: "tool", id: "a", title: "run: ls", status: "in_progress" });
+    stream.sink({ type: "tool", id: "a", title: "run: ls", status: "complete" });
+    stream.sink({ type: "tool", id: "b", title: "run: cat x", status: "in_progress" });
+    stream.sink({ type: "tool", id: "b", title: "run: cat x", status: "error" });
+
+    expect(stream.steps).toEqual([
+      { title: "run: ls", failed: false },
+      { title: "run: cat x", failed: true },
+    ]);
+  });
+
+  test("the thinking placeholder is not a step anyone took", () => {
+    const stream = createSlackStream(fakeStreamer().make);
+    stream.showThinking("thinking…");
+    stream.sink({ type: "tool", id: "a", title: "run: ls", status: "complete" });
+    expect(stream.steps.map((s) => s.title)).toEqual(["run: ls"]);
+  });
+
+  test("a turn that only talked has no steps to collapse", () => {
+    const stream = createSlackStream(fakeStreamer().make);
+    stream.sink({ type: "text", delta: "just an answer" });
+    expect(stream.steps).toEqual([]);
+  });
+});
