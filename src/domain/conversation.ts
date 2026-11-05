@@ -77,3 +77,24 @@ export const reactableMessages = (
  * referenced); use `hasContent` to decide whether a message is mention-only.
  */
 export const cleanInboundText = (raw: string): string => raw.replace(/\s+/g, " ").trim();
+
+/**
+ * The thread as it stood when this message was sent: nothing after it.
+ *
+ * A queued turn reads the thread when it finally runs, not when it was asked.
+ * By then the bot's own "still working on ... yours is next" notice sits under
+ * the message, and so may later asks that are each getting a turn of their
+ * own. Left in, the notice became "the newest message" and the turn answered
+ * the bot's own status line instead of the person waiting on it.
+ *
+ * Unknown or missing ts leaves the thread alone; the caller appends the
+ * trigger itself when Slack has not caught up with it yet.
+ */
+export const endAtTrigger = <T extends { readonly slackTs?: string }>(
+  turns: readonly T[],
+  triggerTs?: string,
+): T[] => {
+  if (!triggerTs) return [...turns];
+  const at = turns.findIndex((t) => t.slackTs === triggerTs);
+  return at < 0 ? [...turns] : turns.slice(0, at + 1);
+};

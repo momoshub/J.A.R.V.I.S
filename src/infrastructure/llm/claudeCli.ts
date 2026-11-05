@@ -24,7 +24,7 @@ import type {
 } from "../../application/ports.ts";
 import type { PromptMessage } from "../../domain/types.ts";
 import type { ToolPolicy } from "../../domain/toolPolicy.ts";
-import { redactSecrets } from "../../domain/toolVisibility.ts";
+import { isNoiseTool, redactPaths, redactSecrets } from "../../domain/toolVisibility.ts";
 import { stopProcess } from "./killTree.ts";
 
 export type ClaudeCliConfig = {
@@ -101,8 +101,9 @@ export const summarizeTool = (
   }
   if (name === "Bash" && typeof input.command === "string") {
     // The card is posted into a channel, so scrub anything credential-shaped
-    // from what is shown. `command` stays whole: it is only ever matched on.
-    const shown = redactSecrets(input.command);
+    // and the host's own paths from what is shown. `command` stays whole: it
+    // is only ever matched on.
+    const shown = redactPaths(redactSecrets(input.command));
     return {
       title: truncate(`run: ${shown}`, 200),
       details: truncate(shown, 256),
@@ -112,7 +113,7 @@ export const summarizeTool = (
   const firstString = Object.values(input).find((v) => typeof v === "string") as string | undefined;
   return {
     title: truncate(name, 200),
-    details: firstString ? truncate(redactSecrets(firstString), 256) : undefined,
+    details: firstString ? truncate(redactPaths(redactSecrets(firstString)), 256) : undefined,
   };
 };
 
@@ -347,7 +348,7 @@ export const createClaudeCliLlm = (config: ClaudeCliConfig = {}): LlmPort => {
           }
         } else if (ev.type === "content_block_stop" && typeof index === "number") {
           const tb = toolByIndex.get(index);
-          if (tb) {
+          if (tb && !isNoiseTool(tb.name)) {
             const { title, details, command } = summarizeTool(tb.name, tb.json);
             cardById.set(tb.id, { title, command });
             emit({ type: "tool", id: tb.id, title, details, command, status: "in_progress" });
@@ -357,12 +358,15 @@ export const createClaudeCliLlm = (config: ClaudeCliConfig = {}): LlmPort => {
         const content = ((e.message as Record<string, unknown>)?.content ?? []) as Record<string, unknown>[];
         for (const c of content) {
           if (c.type === "tool_result" && typeof c.tool_use_id === "string") {
+            // No card means nothing was shown for it: a plumbing tool, or a
+            // subagent's own step. Closing it anyway drew a bare "tool" card.
             const card = cardById.get(c.tool_use_id);
+            if (!card) continue;
             emit({
               type: "tool",
               id: c.tool_use_id,
-              title: card?.title ?? "tool",
-              command: card?.command,
+              title: card.title,
+              command: card.command,
               status: c.is_error ? "error" : "complete",
             });
           }

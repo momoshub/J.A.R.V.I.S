@@ -32,6 +32,36 @@ export const isHiddenAction = (command?: string): boolean =>
   !!command && HIDDEN.some((re) => re.test(command));
 
 /**
+ * Tools that are the model's own plumbing, not work anyone asked to watch. A
+ * card for each one is just "ToolSearch, ToolSearch, TodoWrite" noise between
+ * the steps that matter.
+ */
+const NOISE_TOOLS = new Set([
+  "ToolSearch",
+  "TodoWrite",
+  "TaskOutput",
+  "TaskStop",
+  "KillShell",
+  "BashOutput",
+  "ExitPlanMode",
+  "ScheduleWakeup",
+  "ListMcpResourcesTool",
+]);
+
+/** True when a tool call by this name is plumbing and should leave no card. */
+export const isNoiseTool = (name: string): boolean => NOISE_TOOLS.has(name);
+
+/**
+ * Shorten the machine's own paths in anything user-visible: the workspace root
+ * becomes `$Workspaces` and the home directory `~`. Whose laptop the bot runs
+ * on, and how it is laid out, is nobody's business in a channel.
+ */
+export const redactPaths = (text: string, home: string = process.env.HOME ?? ""): string => {
+  if (!home || home === "/") return text;
+  return text.split(`${home}/Workspaces`).join("$Workspaces").split(home).join("~");
+};
+
+/**
  * Credential shapes worth scrubbing from anything user-visible. A shell variable
  * (`$SLACK_BOT_TOKEN`) is not a secret and is left alone - it is the expanded
  * value that must never be rendered.

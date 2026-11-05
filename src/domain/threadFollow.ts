@@ -54,6 +54,30 @@ export const couldFollowThread = (m: FollowCandidate, botUserId?: string): boole
 };
 
 /**
+ * Is this thread a conversation between the bot and one person?
+ *
+ * Somebody who tagged it once and then keeps talking with nobody else in the
+ * thread is plainly still talking TO it. Making them tag it on every line is
+ * friction for nothing. The bot must have replied at least once, so a thread
+ * it has never touched is not claimed, and a second human ends it: from then
+ * on it is a conversation the bot is a guest in.
+ *
+ * `participants` is everyone who has written in the thread, parent included;
+ * the current author is added here because Slack may not have counted their
+ * message yet.
+ */
+export const isOneOnOneThread = (opts: {
+  readonly participants: readonly string[];
+  readonly author: string;
+  readonly botUserId: string;
+}): boolean => {
+  if (!opts.participants.includes(opts.botUserId)) return false;
+  const humans = new Set([...opts.participants, opts.author]);
+  humans.delete(opts.botUserId);
+  return humans.size === 1;
+};
+
+/**
  * Does this untagged thread message get an answer?
  *
  * Two routes in, and they are not the same decision. The bot follows a thread
@@ -62,6 +86,10 @@ export const couldFollowThread = (m: FollowCandidate, botUserId?: string): boole
  * about a single thread - so it outranks the blanket setting rather than
  * being swept away by it. Someone who turns off the default and then points
  * at one conversation means exactly what they said.
+ *
+ * A thread that is just the bot and one person is followed too, always: the
+ * blanket setting is about threads it opened, not about someone mid-chat
+ * with it.
  *
  * `couldFollowThread` has already decided the message is eligible at all;
  * this only decides whose thread it is.
@@ -73,8 +101,10 @@ export const shouldFollowThread = (opts: {
   readonly ownThread: boolean;
   /** `follow_own_threads` is off. */
   readonly ownThreadsOff: boolean;
+  /** Only the bot and one person have written in the thread. */
+  readonly oneOnOne?: boolean;
 }): boolean => {
-  if (opts.asked) return true;
+  if (opts.asked || opts.oneOnOne) return true;
   if (opts.ownThreadsOff) return false;
   return opts.ownThread;
 };

@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { isHiddenAction, redactSecrets, REDACTED } from "../../src/domain/toolVisibility.ts";
+import { isHiddenAction, isNoiseTool, redactPaths, redactSecrets, REDACTED } from "../../src/domain/toolVisibility.ts";
 
 describe("isHiddenAction", () => {
   test("the bot's silent self-actions leave no card", () => {
@@ -42,5 +42,28 @@ describe("redactSecrets", () => {
 
   test("ordinary commands are untouched", () => {
     expect(redactSecrets("git log --oneline -5")).toBe("git log --oneline -5");
+  });
+});
+
+describe("isNoiseTool", () => {
+  test("the model's own plumbing leaves no card, real tools do", () => {
+    expect(isNoiseTool("ToolSearch")).toBe(true);
+    expect(isNoiseTool("TodoWrite")).toBe(true);
+    expect(isNoiseTool("Bash")).toBe(false);
+    expect(isNoiseTool("mcp__pg-prod__execute_sql")).toBe(false);
+  });
+});
+
+describe("redactPaths", () => {
+  test("the workspace root and home directory are shortened", () => {
+    expect(redactPaths("cd /Users/kai/Workspaces/acme-be && git grep x", "/Users/kai")).toBe(
+      "cd $Workspaces/acme-be && git grep x",
+    );
+    expect(redactPaths("cat /Users/kai/.claude/x.md", "/Users/kai")).toBe("cat ~/.claude/x.md");
+  });
+
+  test("other paths are left alone", () => {
+    expect(redactPaths("grep -n foo /tmp/survey.js", "/Users/kai")).toBe("grep -n foo /tmp/survey.js");
+    expect(redactPaths("ls /", "")).toBe("ls /");
   });
 });

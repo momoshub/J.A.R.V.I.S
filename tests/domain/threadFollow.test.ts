@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { couldFollowThread, mentionsBot, shouldFollowThread } from "../../src/domain/threadFollow.ts";
+import { couldFollowThread, isOneOnOneThread, mentionsBot, shouldFollowThread } from "../../src/domain/threadFollow.ts";
 import { buildSystemPrompt } from "../../src/domain/personality.ts";
 import { promptFingerprint } from "../../src/domain/promptFingerprint.ts";
 
@@ -137,5 +137,34 @@ describe("shouldFollowThread", () => {
 
   test("the setting still silences its OWN threads", () => {
     expect(f({ ownThread: true, ownThreadsOff: true })).toBe(false);
+  });
+});
+
+describe("isOneOnOneThread", () => {
+  const bot = "UBOT";
+  const f = (participants: string[], author = "U1") => isOneOnOneThread({ participants, author, botUserId: bot });
+
+  test("the bot and one person is a one-on-one", () => {
+    expect(f(["U1", bot])).toBe(true);
+  });
+
+  test("the author counts even before Slack lists them", () => {
+    expect(f([bot], "U1")).toBe(true);
+  });
+
+  test("a second person ends it", () => {
+    expect(f(["U1", bot], "U2")).toBe(false);
+    expect(f(["U1", "U2", bot])).toBe(false);
+  });
+
+  test("a thread the bot never wrote in is not claimed", () => {
+    expect(f(["U1"])).toBe(false);
+  });
+});
+
+describe("shouldFollowThread and a one-on-one thread", () => {
+  test("it is followed, whatever the blanket setting says", () => {
+    expect(shouldFollowThread({ asked: false, ownThread: false, ownThreadsOff: true, oneOnOne: true })).toBe(true);
+    expect(shouldFollowThread({ asked: false, ownThread: false, ownThreadsOff: false, oneOnOne: false })).toBe(false);
   });
 });

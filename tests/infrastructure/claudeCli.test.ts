@@ -227,6 +227,14 @@ describe("createClaudeCliLlm", () => {
     expect(out.command).toBe(cmd); // ... but preserved in full for matching
   });
 
+  test("summarizeTool shortens the host's paths in what it shows", () => {
+    const home = process.env.HOME ?? "/Users/x";
+    const cmd = `cd ${home}/Workspaces/acme-be && git grep foo`;
+    const out = summarizeTool("Bash", JSON.stringify({ command: cmd }));
+    expect(out.title).toBe("run: cd $Workspaces/acme-be && git grep foo");
+    expect(out.command).toBe(cmd);
+  });
+
   test("summarizeTool falls back to the tool name", () => {
     expect(summarizeTool("Read", '{"file_path":"/x"}').title).toBe("Read");
     expect(summarizeTool("Weird", "not json").title).toBe("Weird");
@@ -338,6 +346,21 @@ describe("createClaudeCliLlm.stream", () => {
     expect(out).toBe("halfway there"); // the fragment is still handed back
     const aborted = seen.find((e) => e.type === "aborted");
     expect(aborted).toMatchObject({ type: "aborted", reason: "it ran out of time" });
+  });
+
+  test("plumbing tools and results with no card of ours draw nothing", async () => {
+    const events = [
+      { type: "stream_event", event: { type: "content_block_start", index: 0, content_block: { type: "tool_use", id: "t1", name: "ToolSearch" } } },
+      { type: "stream_event", event: { type: "content_block_stop", index: 0 } },
+      { type: "user", message: { content: [{ type: "tool_result", tool_use_id: "t1", is_error: false }] } },
+      // a subagent's own step: a result for a call we never saw start
+      { type: "user", message: { content: [{ type: "tool_result", tool_use_id: "sub_1", is_error: false }] } },
+      { type: "result", subtype: "success", is_error: false, result: "done" },
+    ];
+    const llm = createClaudeCliLlm({ binPath: fakeStreamBin(events) });
+    const seen: LlmStreamEvent[] = [];
+    await llm.stream!({ system: "s", messages: [{ role: "user", content: "hi" }] }, (e) => seen.push(e));
+    expect(seen.filter((e) => e.type === "tool")).toEqual([]);
   });
 
   test("maps a failed tool_result to status error", async () => {

@@ -5,6 +5,7 @@ import {
   cleanInboundText,
   reactableMessages,
   DEFAULT_CONTEXT_WINDOW,
+  endAtTrigger,
 } from "../../src/domain/conversation.ts";
 import type { StoredMessage } from "../../src/domain/types.ts";
 
@@ -136,5 +137,28 @@ describe("reactableMessages", () => {
     const [long] = reactableMessages([msg({ slackTs: "1.1", content: "x".repeat(200) })]);
     expect(long?.excerpt).toHaveLength(83); // 80 + the ellipsis
     expect(long?.excerpt.endsWith("...")).toBe(true);
+  });
+});
+
+describe("endAtTrigger", () => {
+  const at = (ts: string, content: string, role: "user" | "assistant" = "user") => ({ slackTs: ts, content, role });
+
+  test("drops the busy notice and later asks posted after a queued message", () => {
+    const thread = [
+      at("1", "delete a"),
+      at("2", "deleted that one", "assistant"),
+      at("3", "delete b"),
+      at("4", "⏳ still working on *delete a* (10s so far) - yours is next", "assistant"),
+      at("5", "delete c"),
+    ];
+    const out = endAtTrigger(thread, "3");
+    expect(out.map((t) => t.content)).toEqual(["delete a", "deleted that one", "delete b"]);
+    expect(out[out.length - 1]?.role).toBe("user");
+  });
+
+  test("leaves the thread whole when the trigger is unknown or missing", () => {
+    const thread = [at("1", "a"), at("2", "b")];
+    expect(endAtTrigger(thread, "9")).toHaveLength(2);
+    expect(endAtTrigger(thread)).toHaveLength(2);
   });
 });

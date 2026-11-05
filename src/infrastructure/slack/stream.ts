@@ -237,6 +237,56 @@ export const createSlackStream = (
     });
   };
 
+  /**
+   * Repeats of the same step share one card. A turn that runs the same query
+   * five times showed five identical cards; now it shows one, titled
+   * "... (5 runs)", that completes when the last of them does.
+   *
+   * "The same" means the whole input, not the card title: titles are clipped,
+   * and an MCP call's title is only the tool name, so grouping on it merged
+   * five different SQL queries into one card that showed just the first.
+   */
+  type Group = { id: string; title: string; details?: string; count: number; open: number; failed: boolean };
+  const groups = new Map<string, Group>();
+  const groupOf = new Map<string, Group>();
+  const runsLabel = (title: string, count: number): string => {
+    const suffix = ` (${count} runs)`;
+    return title.length + suffix.length > 200 ? `${title.slice(0, 197 - suffix.length)}...${suffix}` : title + suffix;
+  };
+  const groupCard = (g: Group, status: "in_progress" | "complete" | "error"): LlmStreamEvent => ({
+    type: "tool",
+    id: g.id,
+    title: runsLabel(g.title, g.count),
+    status,
+    ...(g.details ? { details: g.details } : {}),
+  });
+
+  /** The event to show for a tool step, or undefined when its group's card already covers it. */
+  const grouped = (event: Extract<LlmStreamEvent, { type: "tool" }>): LlmStreamEvent | undefined => {
+    if (event.status === "in_progress") {
+      if (groupOf.has(event.id)) return event;
+      const key = event.command ?? `${event.title}\n${event.details ?? ""}`;
+      const g = groups.get(key);
+      if (!g) {
+        const fresh = { id: event.id, title: event.title, details: event.details, count: 1, open: 1, failed: false };
+        groups.set(key, fresh);
+        groupOf.set(event.id, fresh);
+        return event;
+      }
+      groupOf.set(event.id, g);
+      g.count += 1;
+      g.open += 1;
+      return groupCard(g, "in_progress");
+    }
+    const g = groupOf.get(event.id);
+    if (!g) return event;
+    g.open = Math.max(0, g.open - 1);
+    g.failed ||= event.status === "error";
+    if (g.count === 1) return event;
+    if (g.open > 0) return undefined;
+    return groupCard(g, g.failed ? "error" : "complete");
+  };
+
   let holding = options.holdUntilWorking === true;
   let held = "";
 
@@ -244,6 +294,11 @@ export const createSlackStream = (
     // Hidden actions (reacting, remembering, anything on the local host) leave no
     // trace here: no card, and they do not count as content or end the thinking step.
     if (event.type === "tool" && isHiddenAction(event.command)) return;
+    if (event.type === "tool") {
+      const shown = grouped(event);
+      if (!shown) return;
+      event = shown;
+    }
     if (holding) {
       if (event.type === "aborted") return;
       if (event.type === "text") {

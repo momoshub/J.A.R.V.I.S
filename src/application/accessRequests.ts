@@ -25,6 +25,15 @@ export const GRANTED_ROLE: UserRole = "pal";
 /** Roles that may decide an access request. */
 export const DECIDERS: readonly UserRole[] = ["owner", "admin"];
 
+/**
+ * People the owner has already turned away for good. They get a joke instead of
+ * a request: no notice is raised, so asking again costs the deciders nothing.
+ */
+export const SNUBBED: readonly string[] = ["U0ALEX00001", "U0USER00002"];
+
+export const SNUB_REPLY =
+  "please grant access to <@U0USER00003> for <@U0OWNER0001> first, then we will consider granting permissions for you 😏";
+
 /** Excerpt of the message quoted to the owner. */
 const ASKED_CHARS = 200;
 
@@ -73,6 +82,7 @@ export const requestAccess = async (
   who: Requester,
   fallback: string,
 ): Promise<string | undefined> => {
+  if (SNUBBED.includes(who.slackUserId)) return SNUB_REPLY;
   if (!deps.accessRequests || !deps.slack) return fallback;
 
   // Already waiting: they have been told once, and nothing has changed.

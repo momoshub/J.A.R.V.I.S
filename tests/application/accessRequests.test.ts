@@ -3,7 +3,7 @@ import { openDatabase } from "../../src/infrastructure/db/client.ts";
 import { createUserRepo } from "../../src/infrastructure/db/userRepo.ts";
 import { createMessageRepo } from "../../src/infrastructure/db/messageRepo.ts";
 import { createAccessRequestRepo } from "../../src/infrastructure/db/accessRequestRepo.ts";
-import { decideAccessRequest, GRANTED_ROLE, REJECTED_COOLDOWN_MS, requestAccess } from "../../src/application/accessRequests.ts";
+import { decideAccessRequest, GRANTED_ROLE, REJECTED_COOLDOWN_MS, requestAccess, SNUBBED, SNUB_REPLY } from "../../src/application/accessRequests.ts";
 import { handleMessage } from "../../src/application/handleMessage.ts";
 import type { SlackAdminPort } from "../../src/application/slackAdmin.ts";
 import type { LlmPort } from "../../src/application/ports.ts";
@@ -306,5 +306,31 @@ describe("admins decide too", () => {
     });
     expect(out.kind).toBe("ignored");
     expect(deps.users.get(STRANGER)).toBeUndefined();
+  });
+});
+
+describe("a snubbed person asking", () => {
+  test("gets the joke, and no notice reaches the deciders", async () => {
+    const { deps, posts } = build();
+    const reply = await requestAccess(deps, { ...who, slackUserId: SNUBBED[0]! }, "nope");
+    expect(reply).toBe(SNUB_REPLY);
+    expect(posts.filter((p) => p.channel === OWNER)).toHaveLength(0);
+    expect(deps.accessRequests.pendingFor(SNUBBED[0]!)).toBeUndefined();
+  });
+});
+
+describe("a stranger in a followed thread", () => {
+  test("is ignored: no reply and no request raised", async () => {
+    const { deps, posts } = build();
+    const result = await handleMessage(deps, {
+      channelId: "C1",
+      slackUserId: STRANGER,
+      text: "anyone?",
+      threadTs: "100.1",
+      following: true,
+    });
+    expect(result.kind).toBe("ignored");
+    expect(posts).toHaveLength(0);
+    expect(deps.accessRequests.pendingFor(STRANGER)).toBeUndefined();
   });
 });

@@ -55,6 +55,44 @@ describe("createSlackStream", () => {
     expect(f.appends[3]).toEqual({ markdown_text: "world" });
   });
 
+  test("repeats of the same step share one card that counts the runs", async () => {
+    const f = fakeStreamer();
+    const s = createSlackStream(f.make);
+    s.sink({ type: "tool", id: "t1", title: "run: query", status: "in_progress" });
+    s.sink({ type: "tool", id: "t1", title: "run: query", status: "complete" });
+    s.sink({ type: "tool", id: "t2", title: "run: query", status: "in_progress" });
+    s.sink({ type: "tool", id: "t3", title: "run: query", status: "in_progress" });
+    s.sink({ type: "tool", id: "t2", title: "run: query", status: "complete" });
+    s.sink({ type: "tool", id: "t3", title: "run: query", status: "error" });
+    s.sink({ type: "tool", id: "t4", title: "run: ls", status: "in_progress" });
+    await s.finish();
+    const cards = f.appends.flatMap((a) => (a.chunks ?? []) as Array<Record<string, unknown>>);
+    expect(cards.map((c) => [c.id, c.title, c.status])).toEqual([
+      ["t1", "run: query", "in_progress"],
+      ["t1", "run: query", "complete"],
+      ["t1", "run: query (2 runs)", "in_progress"],
+      ["t1", "run: query (3 runs)", "in_progress"],
+      ["t1", "run: query (3 runs)", "error"],
+      ["t4", "run: ls", "in_progress"],
+    ]);
+  });
+
+  test("same tool with a different input is a different step", async () => {
+    const f = fakeStreamer();
+    const s = createSlackStream(f.make);
+    const sql = "mcp__pg-prod__execute_sql";
+    s.sink({ type: "tool", id: "q1", title: sql, details: "select 1", status: "in_progress" });
+    s.sink({ type: "tool", id: "q2", title: sql, details: "select 2", status: "in_progress" });
+    s.sink({ type: "tool", id: "q3", title: sql, details: "select 1", status: "in_progress" });
+    await s.finish();
+    const cards = f.appends.flatMap((a) => (a.chunks ?? []) as Array<Record<string, unknown>>);
+    expect(cards.map((c) => [c.id, c.title, c.details])).toEqual([
+      ["q1", sql, "select 1"],
+      ["q2", sql, "select 2"],
+      ["q1", `${sql} (2 runs)`, "select 1"],
+    ]);
+  });
+
   test("skips empty text deltas", async () => {
     const f = fakeStreamer();
     const s = createSlackStream(f.make);
@@ -300,7 +338,7 @@ describe("task cards against the wall", () => {
     const s = createSlackStream(f.make);
     s.sink({ type: "text", delta: "digging in" });
     for (let i = 0; i < 60; i++) {
-      s.sink({ type: "tool", id: `t${i}`, title: "run: query", details: "q".repeat(400), status: "in_progress" });
+      s.sink({ type: "tool", id: `t${i}`, title: `run: query ${i}`, details: "q".repeat(400), status: "in_progress" });
     }
     s.sink({ type: "text", delta: "the answer" });
     const ok = await s.finish();
