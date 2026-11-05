@@ -324,7 +324,12 @@ export const handleMessage = async (
     signal,
     runTicket,
     // Whose turn this is, so what it consumed lands against them.
-    bill: { actor: decision.user.slackId, kind: "chat", channel: inbound.channelId },
+    bill: {
+      actor: decision.user.slackId,
+      kind: "chat",
+      channel: inbound.channelId,
+      threadTs: inbound.threadTs ?? inbound.messageTs,
+    },
   };
   const run = (p: Parameters<typeof deps.llm.complete>[0]) =>
     sink && deps.llm.stream ? deps.llm.stream(p, sink) : deps.llm.complete(p);

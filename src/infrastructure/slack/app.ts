@@ -11,6 +11,7 @@ import { App } from "@slack/bolt";
 import type { WebClient } from "@slack/web-api";
 import { respond, type RespondDeps } from "../../application/respond.ts";
 import { decideAccessRequest } from "../../application/accessRequests.ts";
+import { actOnMessageReaction, messageActionFor } from "../../application/messageReactions.ts";
 import { APPROVE_ACTION, decideCommandApproval, REJECT_ACTION } from "../../application/commandLimits.ts";
 import { forHowLong } from "../../domain/runControl.ts";
 import {
@@ -106,7 +107,11 @@ type Deps = RespondDeps & {
 export type SlackClient = {
   users: { info: (a: { user: string }) => Promise<unknown> };
   chatStream: (args: Record<string, unknown>) => Streamer;
-  chat: { update: (a: Record<string, unknown>) => Promise<unknown> };
+  chat: {
+    update: (a: Record<string, unknown>) => Promise<unknown>;
+    /** Optional so a test fake need not have it; the real client always does. */
+    delete?: (a: Record<string, unknown>) => Promise<unknown>;
+  };
 };
 
 /** A raw Slack message payload, enough to decide whether to handle it. */
@@ -330,18 +335,43 @@ export const createHandler =
         // step that FAILED - that is the part somebody may have to act on.
         // Watching the cards arrive is how anyone knows the turn is alive, so
         // this only ever happens after it has finished.
-        const collapsed = stream?.ts ? collapseSteps(stream.steps) : undefined;
+        // A reply that rolled over is several messages, and `stream.ts` is
+        // only the last. Each one is rebuilt from the part IT showed, minus
+        // its cards; the summary and footer go on the last one with content.
+        // Rewriting the last with the whole answer posted the reply twice.
+        // A message left holding nothing but cards is deleted.
+        const parts = stream?.parts ?? [];
+        const collapsed = collapseSteps(stream?.steps ?? []);
         const footer = stream?.usage ? usageFooter(stream.usage) : undefined;
-        if (stream?.ts && (collapsed || footer)) {
-          const body = toMrkdwn(result.text);
-          const rich = toBlockMessage(result.text, toMrkdwn);
+        const fail = (e: unknown) => log(`collapse failed: ${e instanceof Error ? e.message : String(e)}`);
+        const tidy = (text: string, withTail: boolean) => {
+          const tailCollapsed = withTail ? collapsed : undefined;
+          const tailFooter = withTail ? footer : undefined;
+          const body = toMrkdwn(text);
+          const rich = toBlockMessage(text, toMrkdwn);
           const blocks = rich?.blocks
-            ? [...rich.blocks, ...collapsedBlocks("", collapsed, footer)]
-            : collapsedBlocks(body, collapsed, footer);
+            ? [...rich.blocks, ...collapsedBlocks("", tailCollapsed, tailFooter)]
+            : collapsedBlocks(body, tailCollapsed, tailFooter);
+          return { text: body, blocks };
+        };
+        if (parts.length === 1 && stream?.ts && (collapsed || footer)) {
           await msg.client.chat
-            .update({ channel: msg.channelId, ts: stream.ts, text: body, blocks })
+            .update({ channel: msg.channelId, ts: stream.ts, ...tidy(result.text, true) })
             // A tidy-up that fails must leave the answer exactly as it was.
-            .catch((e: unknown) => log(`collapse failed: ${e instanceof Error ? e.message : String(e)}`));
+            .catch(fail);
+        } else if (parts.length > 1) {
+          const lastWithText = parts.map((p) => p.text.trim() !== "").lastIndexOf(true);
+          for (const [i, part] of parts.entries()) {
+            if (!part.text.trim()) {
+              if (lastWithText >= 0) {
+                await msg.client.chat.delete?.({ channel: msg.channelId, ts: part.ts }).catch(fail);
+              }
+              continue;
+            }
+            await msg.client.chat
+              .update({ channel: msg.channelId, ts: part.ts, ...tidy(part.text, i === lastWithText) })
+              .catch(fail);
+          }
         }
       } else if (result.text.trim() && !isSilenceNote(result.text)) {
         // Converted at the boundary, not merely asked for in the prompt: a rule
@@ -769,7 +799,8 @@ export const createSlackApp = (config: SlackAppConfig, deps: Deps) => {
     );
   }) as never);
 
-  // The owner reacting on an access-request notice decides it.
+  // The owner reacting on an access-request notice decides it; the owner
+  // reacting on one of the bot's messages moves or deletes it.
   app.event("reaction_added", async ({ event }) => {
     const e = event as {
       user?: string;
@@ -777,6 +808,20 @@ export const createSlackApp = (config: SlackAppConfig, deps: Deps) => {
       item?: { type?: string; channel?: string; ts?: string };
     };
     if (!e.user || !e.reaction || e.item?.type !== "message" || !e.item.channel || !e.item.ts) return;
+    if (messageActionFor(e.reaction)) {
+      try {
+        const outcome = await actOnMessageReaction(deps, {
+          slackUserId: e.user,
+          reaction: e.reaction,
+          channel: e.item.channel,
+          ts: e.item.ts,
+        });
+        log(`message reaction ${e.reaction} on ${e.item.channel}/${e.item.ts}: ${outcome.kind}${outcome.kind === "ignored" ? ` (${outcome.why})` : ""}`);
+      } catch (err) {
+        log(`message reaction failed: ${err instanceof Error ? err.message : String(err)}`);
+      }
+      return;
+    }
     try {
       const outcome = await decideAccessRequest(deps, {
         slackUserId: e.user,

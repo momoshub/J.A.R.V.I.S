@@ -69,7 +69,8 @@ import { dispatchCommand, isQuietCommand } from "./application/commands.ts";
 import { createCommandTickets, refusalMessage } from "./application/commandTickets.ts";
 import { createActivityLog } from "./infrastructure/logger.ts";
 import type { CommandLogRepo } from "./infrastructure/db/commandLogRepo.ts";
-import type { LlmPort, UsageSink } from "./application/ports.ts";
+import type { LlmPort, ToolTraceSink, UsageSink } from "./application/ports.ts";
+import { createToolTraceLog } from "./infrastructure/llm/toolTraceLog.ts";
 import type { RespondDeps } from "./application/respond.ts";
 
 /**
@@ -83,7 +84,7 @@ const ensureDir = (path: string): string => {
 };
 
 /** Pick the brain based on config: the local Claude Code CLI or the API. */
-const buildLlm = (config: AppConfig, cwd: string, onUsage?: UsageSink): LlmPort =>
+const buildLlm = (config: AppConfig, cwd: string, onUsage?: UsageSink, onToolTrace?: ToolTraceSink): LlmPort =>
   config.llmProvider === "claude-cli"
     ? createClaudeCliLlm({
         binPath: config.claudeBin,
@@ -92,6 +93,7 @@ const buildLlm = (config: AppConfig, cwd: string, onUsage?: UsageSink): LlmPort 
         cwd,
         timeoutMs: config.claudeTimeoutMs,
         onUsage,
+        onToolTrace,
       })
     : createAnthropicLlm({
         // guaranteed present for this provider by config validation
@@ -262,7 +264,9 @@ const main = async () => {
       clock(),
     );
 
-  const llm = buildLlm(config, fullCwd, recordUsage);
+  // One file per thread, beside the bot's own logs - what every turn ran, in full.
+  const toolTrace = createToolTraceLog(join(config.logDir, "threads"));
+  const llm = buildLlm(config, fullCwd, recordUsage, toolTrace);
   console.log(`[llm] ${profile().name}'s brain: ${modelLabel(config)}`);
 
   // Slack Web API + AI drafting, shared by the console and the power-tool commands.

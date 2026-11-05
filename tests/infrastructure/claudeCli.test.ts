@@ -10,7 +10,7 @@ import {
   usageOf,
 } from "../../src/infrastructure/llm/claudeCli.ts";
 import type { PromptMessage } from "../../src/domain/types.ts";
-import type { LlmStreamEvent } from "../../src/application/ports.ts";
+import type { BillingContext, LlmStreamEvent, ToolTrace } from "../../src/application/ports.ts";
 
 describe("renderPrompt", () => {
   test("empty window renders nothing", () => {
@@ -375,6 +375,79 @@ describe("createClaudeCliLlm.stream", () => {
     await llm.stream!({ system: "s", messages: [{ role: "user", content: "hi" }] }, (e) => seen.push(e));
     const errored = seen.find((e) => e.type === "tool" && e.status === "error");
     expect(errored).toBeDefined();
+  });
+});
+
+describe("tracing every tool call in full", () => {
+  test("calls and results reach the trace with the run's thread, plumbing and subagents included", async () => {
+    const events = [
+      { type: "stream_event", event: { type: "content_block_start", index: 0, content_block: { type: "tool_use", id: "t1", name: "Bash" } } },
+      { type: "stream_event", event: { type: "content_block_delta", index: 0, delta: { type: "input_json_delta", partial_json: '{"command":"ls -la /tmp"}' } } },
+      { type: "stream_event", event: { type: "content_block_stop", index: 0 } },
+      { type: "user", message: { content: [{ type: "tool_result", tool_use_id: "t1", is_error: false, content: "a\nb" }] } },
+      { type: "stream_event", event: { type: "content_block_start", index: 0, content_block: { type: "tool_use", id: "t2", name: "ToolSearch" } } },
+      { type: "stream_event", event: { type: "content_block_stop", index: 0 } },
+      {
+        type: "assistant",
+        parent_tool_use_id: "task_1",
+        message: { content: [{ type: "tool_use", id: "s1", name: "Read", input: { file_path: "/x" } }] },
+      },
+      {
+        type: "user",
+        parent_tool_use_id: "task_1",
+        message: { content: [{ type: "tool_result", tool_use_id: "s1", is_error: true, content: [{ type: "text", text: "nope" }] }] },
+      },
+      { type: "result", subtype: "success", is_error: false, result: "done" },
+    ];
+    const traces: { trace: ToolTrace; bill: BillingContext | undefined }[] = [];
+    const llm = createClaudeCliLlm({ binPath: fakeStreamBin(events), onToolTrace: (trace, bill) => traces.push({ trace, bill }) });
+    const bill = { actor: "U1", kind: "chat", channel: "C1", threadTs: "111.1" };
+    await llm.stream!({ system: "s", messages: [{ role: "user", content: "hi" }], bill }, () => {});
+    expect(traces.map((t) => t.trace)).toEqual([
+      { kind: "call", id: "t1", name: "Bash", input: '{"command":"ls -la /tmp"}' },
+      { kind: "result", id: "t1", isError: false, output: "a\nb" },
+      { kind: "call", id: "t2", name: "ToolSearch", input: "" },
+      { kind: "call", id: "s1", name: "Read", input: '{"file_path":"/x"}', parent: "task_1" },
+      { kind: "result", id: "s1", isError: true, output: "nope", parent: "task_1" },
+    ]);
+    expect(traces.every((t) => t.bill === bill)).toBe(true);
+  });
+
+  test("a one-shot complete is traced too, and keeps complete's contract", async () => {
+    const events = [
+      { type: "stream_event", event: { type: "content_block_start", index: 0, content_block: { type: "tool_use", id: "t1", name: "Bash" } } },
+      { type: "stream_event", event: { type: "content_block_delta", index: 0, delta: { type: "input_json_delta", partial_json: '{"command":"date"}' } } },
+      { type: "stream_event", event: { type: "content_block_stop", index: 0 } },
+      { type: "user", message: { content: [{ type: "tool_result", tool_use_id: "t1", is_error: false, content: "Thu" }] } },
+      { type: "result", subtype: "success", is_error: false, result: "  it is Thursday  " },
+    ];
+    const traces: ToolTrace[] = [];
+    const llm = createClaudeCliLlm({ binPath: fakeStreamBin(events), onToolTrace: (t) => traces.push(t) });
+    expect(await llm.complete({ system: "s", messages: [{ role: "user", content: "day?" }] })).toBe("it is Thursday");
+    expect(traces.map((t) => t.kind)).toEqual(["call", "result"]);
+
+    const failed = createClaudeCliLlm({
+      binPath: fakeStreamBin([{ type: "result", subtype: "error_max_turns", is_error: true, result: "gave up" }]),
+      onToolTrace: () => {},
+    });
+    await expect(failed.complete({ system: "s", messages: [{ role: "user", content: "x" }] })).rejects.toThrow(
+      "claude CLI error (error_max_turns): gave up",
+    );
+  });
+
+  test("a trace sink that throws does not break the run", async () => {
+    const events = [
+      { type: "stream_event", event: { type: "content_block_start", index: 0, content_block: { type: "tool_use", id: "t1", name: "Bash" } } },
+      { type: "stream_event", event: { type: "content_block_stop", index: 0 } },
+      { type: "result", subtype: "success", is_error: false, result: "done" },
+    ];
+    const llm = createClaudeCliLlm({
+      binPath: fakeStreamBin(events),
+      onToolTrace: () => {
+        throw new Error("disk full");
+      },
+    });
+    expect(await llm.stream!({ system: "s", messages: [{ role: "user", content: "hi" }] }, () => {})).toBe("done");
   });
 });
 

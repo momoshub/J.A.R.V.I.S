@@ -31,3 +31,6 @@ data/tokens.key
 # Claude Code's own worktrees. They are checkouts of this repo, so committing
 # them embeds a repository inside itself and clones come out broken.
 .claude/worktrees/
+
+# per-thread tool traces (full tool input/output), host-only
+logs/threads/

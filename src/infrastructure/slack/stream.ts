@@ -26,6 +26,9 @@ import { createBlockKitExtractor, type Block, type Segment } from "../../domain/
 import type { LlmStreamEvent, LlmStreamSink } from "../../application/ports.ts";
 
 /** The slice of Slack's ChatStreamer we depend on (kept minimal for testing). */
+/** One message of a streamed reply and what it showed. */
+export type StreamPart = { readonly ts: string; readonly text: string };
+
 export type Streamer = {
   append: (args: { markdown_text?: string; chunks?: AnyChunk[] }) => Promise<unknown>;
   stop: (args?: { markdown_text?: string }) => Promise<unknown>;
@@ -74,6 +77,14 @@ export type SlackStream = {
   readonly steps: readonly FinishedStep[];
   /** What the run cost, once the CLI has reported it. Undefined until then. */
   readonly usage: LlmUsage | undefined;
+  /**
+   * Every message the reply was spread across, oldest first, with the text
+   * each one actually carried (a Block Kit chunk as its ```blockkit fence).
+   * More than one means it rolled over, and `ts` is only the LAST of them - so
+   * rewriting that one with the whole answer posts it twice. Each message is
+   * tidied with its own part instead.
+   */
+  readonly parts: readonly StreamPart[];
   /** Await pending appends and close the stream. False if it broke or showed no content. */
   finish: () => Promise<boolean>;
   /**
@@ -141,8 +152,13 @@ export const createSlackStream = (
     });
   };
 
+  /** Per opened message: the streamer, and the text it was sent. */
+  const opened: { streamer: Streamer; text: string }[] = [];
   const ensure = (): Streamer => {
-    if (!streamer) streamer = makeStreamer();
+    if (!streamer) {
+      streamer = makeStreamer();
+      opened.push({ streamer, text: "" });
+    }
     return streamer;
   };
 
@@ -173,6 +189,18 @@ export const createSlackStream = (
       await rollover();
       used = cost;
       await ensure().append(args);
+    }
+    record(args);
+  };
+
+  /** Note what the current message now shows, so it can be rebuilt without its cards. */
+  const record = (args: Parameters<Streamer["append"]>[0]): void => {
+    const current = opened[opened.length - 1];
+    if (!current) return;
+    if (args.markdown_text) current.text += args.markdown_text;
+    for (const c of args.chunks ?? []) {
+      const blocks = (c as { type?: string; blocks?: unknown }).type === "blocks" ? (c as { blocks: unknown }).blocks : undefined;
+      if (blocks) current.text += `\n\`\`\`blockkit\n${JSON.stringify(blocks)}\n\`\`\`\n`;
     }
   };
 
@@ -412,6 +440,9 @@ export const createSlackStream = (
     },
     get usage() {
       return usage;
+    },
+    get parts() {
+      return opened.flatMap((o) => (o.streamer.ts ? [{ ts: o.streamer.ts, text: o.text }] : []));
     },
     abandon: async () => {
       cancelPending();

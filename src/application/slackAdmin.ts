@@ -48,6 +48,16 @@ export type HistoryPage = {
 /** Where a posted message ended up. */
 export type PostedRef = { channel: string; ts: string };
 
+/** One message as it sits in Slack, enough to move it between a thread and the channel. */
+export type SlackMessageRef = {
+  ts: string;
+  userId?: string;
+  threadTs?: string;
+  /** A thread reply that is also shown in the channel ("also send to channel"). */
+  broadcast: boolean;
+  text: string;
+};
+
 /** A button on an interactive message. */
 export type InteractiveAction = {
   actionId: string;
@@ -100,6 +110,12 @@ export type SlackAdminPort = {
   update: (channel: string, ts: string, text: string) => Promise<void>;
   /** Delete one of the bot's own messages. */
   remove: (channel: string, ts: string) => Promise<void>;
+  /** One message by its ts, top-level or inside a thread. */
+  lookup?: (channel: string, ts: string) => Promise<SlackMessageRef | undefined>;
+  /** Turn one of the bot's own thread replies into "also send to channel". */
+  broadcast?: (channel: string, ts: string) => Promise<void>;
+  /** Take a broadcast reply off the channel and keep it in its thread - same ts. */
+  unbroadcast?: (channel: string, ts: string) => Promise<void>;
   /**
    * Post a message, optionally into a thread. Returns where it landed when the
    * transport knows, so a temporary notice can be taken down again.

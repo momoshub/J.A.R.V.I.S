@@ -649,7 +649,7 @@ export const COMMANDS: readonly CommandDef[] = [
     minRole: "pal",
     usage: "<question>",
     summary: "ask me something in one shot",
-    run: async ({ deps, actor, channelId, rest, prefix }) => {
+    run: async ({ deps, actor, channelId, rest, prefix, threadTs }) => {
       const question = rest.trim();
       if (!question) return `Ask me something: \`${prefix} ask <question>\``;
       if (!deps.llm) return "My brain is not wired up right now.";
@@ -661,7 +661,7 @@ export const COMMANDS: readonly CommandDef[] = [
         assistantName: ctx.botName,
         policy: deps.toolPolicy?.(actor.role, channelId),
         oauthToken: tokenFor(deps, actor),
-        bill: { actor: actor.slackId, kind: "ask", channel: channelId },
+        bill: { actor: actor.slackId, kind: "ask", channel: channelId, threadTs },
       });
       return reply.trim() || "I do not have anything useful to add there.";
     },
@@ -704,7 +704,7 @@ export const COMMANDS: readonly CommandDef[] = [
         assistantName: ctx.botName,
         policy,
         oauthToken: tokenFor(deps, actor),
-        bill: { actor: actor.slackId, kind: "btw", channel: channelId },
+        bill: { actor: actor.slackId, kind: "btw", channel: channelId, threadTs },
       });
       // Nothing is appended to `messages` on the way out, so the thread's next
       // real turn never sees this exchange in its unseen turns.
@@ -1239,7 +1239,7 @@ export const COMMANDS: readonly CommandDef[] = [
         messages: [{ role: "user" as const, content: note || "Curate my memory." }],
         assistantName: name,
         policy: { ...full, cwd: staging, timeoutMs: REFINE_TIMEOUT_MS },
-        bill: { actor: actor.slackId, kind: "adapter", channel: channelId },
+        bill: { actor: actor.slackId, kind: "adapter", channel: channelId, threadTs: ctx.threadTs },
       };
 
       if (reply) await reply("🧹 going through what I remember");
@@ -1397,7 +1397,7 @@ export const COMMANDS: readonly CommandDef[] = [
         // The tracker lives behind the account's Notion connector, which a
         // setup token does not carry.
         useHostLogin: true,
-        bill: { actor: actor.slackId, kind: "close", channel: channelId },
+        bill: { actor: actor.slackId, kind: "close", channel: channelId, threadTs: ctx.threadTs },
       };
 
       if (!reply) {
@@ -1486,7 +1486,7 @@ export const COMMANDS: readonly CommandDef[] = [
         // Notion lives with the host's interactive login; a setup token carries
         // no connectors at all, so this is the only credential that can write.
         useHostLogin: true,
-        bill: { actor: actor.slackId, kind: "note", channel: channelId },
+        bill: { actor: actor.slackId, kind: "note", channel: channelId, threadTs: ctx.threadTs },
       };
 
       if (!reply) {
@@ -1560,7 +1560,7 @@ export const COMMANDS: readonly CommandDef[] = [
         // The connector lives with the host's interactive login; a setup token
         // carries none, so this is the only credential that can see it.
         useHostLogin: true,
-        bill: { actor: actor.slackId, kind: "read", channel: channelId },
+        bill: { actor: actor.slackId, kind: "read", channel: channelId, threadTs },
       };
 
       if (!reply) {
@@ -1619,7 +1619,7 @@ export const COMMANDS: readonly CommandDef[] = [
         assistantName: name,
         policy: { ...full, timeoutMs: INVESTIGATE_TIMEOUT_MS },
         useHostLogin: true,
-        bill: { actor: actor.slackId, kind: "investigate", channel: channelId },
+        bill: { actor: actor.slackId, kind: "investigate", channel: channelId, threadTs },
       };
 
       if (!reply) {
@@ -1681,7 +1681,7 @@ export const COMMANDS: readonly CommandDef[] = [
         messages: [{ role: "user" as const, content: task }],
         assistantName: name,
         policy: { ...full, timeoutMs: FANOUT_TIMEOUT_MS },
-        bill: { actor: actor.slackId, kind: "fanout", channel: channelId },
+        bill: { actor: actor.slackId, kind: "fanout", channel: channelId, threadTs },
       };
 
       if (!reply) {
@@ -1765,7 +1765,7 @@ export const COMMANDS: readonly CommandDef[] = [
         // authorisation at all (verified: zero mcp__ tools under one). Only the
         // host's interactive login has the connectors, so this one task uses it.
         useHostLogin: true,
-        bill: { actor: actor.slackId, kind: "ticket", channel: channelId },
+        bill: { actor: actor.slackId, kind: "ticket", channel: channelId, threadTs },
       };
 
       if (!reply) {
@@ -1948,7 +1948,7 @@ export const COMMANDS: readonly CommandDef[] = [
         assistantName: name,
         policy,
         oauthToken,
-        bill: { actor: actor.slackId, kind: "review", channel: channelId },
+        bill: { actor: actor.slackId, kind: "review", channel: channelId, threadTs: ctx.threadTs },
       };
 
       // No live destination (tests / slack off): one-shot, return the text.

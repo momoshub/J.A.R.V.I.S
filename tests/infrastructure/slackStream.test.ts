@@ -264,6 +264,7 @@ describe("the 12,000 character wall", () => {
       const m = { text: "", stopped: false };
       messages.push(m);
       return {
+        ts: `ts-${messages.length}`,
         append: async (a) => {
           if (a.markdown_text) m.text += a.markdown_text;
           // Slack's real behaviour, measured: past 12,000 it refuses outright
@@ -291,6 +292,33 @@ describe("the 12,000 character wall", () => {
     expect(f.messages.map((m) => m.text).join("").length).toBe(20_000);
     // and every message is within what Slack will take
     expect(f.messages.every((m) => m.text.length <= 12_000)).toBe(true);
+  });
+
+  test("it reports each message and the part it showed", async () => {
+    const short = multi();
+    const a = createSlackStream(short.make);
+    a.sink({ type: "text", delta: "hi" });
+    await a.finish();
+    expect(a.parts).toEqual([{ ts: "ts-1", text: "hi" }]);
+
+    const long = multi();
+    const b = createSlackStream(long.make);
+    for (let i = 0; i < 20; i++) b.sink({ type: "text", delta: "x".repeat(1000) });
+    await b.finish();
+    expect(b.parts.length).toBe(long.messages.length);
+    expect(b.parts.length).toBeGreaterThan(1);
+    expect(b.parts.map((p) => p.text)).toEqual(long.messages.map((m) => m.text));
+  });
+
+  test("a Block Kit chunk is kept in its part as a fence, so the part can be rebuilt", async () => {
+    const f = multi();
+    const s = createSlackStream(f.make);
+    s.sink({ type: "text", delta: 'before\n```blockkit\n[{"type":"divider"}]\n```\nafter' });
+    await s.finish();
+    const text = s.parts[0]?.text ?? "";
+    expect(text).toContain("before");
+    expect(text).toContain('```blockkit\n[{"type":"divider"}]\n```');
+    expect(text).toContain("after");
   });
 
   test("the message before a rollover is closed properly", async () => {

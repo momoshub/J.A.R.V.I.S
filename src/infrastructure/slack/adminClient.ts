@@ -197,6 +197,42 @@ export const createSlackAdmin = (client: WebClient): SlackAdminPort => {
       await client.chat.delete({ channel, ts });
     },
 
+    lookup: async (channel, ts) => {
+      // `replies` answers for a parent and for a reply alike; `history` is the
+      // fallback for a plain message in a channel the replies call refuses.
+      const fromReplies = async () =>
+        ((await client.conversations.replies({ channel, ts, inclusive: true, limit: 1 })) as {
+          messages?: RawMessage[];
+        }).messages ?? [];
+      const fromHistory = async () =>
+        ((await client.conversations.history({ channel, latest: ts, inclusive: true, limit: 1 })) as {
+          messages?: RawMessage[];
+        }).messages ?? [];
+      const found =
+        (await fromReplies().catch(() => [])).find((m) => m.ts === ts) ??
+        (await fromHistory().catch(() => [])).find((m) => m.ts === ts);
+      if (!found?.ts) return undefined;
+      return {
+        ts: found.ts,
+        userId: found.user,
+        threadTs: found.thread_ts,
+        broadcast: found.subtype === "thread_broadcast",
+        text: found.text ?? "",
+      };
+    },
+
+    broadcast: async (channel, ts) => {
+      // No content: the typed args insist on some, but Slack keeps the
+      // message as it is and only flips it into the channel.
+      await client.apiCall("chat.update", { channel, ts, reply_broadcast: true });
+    },
+
+    unbroadcast: async (channel, ts) => {
+      // Undocumented, but it is what the client's "Remove from channel" sends:
+      // the channel copy goes, the thread reply stays with the same ts.
+      await client.apiCall("chat.delete", { channel, ts, broadcast_delete: true });
+    },
+
     post: async (channel, text, threadTs) => {
       const thread = threadTs ? { thread_ts: threadTs } : {};
       const plain = () => client.chat.postMessage({ channel, text: toMrkdwn(text), ...thread });

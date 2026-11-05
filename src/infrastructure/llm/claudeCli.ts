@@ -19,6 +19,8 @@ import type {
   LlmSession,
   LlmStreamSink,
   LlmUsage,
+  ToolTrace,
+  ToolTraceSink,
   UsagePayer,
   UsageSink,
 } from "../../application/ports.ts";
@@ -44,6 +46,21 @@ export type ClaudeCliConfig = {
    * that number exists - nothing downstream can reconstruct it.
    */
   onUsage?: UsageSink;
+  /** Told every tool call and result in full, for the per-thread debug log. */
+  onToolTrace?: ToolTraceSink;
+};
+
+/** A tool_result's content as text: a string, or the text parts of a block list. */
+export const toolOutput = (content: unknown): string => {
+  if (typeof content === "string") return content;
+  if (!Array.isArray(content)) return content === undefined ? "" : JSON.stringify(content);
+  return content
+    .map((p) => {
+      const part = p as { type?: string; text?: unknown };
+      if (part.type === "text" && typeof part.text === "string") return part.text;
+      return `[${part.type ?? "part"}]`;
+    })
+    .join("\n");
 };
 
 const speakerLabel = (m: PromptMessage, assistantName: string): string =>
@@ -264,7 +281,7 @@ export const createClaudeCliLlm = (config: ClaudeCliConfig = {}): LlmPort => {
     }
   };
 
-  const complete = async ({ system, messages, assistantName, policy, session, oauthToken, useHostLogin, signal, runTicket, bill }: LlmCompleteParams) => {
+  const completeOneShot = async ({ system, messages, assistantName, policy, session, oauthToken, useHostLogin, signal, runTicket, bill }: LlmCompleteParams) => {
     const proc = spawnClaude(config, [...buildArgs(config, false, policy, session), "--append-system-prompt", system], renderPrompt(messages, assistantName), policy, oauthToken, useHostLogin, signal, runTicket);
     const [stdout, stderr, exitCode] = await Promise.all([
       new Response(proc.stdout).text(),
@@ -287,7 +304,13 @@ export const createClaudeCliLlm = (config: ClaudeCliConfig = {}): LlmPort => {
     return (parsed.result ?? "").trim();
   };
 
-  const stream = async ({ system, messages, assistantName, policy, session, oauthToken, useHostLogin, signal, runTicket, bill }: LlmCompleteParams, sink: LlmStreamSink) => {
+  /**
+   * Run the CLI in stream-json mode and read it to the end. Shared by `stream`
+   * and by `complete` when tool calls are being traced: the one-shot json
+   * output carries only the final answer, so a run made that way left no
+   * record of what it ran.
+   */
+  const runStreaming = async ({ system, messages, assistantName, policy, session, oauthToken, useHostLogin, signal, runTicket, bill }: LlmCompleteParams, sink: LlmStreamSink) => {
     const proc = spawnClaude(config, [...buildArgs(config, true, policy, session), "--append-system-prompt", system], renderPrompt(messages, assistantName), policy, oauthToken, useHostLogin, signal, runTicket);
     const stderrPromise = new Response(proc.stderr).text();
 
@@ -310,11 +333,23 @@ export const createClaudeCliLlm = (config: ClaudeCliConfig = {}): LlmPort => {
       }
     };
 
+    // The full record, for the thread's debug log. Like `emit`, a logger that
+    // throws must never cost the run its stdout.
+    const trace = (t: ToolTrace): void => {
+      if (!config.onToolTrace) return;
+      try {
+        config.onToolTrace(t, bill);
+      } catch {
+        // a debug log is never worth the answer
+      }
+    };
+
     // index -> in-flight tool_use block; id -> resolved card, replayed on the result.
     const toolByIndex = new Map<number, { id: string; name: string; json: string }>();
     const cardById = new Map<string, { title: string; command?: string }>();
     let finalText = "";
     let streamedText = "";
+    let resultEvent: Record<string, unknown> | undefined;
 
     const handleEvent = (e: Record<string, unknown>): void => {
       if (e.type === "stream_event") {
@@ -348,16 +383,39 @@ export const createClaudeCliLlm = (config: ClaudeCliConfig = {}): LlmPort => {
           }
         } else if (ev.type === "content_block_stop" && typeof index === "number") {
           const tb = toolByIndex.get(index);
+          if (tb) trace({ kind: "call", id: tb.id, name: tb.name, input: tb.json });
           if (tb && !isNoiseTool(tb.name)) {
             const { title, details, command } = summarizeTool(tb.name, tb.json);
             cardById.set(tb.id, { title, command });
             emit({ type: "tool", id: tb.id, title, details, command, status: "in_progress" });
           }
         }
+      } else if (e.type === "assistant" && typeof e.parent_tool_use_id === "string") {
+        // A subagent's own steps arrive whole rather than as stream deltas.
+        // The main agent's come through `stream_event` above, so only these.
+        const content = ((e.message as Record<string, unknown>)?.content ?? []) as Record<string, unknown>[];
+        for (const c of content) {
+          if (c.type === "tool_use" && typeof c.id === "string") {
+            trace({
+              kind: "call",
+              id: c.id,
+              name: typeof c.name === "string" ? c.name : "tool",
+              input: JSON.stringify(c.input ?? {}),
+              parent: e.parent_tool_use_id,
+            });
+          }
+        }
       } else if (e.type === "user") {
         const content = ((e.message as Record<string, unknown>)?.content ?? []) as Record<string, unknown>[];
         for (const c of content) {
           if (c.type === "tool_result" && typeof c.tool_use_id === "string") {
+            trace({
+              kind: "result",
+              id: c.tool_use_id,
+              isError: c.is_error === true,
+              output: toolOutput(c.content),
+              ...(typeof e.parent_tool_use_id === "string" ? { parent: e.parent_tool_use_id } : {}),
+            });
             // No card means nothing was shown for it: a plumbing tool, or a
             // subagent's own step. Closing it anyway drew a bare "tool" card.
             const card = cardById.get(c.tool_use_id);
@@ -379,6 +437,7 @@ export const createClaudeCliLlm = (config: ClaudeCliConfig = {}): LlmPort => {
         const u = usageOf(e);
         if (u) emit({ type: "usage", usage: u });
         if (typeof e.result === "string") finalText = e.result;
+        resultEvent = e;
       }
     };
 
@@ -421,9 +480,13 @@ export const createClaudeCliLlm = (config: ClaudeCliConfig = {}): LlmPort => {
 
     const exitCode = await proc.exited;
     const finished = (finalText || streamedText).trim();
+    return { exitCode, finished, finalText, resultEvent, stderr: stderrPromise, emit };
+  };
+
+  const stream = async (params: LlmCompleteParams, sink: LlmStreamSink) => {
+    const { exitCode, finished, stderr, emit } = await runStreaming(params, sink);
     if (exitCode !== 0 && !finished) {
-      const stderr = await stderrPromise;
-      throw new Error(`claude CLI exited with code ${exitCode}: ${stderr.trim() || "no output"}`);
+      throw new Error(`claude CLI exited with code ${exitCode}: ${(await stderr).trim() || "no output"}`);
     }
     // Killed after it had already said something. What we hold is a fragment of
     // a run, not its answer - 143 is the timeout reaping it. Say so rather than
@@ -436,6 +499,23 @@ export const createClaudeCliLlm = (config: ClaudeCliConfig = {}): LlmPort => {
     }
     return finished;
   };
+
+  /** `complete`'s contract - throw unless it finished cleanly - over a streamed run. */
+  const completeTraced = async (params: LlmCompleteParams): Promise<string> => {
+    const { exitCode, finalText, resultEvent, stderr } = await runStreaming(params, () => {});
+    if (exitCode !== 0) {
+      throw new Error(`claude CLI exited with code ${exitCode}: ${(await stderr).trim() || "no output"}`);
+    }
+    if (!resultEvent) throw new Error("claude CLI ended without a result");
+    if (resultEvent.is_error || resultEvent.subtype !== "success") {
+      throw new Error(`claude CLI error (${String(resultEvent.subtype ?? "unknown")}): ${finalText}`);
+    }
+    return finalText.trim();
+  };
+
+  // Traced runs go through the stream so their tool calls are on record.
+  const complete = (params: LlmCompleteParams): Promise<string> =>
+    config.onToolTrace ? completeTraced(params) : completeOneShot(params);
 
   return { complete, stream };
 };

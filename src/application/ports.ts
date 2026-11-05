@@ -69,7 +69,21 @@ export type BillingContext = {
   /** `chat`, `workflow`, or the command's name. */
   readonly kind: string;
   readonly channel?: string;
+  /** Thread the run belongs to, so its tool calls land in that thread's log. */
+  readonly threadTs?: string;
 };
+
+/**
+ * One tool call or its result, in full - the cards in Slack are clipped to a
+ * line, so this is the record to read when a turn has to be debugged later.
+ * `parent` is set for a subagent's own steps: the Task call that spawned it.
+ */
+export type ToolTrace =
+  | { readonly kind: "call"; readonly id: string; readonly name: string; readonly input: string; readonly parent?: string }
+  | { readonly kind: "result"; readonly id: string; readonly isError: boolean; readonly output: string; readonly parent?: string };
+
+/** Told about every tool call and result; wired at the composition root. */
+export type ToolTraceSink = (trace: ToolTrace, bill: BillingContext | undefined) => void;
 
 /** Whose credential paid: the bot's own, the caller's token, or the host login. */
 export type UsagePayer = "bot" | "caller" | "host";

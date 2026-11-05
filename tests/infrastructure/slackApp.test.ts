@@ -43,7 +43,7 @@ describe("shouldHandleDm", () => {
 
 type Recorded = { appends: unknown[]; stops: number; stopThrows: boolean; appendThrows: boolean };
 
-const fakeStreamer = (rec: Recorded): Streamer => ({
+const fakeStreamer = (rec: Recorded, ts = "222.2"): Streamer => ({
   append: async (a) => {
     if (rec.appendThrows) throw new Error("append boom");
     rec.appends.push(a);
@@ -52,7 +52,7 @@ const fakeStreamer = (rec: Recorded): Streamer => ({
     if (rec.stopThrows) throw new Error("stop boom");
     rec.stops += 1;
   },
-  ts: "222.2",
+  ts,
 });
 
 const build = (opts: {
@@ -86,13 +86,20 @@ const build = (opts: {
   };
   const said: { text: string; reply_broadcast?: boolean }[] = [];
   const updates: Record<string, unknown>[] = [];
+  const deletes: string[] = [];
   const rec = opts.rec ?? { appends: [], stops: 0, stopThrows: false, appendThrows: false };
+  // The first message keeps the old fixed ts; a rollover gets its own.
+  let streams = 0;
   const client: SlackClient = {
     users: { info: async () => ({ user: { profile: { display_name: "Kai" } } }) },
-    chatStream: () => fakeStreamer(rec),
+    chatStream: () => fakeStreamer(rec, streams++ === 0 ? "222.2" : `222.${streams + 1}`),
     chat: {
       update: async (a) => {
         updates.push(a);
+        return {};
+      },
+      delete: async (a) => {
+        deletes.push(String(a.ts));
         return {};
       },
     },
@@ -107,7 +114,7 @@ const build = (opts: {
     client,
     say: async (m) => said.push({ text: m.text, ...(m.reply_broadcast ? { reply_broadcast: true } : {}) }),
   });
-  return { handle, msg, said, updates, rec, messages };
+  return { handle, msg, said, updates, deletes, rec, messages };
 };
 
 const streamingLlm = (final: string, events: LlmStreamEvent[] = []): LlmPort => ({
@@ -139,6 +146,50 @@ describe("createHandler streaming truth table", () => {
     });
     await handle(msg("hi"));
     expect(said).toEqual([{ text: "full reply", reply_broadcast: true }]);
+  });
+
+  test("a reply that rolled over is tidied message by message, footer on the last", async () => {
+    const steps: LlmStreamEvent[] = [
+      { type: "tool", id: "t1", title: "run: one", status: "complete" },
+      { type: "tool", id: "t2", title: "run: two", status: "complete" },
+    ];
+    const head = "a".repeat(10_000);
+    const tail = "b".repeat(3_000);
+    const two = build({
+      llm: streamingLlm(head + tail, [...steps, { type: "text", delta: head }, { type: "text", delta: tail }]),
+      streamUpdates: true,
+    });
+    await two.handle(two.msg("hi", "000.9"));
+    expect(two.said).toHaveLength(0);
+    // one rewrite per message, each with only its own part: nothing posted twice
+    const texts = two.updates.map((u) => String(u.text));
+    expect(texts.join("")).toBe(head + tail);
+    expect(two.updates).toHaveLength(2);
+    // the step summary lives on the last message only
+    const contexts = two.updates.map((u) => (u.blocks as { type: string }[]).some((b) => b.type === "context"));
+    expect(contexts).toEqual([false, true]);
+    expect(two.deletes).toHaveLength(0);
+  });
+
+  test("a rolled-over message that only held cards is deleted", async () => {
+    const big = (id: string): LlmStreamEvent => ({
+      type: "tool",
+      id,
+      title: `run: ${id}`,
+      status: "complete",
+      details: "d".repeat(250),
+    });
+    // enough cards to push the allowance over, then a short answer
+    const cards = Array.from({ length: 40 }, (_, i) => big(`t${i}`));
+    const r = build({
+      llm: streamingLlm("done", [{ type: "text", delta: "done" }, ...cards]),
+      streamUpdates: true,
+    });
+    await r.handle(r.msg("hi", "000.9"));
+    expect(r.said).toHaveLength(0);
+    expect(r.updates.map((u) => String(u.text))).toEqual(["done"]);
+    expect(r.deletes.length).toBeGreaterThan(0);
+    expect(r.deletes).not.toContain("222.2");
   });
 
   test("posts once when streaming is disabled", async () => {
