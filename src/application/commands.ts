@@ -110,8 +110,10 @@ import type { CommandLogRepo } from "../infrastructure/db/commandLogRepo.ts";
 import type { UsageRepo } from "../infrastructure/db/usageRepo.ts";
 import type { TurnLogRepo } from "../infrastructure/db/turnLogRepo.ts";
 import type { WatchRepo } from "../infrastructure/db/watchRepo.ts";
+import type { ReminderRepo } from "../infrastructure/db/reminderRepo.ts";
 import type { FollowRepo } from "../infrastructure/db/followRepo.ts";
 import { builtinCheck, humanDuration, parseWatchArgs } from "../domain/watch.ts";
+import { formatWhen, humanLead, parseRemindArgs } from "../domain/reminder.ts";
 import { DEFAULT_SNUB_REPLY, formatSnubbed, parseSnubbed } from "../domain/snub.ts";
 import {
   mindfulReport,
@@ -157,6 +159,10 @@ export type CommandDeps = {
   watches?: WatchRepo;
   /** Threads it was asked to keep up with, tag or no tag. */
   follows?: FollowRepo;
+  /** Reminders people asked for, posted on a timer outside any turn. */
+  reminders?: ReminderRepo;
+  /** Minutes east of UTC that reminder times are read in. Defaults to the host's. */
+  tzOffsetMinutes?: () => number;
   /** The workspace domain, so `mindful` can print clickable thread links. */
   slackTeam?: () => string | undefined;
   /**
@@ -890,6 +896,60 @@ export const COMMANDS: readonly CommandDef[] = [
       return check
         ? `⏳ watching: \`${check.slice(0, 80)}\`\nevery ${humanDuration(parsed.everyMs)}, giving up after ${humanDuration(parsed.deadlineMs)}. I will carry on here by myself when it passes. (\`${prefix} watch cancel\`, #${w.id})`
         : `⏳ I will pick this up again in ${humanDuration(parsed.deadlineMs)}. (\`${prefix} watch cancel\`, #${w.id})`;
+    },
+  },
+  {
+    name: "remind",
+    aliases: ["reminder", "remindme"],
+    // No shell and no turn - a time and a line to post - so anyone may set
+    // one. Tagging somebody else is what any Slack user can already do.
+    minRole: "pal",
+    usage: "[me|<@someone>] (in 2h | at 15:00 [today|tomorrow] | tomorrow 9am | on 2026-12-01) <what> | list | cancel <id>",
+    summary: "remind you (or someone) of something here, at a time",
+    run: async ({ deps, actor, args, rest, prefix, threadTs, channelId }) => {
+      if (!deps.reminders) return "I have nowhere to keep a reminder right now.";
+      const now = deps.clock();
+      const offset = deps.tzOffsetMinutes?.() ?? -new Date(now).getTimezoneOffset();
+      const sub = (args[0] ?? "").toLowerCase();
+      const admin = actor.role === "admin" || actor.role === "owner";
+
+      if (sub === "list" && args.length <= 2) {
+        const all = admin && (args[1] ?? "").toLowerCase() === "all";
+        const rows = all ? deps.reminders.waiting(30) : deps.reminders.waitingFor(actor.slackId, 30);
+        if (rows.length === 0) return all ? "No reminders are waiting." : "You have no reminders waiting.";
+        return rows
+          .map(
+            (r) =>
+              `- #${r.id} ${formatWhen(r.dueAt, offset)} (${humanLead(r.dueAt - now)}) <#${r.channelId}> ${r.targets.map((t) => `<@${t}>`).join(" ")}: ${r.text.slice(0, 80)}`,
+          )
+          .join("\n");
+      }
+
+      if ((sub === "cancel" || sub === "stop" || sub === "rm") && args.length === 2) {
+        const id = Number((args[1] ?? "").replace(/^#/, ""));
+        const r = Number.isInteger(id) ? deps.reminders.get(id) : undefined;
+        if (!r || r.state !== "waiting") return `There is no waiting reminder #${args[1]}.`;
+        // Whoever set it, whoever it is for, or an admin. Anyone else would be
+        // quietly deleting somebody's promise to themselves.
+        if (r.createdBy !== actor.slackId && !r.targets.includes(actor.slackId) && !admin) {
+          return `#${r.id} is not yours to cancel - ask <@${r.createdBy}>.`;
+        }
+        deps.reminders.settle(r.id, "cancelled", now);
+        return `cancelled reminder #${r.id}`;
+      }
+
+      const parsed = parseRemindArgs(rest, actor.slackId, now, offset);
+      if (!parsed.ok) {
+        return `${parsed.error}. \`${prefix} remind me in 2h check the deploy\`, or \`${prefix} remind <@someone> tomorrow 9am standup notes\``;
+      }
+      const r = deps.reminders.add(
+        { channelId, threadTs: threadTs ?? "", createdBy: actor.slackId, targets: parsed.targets, text: parsed.text, dueAt: parsed.dueAt },
+        now,
+      );
+      const who = parsed.targets.length === 1 && parsed.targets[0] === actor.slackId
+        ? "you"
+        : parsed.targets.map((t) => `<@${t}>`).join(" ");
+      return `⏰ I will remind ${who} ${formatWhen(parsed.dueAt, offset)} (${humanLead(parsed.dueAt - now)}) ${threadTs ? "in this thread" : "here"}. (\`${prefix} remind cancel ${r.id}\`)`;
     },
   },
   {

@@ -10,6 +10,7 @@ import { createUsageRepo } from "../../src/infrastructure/db/usageRepo.ts";
 import { createTurnLogRepo } from "../../src/infrastructure/db/turnLogRepo.ts";
 import { createWatchRepo } from "../../src/infrastructure/db/watchRepo.ts";
 import { createFollowRepo } from "../../src/infrastructure/db/followRepo.ts";
+import { createReminderRepo } from "../../src/infrastructure/db/reminderRepo.ts";
 import { DEFAULT_SNUB_REPLY } from "../../src/domain/snub.ts";
 import { createRunRegistry } from "../../src/application/runRegistry.ts";
 import { commandLineOf, dispatchCommand, type CommandDeps, isQuietCommand } from "../../src/application/commands.ts";
@@ -437,6 +438,43 @@ describe("dispatchCommand", () => {
       { threadTs: "9.9" },
     );
     expect(out).toContain("needs a GitHub pull request url");
+  });
+
+  test("remind stores a reminder for whoever asked, in this thread", async () => {
+    const reminders = createReminderRepo(db);
+    const out = await dispatchCommand(
+      { ...build(), reminders, tzOffsetMinutes: () => 0 },
+      actor(),
+      "C1",
+      "remind me in 2h check the deploy",
+      { threadTs: "9.9" },
+    );
+    expect(out).toContain("I will remind you");
+    expect(out).toContain("remind cancel");
+    const [r] = reminders.waiting();
+    expect(r?.dueAt).toBe(42 + 7_200_000);
+    expect(r?.targets).toEqual([OWNER]);
+    expect(r?.threadTs).toBe("9.9");
+    expect(r?.text).toBe("check the deploy");
+  });
+
+  test("remind with no time explains itself and stores nothing", async () => {
+    const reminders = createReminderRepo(db);
+    const out = await dispatchCommand({ ...build(), reminders }, actor(), "C1", "remind me something");
+    expect(out).toContain("say when");
+    expect(reminders.waiting()).toHaveLength(0);
+  });
+
+  test("remind list and cancel, and only your own", async () => {
+    const reminders = createReminderRepo(db);
+    const deps = { ...build(), reminders, tzOffsetMinutes: () => 0 };
+    await dispatchCommand(deps, actor(), "C1", "remind <@U2> in 1h ship it");
+    const [r] = reminders.waiting();
+    expect(await dispatchCommand(deps, actor(), "C1", "remind list")).toContain(`#${r?.id}`);
+    const stranger = actor({ slackId: "U9", role: "pal" });
+    expect(await dispatchCommand(deps, stranger, "C1", `remind cancel ${r?.id}`)).toContain("not yours");
+    expect(await dispatchCommand(deps, actor(), "C1", `remind cancel ${r?.id}`)).toContain("cancelled");
+    expect(reminders.waiting()).toHaveLength(0);
   });
 
   test("a watch needs a thread to come back to", async () => {

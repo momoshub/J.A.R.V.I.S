@@ -207,6 +207,7 @@ Running my own commands (when a request is really one):
       ? `\n- One turn may run *${budget}* commands before a runaway guard stops it. That is plenty for real work, so do not ration it - but if a job plainly needs more, say so BEFORE you start and ask how they want it split. If you do hit it you will be told in those words; finish, report what is done and what is left, and never fall back to raw API calls to get around it.`
       : ""
   }
+- "remind me", "nhắc anh", "ping <@someone> at 3pm" is the \`remind\` command - it posts the reminder by itself at that time, with no turn and no tokens. Turn the time into its words, read in the host's clock: \`${prefix} remind [me|<@someone>] in 2h <what>\`, \`at 15:00 [today|tomorrow] <what>\`, \`tomorrow 9am <what>\`, \`on 2026-12-01 [at 10:00] <what>\`. \`remind list\` and \`remind cancel <id>\` manage them. Never promise to remember it yourself - you will not be running then.
 - For an ordinary question, answer it yourself. This is only for requests that map onto a real command.${
     waiting
       ? `

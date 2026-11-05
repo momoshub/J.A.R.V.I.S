@@ -29,6 +29,7 @@ import type { AdapterRevisionRepo } from "../infrastructure/db/adapterRevisionRe
 import type { CommandLogRepo } from "../infrastructure/db/commandLogRepo.ts";
 import type { UsageRepo } from "../infrastructure/db/usageRepo.ts";
 import type { TurnLogRepo } from "../infrastructure/db/turnLogRepo.ts";
+import type { ReminderRepo } from "../infrastructure/db/reminderRepo.ts";
 import type { WatchRepo } from "../infrastructure/db/watchRepo.ts";
 import type { FollowRepo } from "../infrastructure/db/followRepo.ts";
 import type { WorkflowRepo } from "../infrastructure/db/workflowRepo.ts";
@@ -77,6 +78,8 @@ export type HandleMessageDeps = {
   watches?: WatchRepo;
   /** Threads it was asked to keep up with, tag or no tag. */
   follows?: FollowRepo;
+  /** Reminders people asked for, for the `remind` command. */
+  reminders?: ReminderRepo;
   /** The workspace domain, so `mindful` can print clickable thread links. */
   slackTeam?: () => string | undefined;
   /** Run a chat turn in a thread from outside the Slack handler (`mindful`). */

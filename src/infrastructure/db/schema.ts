@@ -87,6 +87,38 @@ export const migrate = (db: Database): void => {
   migrateTurnLog(db);
   migrateWatches(db);
   migrateFollowedThreads(db);
+  migrateReminders(db);
+};
+
+/**
+ * Migration v16: reminders people asked for.
+ *
+ * A time and a line to post, nothing else - no predicate, no turn. `due_at`
+ * is indexed for the same reason `watches.next_at` is: the timer asks "what is
+ * due" on every tick for as long as the bot is up.
+ */
+const migrateReminders = (db: Database): void => {
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS reminders (
+      id          INTEGER PRIMARY KEY AUTOINCREMENT,
+      channel_id  TEXT NOT NULL,
+      thread_ts   TEXT NOT NULL DEFAULT '',
+      created_by  TEXT NOT NULL,
+      targets     TEXT NOT NULL,
+      text        TEXT NOT NULL,
+      due_at      INTEGER NOT NULL,
+      state       TEXT NOT NULL DEFAULT 'waiting',
+      attempts    INTEGER NOT NULL DEFAULT 0,
+      last_error  TEXT NOT NULL DEFAULT '',
+      created_at  INTEGER NOT NULL,
+      updated_at  INTEGER NOT NULL
+    );
+  `);
+  db.exec("CREATE INDEX IF NOT EXISTS idx_reminders_due ON reminders (state, due_at);");
+  const { user_version } = db.query<{ user_version: number }, []>("PRAGMA user_version").get() ?? {
+    user_version: 0,
+  };
+  if (user_version < 16) db.exec("PRAGMA user_version = 16;");
 };
 
 /**

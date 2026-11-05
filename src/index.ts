@@ -37,8 +37,10 @@ import { createCommandLogRepo } from "./infrastructure/db/commandLogRepo.ts";
 import { createUsageRepo } from "./infrastructure/db/usageRepo.ts";
 import { createTurnLogRepo } from "./infrastructure/db/turnLogRepo.ts";
 import { createWatchRepo } from "./infrastructure/db/watchRepo.ts";
+import { createReminderRepo } from "./infrastructure/db/reminderRepo.ts";
 import { createFollowRepo } from "./infrastructure/db/followRepo.ts";
 import { createWatcher } from "./application/watcher.ts";
+import { createReminderSender } from "./application/reminders.ts";
 import { createShellCheck } from "./infrastructure/system/shellCheck.ts";
 
 import { createWorkflowRepo } from "./infrastructure/db/workflowRepo.ts";
@@ -125,6 +127,7 @@ const main = async () => {
   const usage = createUsageRepo(db);
   const turns = createTurnLogRepo(db);
   const watches = createWatchRepo(db);
+  const reminders = createReminderRepo(db);
   const follows = createFollowRepo(db);
   const adapterDeps = () => ({
     store: adapterStore,
@@ -314,6 +317,7 @@ const main = async () => {
     turns,
     watches,
     follows,
+    reminders,
     slackWaitScript,
     macUiScript,
     // Re-run a dead turn, or nudge a quiet thread, from `mindful`. It goes
@@ -521,9 +525,21 @@ const main = async () => {
     say: async (channel, text, thread) => void (await slackAdmin.post(channel, text, thread)),
     log: (msg) => console.error(`[watch] ${msg}`),
   });
+  // Reminders ride the same timer: they need no model either, only a post.
+  const reminderSender = createReminderSender({
+    reminders,
+    clock,
+    post: async (channel, text, thread) => void (await slackAdmin.post(channel, text, thread)),
+    log: (msg) => console.error(`[remind] ${msg}`),
+  });
+  const pendingReminders = reminders.waiting().length;
+  if (pendingReminders > 0) console.log(`[remind] ${pendingReminders} reminder(s) waiting from before the restart`);
   const waiting = watches.waiting().length;
   if (waiting > 0) console.log(`[watch] carrying on with ${waiting} watch(es) from before the restart`);
-  const watchTimer = setInterval(() => void watcher.tick(), WATCH_TICK_MS);
+  const watchTimer = setInterval(() => {
+    void watcher.tick();
+    void reminderSender.tick();
+  }, WATCH_TICK_MS);
   (watchTimer as { unref?: () => void }).unref?.();
 
   const shutdown = async () => {
