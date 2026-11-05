@@ -419,7 +419,7 @@ export const createSlackApp = (config: SlackAppConfig, deps: Deps) => {
             slash: config.slashCommand,
             threadTs,
             preApproved: true,
-            reply: deps.slack ? (text: string) => deps.slack!.post(channelId, text, threadTs) : undefined,
+            reply: deps.slack ? async (text: string) => void (await deps.slack!.post(channelId, text, threadTs)) : undefined,
           }),
       );
       log(`command approval ${outcome.kind}`);
@@ -511,7 +511,7 @@ export const createSlackApp = (config: SlackAppConfig, deps: Deps) => {
           prefix: config.commandPrefix,
           slash: config.slashCommand,
           threadTs: req.threadTs,
-          reply: deps.slack ? (text: string) => deps.slack!.post(channel, text, req.threadTs) : undefined,
+          reply: deps.slack ? async (text: string) => void (await deps.slack!.post(channel, text, req.threadTs)) : undefined,
         });
       }
     } catch (err) {

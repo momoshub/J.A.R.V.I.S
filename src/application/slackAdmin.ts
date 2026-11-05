@@ -100,8 +100,11 @@ export type SlackAdminPort = {
   update: (channel: string, ts: string, text: string) => Promise<void>;
   /** Delete one of the bot's own messages. */
   remove: (channel: string, ts: string) => Promise<void>;
-  /** Post a message, optionally into a thread. */
-  post: (channel: string, text: string, threadTs?: string) => Promise<void>;
+  /**
+   * Post a message, optionally into a thread. Returns where it landed when the
+   * transport knows, so a temporary notice can be taken down again.
+   */
+  post: (channel: string, text: string, threadTs?: string) => Promise<PostedRef | void>;
   /**
    * Open (or reuse) a DM with a user and post there. Returns where it landed,
    * so a message can later be found again - matching a reaction to it, say.

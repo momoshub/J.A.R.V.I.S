@@ -197,7 +197,12 @@ export const createSlackAdmin = (client: WebClient): SlackAdminPort => {
     },
 
     post: async (channel, text, threadTs) => {
-      await client.chat.postMessage({ channel, text: toMrkdwn(text), ...(threadTs ? { thread_ts: threadTs } : {}) });
+      const posted = (await client.chat.postMessage({
+        channel,
+        text: toMrkdwn(text),
+        ...(threadTs ? { thread_ts: threadTs } : {}),
+      })) as { ts?: string };
+      return posted.ts ? { channel, ts: posted.ts } : undefined;
     },
 
     postDm: async (userId, text) => {

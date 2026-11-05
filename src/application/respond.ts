@@ -42,16 +42,39 @@ const RANK: Record<UserRole, number> = { pal: 0, executer: 1, admin: 2, owner: 3
  * mechanisms for one job - and the home-made one was the weaker, since it only
  * existed on this notice and only while somebody was queued behind a turn.
  * The sentence was always the part that mattered.
+ *
+ * It names the running turn by a link to the message that asked for it, and
+ * returns where it landed: the notice is only true while the turn waits, so
+ * the queued turn takes it down when it starts.
  */
-const announceBusy = async (deps: RespondDeps, inbound: InboundMessage, key: string): Promise<void> => {
+const announceBusy = async (
+  deps: RespondDeps,
+  inbound: InboundMessage,
+  key: string,
+): Promise<PostedRef | undefined> => {
   const running = deps.runs?.current(key);
-  const text = running
-    ? busyNotice(running, deps.clock())
-    : "⏳ still on the one before this, I will pick it up next";
   try {
-    await deps.slack?.post(inbound.channelId, text, inbound.threadTs);
+    const link =
+      running?.messageTs && deps.slack?.permalink
+        ? await deps.slack.permalink(running.channelId, running.messageTs)
+        : undefined;
+    const text = running
+      ? busyNotice(running, deps.clock(), link)
+      : "⏳ still on the one before this, I will pick it up next";
+    return (await deps.slack?.post(inbound.channelId, text, inbound.threadTs)) || undefined;
   } catch {
     // A notice that cannot be posted must not take the turn down with it.
+    return undefined;
+  }
+};
+
+/** Take a busy notice down. Best-effort: a stale notice is not worth a failed turn. */
+const clearBusy = async (deps: RespondDeps, notice: PostedRef | undefined): Promise<void> => {
+  if (!notice) return;
+  try {
+    await deps.slack?.remove(notice.channel, notice.ts);
+  } catch {
+    // already gone, or not ours to delete
   }
 };
 
@@ -86,10 +109,16 @@ export const respond = async (
       threadTs: inbound.threadTs,
       actor: inbound.slackUserId,
       what,
+      messageTs: inbound.messageTs,
       startedAt: deps.clock(),
     });
+    // The "still working on ..." notice this message got, if it had to wait.
+    let busy: PostedRef | undefined;
 
     const chatTurn = async (): Promise<HandleResult> => {
+      // Its turn has come (or it was called off), so "yours is next" is no
+      // longer true. The answer lands as a new message; the notice goes.
+      await clearBusy(deps, busy);
       // Called off while it waited its turn, so it never spawns anything.
       if (tracked?.signal.aborted) return { kind: "ignored" };
       tracked?.running();
@@ -161,7 +190,7 @@ export const respond = async (
       // Not when following: nobody asked, so nobody is waiting on a place in
       // the queue, and "yours is next" in a channel is noise about the bot's
       // own scheduling rather than anything the thread needs.
-      if (!inbound.following) await announceBusy(deps, inbound, key);
+      if (!inbound.following) busy = await announceBusy(deps, inbound, key);
     }
     return queue.run(key, chatTurn);
   }

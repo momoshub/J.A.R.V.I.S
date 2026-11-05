@@ -21,8 +21,17 @@ export const forHowLong = (ms: number): string => {
  * not say which one, and in a thread with several asks in flight that is the
  * only thing the reader actually needs.
  */
-export const busyNotice = (running: { what: string; startedAt: number }, now: number): string =>
-  `⏳ still working on *${running.what}* (${forHowLong(now - running.startedAt)} so far) - yours is next`;
+export const busyNotice = (
+  running: { what: string; startedAt: number },
+  now: number,
+  link?: string,
+): string => {
+  // A link to the message beats a quote of it: the quote is cut at 48
+  // characters, the link is one click to the whole ask. `<`, `>` and `|`
+  // would break Slack's link syntax, so the label drops them.
+  const named = link ? `<${link}|${running.what.replace(/[<>|]/g, "")}>` : `*${running.what}*`;
+  return `⏳ still working on ${named} (${forHowLong(now - running.startedAt)} so far) - yours is next`;
+};
 
 /** What the thread is told once a turn has been stopped. */
 export const stoppedNotice = (

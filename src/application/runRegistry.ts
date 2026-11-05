@@ -33,6 +33,8 @@ export type TrackedRun = {
   readonly actor: string;
   /** The first words of the request, to name it in a notice. */
   readonly what: string;
+  /** The message that asked for it, so a notice can link to it. */
+  readonly messageTs?: string;
   readonly startedAt: number;
   /** Mutable: a stop flips it to `stopping`, which the next press must see. */
   state: RunState;

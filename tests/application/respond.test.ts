@@ -212,6 +212,41 @@ describe("respond", () => {
     expect(posted[0]).toContain("the long one"); // names what is in the way
   });
 
+  test("the busy notice links the running ask, and goes once the queued one starts", async () => {
+    const posted: { text: string; ts: string }[] = [];
+    const removed: string[] = [];
+    let removedBeforeAnswer = false;
+    const deps = build({
+      complete: async (p) => {
+        if (p.messages[p.messages.length - 1]?.content === "and this") removedBeforeAnswer = removed.length === 1;
+        await new Promise((r) => setTimeout(r, 30));
+        return "ok";
+      },
+    });
+    deps.threadQueue = createThreadQueue();
+    deps.runs = createRunRegistry();
+    deps.slack = {
+      ...quietSlack,
+      permalink: async (c, ts) => `https://x.slack.com/archives/${c}/p${ts.replace(".", "")}`,
+      post: async (channel, text) => {
+        const ts = `9.${posted.length}`;
+        posted.push({ text, ts });
+        return { channel, ts };
+      },
+      remove: async (_c, ts) => void removed.push(ts),
+    };
+
+    const inbound = { channelId: "C1", slackUserId: OWNER, threadTs: "400.1" };
+    const first = respond(deps, { ...inbound, text: "the long one", messageTs: "400.1" });
+    await new Promise((r) => setTimeout(r, 10));
+    const second = respond(deps, { ...inbound, text: "and this", messageTs: "400.2" });
+
+    await Promise.all([first, second]);
+    expect(posted[0]?.text).toContain("<https://x.slack.com/archives/C1/p4001|the long one>");
+    expect(removed).toEqual([posted[0]!.ts]);
+    expect(removedBeforeAnswer).toBe(true); // gone before the queued turn answers
+  });
+
   test("a message dropped before it ran never reaches the brain", async () => {
     const runs = createRunRegistry();
     const seen: string[] = [];
@@ -254,7 +289,7 @@ describe("the busy notice and following", () => {
     expect(couldFollowThread({ user: "U1", text: "hi", channel_type: "channel", ts: "2", thread_ts: "1" }, "UBOT")).toBe(true);
 
     const src = await Bun.file("src/application/respond.ts").text();
-    expect(src).toContain("if (!inbound.following) await announceBusy");
+    expect(src).toContain("if (!inbound.following) busy = await announceBusy");
   });
 });
 
