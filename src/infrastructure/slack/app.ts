@@ -51,7 +51,7 @@ import {
 import { annotateMentions, extractMentionIds } from "../../domain/mentions.ts";
 import { isTimeout } from "../../domain/threadSession.ts";
 import { toMrkdwn } from "../../domain/slackFormat.ts";
-import { couldFollowThread, isOneOnOneThread, shouldFollowThread } from "../../domain/threadFollow.ts";
+import { couldFollowThread, followVerdict, isOneOnOneThread } from "../../domain/threadFollow.ts";
 import { isSilenceNote } from "../../domain/silence.ts";
 import { createSlackStream, type Streamer } from "./stream.ts";
 import {
@@ -791,8 +791,10 @@ export const createSlackApp = (config: SlackAppConfig, deps: Deps) => {
       const parent = res.messages?.[0];
       const participants = [...(parent?.user ? [parent.user] : []), ...(parent?.reply_users ?? [])];
       info = { author: parent?.user, participants, at: Date.now() };
-    } catch {
-      // Cannot see the thread: treat it as not ours and stay quiet.
+    } catch (err) {
+      // Cannot see the thread: treat it as not ours and stay quiet, but say
+      // so - a lookup that fails reads exactly like a thread that is not ours.
+      log(`thread lookup failed channel=${channel} thread=${threadTs}: ${err instanceof Error ? err.message : String(err)}`);
     }
     // Cached either way, including the failure - retrying on every message in
     // a thread we cannot read is a loop, not a recovery.
@@ -814,7 +816,11 @@ export const createSlackApp = (config: SlackAppConfig, deps: Deps) => {
       // started by a person gets the same treatment. Or it is just it and
       // one person talking, who should not have to tag it on every line.
       const me = await deps.slack?.botUserId().catch(() => undefined);
-      if (!couldFollowThread(m, me) || !me) return;
+      if (!couldFollowThread(m, me)) return;
+      if (!me) {
+        log(`follow skip channel=${m.channel} thread=${m.thread_ts} user=${m.user}: bot id unknown`);
+        return;
+      }
       const asked = deps.follows?.isFollowed(m.channel, m.thread_ts!) === true;
       const ownThreadsOff =
         deps.settings?.get("follow_own_threads")?.trim().toLowerCase() === "off";
@@ -825,7 +831,16 @@ export const createSlackApp = (config: SlackAppConfig, deps: Deps) => {
       const ownThread = !!info && !ownThreadsOff && info.author === me;
       const oneOnOne =
         !!info && isOneOnOneThread({ participants: info.participants, author: m.user!, botUserId: me });
-      if (!shouldFollowThread({ asked, ownThread, ownThreadsOff, oneOnOne })) return;
+      // Every human reply in a thread gets one line, follow or not. So a reply
+      // with NO line here never reached the bot at all - Slack did not deliver
+      // the event - and that is a different fix from a decision that said no.
+      const verdict = followVerdict({ asked, ownThread, ownThreadsOff, oneOnOne });
+      log(
+        `follow ${verdict.follow ? "yes" : "skip"} channel=${m.channel} (${m.channel_type ?? "?"}) ` +
+          `thread=${m.thread_ts} user=${m.user}: ${verdict.why}` +
+          (info ? ` author=${info.author ?? "?"} participants=${info.participants.join(",") || "none"}` : ""),
+      );
+      if (!verdict.follow) return;
       await handle({
         channelId: m.channel,
         userId: m.user!,

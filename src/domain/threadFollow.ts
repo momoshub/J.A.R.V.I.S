@@ -38,19 +38,31 @@ export const mentionsBot = (text: string, botUserId?: string): boolean =>
  * Everything here is cheap and local. The expensive part - who wrote the
  * thread's parent - is only worth asking once this says yes.
  */
-export const couldFollowThread = (m: FollowCandidate, botUserId?: string): boolean => {
+export const couldFollowThread = (m: FollowCandidate, botUserId?: string): boolean =>
+  followSkipReason(m, botUserId) === undefined;
+
+/**
+ * Why a message is not even a follow candidate, or undefined when it is.
+ *
+ * The same checks as `couldFollowThread`, named, so a skip can be logged with
+ * its reason instead of vanishing. A silent skip and an event Slack never
+ * delivered look identical in the logs otherwise.
+ */
+export const followSkipReason = (m: FollowCandidate, botUserId?: string): string | undefined => {
   // Edits, joins, deletions and other subtypes are not somebody talking.
-  if (m.subtype || m.bot_id) return false;
-  if (!m.user || !m.text?.trim()) return false;
+  if (m.subtype) return `subtype:${m.subtype}`;
+  if (m.bot_id) return "bot";
+  if (!m.user || !m.text?.trim()) return "empty";
   // DMs already get answered; this is for channels.
-  if (m.channel_type === "im") return false;
+  if (m.channel_type === "im") return "dm";
   // Only a REPLY, never the parent itself.
-  if (!m.thread_ts || m.thread_ts === m.ts) return false;
+  if (!m.thread_ts || m.thread_ts === m.ts) return "not-a-reply";
   // Never itself, or it would answer its own follow-ups forever.
-  if (botUserId && m.user === botUserId) return false;
+  if (botUserId && m.user === botUserId) return "self";
   // A tagged message is handled by the mention event; following it here too
   // would answer the same message twice.
-  return !mentionsBot(m.text, botUserId);
+  if (mentionsBot(m.text, botUserId)) return "tagged";
+  return undefined;
 };
 
 /**
@@ -107,4 +119,17 @@ export const shouldFollowThread = (opts: {
   if (opts.asked || opts.oneOnOne) return true;
   if (opts.ownThreadsOff) return false;
   return opts.ownThread;
+};
+
+/**
+ * The follow decision with its reason, for the log line.
+ *
+ * Same answer as `shouldFollowThread`; the reason says which route let it in,
+ * or why none did.
+ */
+export const followVerdict = (opts: Parameters<typeof shouldFollowThread>[0]): { follow: boolean; why: string } => {
+  if (opts.asked) return { follow: true, why: "asked" };
+  if (opts.oneOnOne) return { follow: true, why: "one-on-one" };
+  if (opts.ownThreadsOff) return { follow: false, why: "own-threads-off" };
+  return opts.ownThread ? { follow: true, why: "own-thread" } : { follow: false, why: "not-ours" };
 };

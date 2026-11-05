@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { couldFollowThread, isOneOnOneThread, mentionsBot, shouldFollowThread } from "../../src/domain/threadFollow.ts";
+import { couldFollowThread, followSkipReason, followVerdict, isOneOnOneThread, mentionsBot, shouldFollowThread } from "../../src/domain/threadFollow.ts";
 import { buildSystemPrompt } from "../../src/domain/personality.ts";
 import { promptFingerprint } from "../../src/domain/promptFingerprint.ts";
 
@@ -166,5 +166,51 @@ describe("shouldFollowThread and a one-on-one thread", () => {
   test("it is followed, whatever the blanket setting says", () => {
     expect(shouldFollowThread({ asked: false, ownThread: false, ownThreadsOff: true, oneOnOne: true })).toBe(true);
     expect(shouldFollowThread({ asked: false, ownThread: false, ownThreadsOff: false, oneOnOne: false })).toBe(false);
+  });
+});
+
+describe("followSkipReason", () => {
+  test("a candidate has no reason, and agrees with couldFollowThread", () => {
+    expect(followSkipReason(reply(), BOT)).toBeUndefined();
+    expect(couldFollowThread(reply(), BOT)).toBe(true);
+  });
+
+  test("each skip is named, so the log says why", () => {
+    expect(followSkipReason(reply({ subtype: "message_changed" }), BOT)).toBe("subtype:message_changed");
+    expect(followSkipReason(reply({ bot_id: "B1" }), BOT)).toBe("bot");
+    expect(followSkipReason(reply({ text: "  " }), BOT)).toBe("empty");
+    expect(followSkipReason(reply({ channel_type: "im" }), BOT)).toBe("dm");
+    expect(followSkipReason(reply({ thread_ts: undefined }), BOT)).toBe("not-a-reply");
+    expect(followSkipReason(reply({ user: BOT }), BOT)).toBe("self");
+    expect(followSkipReason(reply({ text: "<@UBOT> hi" }), BOT)).toBe("tagged");
+  });
+
+  test("a group DM reply is a candidate like any channel reply", () => {
+    expect(followSkipReason(reply({ channel_type: "mpim" }), BOT)).toBeUndefined();
+  });
+});
+
+describe("followVerdict", () => {
+  const base = { asked: false, ownThread: false, ownThreadsOff: false, oneOnOne: false };
+
+  test("it names the route that let a message in", () => {
+    expect(followVerdict({ ...base, asked: true })).toEqual({ follow: true, why: "asked" });
+    expect(followVerdict({ ...base, oneOnOne: true, ownThreadsOff: true })).toEqual({ follow: true, why: "one-on-one" });
+    expect(followVerdict({ ...base, ownThread: true })).toEqual({ follow: true, why: "own-thread" });
+  });
+
+  test("and why it kept a message out", () => {
+    expect(followVerdict({ ...base, ownThreadsOff: true, ownThread: true })).toEqual({ follow: false, why: "own-threads-off" });
+    expect(followVerdict(base)).toEqual({ follow: false, why: "not-ours" });
+  });
+
+  test("it always agrees with shouldFollowThread", () => {
+    for (const asked of [false, true])
+      for (const ownThread of [false, true])
+        for (const ownThreadsOff of [false, true])
+          for (const oneOnOne of [false, true]) {
+            const o = { asked, ownThread, ownThreadsOff, oneOnOne };
+            expect(followVerdict(o).follow).toBe(shouldFollowThread(o));
+          }
   });
 });
