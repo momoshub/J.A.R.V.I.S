@@ -56,3 +56,31 @@ describe("collapsedBlocks", () => {
     expect(blocks[0]?.type).toBe("context");
   });
 });
+
+describe("one grey line, not two", () => {
+  test("steps and cost share a single context block", () => {
+    // they were built separately and collided here; stacking two context
+    // blocks under one answer is the clutter this exists to remove
+    const blocks = collapsedBlocks(
+      "the answer",
+      { summary: "🔧 4 steps, 1 failed", failures: ["run: gh pr view"] },
+      "claude-opus-5-5 · in 95.9k · out 10.6k · $1.30 · 3m 16s",
+    );
+    expect(blocks.filter((b) => b.type === "context")).toHaveLength(1);
+    const text = JSON.stringify(blocks);
+    expect(text).toContain("4 steps, 1 failed");
+    expect(text).toContain("run: gh pr view");
+    expect(text).toContain("$1.30");
+  });
+
+  test("cost alone still gets its line, with no steps to summarise", () => {
+    const blocks = collapsedBlocks("the answer", undefined, "claude-opus-5-5 · $0.02 · 0m 4s");
+    expect(blocks).toHaveLength(2);
+    expect(JSON.stringify(blocks[1])).toContain("$0.02");
+  });
+
+  test("neither one means no block at all, rather than an empty grey bar", () => {
+    expect(collapsedBlocks("the answer")).toHaveLength(1);
+    expect(collapsedBlocks("the answer", undefined, "   ")).toHaveLength(1);
+  });
+});

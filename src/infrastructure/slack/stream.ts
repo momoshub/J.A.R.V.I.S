@@ -21,6 +21,7 @@ import { isHiddenAction } from "../../domain/toolVisibility.ts";
 import { MAX_SILENCE_NOTE } from "../../domain/silence.ts";
 import { createFenceNormalizer } from "./fences.ts";
 import type { FinishedStep } from "../../domain/collapseSteps.ts";
+import type { LlmUsage } from "../../application/ports.ts";
 import { createBlockKitExtractor, type Block, type Segment } from "../../domain/blockKit.ts";
 import type { LlmStreamEvent, LlmStreamSink } from "../../application/ports.ts";
 
@@ -71,6 +72,8 @@ export type SlackStream = {
    * `finish` to collapse the column of cards into one line.
    */
   readonly steps: readonly FinishedStep[];
+  /** What the run cost, once the CLI has reported it. Undefined until then. */
+  readonly usage: LlmUsage | undefined;
   /** Await pending appends and close the stream. False if it broke or showed no content. */
   finish: () => Promise<boolean>;
   /**
@@ -280,6 +283,7 @@ export const createSlackStream = (
     // An aborted run is the caller's to narrate (it knows what was at stake);
     // there is no card to draw for it.
     if (event.type === "aborted") return;
+    if (event.type === "usage") return;
     contentShown = true;
     // What the column showed, so it can be collapsed once the turn is done.
     // The thinking card is the bot's own placeholder, not a step anyone did.
@@ -313,6 +317,12 @@ export const createSlackStream = (
    * column has one card for it, so the summary must count one.
    */
   const shown = new Map<string, FinishedStep>();
+  /**
+   * What the run cost. It arrives once, at the very end, and is NOT content:
+   * it must never open a stream, end the thinking step, or count as something
+   * to show - it is written into the footer after the turn is over.
+   */
+  let usage: LlmUsage | undefined;
   const runsLabel = (title: string, count: number): string => {
     const suffix = ` (${count} runs)`;
     return title.length + suffix.length > 200 ? `${title.slice(0, 197 - suffix.length)}...${suffix}` : title + suffix;
@@ -355,6 +365,12 @@ export const createSlackStream = (
   let held = "";
 
   const sink: LlmStreamSink = (event: LlmStreamEvent) => {
+    // Kept for the footer and nothing else: it must not open a stream, end the
+    // thinking step, or count as content, all of which `forward` would do.
+    if (event.type === "usage") {
+      usage = event.usage;
+      return;
+    }
     // Hidden actions (reacting, remembering, anything on the local host) leave no
     // trace here: no card, and they do not count as content or end the thinking step.
     if (event.type === "tool" && isHiddenAction(event.command)) return;
@@ -393,6 +409,9 @@ export const createSlackStream = (
     },
     get steps() {
       return [...shown.values()];
+    },
+    get usage() {
+      return usage;
     },
     abandon: async () => {
       cancelPending();

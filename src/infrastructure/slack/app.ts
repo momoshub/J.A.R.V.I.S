@@ -54,6 +54,7 @@ import { toMrkdwn } from "../../domain/slackFormat.ts";
 import { toBlockMessage, type Block } from "../../domain/blockKit.ts";
 import { couldFollowThread, followVerdict, isOneOnOneThread } from "../../domain/threadFollow.ts";
 import { collapsedBlocks, collapseSteps } from "../../domain/collapseSteps.ts";
+import { usageFooter } from "../../domain/usageFooter.ts";
 import { isSilenceNote } from "../../domain/silence.ts";
 import { createSlackStream, type Streamer } from "./stream.ts";
 import {
@@ -330,12 +331,13 @@ export const createHandler =
         // Watching the cards arrive is how anyone knows the turn is alive, so
         // this only ever happens after it has finished.
         const collapsed = stream?.ts ? collapseSteps(stream.steps) : undefined;
-        if (collapsed && stream?.ts) {
+        const footer = stream?.usage ? usageFooter(stream.usage) : undefined;
+        if (stream?.ts && (collapsed || footer)) {
           const body = toMrkdwn(result.text);
           const rich = toBlockMessage(result.text, toMrkdwn);
           const blocks = rich?.blocks
-            ? [...rich.blocks, ...collapsedBlocks("", collapsed)]
-            : collapsedBlocks(body, collapsed);
+            ? [...rich.blocks, ...collapsedBlocks("", collapsed, footer)]
+            : collapsedBlocks(body, collapsed, footer);
           await msg.client.chat
             .update({ channel: msg.channelId, ts: stream.ts, text: body, blocks })
             // A tidy-up that fails must leave the answer exactly as it was.

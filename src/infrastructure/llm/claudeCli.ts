@@ -375,6 +375,9 @@ export const createClaudeCliLlm = (config: ClaudeCliConfig = {}): LlmPort => {
         // Recorded even when the run errored: a turn that burned nine minutes
         // and then failed cost exactly as much as one that worked.
         report(e, oauthToken, useHostLogin, bill);
+        // Also handed to the renderer, which puts it under the reply.
+        const u = usageOf(e);
+        if (u) emit({ type: "usage", usage: u });
         if (typeof e.result === "string") finalText = e.result;
       }
     };

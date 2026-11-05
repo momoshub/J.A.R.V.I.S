@@ -29,7 +29,12 @@ export type LlmStreamEvent =
    * already produced text). Whatever was streamed is a fragment, not an answer -
    * a consumer that would otherwise present it as the result must say so.
    */
-  | { readonly type: "aborted"; readonly reason: string };
+  | { readonly type: "aborted"; readonly reason: string }
+  /**
+   * What the run cost, from the CLI's final `result` line. Arrives once, at
+   * the end, so a renderer can put it under the reply.
+   */
+  | { readonly type: "usage"; readonly usage: LlmUsage };
 
 /** Consumer of streaming events (e.g. the Slack streaming renderer). */
 export type LlmStreamSink = (event: LlmStreamEvent) => void;

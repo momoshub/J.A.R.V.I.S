@@ -58,17 +58,29 @@ export const collapseSteps = (steps: readonly FinishedStep[]): Collapsed | undef
 /**
  * The rewritten message: the answer first, then what it took.
  *
+ * ONE grey line, not two. The step summary and the usage footer were built
+ * separately and collided in the same place, which is the honest reason they
+ * are merged here rather than stacked: two context blocks under one answer is
+ * exactly the clutter this is meant to remove.
+ *
  * The body goes in a `markdown` block, which Slack renders the same way the
  * streamed text was rendered, so collapsing does not change how the answer
- * looks - only what is above it.
+ * looks - only what sits under it.
  */
-export const collapsedBlocks = (body: string, collapsed: Collapsed): Block[] => {
+export const collapsedBlocks = (
+  body: string,
+  collapsed?: Collapsed,
+  /** `model · in 95.9k · out 10.6k · $1.30 · 3m 16s`, when the run reported it. */
+  footer?: string,
+): Block[] => {
   const blocks: Block[] = [];
   if (body.trim()) blocks.push({ type: "markdown", text: body });
-  const lines = [collapsed.summary, ...collapsed.failures.map((f) => `• ${f}`)];
-  blocks.push({
-    type: "context",
-    elements: [{ type: "mrkdwn", text: lines.join("\n") }],
-  });
+  const lines = [
+    ...(collapsed ? [collapsed.summary, ...collapsed.failures.map((f) => `• ${f}`)] : []),
+    ...(footer?.trim() ? [footer.trim()] : []),
+  ];
+  if (lines.length > 0) {
+    blocks.push({ type: "context", elements: [{ type: "mrkdwn", text: lines.join("\n") }] });
+  }
   return blocks;
 };

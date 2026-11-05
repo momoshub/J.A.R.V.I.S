@@ -539,3 +539,31 @@ describe("the steps a finished message showed", () => {
     expect(stream.steps).toEqual([]);
   });
 });
+
+describe("what the run cost", () => {
+  const usage = {
+    model: "claude-opus-5-5",
+    inputTokens: 10,
+    outputTokens: 20,
+    cacheReadTokens: 30,
+    cacheWriteTokens: 40,
+    costUsd: 1.5,
+    durationMs: 1000,
+  };
+
+  test("it is kept for the footer", () => {
+    const stream = createSlackStream(fakeStreamer().make);
+    stream.sink({ type: "usage", usage });
+    expect(stream.usage?.costUsd).toBe(1.5);
+  });
+
+  test("it never opens a stream, and never counts as content", () => {
+    // it arrives at the very end of EVERY run, including ones that said
+    // nothing - opening a message for it would post an empty reply
+    const f = fakeStreamer();
+    const stream = createSlackStream(f.make);
+    stream.sink({ type: "usage", usage });
+    expect(f.made()).toBe(0);
+    expect(stream.started).toBe(false);
+  });
+});
