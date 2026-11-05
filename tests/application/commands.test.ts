@@ -926,12 +926,30 @@ describe("dispatchCommand", () => {
     expect(out).toContain("no such category: nope");
   });
 
-  test("jrp drafts and posts a reply to the linked thread", async () => {
-    const deps = build();
+  test("jrp runs a real turn in the linked thread instead of posting a blind draft", async () => {
+    const ran: { channelId: string; threadTs: string; slackUserId: string; text: string }[] = [];
+    const deps = { ...build(), runTurn: async (r: (typeof ran)[number]) => void ran.push(r) };
     const out = await dispatchCommand(deps, actor(), "C1", `jrp ${LINK}`);
-    expect(out).toContain("posted");
-    expect(slackCalls.posts).toHaveLength(1);
-    expect(slackCalls.posts[0]).toMatchObject({ channel: "C0TEST00001", text: "an AI-drafted reply", threadTs: "1787122692.303399" });
+    expect(out).toContain("on it");
+    expect(slackCalls.posts).toHaveLength(0);
+    expect(ran).toHaveLength(1);
+    expect(ran[0]).toMatchObject({ channelId: "C0TEST00001", threadTs: "1787122692.303399" });
+    expect(ran[0]?.text).toContain("ts 1787122692.303399");
+    expect(ran[0]?.text).toContain("attachment");
+  });
+
+  test("jrp on a reply link answers in its thread, and passes on what to say", async () => {
+    const ran: { threadTs: string; text: string }[] = [];
+    const deps = { ...build(), runTurn: async (r: { threadTs: string; text: string }) => void ran.push(r) };
+    const reply = "<https://team.slack.com/archives/C0TEST00001/p1787122699000001?thread_ts=1787122692.303399&amp;cid=C0TEST00001>";
+    await dispatchCommand(deps, actor(), "C1", `jrp ${reply} it is fixed now`);
+    expect(ran[0]?.threadTs).toBe("1787122692.303399");
+    expect(ran[0]?.text).toContain("ts 1787122699.000001");
+    expect(ran[0]?.text).toContain("What to tell them: it is fixed now");
+  });
+
+  test("jrp says so when it cannot start a turn", async () => {
+    expect(await dispatchCommand(build(), actor(), "C1", `jrp ${LINK}`)).toContain("cannot start a turn");
   });
 
   test("rm-msg deletes the linked message", async () => {

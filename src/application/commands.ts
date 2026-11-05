@@ -2452,18 +2452,30 @@ Up to ${BOMB_SIZE} reactions; no category means *${DEFAULT_CATEGORY}*.`;
     name: "reply",
     aliases: ["jrp"],
     minRole: "admin",
-    usage: "<message-link>",
-    summary: "draft and post an AI reply to a message",
-    run: async ({ deps, args, prefix }) => {
-      if (!deps.slack || !deps.draft) return "Slack tools are not available.";
-      const ref = parseMessageLink((args[0] ?? "").replace(/^<|>$/g, ""));
+    usage: "<message-link> [what to tell them]",
+    summary: "answer a message properly, in its own thread",
+    run: async ({ deps, actor, args, prefix }) => {
+      // A real turn in that thread, not a one-shot draft. The draft saw names
+      // instead of ids, so it broke tags, and it never opened a screenshot or
+      // looked anything up - it answered the words and missed the problem.
+      if (!deps.runTurn) return "I cannot start a turn from here right now.";
+      const link = (args[0] ?? "").replace(/^<|>$/g, "").replace(/&amp;/g, "&");
+      const ref = parseMessageLink(link);
       if (!ref) return `Paste a Slack message link: \`${prefix} reply <message-link>\``;
-      const thread = await deps.slack.replies(ref.channel, ref.ts);
-      if (thread.length === 0) return "I could not read that message (am I in the channel?).";
-      const draft = await deps.draft(thread);
-      if (!draft.trim()) return "I could not draft a reply for that one.";
-      await deps.slack.post(ref.channel, draft, ref.ts);
-      return "posted a reply in that thread 🙈";
+      const root = link.match(/[?&]thread_ts=(\d+\.\d+)/)?.[1] ?? ref.ts;
+      const said = args.slice(1).join(" ").trim();
+      const text = [
+        `<@${actor.slackId}> wants you to answer the message at ts ${ref.ts} in this thread, posted by someone else.`,
+        "Read the whole thread first, open every link and attachment on that message, and investigate whatever it needs before you answer.",
+        "Address its author by their Slack tag, not the person who asked you, and do not ask them for anything the thread already shows.",
+        said ? `What to tell them: ${said}` : "",
+      ]
+        .filter(Boolean)
+        .join("\n");
+      // Not awaited: a real answer can take minutes, and the person who asked
+      // should not hold a command open for it. The turn posts its own reply.
+      void deps.runTurn({ channelId: ref.channel, threadTs: root, slackUserId: actor.slackId, text }).catch(() => {});
+      return "on it, answering in that thread 🙈";
     },
   },
 ];

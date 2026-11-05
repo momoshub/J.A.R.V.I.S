@@ -8,6 +8,7 @@ import type { PromptMessage } from "../../src/domain/types.ts";
 import type { SlackAdminPort, SlackMessage } from "../../src/application/slackAdmin.ts";
 import { createThreadSessionRepo } from "../../src/infrastructure/db/threadSessionRepo.ts";
 import type { LlmCompleteParams } from "../../src/application/ports.ts";
+import { syntheticTs } from "../../src/domain/slackLinks.ts";
 
 const slackMsg = (over: Partial<SlackMessage> & { ts: string; userId: string; text: string }): SlackMessage => ({
   userName: "",
@@ -343,6 +344,28 @@ describe("handleMessage", () => {
       messageTs: "100.2",
     });
     expect(seen.map((m) => m.content)).toEqual(["first", "the new one"]);
+  });
+
+  test("a turn nobody's message triggered reads the WHOLE thread and still gets its instruction", async () => {
+    // `reply` / `mindful` start a turn with no message of their own. Using the
+    // root's ts as the trigger cut the thread at the root and lost the ask.
+    let seen: readonly PromptMessage[] = [];
+    const deps = build(fakeLlm("ok", (m) => (seen = m)));
+    deps.slack = {
+      ...noopSlack,
+      replies: async () => [
+        slackMsg({ ts: "100.1", userId: OWNER, text: "the env is up" }),
+        slackMsg({ ts: "100.2", userId: "U2", text: "didn't work" }),
+      ],
+    };
+    await handleMessage(deps, {
+      channelId: "D1",
+      slackUserId: OWNER,
+      text: "answer U2",
+      threadTs: "100.1",
+      messageTs: syntheticTs(200_000),
+    });
+    expect(seen.map((m) => m.content)).toEqual(["the env is up", "didn't work", "answer U2"]);
   });
 
   test("falls back to stored memory when the thread cannot be read", async () => {

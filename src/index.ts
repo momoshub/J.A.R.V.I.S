@@ -58,6 +58,7 @@ import { describeUiAccess, needsAttention } from "./domain/uiAccess.ts";
 import { createSlackAdmin } from "./infrastructure/slack/adminClient.ts";
 import { createGhCli } from "./infrastructure/github/ghCli.ts";
 import { createDraftReply } from "./application/draftReply.ts";
+import { syntheticTs } from "./domain/slackLinks.ts";
 import { toolPolicyFor } from "./domain/toolPolicy.ts";
 import { logSourceOrder } from "./domain/investigation.ts";
 import { createDashboard } from "./infrastructure/dashboard/server.ts";
@@ -335,7 +336,7 @@ const main = async () => {
         slackUserId,
         text,
         threadTs,
-        messageTs: threadTs,
+        messageTs: syntheticTs(clock()),
         viaSlash: false,
         following: false,
       });
