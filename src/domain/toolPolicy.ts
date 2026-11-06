@@ -193,6 +193,7 @@ export const EXECUTER_CODE_TOOLS: readonly string[] = [
  */
 const executerBrowserTools = (opts: ToolPolicyOptions): readonly string[] => [
   ...(opts.macUiScript ? [`Bash(${opts.macUiScript}:*)`] : []),
+  ...(opts.agentDesktop ? [`Bash(${opts.agentDesktop}:*)`] : []),
   ...(opts.browserScripts ?? []).map((s) => `Bash(osascript -l JavaScript ${s}:*)`),
   ...(opts.uploadScript ? [`Bash(${opts.uploadScript}:*)`] : []),
   "Bash(screencapture:*)", "Bash(sips:*)",
@@ -267,6 +268,8 @@ export type ToolPolicyOptions = {
   readonly slackReadScript?: string;
   /** Absolute path of the Accessibility driver (`bin/mac-ui.js`): executer only. */
   readonly macUiScript?: string;
+  /** Absolute path of the agent-desktop binary, the second AX driver: executer only. */
+  readonly agentDesktop?: string;
   /** Absolute paths of the JXA browser helpers (real click, keys): executer only. */
   readonly browserScripts?: readonly string[];
   /** Absolute path of the Slack thread upload helper: executer only. */

@@ -119,6 +119,8 @@ export type HandleMessageDeps = {
   slackWaitScript?: string;
   /** Absolute path of the desktop driver (`bin/mac-ui.js`). */
   macUiScript?: string;
+  /** Absolute path of the agent-desktop binary, when it is installed. */
+  agentDesktop?: string;
   /** Absolute path of the claude.ai artifact reader. */
   artifactScript?: string;
   /** Absolute path of the verify-and-restart helper. Admin+ only; see below. */
@@ -275,6 +277,7 @@ export const handleMessage = async (
     // to the roles whose tool policy grants it: full access, and executers for
     // browser testing.
     macUiScript: canDrive(decision.user.role) ? deps.macUiScript : undefined,
+    agentDesktop: canDrive(decision.user.role) ? deps.agentDesktop : undefined,
     // ... and keep a durable fact, but only when talking to someone who could
     // have taught it one by hand. Learnings apply to everyone, everywhere.
     learnUrl: canTeach(decision.user.role) ? deps.learnUrl : undefined,

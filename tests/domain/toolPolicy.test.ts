@@ -155,6 +155,12 @@ describe("toolPolicyFor", () => {
     ]);
   });
 
+  test("an executer may run agent-desktop by its path, a pal may not", () => {
+    const withBin = { ...opts, agentDesktop: "/opt/homebrew/bin/agent-desktop" };
+    expect(toolPolicyFor("executer", withBin).allowedTools).toContain("Bash(/opt/homebrew/bin/agent-desktop:*)");
+    expect(toolPolicyFor("pal", withBin).allowedTools).not.toContain("Bash(/opt/homebrew/bin/agent-desktop:*)");
+  });
+
   test("an executer writes code and opens a PR, a pal does not", () => {
     const exe = toolPolicyFor("executer", { ...opts, protectedPaths: ["/opt/jarvis"] });
     for (const t of ["Write", "Edit", "Bash(git commit:*)", "Bash(git push:*)", "Bash(gh pr create:*)", "Bash(gh repo clone:*)"]) {
