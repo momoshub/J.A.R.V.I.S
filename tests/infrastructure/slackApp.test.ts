@@ -458,8 +458,64 @@ describe("Block Kit the brain built", () => {
     expect(order).toEqual(["update", "turn"]);
     expect(updates[0]).toMatchObject({ channel: "C1", ts: "200.2", text: "Which?" });
     const blocks = updates[0]?.blocks as { type: string; elements?: { text?: string }[] }[];
-    expect(blocks.map((b) => b.type)).toEqual(["section", "context"]);
-    expect(blocks[1]?.elements?.[0]?.text).toContain("<@U2> chose *Option A*");
+    expect(blocks.map((b) => b.type)).toEqual(["section", "actions", "context"]);
+    expect(JSON.stringify(blocks[1])).toContain("jv:settled:a");
+    expect(blocks[2]?.elements?.[0]?.text).toContain("<@U2> chose *Option A*");
+  });
+
+  test("a press on a settled button is acked and does nothing", async () => {
+    const r = rig();
+    await r.onKitAction({
+      ack: r.ack,
+      client: r.client,
+      body: { user: { id: "U2" }, channel: { id: "C1" }, message: { ts: "200.2", blocks: choice } },
+      action: { action_id: "jv:settled:a", type: "button", value: "a" },
+    });
+    expect(r.acks).toHaveLength(1);
+    expect(r.turns).toHaveLength(0);
+  });
+
+  const vote = [
+    { type: "section", text: { type: "mrkdwn", text: "Quiz" } },
+    { type: "actions", block_id: "q1", elements: [
+      { type: "button", action_id: "jv:a", text: { type: "plain_text", text: "A" }, value: "a" },
+      { type: "button", action_id: "jv:b", text: { type: "plain_text", text: "B" }, value: "b" },
+    ] },
+    { type: "actions", block_id: "go", elements: [{ type: "button", action_id: "jv:submit", text: { type: "plain_text", text: "Submit" } }] },
+  ];
+
+  test("a vote counts every pick on the message, even at once, and only submit makes a turn", async () => {
+    const r = rig();
+    const updates: Record<string, unknown>[] = [];
+    const client = { ...r.client, chat: { ...r.client.chat, update: async (a: Record<string, unknown>) => {
+      await new Promise((ok) => setTimeout(ok, 5));
+      updates.push(a);
+    } } };
+    const press = (user: string, id: string, label: string, blockId: string) =>
+      r.onKitAction({
+        ack: r.ack,
+        client,
+        body: { user: { id: user }, channel: { id: "C1" }, message: { ts: "300.0", thread_ts: "100.1", text: "Quiz", blocks: vote } },
+        action: { action_id: id, type: "button", block_id: blockId, text: { text: label } },
+      });
+    await Promise.all([press("U1", "jv:a", "A", "q1"), press("U2", "jv:b", "B", "q1")]);
+    expect(r.turns).toHaveLength(0);
+    expect(JSON.stringify(updates.at(-1)?.blocks)).toContain("<@U1> *A*   |   <@U2> *B*");
+    await press("U3", "jv:submit", "Submit", "go");
+    expect(r.turns).toHaveLength(1);
+    expect(r.turns[0]?.text).toContain("pressed submit");
+    expect(r.turns[0]?.text).toContain("<@U1> A, <@U2> B");
+    expect(JSON.stringify(updates.at(-1)?.blocks)).toContain("<@U3> submitted");
+  });
+
+  test("a typed reply leaves an open vote alone", async () => {
+    const updates: unknown[] = [];
+    const client = {
+      conversations: { replies: async () => ({ messages: [{ ts: "150.0", user: "UBOT", text: "Quiz", blocks: vote }] }) },
+      chat: { update: async (a: unknown) => void updates.push(a) },
+    };
+    expect(await retireOpenKit(client, "UBOT", { channel: "C1", ts: "200.0", thread_ts: "100.1", user: "U1" }, () => {})).toBe(0);
+    expect(updates).toHaveLength(0);
   });
 
   test("a checkbox press leaves the message live", async () => {

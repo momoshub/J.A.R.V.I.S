@@ -195,7 +195,9 @@ Interactive Block Kit (buttons, selects, modals):
   -> {"ok":true,"action_id":"jv:modal:<id>"}. The submission comes back here as a turn listing every field as block_id.action_id: value. Add "notify_on_close":true to hear about a cancel too
 - external selects (options loaded live) are not supported: use static options
 - a question with a fixed set of answers (a or b, yes or no, pick one of these) is asked with buttons, never as lettered options in text. Put the question in a section block and one jv: button per answer, the value naming the answer
-- you do not disable them yourself: a press locks the message at once, showing who chose what, and a typed reply in the thread retires any buttons still open. Just act on the answer
+- you do not disable them yourself: a press settles the message at once - the buttons stay, inert, the chosen one marked - and a typed reply in the thread settles any buttons still open. Just act on the answer
+- make it look good: a header block, a section with an image accessory when one fits, emoji in button labels, a divider and a context line. Never colour a button in a way that gives away the answer
+- for a question several people should answer (a quiz or poll in a channel), add a "jv:submit" button. Then a press only records that person's pick in a tally under the question (one per person, pressing it again takes it back) and nothing comes to you, and typed replies leave it open. You get one turn when someone presses submit, listing everyone's picks
 - a turn is not instant, so when a press needs a visible reaction, update the message with chat.update once you have acted on it`;
 };
 
@@ -225,11 +227,31 @@ export const locksOnPress = (type: string | undefined, actionId: string): boolea
 
 export type KitBlock = Record<string, unknown>;
 
-type Element = { action_id?: unknown; text?: { text?: unknown } };
+/**
+ * A settled element keeps its place and its looks but no longer belongs to a
+ * live question: the `jv:settled:` id makes a later press a no-op instead of
+ * a fresh turn. Buttons people liked looking at stay on the message this way.
+ */
+export const KIT_SETTLED_PREFIX = "jv:settled:";
+export const isSettled = (actionId: string): boolean => actionId.startsWith(KIT_SETTLED_PREFIX);
 
-const isKitElement = (e: unknown): boolean =>
-  typeof e === "object" && e !== null && typeof (e as Element).action_id === "string" &&
-  KIT_PATTERN.test((e as Element).action_id as string);
+/**
+ * A message with a `jv:submit...` button is a vote: every other button only
+ * records the presser's pick on the message, and the turn waits for submit.
+ */
+export const isSubmit = (actionId: string): boolean => actionId.startsWith(`${KIT_PREFIX}submit`);
+
+type Element = { action_id?: unknown; type?: unknown; style?: unknown; text?: { type?: unknown; text?: unknown } };
+
+const idOf = (e: unknown): string | undefined =>
+  typeof e === "object" && e !== null && typeof (e as Element).action_id === "string"
+    ? ((e as Element).action_id as string)
+    : undefined;
+
+const isKitElement = (e: unknown): boolean => {
+  const id = idOf(e);
+  return !!id && KIT_PATTERN.test(id) && !isSettled(id);
+};
 
 const blockHasKit = (b: KitBlock): boolean =>
   (Array.isArray(b.elements) && b.type === "actions" && b.elements.some(isKitElement)) || isKitElement(b.accessory);
@@ -237,36 +259,62 @@ const blockHasKit = (b: KitBlock): boolean =>
 /** Whether a posted message still carries elements of ours someone could press. */
 export const hasLiveKit = (blocks: readonly KitBlock[] | undefined): boolean => (blocks ?? []).some(blockHasKit);
 
+const elementsOf = (b: KitBlock): unknown[] =>
+  b.type === "actions" && Array.isArray(b.elements) ? b.elements : b.accessory ? [b.accessory] : [];
+
+/** Whether the message is a vote, still open for picks. */
+export const isVote = (blocks: readonly KitBlock[] | undefined): boolean =>
+  (blocks ?? []).some((b) => elementsOf(b).some((e) => isKitElement(e) && isSubmit(idOf(e) ?? "")));
+
 /** What the person picked, as they saw it: the button's label, or the option's. */
 export const pickedLabel = (a: KitElementState & { text?: { text?: string } }): string | undefined =>
   a.text?.text ?? a.selected_option?.text?.text ?? elementValue(a);
 
+const PICKED_MARK = "✅ ";
+
+/** A live button made inert, marked when it is the one that was chosen. */
+const settleButton = (e: Element, picked: string | undefined): Element => {
+  const id = idOf(e) ?? "";
+  const { style: _style, ...rest } = e;
+  const label = typeof e.text?.text === "string" ? e.text.text : "";
+  return id === picked
+    ? { ...rest, action_id: `${KIT_SETTLED_PREFIX}${id.slice(KIT_PREFIX.length)}`, style: "primary",
+        text: { ...e.text, type: "plain_text", text: `${PICKED_MARK}${label}` } }
+    : { ...rest, action_id: `${KIT_SETTLED_PREFIX}${id.slice(KIT_PREFIX.length)}` };
+};
+
+const settleElement = (e: unknown, picked: string | undefined): unknown[] => {
+  if (!isKitElement(e)) return [e];
+  return (e as Element).type === "button" ? [settleButton(e as Element, picked)] : [];
+};
+
 /**
- * The message with every `jv:` element taken out and one context line where
- * the first of them stood, saying how it was settled. Anything else - the
- * question, other people's elements - is kept as it was.
+ * The message once its question is settled. Our buttons stay where they were
+ * but go inert, the one pressed (`picked`) marked as chosen. Our other
+ * elements - selects, pickers - are taken out, since a select left in place
+ * still looks changeable. One context line saying how it was settled goes
+ * after the first block we touched. Everything else is kept as it was.
  */
-export const retireKit = (blocks: readonly KitBlock[], note: string): KitBlock[] => {
+export const retireKit = (blocks: readonly KitBlock[], note: string, picked?: string): KitBlock[] => {
   const out: KitBlock[] = [];
   let noted = false;
-  const mark = () => {
-    if (noted) return;
-    noted = true;
-    out.push({ type: "context", elements: [{ type: "mrkdwn", text: note }] });
-  };
   for (const b of blocks) {
     if (!blockHasKit(b)) {
       out.push(b);
       continue;
     }
     if (b.type === "actions" && Array.isArray(b.elements)) {
-      const rest = b.elements.filter((e) => !isKitElement(e));
+      const rest = b.elements.flatMap((e) => settleElement(e, picked));
       if (rest.length) out.push({ ...b, elements: rest });
     } else {
-      const { accessory: _gone, ...kept } = b;
-      out.push(kept);
+      const [kept] = settleElement(b.accessory, picked);
+      const { accessory: _gone, ...plain } = b;
+      out.push(kept ? { ...plain, accessory: kept } : plain);
     }
-    mark();
+    if (!noted) {
+      noted = true;
+      out.push({ type: "context", elements: [{ type: "mrkdwn", text: note }] });
+    }
   }
   return out;
 };
@@ -275,3 +323,69 @@ export const pressedNote = (userId: string, label: string | undefined): string =
   `:white_check_mark: <@${userId}> chose${label ? ` *${label}*` : ""}`;
 
 export const repliedNote = (userId: string): string => `:speech_balloon: <@${userId}> answered in the thread`;
+
+export const submittedNote = (userId: string): string => `:incoming_envelope: <@${userId}> submitted`;
+
+/** The tally of one actions block lives in a context block right after it. */
+const VOTES_PREFIX = "jv-votes:";
+const VOTE_PATTERN = /<@([A-Z0-9]+)> \*(.+?)\*/g;
+const VOTE_SEPARATOR = "   |   ";
+
+const tallyText = (b: KitBlock): string => {
+  const el = Array.isArray(b.elements) ? (b.elements[0] as { text?: unknown } | undefined) : undefined;
+  return typeof el?.text === "string" ? el.text : "";
+};
+
+/** Who picked what so far in one block's tally, in the order they first picked. */
+export const readVotes = (blocks: readonly KitBlock[], blockId: string): Map<string, string> => {
+  const tally = blocks.find((b) => b.block_id === `${VOTES_PREFIX}${blockId}`);
+  const votes = new Map<string, string>();
+  for (const m of tally ? tallyText(tally).matchAll(VOTE_PATTERN) : []) votes.set(m[1]!, m[2]!);
+  return votes;
+};
+
+const tallyBlock = (blockId: string, votes: ReadonlyMap<string, string>): KitBlock => ({
+  type: "context",
+  block_id: `${VOTES_PREFIX}${blockId}`,
+  elements: [
+    {
+      type: "mrkdwn",
+      text: `:ballot_box_with_ballot: ${[...votes].map(([u, l]) => `<@${u}> *${l}*`).join(VOTE_SEPARATOR)}`,
+    },
+  ],
+});
+
+/**
+ * One person's pick on a vote: it replaces their earlier pick in that block,
+ * and pressing the same answer again takes it back. Each person has one
+ * answer per question, and everyone sees the tally under it.
+ */
+export const castVote = (blocks: readonly KitBlock[], blockId: string, userId: string, label: string): KitBlock[] => {
+  const votes = readVotes(blocks, blockId);
+  if (votes.get(userId) === label) votes.delete(userId);
+  else votes.set(userId, label);
+  const id = `${VOTES_PREFIX}${blockId}`;
+  const out: KitBlock[] = [];
+  for (const b of blocks) {
+    if (b.block_id === id) continue;
+    out.push(b);
+    if (b.block_id === blockId && votes.size) out.push(tallyBlock(blockId, votes));
+  }
+  return out;
+};
+
+/** Every tally on the message, as lines a submit turn can read. */
+export const voteLines = (blocks: readonly KitBlock[]): string[] =>
+  blocks
+    .filter((b) => typeof b.block_id === "string" && b.block_id.startsWith(VOTES_PREFIX))
+    .map((b) => {
+      const votes = readVotes(blocks, (b.block_id as string).slice(VOTES_PREFIX.length));
+      return `- block \`${(b.block_id as string).slice(VOTES_PREFIX.length)}\`: ${[...votes].map(([u, l]) => `<@${u}> ${l}`).join(", ")}`;
+    });
+
+/** The turn a vote's submit becomes: who closed it, and what everyone picked. */
+export const describeVote = (userId: string, actionId: string, lines: readonly string[]): string =>
+  [
+    `[block kit event] <@${userId}> pressed submit (\`${actionId}\`) on a vote in this thread. The answers:`,
+    ...(lines.length ? lines : ["- nobody picked anything"]),
+  ].join("\n");

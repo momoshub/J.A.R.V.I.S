@@ -10,6 +10,13 @@ import {
   locksOnPress,
   pickedLabel,
   retireKit,
+  castVote,
+  describeVote,
+  isSettled,
+  isSubmit,
+  isVote,
+  readVotes,
+  voteLines,
   KIT_PATTERN,
   kitRules,
   modalIdOf,
@@ -170,23 +177,35 @@ describe("answered questions lock", () => {
     expect(locksOnPress(undefined, "jv:x")).toBe(false);
   });
 
-  test("retiring drops our elements, keeps the question and leaves one note", () => {
-    const out = retireKit(question, "chose a");
-    expect(out).toEqual([question[0]!, { type: "context", elements: [{ type: "mrkdwn", text: "chose a" }] }]);
+  test("settling keeps our buttons inert, marks the pick and leaves one note", () => {
+    const out = retireKit(question, "chose a", "jv:pick-a");
+    expect(out).toEqual([
+      question[0]!,
+      {
+        type: "actions",
+        elements: [
+          { type: "button", action_id: "jv:settled:pick-a", style: "primary", text: { type: "plain_text", text: "✅ a) backup" }, value: "a" },
+          { type: "button", action_id: "jv:settled:pick-b", text: { type: "plain_text", text: "b) API" }, value: "b" },
+        ],
+      },
+      { type: "context", elements: [{ type: "mrkdwn", text: "chose a" }] },
+    ]);
     expect(hasLiveKit(question)).toBe(true);
     expect(hasLiveKit(out)).toBe(false);
+    expect(isSettled("jv:settled:pick-a")).toBe(true);
+    expect(retireKit(out, "again")).toEqual(out);
   });
 
-  test("elements that are not ours stay, and an accessory of ours goes", () => {
+  test("settling without a pick drops colours, and selects of ours go", () => {
     const mixed = [
-      { type: "section", text: { type: "mrkdwn", text: "q" }, accessory: { type: "button", action_id: "jv:go" } },
-      { type: "actions", elements: [{ type: "button", action_id: "approve" }, { type: "button", action_id: "jv:b" }] },
+      { type: "section", text: { type: "mrkdwn", text: "q" }, accessory: { type: "static_select", action_id: "jv:go" } },
+      { type: "actions", elements: [{ type: "button", action_id: "approve" }, { type: "button", action_id: "jv:b", style: "danger" }] },
     ];
     const out = retireKit(mixed, "done");
     expect(out).toEqual([
       { type: "section", text: { type: "mrkdwn", text: "q" } },
       { type: "context", elements: [{ type: "mrkdwn", text: "done" }] },
-      { type: "actions", elements: [{ type: "button", action_id: "approve" }] },
+      { type: "actions", elements: [{ type: "button", action_id: "approve" }, { type: "button", action_id: "jv:settled:b" }] },
     ]);
     expect(hasLiveKit(undefined)).toBe(false);
   });
@@ -199,5 +218,57 @@ describe("answered questions lock", () => {
 
   test("the brain is told to ask choices with buttons", () => {
     expect(kitRules("http://x")).toContain("asked with buttons");
+  });
+});
+
+describe("votes wait for submit", () => {
+  const vote = [
+    { type: "section", text: { type: "mrkdwn", text: "Which one?" } },
+    {
+      type: "actions",
+      block_id: "q1",
+      elements: [
+        { type: "button", action_id: "jv:q1-a", text: { type: "plain_text", text: "A" }, value: "a" },
+        { type: "button", action_id: "jv:q1-b", text: { type: "plain_text", text: "B" }, value: "b" },
+      ],
+    },
+    { type: "actions", block_id: "go", elements: [{ type: "button", action_id: "jv:submit", text: { type: "plain_text", text: "Submit" } }] },
+  ];
+
+  test("a submit button makes it a vote, until it is settled", () => {
+    expect(isSubmit("jv:submit")).toBe(true);
+    expect(isSubmit("jv:submit-quiz")).toBe(true);
+    expect(isSubmit("jv:q1-a")).toBe(false);
+    expect(isVote(vote)).toBe(true);
+    expect(isVote(vote.slice(0, 2))).toBe(false);
+    expect(isVote(retireKit(vote, "submitted", "jv:submit"))).toBe(false);
+  });
+
+  test("each person has one pick per question, shown under it", () => {
+    let blocks = castVote(vote, "q1", "U1", "A");
+    blocks = castVote(blocks, "q1", "U2", "B");
+    blocks = castVote(blocks, "q1", "U1", "B");
+    expect(blocks[2]).toEqual({
+      type: "context",
+      block_id: "jv-votes:q1",
+      elements: [{ type: "mrkdwn", text: ":ballot_box_with_ballot: <@U1> *B*   |   <@U2> *B*" }],
+    });
+    expect(blocks.length).toBe(vote.length + 1);
+    expect([...readVotes(blocks, "q1")]).toEqual([["U1", "B"], ["U2", "B"]]);
+  });
+
+  test("pressing your pick again takes it back, and an empty tally goes", () => {
+    const once = castVote(vote, "q1", "U1", "A");
+    expect(castVote(once, "q1", "U1", "A")).toEqual(vote);
+  });
+
+  test("submit hands over every pick", () => {
+    const blocks = castVote(castVote(vote, "q1", "U1", "A"), "q1", "U2", "B");
+    const lines = voteLines(blocks);
+    expect(lines).toEqual(["- block `q1`: <@U1> A, <@U2> B"]);
+    const turn = describeVote("U3", "jv:submit", lines);
+    expect(turn).toStartWith("[block kit event] <@U3> pressed submit");
+    expect(turn).toContain("<@U1> A, <@U2> B");
+    expect(describeVote("U3", "jv:submit", [])).toContain("nobody picked");
   });
 });
