@@ -86,8 +86,18 @@ describe("messages", () => {
     const text = fixPrompt(issue, "/src", "/src/bin/restart.sh");
     expect(text).toContain("/src/bin/restart.sh");
     expect(text).toContain("never revert");
-    expect(text).toContain("do not commit");
     expect(text).toContain("RESULT: fixed");
+  });
+
+  test("the fix runs in its own worktree and lands through a merged PR, never in the main folder", () => {
+    const text = fixPrompt(issue, "/src", "/src/bin/restart.sh");
+    expect(text).toContain("never edit /src itself");
+    expect(text).toContain(`worktree add /src/.claude/worktrees/issue-${issue.id} -b fix/issue-${issue.id} origin/main`);
+    expect(text).toContain("merge it yourself");
+    expect(text).toContain("git -C /src pull --ff-only origin main");
+    expect(text).not.toContain("do not commit");
+    // the restart comes last, after the merge is pulled home
+    expect(text.indexOf("pull --ff-only")).toBeLessThan(text.indexOf("/src/bin/restart.sh"));
   });
 
   test("after notices", () => {
