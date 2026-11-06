@@ -10,6 +10,7 @@
  * to the same line via `commandLineOf` and run through `dispatchCommand`, which
  * enforces per-command role gates before touching repos or the brain.
  */
+import type { ReviewGuard } from "./reviewGuard.ts";
 import { buildSystemPrompt, DEFAULT_BOT_NAME } from "../domain/personality.ts";
 import { refinePrompt } from "../domain/refinePrompt.ts";
 import { notePrompt } from "../domain/notePrompt.ts";
@@ -202,6 +203,8 @@ export type CommandDeps = {
   totp?: TotpPort;
   /** In-flight turns, so `stop` can end one without waiting it out. */
   runs?: RunRegistry;
+  /** One review per PR at a time, across the review inbox and `review`. */
+  reviewGuard?: ReviewGuard;
   /** Read-only Grafana helper, so an investigation can reach a non-Loki datasource. */
   grafanaGetScript?: string;
   /** One CLI session per thread, for the `session` command to inspect and reset. */
@@ -1903,8 +1906,8 @@ export const COMMANDS: readonly CommandDef[] = [
       // this, `review help` spawned a full review of a PR named "help" - minutes
       // of work on the asker's own credential, to answer a question.
       const shorthand = urls.length === 0 ? rest.filter(looksLikePrRef) : [];
-      const targets = urls.length > 0 ? urls : shorthand;
-      if (targets.length === 0) {
+      const wanted = urls.length > 0 ? urls : shorthand;
+      if (wanted.length === 0) {
         return `Which PR? \`${prefix} review <pr-url>\` - or \`${prefix} review help\` for how I do it.`;
       }
       // Anything typed alongside the urls is guidance: "the migration is the
@@ -1949,120 +1952,146 @@ export const COMMANDS: readonly CommandDef[] = [
       }
       const policyFor = (url: string): ReviewPolicy =>
         palOnly ? "approve-after" : (override ?? configured.get(url) ?? DEFAULT_REVIEW_POLICY);
-      // Repositories on `approve-after` are left alone until the review is in.
-      const afterReview = urls.filter((u) => policyFor(u) === "approve-after");
+      // One review per PR. A GitHub review request and a `review` typed here
+      // both land in this command, and two runs mean two approvals and two
+      // comments on the same PR. A PR already in hand is pointed at, not redone.
+      const busy: string[] = [];
+      const mine: string[] = [];
       for (const url of urls) {
-        if (afterReview.includes(url)) continue;
-        const res = await deps.github?.approve(url);
-        if (!res) break; // no gh wired up - leave it to the brain
-        const line = res.ok ? `✅ approved ${url}` : `⚠️ could not approve ${url} - ${res.error}`;
-        if (res.ok) {
-          seen.add(line);
-          approvedUpFront.push(url);
-        }
-        announcements.push(line);
-      }
-
-      const params = {
-        system: reviewPrompt(targets, name, await account, approvedUpFront, reviewAgentsOf(deps), note),
-        messages: [{ role: "user" as const, content: `review ${targets.join(" ")}${note ? `\n\n${note}` : ""}` }],
-        assistantName: name,
-        policy,
-        oauthToken,
-        bill: { actor: actor.slackId, kind: "review", channel: channelId, threadTs: ctx.threadTs },
-      };
-
-      // No live destination (tests / slack off): one-shot, return the text.
-      if (!reply) {
-        const out = await deps.llm.complete(params);
-        return out.trim() || "I could not put a review together for that one.";
-      }
-
-      // Live: post progress as each PR action lands, then the review itself. The
-      // destination is chosen by the transport - thread for a message command, DM
-      // for a slash command - so nothing is hidden in an ephemeral reply.
-      for (const line of announcements) await reply(line);
-      await reply(
-        `🔍 reviewing ${targets.join(" ")}` +
-          (override ? `\n_${override}, for this run only_` : "") +
-          (note ? `\n_looking at: ${note}_` : ""),
-      );
-
-      let out = "";
-      // Set when the run was killed mid-flight. What streamed is then a fragment
-      // of a review, never the review, and must not be presented as one.
-      let cutOff = "";
-      if (deps.llm.stream) {
-        const announce = (line: string): void => {
-          if (seen.has(line)) return;
-          seen.add(line);
-          void reply(line);
-        };
-        // Review comments posted so far, so a late follow-up is labelled as one.
-        let comments = 0;
-        // The only PR url we can attribute an action to when the command itself
-        // carries none (e.g. `gh pr review 2149 --repo ...`).
-        const soleUrl = targets.length === 1 ? (targets[0]?.match(PR_URL)?.[0] ?? "") : "";
-        out = await deps.llm.stream(params, (ev) => {
-          if (ev.type === "aborted") {
-            cutOff = ev.reason;
-            return;
-          }
-          if (ev.type !== "tool" || ev.status !== "complete") return;
-          // Match the command in full, never the card title: the title is clipped
-          // at 200 chars, and a `gh pr review` written after a heredoc body sits
-          // well past that - which is how a request-changes went unannounced.
-          const ran = ev.command ?? ev.title;
-          const t = ran.toLowerCase();
-          const url = ran.match(PR_URL)?.[0] ?? soleUrl;
-          const at = url ? ` ${url}` : "";
-          const on = url ? ` on ${url}` : "";
-          // Independent, not else-if: one shell call can approve and then reverse.
-          // `[^\n]*` keeps a match on the gh line itself, so prose inside a heredoc
-          // body ("flipping back to request-changes") cannot trigger a false line.
-          if (/gh pr review[^\n]*--approve/.test(t)) announce(`✅ approved${at}`);
-          // The change request carries a fixed marker, so there is nothing to
-          // relay; the comment is where the review is written, and it comes with
-          // the body that went to GitHub, recovered from the command itself.
-          if (/gh pr review[^\n]*--request-changes/.test(t)) announce(`⚠️ requested changes${on}`);
-          if (/gh pr comment\b/.test(t)) {
-            const body = postedBody(ran, "comment");
-            // A second comment is the late-finding case - an agent reporting back
-            // after the review went up. Say which it is rather than "the review"
-            // twice, which reads as the same thing posted again.
-            const what = comments++ === 0 ? "posted the review" : "posted a follow-up";
-            announce(`📝 ${what}${on}${body ? `\n\n${clip(body)}` : ""}`);
-          }
-        });
-      } else {
-        out = await deps.llm.complete(params);
-      }
-
-      if (cutOff) {
-        // Say it plainly. Anything that did reach GitHub was announced above as
-        // it landed, so the thread already shows exactly how far this got.
-        const far = out.trim();
-        await reply(
-          `⏱️ the review did not finish - ${cutOff}${far ? `\n\nhow far it got:\n\n${clip(far)}` : ""}`,
-        );
-        return "";
-      }
-
-      await reply(out.trim() || "I could not put a review together for that one.");
-
-      // Held back until now: approve only what the review left unblocked, and
-      // ask GitHub rather than inferring it from what the review seemed to say.
-      for (const url of afterReview) {
-        const decision = (await deps.github?.reviewDecision(url))?.toUpperCase();
-        if (decision === "CHANGES_REQUESTED") {
-          await reply(`🚫 not approving ${url} - changes are requested`);
+        const holder = deps.reviewGuard?.claim(url, { channelId, threadTs: ctx.threadTs });
+        if (!holder) {
+          mine.push(url);
           continue;
         }
-        const res = await deps.github?.approve(url);
-        if (!res) continue;
-        await reply(res.ok ? `✅ approved ${url} - the review came back clean` : `⚠️ could not approve ${url} - ${res.error}`);
+        const link =
+          holder.threadTs && deps.slack?.permalink
+            ? await deps.slack.permalink(holder.channelId, holder.threadTs).catch(() => undefined)
+            : undefined;
+        const where = link ? `<${link}|in this thread>` : `in <#${holder.channelId}>`;
+        busy.push(`👯 ${url} ${holder.doneAt === undefined ? "is already being reviewed" : "was just reviewed"} ${where}`);
       }
-      return ""; // already delivered to the thread / DM
+      if (urls.length > 0 && mine.length === 0) return busy.join("\n");
+      // Only urls can be guarded; a shorthand like `#12` has no repo to key on.
+      const targets = urls.length > 0 ? mine : wanted;
+      try {
+        if (reply) for (const line of busy) await reply(line);
+        // Repositories on `approve-after` are left alone until the review is in.
+        const afterReview = mine.filter((u) => policyFor(u) === "approve-after");
+        for (const url of mine) {
+          if (afterReview.includes(url)) continue;
+          const res = await deps.github?.approve(url);
+          if (!res) break; // no gh wired up - leave it to the brain
+          const line = res.ok ? `✅ approved ${url}` : `⚠️ could not approve ${url} - ${res.error}`;
+          if (res.ok) {
+            seen.add(line);
+            approvedUpFront.push(url);
+          }
+          announcements.push(line);
+        }
+
+        const params = {
+          system: reviewPrompt(targets, name, await account, approvedUpFront, reviewAgentsOf(deps), note),
+          messages: [{ role: "user" as const, content: `review ${targets.join(" ")}${note ? `\n\n${note}` : ""}` }],
+          assistantName: name,
+          policy,
+          oauthToken,
+          bill: { actor: actor.slackId, kind: "review", channel: channelId, threadTs: ctx.threadTs },
+        };
+
+        // No live destination (tests / slack off): one-shot, return the text.
+        if (!reply) {
+          const out = await deps.llm.complete(params);
+          return [...busy, out.trim() || "I could not put a review together for that one."].join("\n");
+        }
+
+        // Live: post progress as each PR action lands, then the review itself. The
+        // destination is chosen by the transport - thread for a message command, DM
+        // for a slash command - so nothing is hidden in an ephemeral reply.
+        for (const line of announcements) await reply(line);
+        await reply(
+          `🔍 reviewing ${targets.join(" ")}` +
+            (override ? `\n_${override}, for this run only_` : "") +
+            (note ? `\n_looking at: ${note}_` : ""),
+        );
+
+        let out = "";
+        // Set when the run was killed mid-flight. What streamed is then a fragment
+        // of a review, never the review, and must not be presented as one.
+        let cutOff = "";
+        if (deps.llm.stream) {
+          const announce = (line: string): void => {
+            if (seen.has(line)) return;
+            seen.add(line);
+            void reply(line);
+          };
+          // Review comments posted so far, so a late follow-up is labelled as one.
+          let comments = 0;
+          // The only PR url we can attribute an action to when the command itself
+          // carries none (e.g. `gh pr review 2149 --repo ...`).
+          const soleUrl = targets.length === 1 ? (targets[0]?.match(PR_URL)?.[0] ?? "") : "";
+          out = await deps.llm.stream(params, (ev) => {
+            if (ev.type === "aborted") {
+              cutOff = ev.reason;
+              return;
+            }
+            if (ev.type !== "tool" || ev.status !== "complete") return;
+            // Match the command in full, never the card title: the title is clipped
+            // at 200 chars, and a `gh pr review` written after a heredoc body sits
+            // well past that - which is how a request-changes went unannounced.
+            const ran = ev.command ?? ev.title;
+            const t = ran.toLowerCase();
+            const url = ran.match(PR_URL)?.[0] ?? soleUrl;
+            const at = url ? ` ${url}` : "";
+            const on = url ? ` on ${url}` : "";
+            // Independent, not else-if: one shell call can approve and then reverse.
+            // `[^\n]*` keeps a match on the gh line itself, so prose inside a heredoc
+            // body ("flipping back to request-changes") cannot trigger a false line.
+            if (/gh pr review[^\n]*--approve/.test(t)) announce(`✅ approved${at}`);
+            // The change request carries a fixed marker, so there is nothing to
+            // relay; the comment is where the review is written, and it comes with
+            // the body that went to GitHub, recovered from the command itself.
+            if (/gh pr review[^\n]*--request-changes/.test(t)) announce(`⚠️ requested changes${on}`);
+            if (/gh pr comment\b/.test(t)) {
+              const body = postedBody(ran, "comment");
+              // A second comment is the late-finding case - an agent reporting back
+              // after the review went up. Say which it is rather than "the review"
+              // twice, which reads as the same thing posted again.
+              const what = comments++ === 0 ? "posted the review" : "posted a follow-up";
+              announce(`📝 ${what}${on}${body ? `\n\n${clip(body)}` : ""}`);
+            }
+          });
+        } else {
+          out = await deps.llm.complete(params);
+        }
+
+        if (cutOff) {
+          // Say it plainly. Anything that did reach GitHub was announced above as
+          // it landed, so the thread already shows exactly how far this got.
+          const far = out.trim();
+          await reply(
+            `⏱️ the review did not finish - ${cutOff}${far ? `\n\nhow far it got:\n\n${clip(far)}` : ""}`,
+          );
+          return "";
+        }
+
+        await reply(out.trim() || "I could not put a review together for that one.");
+
+        // Held back until now: approve only what the review left unblocked, and
+        // ask GitHub rather than inferring it from what the review seemed to say.
+        for (const url of afterReview) {
+          const decision = (await deps.github?.reviewDecision(url))?.toUpperCase();
+          if (decision === "CHANGES_REQUESTED") {
+            await reply(`🚫 not approving ${url} - changes are requested`);
+            continue;
+          }
+          const res = await deps.github?.approve(url);
+          if (!res) continue;
+          await reply(res.ok ? `✅ approved ${url} - the review came back clean` : `⚠️ could not approve ${url} - ${res.error}`);
+        }
+        return ""; // already delivered to the thread / DM
+      } finally {
+        for (const url of mine) deps.reviewGuard?.release(url);
+      }
     },
   },
   {
