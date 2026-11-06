@@ -40,7 +40,7 @@ import { requestAccess } from "./accessRequests.ts";
 import type { CommandTickets } from "./commandTickets.ts";
 import { tokenFor, type ClaudeTokenPort } from "./claudeTokens.ts";
 import type { TotpPort } from "./totp.ts";
-import { isMissingSession, tierOf, unseenTurns } from "../domain/threadSession.ts";
+import { isMissingSession, threadSessionName, tierOf, unseenTurns } from "../domain/threadSession.ts";
 import { promptFingerprint } from "../domain/promptFingerprint.ts";
 import type { ThreadSessionRepo } from "../infrastructure/db/threadSessionRepo.ts";
 import type { SlackAdminPort, SlackMessage } from "./slackAdmin.ts";
@@ -350,6 +350,8 @@ export const handleMessage = async (
   const run = (p: Parameters<typeof deps.llm.complete>[0]) =>
     sink && deps.llm.stream ? deps.llm.stream(p, sink) : deps.llm.complete(p);
 
+  // Named after the thread, so another thread's session can find this one.
+  const name = key ? threadSessionName(key.channelId, key.threadTs) : undefined;
   let sessionId = bound?.sessionId ?? deps.newSessionId?.() ?? crypto.randomUUID();
   let resumed = !!bound;
   // Bind BEFORE the run, not after. A turn that dies - and a turn that dies is
@@ -363,7 +365,7 @@ export const handleMessage = async (
     raw = await run({
       ...base,
       messages: bound ? buildContextWindow(unseenTurns(history, bound.lastTs), window) : cold(),
-      ...(key ? { session: { id: sessionId, resume: resumed } } : {}),
+      ...(key ? { session: { id: sessionId, resume: resumed, name } } : {}),
     });
   } catch (err) {
     // The CLI prunes its own history and a database outlives the machine it was
@@ -373,7 +375,7 @@ export const handleMessage = async (
     sessionId = deps.newSessionId?.() ?? crypto.randomUUID();
     resumed = false;
     if (key) sessions?.claim(key.channelId, key.threadTs, tier, sessionId, newestTs, deps.clock(), fingerprint);
-    raw = await run({ ...base, messages: cold(), session: { id: sessionId, resume: false } });
+    raw = await run({ ...base, messages: cold(), session: { id: sessionId, resume: false, name } });
   }
   const reply = raw.trim();
 

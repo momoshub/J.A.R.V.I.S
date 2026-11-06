@@ -104,6 +104,11 @@ export type LlmSession = {
   readonly id: string;
   /** false on the turn that creates the session, true for every one after. */
   readonly resume: boolean;
+  /**
+   * The display name other sessions see it under. A thread's session is named
+   * after the thread, so one thread can find and message another's.
+   */
+  readonly name?: string;
 };
 
 export type LlmCompleteParams = {
