@@ -53,7 +53,7 @@ export const windowLabel = (ms: number): string => {
 };
 
 const nameOf = (key: string, names: ReadonlyMap<string, string>): string =>
-  key ? (names.get(key) ?? `<@${key}>`) : "unattributed";
+  key ? (names.get(key) ?? `\`${key}\``) : "unattributed";
 
 /**
  * The report. Both breakdowns are shown because they answer different

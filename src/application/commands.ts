@@ -1096,16 +1096,31 @@ export const COMMANDS: readonly CommandDef[] = [
     minRole: "admin",
     usage: "[hours|7d]",
     summary: "what the model has cost, by person and by command",
-    run: ({ deps, args }) => {
+    // Asked by the brain, it relays the numbers itself: posted straight into
+    // the thread it lands before the brain can shape it the way it was asked.
+    quiet: true,
+    run: async ({ deps, args }) => {
       if (!deps.usage) return "I am not recording what runs cost right now.";
       const windowMs = parseWindow(args[0]) ?? 24 * 60 * 60_000;
       const since = deps.clock() - windowMs;
+      const byUser = deps.usage.byUser(since, 15);
+      // Names, never tags: a cost report that pings everyone on it is a
+      // report nobody asked to be notified of. People who spent but are no
+      // longer on the list are looked up in Slack rather than tagged.
       const names = new Map(
-        deps.users.list().map((u) => [u.slackId, u.displayName || `<@${u.slackId}>`] as const),
+        deps.users
+          .list()
+          .filter((u) => u.displayName)
+          .map((u) => [u.slackId, u.displayName] as const),
       );
+      const missing = byUser.map((u) => u.key).filter((k) => k && !names.has(k));
+      if (missing.length > 0 && deps.slack) {
+        const found = await deps.slack.resolveNames(missing).catch(() => ({}) as Record<string, string>);
+        for (const [id, name] of Object.entries(found)) if (name) names.set(id, name);
+      }
       return spendReport(
         deps.usage.totals(since),
-        deps.usage.byUser(since, 15),
+        byUser,
         deps.usage.byKind(since, 15),
         windowMs,
         names,
@@ -1118,11 +1133,14 @@ export const COMMANDS: readonly CommandDef[] = [
     minRole: "admin",
     usage: "",
     summary: "list who I answer to",
+    // Like spend: the brain reads it and answers, it is not dropped in the thread.
+    quiet: true,
     run: ({ deps }) => {
       const users = deps.users.list();
       if (users.length === 0) return "Nobody on the list yet, oddly enough.";
+      // Names and ids, never tags: listing everyone must not ping everyone.
       return users
-        .map((u) => `- <@${u.slackId}> - *${u.role}*${u.displayName ? ` (${u.displayName})` : ""}`)
+        .map((u) => `- ${u.displayName || "unnamed"} - *${u.role}* \`${u.slackId}\``)
         .join("\n");
     },
   },
@@ -2598,6 +2616,8 @@ Up to ${BOMB_SIZE} reactions; no category means *${DEFAULT_CATEGORY}*.`;
     minRole: "admin",
     usage: "<message-link>",
     summary: "delete a message I posted",
+    // The brain tidying up must not leave a "deleted" note behind for every message.
+    quiet: true,
     run: async ({ deps, args, prefix }) => {
       if (!deps.slack) return "Slack tools are not available.";
       const ref = parseMessageLink((args[0] ?? "").replace(/^<|>$/g, ""));

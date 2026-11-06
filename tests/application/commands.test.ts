@@ -1432,6 +1432,18 @@ describe("reviews run on the caller's own Claude token", () => {
     expect(isQuietCommand("investigate why")).toBe(false);
   });
 
+  test("spend, users and rm-msg are quiet: the brain relays them, nothing tags the thread", () => {
+    expect(isQuietCommand("spend 30d")).toBe(true);
+    expect(isQuietCommand("users")).toBe(true);
+    expect(isQuietCommand("rm-msg https://x.slack.com/archives/C1/p1700000000000100")).toBe(true);
+  });
+
+  test("users lists names and ids without tagging anyone", async () => {
+    const { deps } = withTokens({});
+    const out = await dispatchCommand(deps, actor(), "C1", "users");
+    expect(out).not.toContain("<@");
+  });
+
   test("watch is quiet too: its confirmation goes back to the brain, not the thread", () => {
     expect(isQuietCommand("watch checks https://github.com/o/r/pull/1 post the result")).toBe(true);
     expect(isQuietCommand("watch list")).toBe(true);

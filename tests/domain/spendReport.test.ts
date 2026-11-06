@@ -42,7 +42,8 @@ describe("spendReport", () => {
     expect(out).toContain("list price");
     expect(out).toContain("$12.50");
     expect(out).toContain("Kai - $10.00");
-    expect(out).toContain("<@U2>"); // no display name, so tag them
+    expect(out).toContain("`U2`"); // no display name: the id, never a tag that pings them
+    expect(out).not.toContain("<@")
     expect(out).toContain("review - $10.00");
     expect(out).toContain("1h00 of model time");
     expect(out).toContain("2.0M cached");
