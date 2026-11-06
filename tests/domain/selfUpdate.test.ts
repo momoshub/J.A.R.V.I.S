@@ -23,8 +23,12 @@ describe("selfUpdateRules", () => {
     expect(rules).toContain('never restart to "see if that fixed it"');
   });
 
-  test("and does not commit on its own initiative", () => {
-    expect(rules).toContain("do not commit or push unless you were asked");
+  test("and lands every change through a worktree and a merged PR", () => {
+    expect(rules).toContain("git worktree add");
+    expect(rules).toContain("merge it yourself");
+    expect(rules).toContain("pull --no-rebase");
+    expect(rules).toContain("Generated with Jarvis");
+    expect(rules).not.toContain("do not commit or push");
   });
 
   test("with no repo or no helper, there is no block at all", () => {

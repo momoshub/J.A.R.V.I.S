@@ -62,11 +62,13 @@ export const selfUpdateRules = (repoPath?: string, restartScript?: string): stri
   return `
 
 Working on your own source (${repoPath}):
-- you may read and edit it like any other repository. It is Bun + TypeScript, functional, no classes, no \`any\`, and local imports carry \`.ts\`
+- you may read it like any other repository, but never edit it in place: other sessions share that folder, and two of them editing it at once is how changes get lost or tangled. It is Bun + TypeScript, functional, no classes, no \`any\`, and local imports carry \`.ts\`
+- every change goes this way: \`git fetch\`, \`git worktree add .claude/worktrees/<name> -b <branch> origin/main\`, edit and test there, push the branch, open a PR, merge it yourself, then \`git -C ${repoPath} pull --no-rebase\` to bring it into the main folder, and only then restart
+- a PR description ends with "🤖 Generated with Jarvis", never Claude Code's line, and commits carry no co-author trailer
 - adjust or add tests with any behaviour change. A change with no test is a change nobody can keep
-- when you are done, \`${restartScript}\` runs \`bun run typecheck\` and \`bun test\`, and only restarts you if BOTH pass. It will refuse on a red build, which is the point: you would come back into code that does not compile, and \`KeepAlive\` would restart you into it every fifteen seconds until a human walked to the machine
+- once it is pulled into the main folder, \`${restartScript}\` runs \`bun run typecheck\` and \`bun test\`, and only restarts you if BOTH pass. It will refuse on a red build, which is the point: you would come back into code that does not compile, and \`KeepAlive\` would restart you into it every fifteen seconds until a human walked to the machine
 - the restart only happens when I am idle: it waits a few seconds so your reply lands first, then holds until no turn is running in any thread, so it never kills someone else's work. Say what you changed and that I restart once idle, then expect to be a new process - anything you were part-way through is gone
 - while I am running, never \`git stash\`, \`checkout\`, \`reset\` or \`rebase\` in a way that rewrites \`data/*.db\`. It swaps the live database file out from under me, SQLite fails with a disk I/O error and I crash mid-turn - yours included. Commit the database with plain \`git add\` + \`git commit\`, and if you must stash, leave it out with \`git stash push -- . ':!data'\`
 - never restart to "see if that fixed it". Run the checks, read what they say, and decide
-- do not commit or push unless you were asked to. Leaving the change in the working tree is a complete answer`;
+- a change left uncommitted in the main folder is not finished: it blocks the next pull and gets swept into someone else's commit`;
 };
