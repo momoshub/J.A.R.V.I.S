@@ -349,8 +349,9 @@ const settleElement = (e: unknown, picked: string | undefined, picks: KitPicks):
  * but go inert, the one pressed (`picked`) marked as chosen. Checkboxes and
  * multi-selects stay too, inert, showing what was ticked (`picks`, the message
  * state at the press). Single selects and pickers are taken out, since one left
- * in place still looks like an open question. One context line saying how it was settled goes
- * after the first block we touched. Everything else is kept as it was.
+ * in place still looks like an open question. One context line saying how it
+ * was settled goes after the last block we touched, so it closes the question
+ * rather than splitting it. Everything else is kept as it was.
  */
 export const retireKit = (
   blocks: readonly KitBlock[],
@@ -359,7 +360,7 @@ export const retireKit = (
   picks: KitPicks = {},
 ): KitBlock[] => {
   const out: KitBlock[] = [];
-  let noted = false;
+  let noteAt = -1;
   for (const b of blocks) {
     if (!blockHasKit(b)) {
       out.push(b);
@@ -373,11 +374,9 @@ export const retireKit = (
       const { accessory: _gone, ...plain } = b;
       out.push(kept ? { ...plain, accessory: kept } : plain);
     }
-    if (!noted) {
-      noted = true;
-      out.push({ type: "context", elements: [{ type: "mrkdwn", text: note }] });
-    }
+    noteAt = out.length;
   }
+  if (noteAt >= 0) out.splice(noteAt, 0, { type: "context", elements: [{ type: "mrkdwn", text: note }] });
   return out;
 };
 

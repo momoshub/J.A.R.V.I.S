@@ -228,6 +228,10 @@ describe("answered questions lock", () => {
       "jv:team": { type: "checkboxes", selected_options: [{ value: "a", text: { text: "A" } }, { value: "b" }] },
       "jv:who": { type: "multi_users_select", selected_users: ["U1"] },
     } });
+    const tail = { type: "context", elements: [{ type: "mrkdwn", text: "footer" }] };
+    const split = retireKit([...team, { type: "actions", elements: [{ type: "button", action_id: "jv:no" }] }, tail], "sent", "jv:go");
+    expect(split.map((b) => b.type)).toEqual(["actions", "actions", "context", "context"]);
+    expect(split[2]).toEqual({ type: "context", elements: [{ type: "mrkdwn", text: "sent" }] });
     const [actions] = retireKit(team, "sent", "jv:go", picks);
     const [boxes, who] = (actions as { elements: Record<string, unknown>[] }).elements;
     expect(boxes).toEqual({ type: "checkboxes", action_id: "jv:settled:team", options: [opt("a"), opt("b"), opt("c")], initial_options: [opt("a"), opt("b")] });
@@ -247,8 +251,8 @@ describe("answered questions lock", () => {
     const out = retireKit(mixed, "done");
     expect(out).toEqual([
       { type: "section", text: { type: "mrkdwn", text: "q" } },
-      { type: "context", elements: [{ type: "mrkdwn", text: "done" }] },
       { type: "actions", elements: [{ type: "button", action_id: "approve" }, { type: "button", action_id: "jv:settled:b" }] },
+      { type: "context", elements: [{ type: "mrkdwn", text: "done" }] },
     ]);
     expect(hasLiveKit(undefined)).toBe(false);
   });
