@@ -148,6 +148,10 @@ export const stateLines = (values: Record<string, Record<string, KitElementState
     }),
   );
 
+/** A message's state flattened to what each element held, keyed by action_id. */
+export const picksOf = (values: Record<string, Record<string, KitElementState>> | undefined): KitPicks =>
+  Object.fromEntries(Object.values(values ?? {}).flatMap((actions) => Object.entries(actions)));
+
 const quoted = (v: string | undefined): string => (v === undefined || v === "" ? "" : ` with value \`${v}\``);
 
 /** The turn a press becomes: who, which element, what it now holds. */
@@ -307,19 +311,53 @@ const settleButton = (e: Element, picked: string | undefined): Element => {
     : { ...rest, action_id: `${KIT_SETTLED_PREFIX}${id.slice(KIT_PREFIX.length)}` };
 };
 
-const settleElement = (e: unknown, picked: string | undefined): unknown[] => {
+/** What each element held when the question settled, keyed by action_id. */
+export type KitPicks = Readonly<Record<string, KitElementState>>;
+
+type Gathering = Element & { options?: Option[]; initial_options?: Option[] };
+
+/**
+ * A checkbox list or multi-select made inert, showing what was ticked. Slack
+ * redraws an updated message from its blocks alone, so the ticks only survive
+ * as `initial_options`, matched back to the element's own option objects.
+ */
+const settleGathering = (e: Gathering, held: KitElementState | undefined): Element => {
+  const id = idOf(e) ?? "";
+  const action_id = `${KIT_SETTLED_PREFIX}${id.slice(KIT_PREFIX.length)}`;
+  const people = held?.selected_users ?? held?.selected_conversations ?? held?.selected_channels;
+  if (people) {
+    const key = held?.selected_users ? "initial_users" : held?.selected_conversations ? "initial_conversations" : "initial_channels";
+    const { [key]: _before, ...rest } = e as Record<string, unknown>;
+    return { ...rest, action_id, ...(people.length ? { [key]: people } : {}) } as Element;
+  }
+  const { initial_options: before, ...rest } = e;
+  const chosen = held?.selected_options?.map((o) => o.value);
+  const initial = chosen ? (e.options ?? []).filter((o) => chosen.includes(o.value)) : before;
+  return { ...rest, action_id, ...(initial?.length ? { initial_options: initial } : {}) };
+};
+
+const settleElement = (e: unknown, picked: string | undefined, picks: KitPicks): unknown[] => {
   if (!isKitElement(e)) return [e];
-  return (e as Element).type === "button" ? [settleButton(e as Element, picked)] : [];
+  const type = (e as Element).type;
+  if (type === "button") return [settleButton(e as Element, picked)];
+  if (typeof type === "string" && GATHERING.has(type)) return [settleGathering(e as Gathering, picks[idOf(e) ?? ""])];
+  return [];
 };
 
 /**
  * The message once its question is settled. Our buttons stay where they were
- * but go inert, the one pressed (`picked`) marked as chosen. Our other
- * elements - selects, pickers - are taken out, since a select left in place
- * still looks changeable. One context line saying how it was settled goes
+ * but go inert, the one pressed (`picked`) marked as chosen. Checkboxes and
+ * multi-selects stay too, inert, showing what was ticked (`picks`, the message
+ * state at the press). Single selects and pickers are taken out, since one left
+ * in place still looks like an open question. One context line saying how it was settled goes
  * after the first block we touched. Everything else is kept as it was.
  */
-export const retireKit = (blocks: readonly KitBlock[], note: string, picked?: string): KitBlock[] => {
+export const retireKit = (
+  blocks: readonly KitBlock[],
+  note: string,
+  picked?: string,
+  picks: KitPicks = {},
+): KitBlock[] => {
   const out: KitBlock[] = [];
   let noted = false;
   for (const b of blocks) {
@@ -328,10 +366,10 @@ export const retireKit = (blocks: readonly KitBlock[], note: string, picked?: st
       continue;
     }
     if (b.type === "actions" && Array.isArray(b.elements)) {
-      const rest = b.elements.flatMap((e) => settleElement(e, picked));
+      const rest = b.elements.flatMap((e) => settleElement(e, picked, picks));
       if (rest.length) out.push({ ...b, elements: rest });
     } else {
-      const [kept] = settleElement(b.accessory, picked);
+      const [kept] = settleElement(b.accessory, picked, picks);
       const { accessory: _gone, ...plain } = b;
       out.push(kept ? { ...plain, accessory: kept } : plain);
     }

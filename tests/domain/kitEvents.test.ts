@@ -10,6 +10,7 @@ import {
   locksOnPress,
   waitsForButton,
   pickedLabel,
+  picksOf,
   retireKit,
   castVote,
   describeVote,
@@ -212,6 +213,30 @@ describe("answered questions lock", () => {
     expect(hasLiveKit(out)).toBe(false);
     expect(isSettled("jv:settled:pick-a")).toBe(true);
     expect(retireKit(out, "again")).toEqual(out);
+  });
+
+  test("settling keeps checkboxes in place, inert, with what was ticked", () => {
+    const opt = (v: string) => ({ text: { type: "plain_text", text: v.toUpperCase() }, value: v });
+    const team = [
+      { type: "actions", block_id: "team", elements: [
+        { type: "checkboxes", action_id: "jv:team", options: [opt("a"), opt("b"), opt("c")], initial_options: [opt("c")] },
+        { type: "multi_users_select", action_id: "jv:who" },
+        { type: "button", action_id: "jv:go", text: { type: "plain_text", text: "Go" } },
+      ] },
+    ];
+    const picks = picksOf({ team: {
+      "jv:team": { type: "checkboxes", selected_options: [{ value: "a", text: { text: "A" } }, { value: "b" }] },
+      "jv:who": { type: "multi_users_select", selected_users: ["U1"] },
+    } });
+    const [actions] = retireKit(team, "sent", "jv:go", picks);
+    const [boxes, who] = (actions as { elements: Record<string, unknown>[] }).elements;
+    expect(boxes).toEqual({ type: "checkboxes", action_id: "jv:settled:team", options: [opt("a"), opt("b"), opt("c")], initial_options: [opt("a"), opt("b")] });
+    expect(who).toEqual({ type: "multi_users_select", action_id: "jv:settled:who", initial_users: ["U1"] });
+
+    const none = retireKit(team, "sent", "jv:go", picksOf({ team: { "jv:team": { type: "checkboxes", selected_options: [] } } }));
+    expect((none[0] as { elements: Record<string, unknown>[] }).elements[0]).not.toHaveProperty("initial_options");
+    const kept = retireKit(team, "replied");
+    expect((kept[0] as { elements: Record<string, unknown>[] }).elements[0]).toHaveProperty("initial_options", [opt("c")]);
   });
 
   test("settling without a pick drops colours, and selects of ours go", () => {
