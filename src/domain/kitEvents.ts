@@ -283,6 +283,12 @@ const GATHERING = new Set([
   "multi_channels_select",
 ]);
 
+/**
+ * Slack has no disabled checkbox, so a settled one can still be unticked on
+ * screen. Writing the message back over itself puts the ticks where they were.
+ */
+export const snapsBack = (type: string | undefined): boolean => !!type && GATHERING.has(type);
+
 const isLiveButton = (e: unknown): boolean =>
   isKitElement(e) && (e as Element).type === "button" && !modalIdOf(idOf(e) ?? "");
 

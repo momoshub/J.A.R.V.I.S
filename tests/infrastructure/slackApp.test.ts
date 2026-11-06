@@ -519,6 +519,29 @@ describe("Block Kit the brain built", () => {
     expect(r.turns).toHaveLength(0);
   });
 
+  test("unticking a settled checkbox puts the message back as it was settled", async () => {
+    const r = rig();
+    const updates: Record<string, unknown>[] = [];
+    const client = { ...r.client, chat: { ...r.client.chat, update: async (a: Record<string, unknown>) => void updates.push(a) } };
+    const settled = [{ type: "actions", elements: [{ type: "checkboxes", action_id: "jv:settled:team", options: [], initial_options: [] }] }];
+    await r.onKitAction({
+      ack: r.ack,
+      client,
+      body: { user: { id: "U2" }, channel: { id: "C1" }, message: { ts: "200.2", text: "Team", blocks: settled } },
+      action: { action_id: "jv:settled:team", type: "checkboxes", selected_options: [] },
+    });
+    expect(updates).toEqual([{ channel: "C1", ts: "200.2", text: "Team", blocks: settled }]);
+    expect(r.turns).toHaveLength(0);
+
+    await r.onKitAction({
+      ack: r.ack,
+      client,
+      body: { user: { id: "U2" }, channel: { id: "C1" }, message: { ts: "200.2", blocks: choice } },
+      action: { action_id: "jv:settled:a", type: "button", value: "a" },
+    });
+    expect(updates).toHaveLength(1);
+  });
+
   const vote = [
     { type: "section", text: { type: "mrkdwn", text: "Quiz" } },
     { type: "actions", block_id: "q1", elements: [
