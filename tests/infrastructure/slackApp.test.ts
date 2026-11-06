@@ -463,6 +463,50 @@ describe("Block Kit the brain built", () => {
     expect(blocks[2]?.elements?.[0]?.text).toContain("<@U2> chose *Option A*");
   });
 
+  const team = [
+    { type: "section", block_id: "heavy", text: { type: "mrkdwn", text: "Pick" }, accessory: { type: "checkboxes", action_id: "jv:team", options: [] } },
+    { type: "actions", elements: [{ type: "button", action_id: "jv:deploy", text: { type: "plain_text", text: "Deploy" }, value: "go" }] },
+  ];
+
+  test("a checkbox tick next to a button is acked and stays silent", async () => {
+    const r = rig();
+    await r.onKitAction({
+      ack: r.ack,
+      client: r.client,
+      body: { user: { id: "U2" }, channel: { id: "C1" }, message: { ts: "200.2", thread_ts: "100.1", blocks: team } },
+      action: { action_id: "jv:team", type: "checkboxes", block_id: "heavy", selected_options: [{ value: "ironman" }] },
+    });
+    expect(r.acks).toHaveLength(1);
+    expect(r.turns).toHaveLength(0);
+  });
+
+  test("the button's turn carries every pick on the message", async () => {
+    const r = rig();
+    await r.onKitAction({
+      ack: r.ack,
+      client: { ...r.client, chat: { ...r.client.chat, update: async () => ({}) } },
+      body: {
+        user: { id: "U2" },
+        channel: { id: "C1" },
+        message: { ts: "200.2", thread_ts: "100.1", blocks: team },
+        state: { values: { heavy: { "jv:team": { type: "checkboxes", selected_options: [{ value: "ironman" }, { value: "thor" }] } } } },
+      },
+      action: { action_id: "jv:deploy", type: "button", value: "go" },
+    });
+    expect(r.turns[0]?.text).toContain("`heavy.jv:team`: ironman, thor");
+  });
+
+  test("a checkbox with no button on its message is still its own turn", async () => {
+    const r = rig();
+    await r.onKitAction({
+      ack: r.ack,
+      client: r.client,
+      body: { user: { id: "U2" }, channel: { id: "C1" }, message: { ts: "200.2", thread_ts: "100.1", blocks: [team[0]!] } },
+      action: { action_id: "jv:team", type: "checkboxes", selected_options: [{ value: "ironman" }] },
+    });
+    expect(r.turns).toHaveLength(1);
+  });
+
   test("a press on a settled button is acked and does nothing", async () => {
     const r = rig();
     await r.onKitAction({
@@ -565,7 +609,7 @@ describe("Block Kit the brain built", () => {
     expect(updates).toHaveLength(0);
   });
 
-  test("a checkbox press leaves the message live", async () => {
+  test("a checkbox press leaves the message live and waits for its button", async () => {
     const updates: unknown[] = [];
     const r = rig();
     const client = { ...r.client, chat: { ...r.client.chat, update: async (a: unknown) => void updates.push(a) } };
@@ -576,7 +620,7 @@ describe("Block Kit the brain built", () => {
       action: { action_id: "jv:a", type: "checkboxes", selected_options: [{ value: "a" }] },
     });
     expect(updates).toHaveLength(0);
-    expect(r.turns).toHaveLength(1);
+    expect(r.turns).toHaveLength(0);
   });
 
   test("a failed lock still hands the press to the thread", async () => {

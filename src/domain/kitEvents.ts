@@ -158,10 +158,13 @@ export const describeAction = (a: {
   value?: string;
   blockId?: string;
   inModal?: string;
+  /** What the rest of the message held at the press, as `stateLines`. */
+  state?: readonly string[];
 }): string =>
   `[block kit event] <@${a.userId}> used \`${a.actionId}\`` +
   `${a.type ? ` (${a.type})` : ""}${a.blockId ? ` in block \`${a.blockId}\`` : ""}` +
-  `${a.inModal ? ` inside the modal "${a.inModal}"` : " on a message in this thread"}${quoted(a.value)}`;
+  `${a.inModal ? ` inside the modal "${a.inModal}"` : " on a message in this thread"}${quoted(a.value)}` +
+  (a.state?.length ? ["", "everything picked on the message at that moment:", ...a.state].join("\n") : "");
 
 /** The turn a submitted modal becomes. */
 export const describeSubmission = (s: {
@@ -188,6 +191,7 @@ export const kitRules = (kitUrl: string): string => {
 
 Interactive Block Kit (buttons, selects, modals):
 - any element whose action_id starts with "jv:" is yours: when someone uses it, the press comes back to this thread as a new turn starting "[block kit event]", from the person who pressed. Every element type works - buttons, static/user/channel selects, multi-selects, overflow, checkboxes, radio buttons, date/time pickers
+- checkboxes and multi-selects on a message that also has a jv: button are silent: ticking them does not reach you, and the button press comes with everything picked on the message. Without a button every tick is its own turn, so always give them one
 - post interactive blocks yourself with chat.postMessage and the bot token, always with thread_ts of this thread so the event finds its way back here. A blockkit fence is for display only
 - give each element a meaningful id ("jv:approve-refund") and a value that tells you what it was about, since the turn only sees the id, the value and who pressed
 - a modal opens only from a click. Store it first, then post a button whose action_id is the one it gives back:
@@ -261,6 +265,26 @@ export const hasLiveKit = (blocks: readonly KitBlock[] | undefined): boolean => 
 
 const elementsOf = (b: KitBlock): unknown[] =>
   b.type === "actions" && Array.isArray(b.elements) ? b.elements : b.accessory ? [b.accessory] : [];
+
+/**
+ * Elements whose whole point is picking several things before saying "done".
+ * A turn per tick wakes the brain once for every box, so next to a button they
+ * stay silent and the button's turn carries everything they hold.
+ */
+const GATHERING = new Set([
+  "checkboxes",
+  "multi_static_select",
+  "multi_users_select",
+  "multi_conversations_select",
+  "multi_channels_select",
+]);
+
+const isLiveButton = (e: unknown): boolean =>
+  isKitElement(e) && (e as Element).type === "button" && !modalIdOf(idOf(e) ?? "");
+
+/** Whether a pick should wait for a button on the same message instead of becoming a turn. */
+export const waitsForButton = (type: string | undefined, blocks: readonly KitBlock[] | undefined): boolean =>
+  !!type && GATHERING.has(type) && (blocks ?? []).some((b) => elementsOf(b).some(isLiveButton));
 
 /** Whether the message is a vote, still open for picks. */
 export const isVote = (blocks: readonly KitBlock[] | undefined): boolean =>
