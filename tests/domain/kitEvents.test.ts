@@ -12,6 +12,7 @@ import {
   pickedLabel,
   picksOf,
   snapBackBlocks,
+  snapsBack,
   retireKit,
   castVote,
   describeVote,
@@ -250,6 +251,36 @@ describe("answered questions lock", () => {
     expect((none[0] as { elements: Record<string, unknown>[] }).elements[0]).not.toHaveProperty("initial_options");
     const kept = retireKit(team, "replied");
     expect((kept[0] as { elements: Record<string, unknown>[] }).elements[0]).toHaveProperty("initial_options", [opt("c")]);
+  });
+
+  test("settling keeps filled form fields in place, inert, with what was picked", () => {
+    const opt = (v: string) => ({ text: { type: "plain_text", text: v.toUpperCase() }, value: v });
+    const form = [
+      { type: "actions", block_id: "f", elements: [
+        { type: "radio_buttons", action_id: "jv:score", options: [opt("8"), opt("10")] },
+        { type: "static_select", action_id: "jv:pod", option_groups: [{ options: [opt("team")] }] },
+        { type: "datepicker", action_id: "jv:date" },
+        { type: "timepicker", action_id: "jv:time" },
+        { type: "users_select", action_id: "jv:empty" },
+        { type: "button", action_id: "jv:send", text: { type: "plain_text", text: "Send" } },
+      ] },
+    ];
+    const picks = picksOf({ f: {
+      "jv:score": { type: "radio_buttons", selected_option: { value: "10", text: { text: "10" } } },
+      "jv:pod": { type: "static_select", selected_option: { value: "team" } },
+      "jv:date": { type: "datepicker", selected_date: "2026-11-14" },
+      "jv:time": { type: "timepicker", selected_time: "10:00" },
+      "jv:empty": { type: "users_select", selected_user: null },
+    } });
+    const [actions] = retireKit(form, "sent", "jv:send", picks);
+    const [score, pod, date, time, send] = (actions as { elements: Record<string, unknown>[] }).elements;
+    expect(score).toEqual({ type: "radio_buttons", action_id: "jv:settled:score", options: [opt("8"), opt("10")], initial_option: opt("10") });
+    expect(pod).toHaveProperty("initial_option", opt("team"));
+    expect(date).toEqual({ type: "datepicker", action_id: "jv:settled:date", initial_date: "2026-11-14" });
+    expect(time).toEqual({ type: "timepicker", action_id: "jv:settled:time", initial_time: "10:00" });
+    expect(send).toHaveProperty("action_id", "jv:settled:send");
+    expect((actions as { elements: unknown[] }).elements).toHaveLength(5);
+    expect(snapsBack("radio_buttons")).toBe(true);
   });
 
   test("snapping back flips the block id of ticked lists only", () => {
