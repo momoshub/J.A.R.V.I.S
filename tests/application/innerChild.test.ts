@@ -122,6 +122,24 @@ describe("inner child", () => {
     expect(issues.get(1)?.state).toBe("fixed");
   });
 
+  test("each turn is triaged with its own reply, not a later turn's in the same thread", async () => {
+    cursor = now - 1000;
+    const messages = createMessageRepo(db);
+    const reply = (content: string, at: number) =>
+      messages.append({ channelId: "C9", slackUserId: "BOT", role: "assistant", content, threadTs: "5.5" }, at);
+    addTurn({ request: "first question", outcome: "ok", error: "", startedAt: now - 900, endedAt: now - 500 });
+    reply("answer to the first", now - 600);
+    addTurn({ request: "second question", outcome: "ok", error: "", startedAt: now - 400, endedAt: now });
+    reply("answer to the second", now - 100);
+    await build({ messages }).tick();
+
+    const sent = String(triages[0]?.messages[0]?.content);
+    const first = sent.slice(sent.indexOf("first question"), sent.indexOf("second question"));
+    expect(first).toContain("answer to the first");
+    expect(first).not.toContain("answer to the second");
+    expect(sent.slice(sent.indexOf("second question"))).toContain("answer to the second");
+  });
+
   test("the same defect is never filed twice", async () => {
     cursor = now - 100;
     addTurn();

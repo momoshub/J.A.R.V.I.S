@@ -49,6 +49,11 @@ export type WatcherDeps = {
   /** Say something in the thread without spending a turn. */
   say?: (channelId: string, text: string, threadTs: string) => Promise<void>;
   log?: (msg: string) => void;
+  /**
+   * A tick that cannot even read what is due. Handed over, never thrown: the
+   * tick runs on a bare timer, and a rejection there kills the whole process.
+   */
+  onError?: (e: unknown) => void;
 };
 
 /** How long one predicate may run before it is treated as an error. */
@@ -131,7 +136,14 @@ export const createWatcher = (deps: WatcherDeps): Watcher => {
       if (running) return;
       running = true;
       try {
-        const due = deps.watches.due(deps.clock());
+        let due: Watch[];
+        try {
+          due = deps.watches.due(deps.clock());
+        } catch (e) {
+          log(`could not read due watches: ${e instanceof Error ? e.message : String(e)}`);
+          deps.onError?.(e);
+          return;
+        }
         for (const w of due) {
           try {
             await one(w);

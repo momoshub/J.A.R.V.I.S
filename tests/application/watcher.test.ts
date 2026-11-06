@@ -168,3 +168,22 @@ describe("watcher", () => {
     expect(said[0]).toContain("could not pick the thread back up");
   });
 });
+
+describe("watcher, when the database itself fails", () => {
+  // `git stash` on the committed data/jarvis.db swapped the file under the open
+  // handle. The tick threw from a bare timer, and the unhandled rejection
+  // killed the bot mid-turn.
+  test("a failed read of due watches is handed over, not thrown", async () => {
+    const swapped = Object.assign(new Error("disk I/O error"), { code: "SQLITE_IOERR_VNODE" });
+    const errors: unknown[] = [];
+    const w = createWatcher({
+      watches: { ...watches, due: () => { throw swapped; } },
+      clock: () => now,
+      check: async () => ({ code: 0, output: "" }),
+      runTurn: async () => {},
+      onError: (e) => void errors.push(e),
+    });
+    await expect(w.tick()).resolves.toBeUndefined();
+    expect(errors).toEqual([swapped]);
+  });
+});

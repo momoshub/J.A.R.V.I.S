@@ -713,7 +713,8 @@ export const COMMANDS: readonly CommandDef[] = [
   },
   {
     name: "forget",
-    minRole: "pal",
+    // Wipes the channel for everyone in it, not just the asker.
+    minRole: "executer",
     destructive: true,
     usage: "",
     summary: "wipe my memory of this channel",
@@ -806,11 +807,11 @@ export const COMMANDS: readonly CommandDef[] = [
   {
     name: "watch",
     aliases: ["waitfor"],
-    // The predicate is a shell command that runs as the bot, on a timer,
-    // outside any turn. That is the same authority a full-access turn has, so
-    // it takes the same trust - and it is the gate that stops a sandboxed
-    // session from scheduling itself a shell.
-    minRole: "executer",
+    // A raw `-- <shell>` predicate runs as the bot, on a timer, outside any
+    // turn - the same authority a full-access turn has - so that form stays
+    // executer and up, checked below. The named waits build their own quoted
+    // predicate and a plain timer has none, so those are anyone's.
+    minRole: "pal",
     // The confirmation is for the brain, not the thread: it already says what
     // it is waiting for in its own words, and a second notice is just noise.
     quiet: true,
@@ -821,7 +822,10 @@ export const COMMANDS: readonly CommandDef[] = [
       const sub = (args[0] ?? "").toLowerCase();
 
       if (sub === "list") {
-        const waiting = deps.watches.waiting(20);
+        // A pal sees their own; the rest name other people's channels and checks.
+        const waiting = deps.watches
+          .waiting(20)
+          .filter((w) => RANK[actor.role] >= RANK.executer || w.slackUserId === actor.slackId);
         if (waiting.length === 0) return "I am not waiting for anything.";
         const now = deps.clock();
         return waiting
@@ -844,6 +848,9 @@ export const COMMANDS: readonly CommandDef[] = [
       const parsed = parseWatchArgs(rest);
       if (!parsed.ok) {
         return `${parsed.error}. \`${prefix} watch pr <url> <what to do>\`, or \`${prefix} watch <what to do> -- <shell check>\``;
+      }
+      if (parsed.check && RANK[actor.role] < RANK.executer) {
+        return `A shell check needs *executer* access. \`${prefix} watch pr|checks|reply|url <target> <what to do>\` is open to you.`;
       }
       const now = deps.clock();
       // A named wait builds its own predicate. The raw `-- <shell>` form still
@@ -1588,7 +1595,8 @@ export const COMMANDS: readonly CommandDef[] = [
   {
     name: "investigate",
     aliases: ["inv", "rca"],
-    minRole: "pal",
+    // A full-access run on the host login, with every connector loaded.
+    minRole: "executer",
     usage: "<what to look into>",
     summary: "dig through logs, RUM and traces for the cause - runs with the connectors loaded",
     run: async (ctx) => {
@@ -1808,7 +1816,8 @@ export const COMMANDS: readonly CommandDef[] = [
   },
   {
     name: "approve",
-    minRole: "pal",
+    // An approval nobody read, under the GitHub account I act with.
+    minRole: "admin",
     usage: "<pr-url> [pr-url...]",
     summary: "approve a PR without reviewing it",
     /**
@@ -1822,9 +1831,8 @@ export const COMMANDS: readonly CommandDef[] = [
      * set to approve only AFTER a clean review is an admin's decision about
      * that repository, so a bare approval there is not on offer at any role.
      *
-     * No brain, so no Claude token and no cost. The pal allowance is what
-     * bounds it, which is also what makes it auditable: every approval is a
-     * row in the command log against the person who asked for it.
+     * No brain, so no Claude token and no cost. Every approval is a row in the
+     * command log against the person who asked for it.
      */
     run: async ({ deps, args, prefix }) => {
       if (!deps.github) return "I have no GitHub access wired up right now.";
@@ -1917,6 +1925,13 @@ export const COMMANDS: readonly CommandDef[] = [
       const approvedUpFront: string[] = [];
       // What each PR is on for this run: the flag if one was given, otherwise
       // whatever the repository is configured for.
+      // A pal's review never approves up front: that would be `approve` with
+      // extra steps, and `approve` is not theirs to run. Nor is the policy, so
+      // they get no say in it for a run either.
+      const palOnly = RANK[actor.role] < RANK.executer;
+      if (palOnly && asked !== undefined) {
+        return "Review policy is not a pal's to set. Drop `--policy` - a pal review approves only after a clean one anyway.";
+      }
       const override: ReviewPolicy | undefined =
         asked === "default" ? DEFAULT_REVIEW_POLICY : asked;
       // Asking for a stricter run is anyone's call. Asking for a looser one -
@@ -1927,7 +1942,8 @@ export const COMMANDS: readonly CommandDef[] = [
       if (loosened && RANK[actor.role] < RANK.admin) {
         return "That repo or author is set to approve only after a clean review, and only an admin can override that for a run.";
       }
-      const policyFor = (url: string): ReviewPolicy => override ?? configured.get(url) ?? DEFAULT_REVIEW_POLICY;
+      const policyFor = (url: string): ReviewPolicy =>
+        palOnly ? "approve-after" : (override ?? configured.get(url) ?? DEFAULT_REVIEW_POLICY);
       // Repositories on `approve-after` are left alone until the review is in.
       const afterReview = urls.filter((u) => policyFor(u) === "approve-after");
       for (const url of urls) {
@@ -2078,7 +2094,7 @@ export const COMMANDS: readonly CommandDef[] = [
   {
     name: "review-policy",
     aliases: ["rvpolicy", "repo-policy"],
-    minRole: "pal",
+    minRole: "admin",
     usage: "[owner/repo | author:<login>] [first|after|default]",
     summary: "how a repo or PR author gets approved: up front, or only after a clean review",
     run: (ctx) => {

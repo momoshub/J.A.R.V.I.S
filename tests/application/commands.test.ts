@@ -403,6 +403,30 @@ describe("dispatchCommand", () => {
     expect(w?.nextAt).toBe(deps.clock() + 60_000);
   });
 
+  test("a pal may watch a PR or set a timer, but not schedule a shell", async () => {
+    const deps = build();
+    const watches = createWatchRepo(db);
+    const pal = actor({ slackId: "U0PAL0010", role: "pal" });
+    deps.users.upsert(pal);
+    const run = (line: string) => dispatchCommand({ ...deps, watches }, pal, "C1", line, { threadTs: "9.8" });
+
+    const shell = await run("watch promote it -- rm -rf ~");
+    expect(shell).toContain("needs *executer*");
+    // naming a wait does not smuggle the shell past the gate either
+    expect(await run("watch pr https://github.com/o/r/pull/9 promote it -- uname -a")).toContain("needs *executer*");
+    expect(watches.waiting()).toEqual([]);
+
+    expect(await run("watch pr https://github.com/o/r/pull/9 promote it")).toContain("to be merged");
+    expect(await run("watch --until 30m look again")).toContain("pick this up again");
+    expect(watches.waiting()).toHaveLength(2);
+
+    // list shows a pal only their own watches
+    await dispatchCommand({ ...deps, watches }, actor(), "C2", "watch --until 1h someone else's", { threadTs: "7.7" });
+    const listed = await run("watch list");
+    expect(listed).not.toContain("<#C2>");
+    expect(await dispatchCommand({ ...deps, watches }, actor(), "C1", "watch list")).toContain("<#C2>");
+  });
+
   test("watch pr builds its own predicate - no shell to invent", async () => {
     const deps = build();
     const watches = createWatchRepo(db);
@@ -770,6 +794,25 @@ describe("dispatchCommand", () => {
     expect(brainRan.yes).toBe(false);
     expect(out).toContain("approved");
     expect(out).toContain("nobody read it"); // it says what it did not do
+  });
+
+  test("approve, investigate and forget are closed to a pal", async () => {
+    const approved: string[] = [];
+    const github: GitHubPort = {
+      whoami: async () => undefined,
+      reviewDecision: async () => undefined,
+      approve: async (url) => {
+        approved.push(url);
+        return { ok: true };
+      },
+    };
+    const deps = { ...build(), github };
+    const pal = actor({ slackId: "U0PAL0008", role: "pal" });
+    deps.users.upsert(pal);
+    expect(await dispatchCommand(deps, pal, "C1", "approve https://github.com/o/r/pull/1")).toContain("needs *admin*");
+    expect(approved).toEqual([]);
+    expect(await dispatchCommand(deps, pal, "C1", "investigate why")).toContain("needs *executer*");
+    expect(await dispatchCommand(deps, pal, "C1", "forget")).toContain("needs *executer*");
   });
 
   test("approve will not go round a repo that approves only after a clean review", async () => {
@@ -1779,14 +1822,50 @@ describe("per-repo review policy", () => {
     const pal = actor({ slackId: "U0PAL0006", role: "pal" });
     deps.users.upsert(pal);
 
-    // a pal cannot overrule the admin decision that this repo waits for a review
+    // a pal has no say in the policy at all, not even for one run
     const refused = await dispatchCommand(deps, pal, "C1", `rv ${PR} --policy first`, { reply });
-    expect(refused).toContain("only an admin");
+    expect(refused).toContain("not a pal's to set");
     expect(calls).toEqual([]); // nothing approved
 
-    // but anyone may ask for the stricter run
-    await dispatchCommand(deps, pal, "C1", `rv ${OTHER} --policy after`, { reply });
+    // an executer may ask for the stricter run, but not the looser one
+    const exec = actor({ slackId: "U0EXE0006", role: "executer" });
+    deps.users.upsert(exec);
+    expect(await dispatchCommand(deps, exec, "C1", `rv ${PR} --policy first`, { reply })).toContain("only an admin");
+    await dispatchCommand(deps, exec, "C1", `rv ${OTHER} --policy after`, { reply });
     expect(calls).toEqual([OTHER]); // approved after the review, not before
+  });
+
+  test("a pal cannot see or set review policy", async () => {
+    const { deps } = withPolicy(undefined);
+    const pal = actor({ slackId: "U0PAL0009", role: "pal" });
+    deps.users.upsert(pal);
+    expect(await dispatchCommand(deps, pal, "C1", "review-policy")).toContain("needs *admin*");
+    expect(await dispatchCommand(deps, pal, "C1", "review-policy acme/acme-be first")).toContain("needs *admin*");
+    expect(deps.settings!.get("review_policy:acme/acme-be")).toBeUndefined();
+  });
+
+  test("a pal's review never approves up front, whatever the repo is on", async () => {
+    const { deps, calls, lines, reply } = withPolicy(undefined);
+    const pal = actor({ slackId: "U0PAL0007", role: "pal" });
+    deps.users.upsert(pal);
+
+    await dispatchCommand(deps, pal, "C1", `rv ${OTHER}`, { reply });
+    expect(lines[0]).toContain("reviewing"); // no approval line first
+    expect(lines[lines.length - 1]).toContain("the review came back clean");
+    expect(calls).toEqual([OTHER]); // approved only after
+
+    const refused = await dispatchCommand(deps, pal, "C1", `rv ${OTHER} --policy first`, { reply });
+    expect(refused).toContain("not a pal's to set");
+    expect(calls).toEqual([OTHER]); // nothing more approved
+  });
+
+  test("an executer's review still approves up front on a default repo", async () => {
+    const { deps, calls, lines, reply } = withPolicy(undefined);
+    const exec = actor({ slackId: "U0EXE0007", role: "executer" });
+    deps.users.upsert(exec);
+    await dispatchCommand(deps, exec, "C1", `rv ${OTHER}`, { reply });
+    expect(lines[0]).toBe(`✅ approved ${OTHER}`);
+    expect(calls).toEqual([OTHER]);
   });
 
   test("several PRs share the run's policy, and the note is not eaten", async () => {
@@ -1834,23 +1913,24 @@ describe("per-repo review policy", () => {
     expect(calls).toEqual([OTHER]);
   });
 
-  test("admins set it, anyone can read it, junk is refused", async () => {
+  test("admins set and read it, a pal gets neither, junk is refused", async () => {
     const deps = build();
     deps.settings = createSettingsRepo(db);
     const pal = actor({ slackId: "U0PAL0001", role: "pal" });
 
-    expect(await dispatchCommand(deps, pal, "C1", "review-policy acme/x after")).toContain("Only admins");
+    expect(await dispatchCommand(deps, pal, "C1", "review-policy acme/x after")).toContain("needs *admin*");
     expect(await dispatchCommand(deps, actor(), "C1", "review-policy notarepo after")).toContain("Which repo?");
     expect(await dispatchCommand(deps, actor(), "C1", "review-policy acme/x sometimes")).toContain(
       "First or after?",
     );
 
     await dispatchCommand(deps, actor(), "C1", "review-policy acme/x after");
-    expect(await dispatchCommand(deps, pal, "C1", "review-policy acme/x")).toContain("approve-after");
+    expect(await dispatchCommand(deps, pal, "C1", "review-policy acme/x")).toContain("needs *admin*");
+    expect(await dispatchCommand(deps, actor(), "C1", "review-policy acme/x")).toContain("approve-after");
     expect(await dispatchCommand(deps, actor(), "C1", "review-policy")).toContain("acme/x");
 
     await dispatchCommand(deps, actor(), "C1", "review-policy acme/x default");
-    expect(await dispatchCommand(deps, pal, "C1", "review-policy acme/x")).toContain("uses the default");
+    expect(await dispatchCommand(deps, actor(), "C1", "review-policy acme/x")).toContain("uses the default");
   });
 
   test("an author on approve-after is reviewed first, whatever the repo is on", async () => {
@@ -1869,15 +1949,15 @@ describe("per-repo review policy", () => {
     expect(lines[0]).toBe(`✅ approved ${OTHER}`);
   });
 
-  test("an author hold blocks a bare approve and a pal's --policy first", async () => {
+  test("an author hold blocks a bare approve and an executer's --policy first", async () => {
     const { deps, calls, reply } = withPolicy(undefined);
     deps.github!.author = async () => "app/morcela-agent";
     await dispatchCommand(deps, actor(), "C1", "review-policy @morcela-agent after");
-    const pal = actor({ slackId: "U0PAL0007", role: "pal" });
-    deps.users.upsert(pal);
+    const exec = actor({ slackId: "U0EXE0007", role: "executer" });
+    deps.users.upsert(exec);
 
     expect(await dispatchCommand(deps, actor(), "C1", `approve ${PR}`)).toContain("only after a clean review");
-    expect(await dispatchCommand(deps, pal, "C1", `rv ${PR} --policy first`, { reply })).toContain("only an admin");
+    expect(await dispatchCommand(deps, exec, "C1", `rv ${PR} --policy first`, { reply })).toContain("only an admin");
     expect(calls).toEqual([]);
   });
 

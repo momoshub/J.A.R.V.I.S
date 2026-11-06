@@ -6,6 +6,7 @@ import {
   MAX_ATTEMPTS,
   PENDING_MAX_AGE_MS,
   recoveryFor,
+  RETRY_DELAY_MS,
   REDELIVER_MAX_AGE_MS,
   waitsForAck,
 } from "../../src/domain/inbox.ts";
@@ -47,8 +48,12 @@ describe("inbox rules", () => {
   });
   test("an interrupted row is redelivered while fresh and under its attempts", () => {
     expect(recoveryFor({ receivedAt: T0, attempts: 1 }, T0 + 60_000)).toBe("redeliver");
+    // Cut off again: wait for things to settle rather than walk straight back in.
+    expect(recoveryFor({ receivedAt: T0, attempts: 2 }, T0 + 60_000)).toBe("defer");
     expect(recoveryFor({ receivedAt: T0, attempts: MAX_ATTEMPTS }, T0 + 60_000)).toBe("drop");
     expect(recoveryFor({ receivedAt: T0, attempts: 1 }, T0 + REDELIVER_MAX_AGE_MS + 1)).toBe("drop");
+    // Age counts from the last attempt: a message still being worked on is not stale.
+    expect(recoveryFor({ receivedAt: T0, claimedAt: T0 + 20 * 60_000, attempts: 2 }, T0 + 21 * 60_000)).toBe("defer");
   });
   test("a stale heartbeat means disconnected, whatever the row last said", () => {
     const s = { state: "connected" as const, since: T0, beatAt: T0 };
@@ -86,7 +91,7 @@ describe("inbox repo", () => {
     inbox.enqueue({ envelopeId: "e1", type: "events_api", body: message("Ev1") }, T0);
     inbox.enqueue({ envelopeId: "e2", type: "events_api", body: message("Ev2") }, T0 - PENDING_MAX_AGE_MS - 1);
     inbox.claim(1, T0);
-    expect(inbox.recover(T0 + 1_000)).toEqual({ redelivered: 1, dropped: 1, interrupted: [] });
+    expect(inbox.recover(T0 + 1_000)).toEqual({ redelivered: 1, deferred: 0, dropped: 1, interrupted: [] });
     expect(inbox.counts()).toMatchObject({ pending: 1, running: 0, dropped: 1 });
   });
 
@@ -218,21 +223,50 @@ describe("gateway handler", () => {
 describe("a reply cut off by a restart", () => {
   test("recover reports the streams a dead row opened, and forgets them on redelivery", () => {
     const inbox = openInbox(":memory:");
-    const fresh = inbox.enqueue({ envelopeId: "e1", type: "events_api", body: message("Ev1") }, T0)!;
     const old = inbox.enqueue({ envelopeId: "e2", type: "events_api", body: message("Ev2") }, T0 - 60 * 60_000)!;
+    inbox.claim(10, T0 - 60 * 60_000);
+    const fresh = inbox.enqueue({ envelopeId: "e1", type: "events_api", body: message("Ev1") }, T0)!;
     inbox.claim(10, T0);
     inbox.addStream(fresh, "D1", "300.1");
     inbox.addStream(fresh, "D1", "300.2");
     inbox.addStream(old, "C9", "400.1");
     const { interrupted } = inbox.recover(T0 + 1_000);
     expect(interrupted).toEqual([
-      { id: fresh, channel: "D1", streamTs: ["300.1", "300.2"], outcome: "redeliver" },
-      { id: old, channel: "C9", streamTs: ["400.1"], outcome: "drop" },
+      { id: old, channel: "C9", streamTs: ["400.1"], outcome: "drop", retried: false },
+      { id: fresh, channel: "D1", streamTs: ["300.1", "300.2"], outcome: "redeliver", retried: false },
     ]);
     // The retry is reclaimed and dies again: only ITS streams are reported,
     // never the first attempt's a second time.
     inbox.claim(10, T0 + 2_000);
     expect(inbox.recover(T0 + 3_000).interrupted).toEqual([]);
+  });
+
+  test("a second cut-off retries by itself after the delay, and the cap still ends a crash loop", () => {
+    const inbox = openInbox(":memory:");
+    const id = inbox.enqueue({ envelopeId: "e1", type: "events_api", body: message("Ev1") }, T0)!;
+    let t = T0;
+    inbox.claim(1, t);
+    // First cut-off: straight back.
+    expect(inbox.recover((t += 1_000))).toMatchObject({ redelivered: 1, deferred: 0 });
+    expect(inbox.claim(1, t)).toHaveLength(1);
+    // Second: pending, but not claimable until the delay has passed.
+    expect(inbox.recover((t += 1_000))).toMatchObject({ redelivered: 0, deferred: 1 });
+    expect(inbox.claim(1, t)).toHaveLength(0);
+    expect(inbox.claim(1, t + RETRY_DELAY_MS - 1)).toHaveLength(0);
+    t += RETRY_DELAY_MS;
+    expect(inbox.claim(1, t)).toHaveLength(1);
+    // Third: deferred again.
+    expect(inbox.recover((t += 1_000)).deferred).toBe(1);
+    t += RETRY_DELAY_MS;
+    inbox.claim(1, t);
+    inbox.addStream(id, "D1", "300.9");
+    // Fourth: that is the cap, and the notice says why rather than "too old".
+    const [row] = inbox.recover((t += 1_000)).interrupted;
+    expect(row).toMatchObject({ outcome: "drop", retried: true });
+    expect(inbox.counts()).toMatchObject({ pending: 0, dropped: 1 });
+    expect(interruptedNotice("drop", true)).toContain(`${MAX_ATTEMPTS} times`);
+    expect(interruptedNotice("drop", true)).not.toContain("too long ago");
+    expect(interruptedNotice("defer")).toContain("5 minutes");
   });
 
   test("the receiver tidies before it hands out the retry, and tells Bolt which attempt it is", async () => {
@@ -273,7 +307,7 @@ describe("a reply cut off by a restart", () => {
       },
     };
     const notice = interruptedNotice("redeliver");
-    await tidyInterrupted(api, { id: 1, channel: "D1", streamTs: ["300.1", "300.2"], outcome: "redeliver" }, notice);
+    await tidyInterrupted(api, { id: 1, channel: "D1", streamTs: ["300.1", "300.2"], outcome: "redeliver", retried: false }, notice);
     expect(calls).toEqual([
       ["chat.stopStream", { channel: "D1", ts: "300.1" }],
       ["chat.update", { channel: "D1", ts: "300.1", text: notice, blocks: [{ type: "markdown", text: notice }] }],

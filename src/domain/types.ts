@@ -8,7 +8,7 @@
 /**
  * Role of a person the bot answers to, in increasing privilege:
  * - pal: sandboxed, read-only tools in a fixed scratch dir, may use `review`
- * - executer: sandboxed, tools assigned from the control deck
+ * - executer: sandboxed, tools assigned from the control deck, plus code edits and PRs
  * - admin: full tool access, can manage users
  * - owner: full control, cannot be removed
  */

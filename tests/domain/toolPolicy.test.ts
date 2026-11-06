@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import {
   DB_MCP_SERVERS,
+  EXECUTER_CODE_TOOLS,
   EXECUTER_DB_SERVERS,
   NO_TOOLS,
   PAL_TOOLS,
@@ -148,7 +149,35 @@ describe("toolPolicyFor", () => {
 
   test("an executer's assigned list still gets reactions appended", () => {
     const tools = toolPolicyFor("executer", { ...opts, executerTools: ["Read", "Bash(gh pr view:*)"] }).allowedTools;
-    expect(tools).toEqual(["Read", "Bash(gh pr view:*)", ...EXECUTER_DB_SERVERS, `Bash(${REACT}:*)`]);
+    expect(tools).toEqual([
+      "Read", "Bash(gh pr view:*)", ...EXECUTER_DB_SERVERS, ...EXECUTER_CODE_TOOLS,
+      "Bash(screencapture:*)", "Bash(sips:*)", `Bash(${REACT}:*)`,
+    ]);
+  });
+
+  test("an executer writes code and opens a PR, a pal does not", () => {
+    const exe = toolPolicyFor("executer", { ...opts, protectedPaths: ["/opt/jarvis"] });
+    for (const t of ["Write", "Edit", "Bash(git commit:*)", "Bash(git push:*)", "Bash(gh pr create:*)", "Bash(gh repo clone:*)"]) {
+      expect(exe.allowedTools).toContain(t);
+      expect(exe.disallowedTools).not.toContain(t);
+    }
+    // an assigned list does not drop them
+    expect(toolPolicyFor("executer", { ...opts, executerTools: ["Read"] }).allowedTools).toContain("Write");
+    // merging and force pushes stay human
+    expect(exe.allowedTools).not.toContain("Bash(gh pr merge:*)");
+    expect(exe.disallowedTools).toContain("Bash(git push --force:*)");
+    expect(exe.disallowedTools).toContain("Bash(git push -f:*)");
+    // the bot's own source and the CLI config are not a normal codebase
+    expect(exe.disallowedTools).toContain("Edit(//opt/jarvis/**)");
+    expect(exe.disallowedTools).toContain("Write(//opt/jarvis/**)");
+    expect(exe.disallowedTools).toContain("Edit(~/.claude/**)");
+    // secrets stay denied
+    expect(exe.disallowedTools).toContain("Bash(aws secretsmanager:*)");
+
+    const pal = toolPolicyFor("pal", opts);
+    for (const t of ["Write", "Edit", "MultiEdit"]) expect(pal.disallowedTools).toContain(t);
+    expect(pal.allowedTools).not.toContain("Bash(gh pr create:*)");
+    expect(pal.allowedTools).not.toContain("Bash(git push:*)");
   });
 
   test("without a helper path nothing extra is granted", () => {

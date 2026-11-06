@@ -4,6 +4,8 @@
  * - owner / admin: full access (skip permissions, any tool, the normal cwd)
  * - pal: sandboxed read-only tools in a fixed scratch dir (may still use `review`)
  * - executer: sandboxed, tools assigned from the control deck, plus the read-only databases
+ *   and the code tools - edit files, commit, push a branch and open a PR - and
+ *   the browser tools to test a UI change on the host Mac
  *
  * When `skipPermissions` is false the CLI runs with an `--allowedTools` allow-list
  * and no permission bypass, so anything off the list is denied.
@@ -169,10 +171,62 @@ export const SANDBOX_DISALLOW: readonly string[] = [
   ...DB_MCP_SERVERS,
 ];
 
-/** Sandbox denials minus the read-only databases an executer is granted. */
-export const EXECUTER_DISALLOW: readonly string[] = SANDBOX_DISALLOW.filter(
-  (t) => !EXECUTER_DB_SERVERS.includes(t),
-);
+/**
+ * What an executer needs to change an ordinary codebase: write files in a
+ * clone, commit, push a branch and open a PR. Merging is not on it, and a
+ * force push is denied below - review stays a human step.
+ */
+export const EXECUTER_CODE_TOOLS: readonly string[] = [
+  "Write", "Edit", "MultiEdit",
+  "Bash(mkdir:*)",
+  "Bash(gh repo clone:*)", "Bash(gh pr create:*)", "Bash(gh pr edit:*)", "Bash(gh pr comment:*)",
+  "Bash(git clone:*)", "Bash(git fetch:*)", "Bash(git pull:*)",
+  "Bash(git checkout:*)", "Bash(git switch:*)", "Bash(git restore:*)",
+  "Bash(git add:*)", "Bash(git rm:*)", "Bash(git mv:*)", "Bash(git commit:*)", "Bash(git push:*)",
+];
+
+/**
+ * What an executer needs to test a UI change in Arc on the host Mac and show
+ * the result: the Accessibility driver, the JXA input helpers (each by path -
+ * a bare `osascript` would run any AppleScript), screenshots, cropping them,
+ * and the upload helper that can only post a file into a Slack thread.
+ */
+const executerBrowserTools = (opts: ToolPolicyOptions): readonly string[] => [
+  ...(opts.macUiScript ? [`Bash(${opts.macUiScript}:*)`] : []),
+  ...(opts.browserScripts ?? []).map((s) => `Bash(osascript -l JavaScript ${s}:*)`),
+  ...(opts.uploadScript ? [`Bash(${opts.uploadScript}:*)`] : []),
+  "Bash(screencapture:*)", "Bash(sips:*)",
+];
+
+/** Written history on a shared branch is not an executer's to rewrite. */
+const NO_FORCE_PUSH: readonly string[] = [
+  "Bash(git push --force:*)", "Bash(git push -f:*)", "Bash(git push --force-with-lease:*)",
+];
+
+/**
+ * Paths an executer may never write, even with the code tools: the bot's own
+ * source and the CLI's config. "Normal codebases" means everything else.
+ */
+const protectedWrites = (paths: readonly string[]): readonly string[] =>
+  paths.flatMap((p) => {
+    // permission rules read `~/x` from home and `//x` as an absolute path
+    const dir = p.startsWith("~") ? p.replace(/\/+$/, "") : `/${p.replace(/\/+$/, "")}`;
+    return [`Edit(${dir}/**)`, `Write(${dir}/**)`, `MultiEdit(${dir}/**)`];
+  });
+
+const FILE_WRITES: readonly string[] = ["Write", "Edit", "MultiEdit", "NotebookEdit"];
+
+/**
+ * Sandbox denials minus the read-only databases and the file writes an
+ * executer is granted, plus the paths and pushes it stays out of.
+ */
+export const executerDisallow = (protectedPaths: readonly string[] = []): readonly string[] => [
+  ...SANDBOX_DISALLOW.filter((t) => !EXECUTER_DB_SERVERS.includes(t) && !FILE_WRITES.includes(t)),
+  "NotebookEdit",
+  ...NO_FORCE_PUSH,
+  ...protectedWrites(["~/.claude", ...protectedPaths]),
+];
+
 
 export type ToolPolicyOptions = {
   /** cwd for full-access roles (owner/admin). */
@@ -181,6 +235,8 @@ export type ToolPolicyOptions = {
   readonly sandboxCwd?: string;
   /** tool allow-list for the executer role, assigned from the control deck. */
   readonly executerTools?: readonly string[];
+  /** Absolute paths an executer may not write: the bot's own source. */
+  readonly protectedPaths?: readonly string[];
   /**
    * Absolute path of the reaction helper. Sandboxed roles get exactly this
    * script rather than a general `curl`, so the bot can react in every
@@ -209,6 +265,12 @@ export type ToolPolicyOptions = {
    * and refusing is a worse answer than a narrow door.
    */
   readonly slackReadScript?: string;
+  /** Absolute path of the Accessibility driver (`bin/mac-ui.js`): executer only. */
+  readonly macUiScript?: string;
+  /** Absolute paths of the JXA browser helpers (real click, keys): executer only. */
+  readonly browserScripts?: readonly string[];
+  /** Absolute path of the Slack thread upload helper: executer only. */
+  readonly uploadScript?: string;
   /**
    * Model per role, for roles that should not be spending the expensive one on
    * ordinary chat. Absent means the adapter's default.
@@ -259,10 +321,12 @@ export const toolPolicyFor = (role: UserRole, opts: ToolPolicyOptions): ToolPoli
           [
             ...(opts.executerTools && opts.executerTools.length > 0 ? opts.executerTools : PAL_TOOLS),
             ...EXECUTER_DB_SERVERS,
+            ...EXECUTER_CODE_TOOLS,
+            ...executerBrowserTools(opts),
           ],
           opts,
         ),
-        disallowedTools: EXECUTER_DISALLOW,
+        disallowedTools: executerDisallow(opts.protectedPaths),
         model: modelOf("executer", opts),
       };
     case "pal":

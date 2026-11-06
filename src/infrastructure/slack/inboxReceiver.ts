@@ -108,9 +108,9 @@ export const createInboxReceiver = (opts: InboxReceiverOptions) => {
       app = a;
     },
     start: async () => {
-      const { redelivered, dropped, interrupted } = opts.inbox.recover(now());
-      if (redelivered || dropped) {
-        log(`from before the restart: ${redelivered} redelivered, ${dropped} dropped`);
+      const { redelivered, deferred, dropped, interrupted } = opts.inbox.recover(now());
+      if (redelivered || deferred || dropped) {
+        log(`from before the restart: ${redelivered} redelivered, ${deferred} retrying in a few minutes, ${dropped} dropped`);
       }
       for (const row of interrupted) {
         await opts.onInterrupted?.(row).catch((err: unknown) =>

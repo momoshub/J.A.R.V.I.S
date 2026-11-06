@@ -31,8 +31,22 @@ export const isEnvelopeType = (t: string): t is EnvelopeType => (ENVELOPE_TYPES 
  */
 export const ACK_WAIT_MS = 2_500;
 
-/** A row the bot was running when it died is redelivered at most this often. */
-export const MAX_ATTEMPTS = 2;
+/**
+ * Attempts a row gets before it is given up on. A row the bot was running
+ * when it died is retried at once the first time, and after `RETRY_DELAY_MS`
+ * every time after that: a second cut-off usually means something is still
+ * going on - a git operation swapping the database out, a deploy, the message
+ * itself - and five minutes lets it settle instead of walking straight back
+ * into it. The cap is what stops a message that crashes the bot every time
+ * from becoming a crash loop.
+ */
+export const MAX_ATTEMPTS = 4;
+
+/** How long a row cut off more than once waits before it runs again. */
+export const RETRY_DELAY_MS = 5 * 60_000;
+
+/** What recovery does with a row it finds `running`. */
+export type Recovery = "redeliver" | "defer" | "drop";
 
 /**
  * A row older than this is not worth acting on any more. A reply hours late to
@@ -64,12 +78,19 @@ export const dedupeKeyOf = (envelopeId: string, body: unknown): string => {
 /** Only interactive payloads and slash commands can carry a response in their ack. */
 export const waitsForAck = (type: EnvelopeType): boolean => type !== "events_api";
 
-/** What to do with a row found `running` when the bot starts. */
+/**
+ * What to do with a row found `running` when the bot starts. Its age counts
+ * from the last attempt, not from when it arrived: a message still being
+ * worked on is not stale, however many restarts it has been through.
+ */
 export const recoveryFor = (
-  row: { receivedAt: number; attempts: number },
+  row: { receivedAt: number; claimedAt?: number; attempts: number },
   now: number,
-): "redeliver" | "drop" =>
-  row.attempts < MAX_ATTEMPTS && now - row.receivedAt <= REDELIVER_MAX_AGE_MS ? "redeliver" : "drop";
+): Recovery => {
+  if (row.attempts >= MAX_ATTEMPTS) return "drop";
+  if (now - (row.claimedAt ?? row.receivedAt) > REDELIVER_MAX_AGE_MS) return "drop";
+  return row.attempts <= 1 ? "redeliver" : "defer";
+};
 
 /**
  * Whether the bot can hear Slack, read from the gateway's heartbeat.
@@ -93,7 +114,14 @@ export const gatewayHealth = (
  * The half is not worth keeping: a retry answers in full below it, and a
  * dropped row's half is an answer that stops mid-sentence.
  */
-export const interruptedNotice = (outcome: "redeliver" | "drop"): string =>
+export const interruptedNotice = (outcome: Recovery, retried = false): string =>
   outcome === "redeliver"
     ? "⚠️ _a restart cut this reply off - picking it up again below_"
-    : "⚠️ _a restart cut this reply off, and it was too long ago to pick up again - ask me once more_";
+    : outcome === "defer"
+      ? `⚠️ _a restart cut this reply off again - giving things ${RETRY_DELAY_MS / 60_000} minutes to settle, then picking it up again below_`
+      : retried
+        ? // Cut off on every attempt: the likeliest cause is the message
+          // itself, and running it once more unattended is how a crash
+          // becomes a loop.
+          `⚠️ _a restart cut this reply off ${MAX_ATTEMPTS} times, so I am not retrying it on my own - it may be what is crashing me. Ask me once more if it is safe to_`
+        : "⚠️ _a restart cut this reply off, and it was too long ago to pick up again - ask me once more_";

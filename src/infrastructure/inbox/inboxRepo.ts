@@ -13,10 +13,13 @@ import { dirname } from "node:path";
 import {
   dedupeKeyOf,
   KEEP_FINISHED_MS,
+  MAX_ATTEMPTS,
   PENDING_MAX_AGE_MS,
   recoveryFor,
   type EnvelopeType,
+  RETRY_DELAY_MS,
   type InboxState,
+  type Recovery,
 } from "../../domain/inbox.ts";
 import type { ConnectionState } from "../../domain/connectionHealth.ts";
 
@@ -51,7 +54,9 @@ export type Interrupted = {
   readonly id: number;
   readonly channel: string;
   readonly streamTs: readonly string[];
-  readonly outcome: "redeliver" | "drop";
+  readonly outcome: Recovery;
+  /** Dropped because it was cut off on every attempt, not because it was old. */
+  readonly retried: boolean;
 };
 
 /** An ack the bot gave: absent while it has not answered yet. */
@@ -96,7 +101,7 @@ export type InboxRepo = {
    * Settle what a previous bot process left behind: rows it was running are
    * redelivered or dropped, and pending rows too old to matter are dropped.
    */
-  recover: (now: number) => { redelivered: number; dropped: number; interrupted: Interrupted[] };
+  recover: (now: number) => { redelivered: number; deferred: number; dropped: number; interrupted: Interrupted[] };
   /** Delete finished rows past their keep time. */
   prune: (now: number) => number;
   counts: () => Record<InboxState, number>;
@@ -142,17 +147,21 @@ export const openInbox = (path: string): InboxRepo => {
   const columns = new Set((db.prepare(`PRAGMA table_info(inbox)`).all() as { name: string }[]).map((c) => c.name));
   if (!columns.has("channel")) db.exec(`ALTER TABLE inbox ADD COLUMN channel TEXT`);
   if (!columns.has("stream_ts")) db.exec(`ALTER TABLE inbox ADD COLUMN stream_ts TEXT`);
+  // A deferred retry is pending but not claimable until then.
+  if (!columns.has("not_before")) db.exec(`ALTER TABLE inbox ADD COLUMN not_before INTEGER`);
 
   const insert = db.prepare(
     `INSERT OR IGNORE INTO inbox (dedupe_key, type, body, retry_num, retry_reason, received_at)
      VALUES (?, ?, ?, ?, ?, ?)`,
   );
-  const pending = db.prepare(`SELECT * FROM inbox WHERE state = 'pending' ORDER BY id LIMIT ?`);
+  const pending = db.prepare(
+    `SELECT * FROM inbox WHERE state = 'pending' AND (not_before IS NULL OR not_before <= ?) ORDER BY id LIMIT ?`,
+  );
   const markRunning = db.prepare(
     `UPDATE inbox SET state = 'running', attempts = attempts + 1, claimed_at = ? WHERE id = ? AND state = 'pending'`,
   );
   const claimTx = db.transaction((limit: number, at: number): InboxRow[] => {
-    const rows = pending.all(limit) as Row[];
+    const rows = pending.all(at, limit) as Row[];
     for (const r of rows) markRunning.run(at, r.id);
     return rows.map((r) => ({ ...toRow(r), state: "running" as const, attempts: r.attempts + 1 }));
   });
@@ -194,31 +203,42 @@ export const openInbox = (path: string): InboxRepo => {
     fail: (id, error, at) => void settle.run("failed", at, error.slice(0, 2000), id),
     recover: (now) => {
       let redelivered = 0;
+      let deferred = 0;
       let dropped = 0;
       const interrupted: Interrupted[] = [];
       const running = db.prepare(`SELECT * FROM inbox WHERE state = 'running'`).all() as (Row & {
         channel: string | null;
         stream_ts: string | null;
+        claimed_at: number | null;
       })[];
       for (const r of running) {
-        const outcome = recoveryFor({ receivedAt: r.received_at, attempts: r.attempts }, now);
-        if (outcome === "redeliver") {
+        const outcome = recoveryFor(
+          { receivedAt: r.received_at, claimedAt: r.claimed_at ?? undefined, attempts: r.attempts },
+          now,
+        );
+        if (outcome !== "drop") {
           // The streams are reported once, here, and forgotten: the retry
           // opens its own, and must not have these tidied a second time.
-          db.prepare(`UPDATE inbox SET state = 'pending', stream_ts = NULL WHERE id = ?`).run(r.id);
-          redelivered += 1;
+          db.prepare(`UPDATE inbox SET state = 'pending', stream_ts = NULL, not_before = ? WHERE id = ?`).run(
+            outcome === "defer" ? now + RETRY_DELAY_MS : null,
+            r.id,
+          );
+          if (outcome === "defer") deferred += 1;
+          else redelivered += 1;
         } else {
           settle.run("dropped", now, "interrupted by a restart, too old or retried too often", r.id);
           dropped += 1;
         }
         const streamTs = (r.stream_ts ?? "").split(",").filter(Boolean);
-        if (r.channel && streamTs.length) interrupted.push({ id: r.id, channel: r.channel, streamTs, outcome });
+        if (r.channel && streamTs.length) {
+          interrupted.push({ id: r.id, channel: r.channel, streamTs, outcome, retried: r.attempts >= MAX_ATTEMPTS });
+        }
       }
       const stale = db
         .prepare(`UPDATE inbox SET state = 'dropped', finished_at = ?, error = 'waited too long' WHERE state = 'pending' AND received_at < ?`)
         .run(now, now - PENDING_MAX_AGE_MS);
       dropped += stale.changes;
-      return { redelivered, dropped, interrupted };
+      return { redelivered, deferred, dropped, interrupted };
     },
     prune: (now) =>
       db

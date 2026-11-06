@@ -90,11 +90,15 @@ export const createInnerChild = (deps: InnerChildDeps): InnerChild => {
   let lastTriage = 0;
   let booted = false;
 
-  const replyTo = (channelId: string, threadTs: string, startedAt: number): string => {
-    const after = deps.messages
+  // Bounded by the turn's end as well as its start: a thread's turns run one
+  // at a time and the reply is stored before the turn is logged, so anything
+  // later belongs to the NEXT turn. Without the upper bound two turns triaged
+  // together both got the newer reply, and one looked like it went unanswered.
+  const replyTo = (channelId: string, threadTs: string, startedAt: number, endedAt: number): string => {
+    const during = deps.messages
       .recentForThread(channelId, threadTs, 10)
-      .filter((m) => m.role === "assistant" && m.createdAt >= startedAt);
-    return after[after.length - 1]?.content ?? "";
+      .filter((m) => m.role === "assistant" && m.createdAt >= startedAt && m.createdAt <= endedAt);
+    return during[during.length - 1]?.content ?? "";
   };
 
   /**
@@ -175,7 +179,7 @@ export const createInnerChild = (deps: InnerChildDeps): InnerChild => {
       outcome: t.outcome,
       error: t.error,
       request: t.request,
-      reply: replyTo(t.channelId, t.threadTs, t.startedAt),
+      reply: replyTo(t.channelId, t.threadTs, t.startedAt, t.endedAt),
     }));
     const raw = await deps.llm.complete({
       system: triageSystem(deps.botName()),

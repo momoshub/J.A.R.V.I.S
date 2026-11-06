@@ -6,7 +6,7 @@
  * and the whole job when it arrives is one message in the right place.
  */
 import { reminderMessage } from "../domain/reminder.ts";
-import type { ReminderRepo } from "../infrastructure/db/reminderRepo.ts";
+import type { Reminder, ReminderRepo } from "../infrastructure/db/reminderRepo.ts";
 import type { Clock } from "./ports.ts";
 
 /** Failed posts before a reminder is given up on. */
@@ -20,6 +20,8 @@ export type ReminderSenderDeps = {
   /** Post a message; an empty thread means the channel itself. */
   post: (channelId: string, text: string, threadTs?: string) => Promise<void>;
   log?: (msg: string) => void;
+  /** Same as the watcher's: a failed read is handed over, never thrown onto the timer. */
+  onError?: (e: unknown) => void;
 };
 
 export type ReminderSender = {
@@ -37,7 +39,15 @@ export const createReminderSender = (deps: ReminderSenderDeps): ReminderSender =
       if (running) return;
       running = true;
       try {
-        for (const r of deps.reminders.due(deps.clock())) {
+        let due: Reminder[];
+        try {
+          due = deps.reminders.due(deps.clock());
+        } catch (e) {
+          log(`could not read due reminders: ${e instanceof Error ? e.message : String(e)}`);
+          deps.onError?.(e);
+          return;
+        }
+        for (const r of due) {
           try {
             await deps.post(r.channelId, reminderMessage(r.targets, r.text, r.createdBy), r.threadTs || undefined);
             deps.reminders.settle(r.id, "sent", deps.clock());

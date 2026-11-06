@@ -81,3 +81,18 @@ describe("reminder sender", () => {
     expect(reminders.waitingFor("U11")).toHaveLength(1);
   });
 });
+
+describe("reminder sender, when the database itself fails", () => {
+  test("a failed read of due reminders is handed over, not thrown", async () => {
+    const swapped = Object.assign(new Error("disk I/O error"), { code: "SQLITE_IOERR_VNODE" });
+    const errors: unknown[] = [];
+    const s = createReminderSender({
+      reminders: { ...reminders, due: () => { throw swapped; } },
+      clock: () => now,
+      post: async () => {},
+      onError: (e) => void errors.push(e),
+    });
+    await expect(s.tick()).resolves.toBeUndefined();
+    expect(errors).toEqual([swapped]);
+  });
+});

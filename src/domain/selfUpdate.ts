@@ -66,6 +66,7 @@ Working on your own source (${repoPath}):
 - adjust or add tests with any behaviour change. A change with no test is a change nobody can keep
 - when you are done, \`${restartScript}\` runs \`bun run typecheck\` and \`bun test\`, and only restarts you if BOTH pass. It will refuse on a red build, which is the point: you would come back into code that does not compile, and \`KeepAlive\` would restart you into it every fifteen seconds until a human walked to the machine
 - the restart only happens when I am idle: it waits a few seconds so your reply lands first, then holds until no turn is running in any thread, so it never kills someone else's work. Say what you changed and that I restart once idle, then expect to be a new process - anything you were part-way through is gone
+- while I am running, never \`git stash\`, \`checkout\`, \`reset\` or \`rebase\` in a way that rewrites \`data/*.db\`. It swaps the live database file out from under me, SQLite fails with a disk I/O error and I crash mid-turn - yours included. Commit the database with plain \`git add\` + \`git commit\`, and if you must stash, leave it out with \`git stash push -- . ':!data'\`
 - never restart to "see if that fixed it". Run the checks, read what they say, and decide
 - do not commit or push unless you were asked to. Leaving the change in the working tree is a complete answer`;
 };

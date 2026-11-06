@@ -264,8 +264,9 @@ export const handleMessage = async (
     grafanaGetScript: deps.grafanaGetScript,
     slackReadScript: deps.slackReadScript,
     // It drives the real screen somebody is sitting at, so it is offered only
-    // to the roles that already run with full tool access.
-    macUiScript: canTeach(decision.user.role) ? deps.macUiScript : undefined,
+    // to the roles whose tool policy grants it: full access, and executers for
+    // browser testing.
+    macUiScript: canDrive(decision.user.role) ? deps.macUiScript : undefined,
     // ... and keep a durable fact, but only when talking to someone who could
     // have taught it one by hand. Learnings apply to everyone, everywhere.
     learnUrl: canTeach(decision.user.role) ? deps.learnUrl : undefined,
@@ -454,6 +455,7 @@ const withAttachments = (m: SlackMessage): string => {
 
 /** Roles allowed to teach the bot - the same gate the `learn` command applies. */
 const canTeach = (role: UserRole): boolean => role === "admin" || role === "owner";
+const canDrive = (role: UserRole): boolean => canTeach(role) || role === "executer";
 
 /** Distinct people who have spoken in this channel, resolved to names we know. */
 const collectParticipants = (

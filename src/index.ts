@@ -14,6 +14,7 @@ import { openDatabase } from "./infrastructure/db/client.ts";
 import { createThreadSessionRepo } from "./infrastructure/db/threadSessionRepo.ts";
 import { createThreadQueue } from "./application/threadQueue.ts";
 import { restartWhenIdle } from "./domain/selfUpdate.ts";
+import { isDbFileSwapped } from "./domain/dbHealth.ts";
 import { createRunRegistry } from "./application/runRegistry.ts";
 import { createSystemProbe, createSystemTracker } from "./infrastructure/system/systemProbe.ts";
 import { createTotpRepo } from "./infrastructure/db/totpRepo.ts";
@@ -216,6 +217,11 @@ const main = async () => {
   const slackWaitScript = join(import.meta.dir, "..", "bin", "slack-wait.sh");
   // Drives any Mac app through the Accessibility API - no Automation needed.
   const macUiScript = join(import.meta.dir, "..", "bin", "mac-ui.js");
+  // Real clicks and keystrokes for web content that ignores AXPress.
+  const browserScriptsDir = join(import.meta.dir, "..", "data", "adapter", "skills", "browser-ui-test", "scripts");
+  const browserScripts = ["click.js", "keys.js", "press-exact.js"].map((f) => join(browserScriptsDir, f));
+  // Posts a file into a thread, so a sandboxed role can share a screenshot.
+  const uploadScript = join(import.meta.dir, "..", "bin", "slack-upload.sh");
   // Reads a claude.ai artifact by opening a full session, which has the tool a
   // `-p` spawn does not.
   const artifactScript = join(import.meta.dir, "..", "bin", "artifact-read.sh");
@@ -241,8 +247,12 @@ const main = async () => {
       runScript,
       fileScript,
       grafanaGetScript,
-    slackReadScript,
+      slackReadScript,
+      macUiScript,
+      browserScripts,
+      uploadScript,
       models: modelsForRoles(),
+      protectedPaths: [repoPath],
       executerTools: (settings.get(SETTING_KEYS.executerTools) ?? "")
         .split(/[,\n]/)
         .map((s) => s.trim())
@@ -413,6 +423,34 @@ const main = async () => {
   // the grant is bound to the runtime's path, so upgrading it silently revokes
   // the permission and nothing says so.
   const uiAccess = createUiAccessProbe();
+  // Exit, and let launchd bring us back. Deferred so the reply that asked
+  // for it has landed, and held until no turn is running anywhere.
+  const requestRestart = (reason: string): void => {
+    activity.line(`restart requested: ${reason}`);
+    restartWhenIdle({
+      // An envelope still being handled is work too - a slash command or
+      // a button press is not a tracked run, and exiting under it loses it.
+      isIdle: () => runs.all().length === 0 && (slackApp?.inFlight() ?? 0) === 0,
+      exit: () => {
+        console.log("Restarting on request ...");
+        process.exit(0);
+      },
+      schedule: (fn, ms) => {
+        setTimeout(fn, ms).unref?.();
+      },
+      log: (line) => activity.line(line),
+    });
+  };
+  // The database file was swapped under us (a git operation on the committed
+  // DB). Every call on this handle now fails, and only reopening fixes it, so
+  // restart once idle instead of crashing the turn that is running.
+  let dbRestartAsked = false;
+  const onDbError = (e: unknown): void => {
+    if (!isDbFileSwapped(e) || dbRestartAsked) return;
+    dbRestartAsked = true;
+    requestRestart("database file was replaced on disk (SQLITE_IOERR_VNODE)");
+  };
+
   const dashboard = createDashboard(
     {
       port: config.dashboardPort,
@@ -429,22 +467,7 @@ const main = async () => {
       slackHealth: () => slackApp?.health(),
       // Exit, and let launchd bring us back. Deferred so the reply that asked
       // for it has landed, and held until no turn is running anywhere.
-      requestRestart: (reason: string) => {
-        activity.line(`restart requested: ${reason}`);
-        restartWhenIdle({
-          // An envelope still being handled is work too - a slash command or
-          // a button press is not a tracked run, and exiting under it loses it.
-          isIdle: () => runs.all().length === 0 && (slackApp?.inFlight() ?? 0) === 0,
-          exit: () => {
-            console.log("Restarting on request ...");
-            process.exit(0);
-          },
-          schedule: (fn, ms) => {
-            setTimeout(fn, ms).unref?.();
-          },
-          log: (line) => activity.line(line),
-        });
-      },
+      requestRestart,
       uiAccess: uiAccess.read,
       users,
       messages,
@@ -518,7 +541,7 @@ const main = async () => {
             inbox,
             log: (l) => activity.line(`inbox: ${l}`),
             onInterrupted: (row) =>
-              tidyInterrupted(slackWeb, row, interruptedNotice(row.outcome), (l) => activity.line(`inbox: ${l}`)),
+              tidyInterrupted(slackWeb, row, interruptedNotice(row.outcome, row.retried), (l) => activity.line(`inbox: ${l}`)),
           })
         : undefined,
       botToken: config.slackBotToken,
@@ -555,6 +578,7 @@ const main = async () => {
     runTurn: deps.runTurn!,
     say: async (channel, text, thread) => void (await slackAdmin.post(channel, text, thread)),
     log: (msg) => console.error(`[watch] ${msg}`),
+    onError: onDbError,
   });
   // Reminders ride the same timer: they need no model either, only a post.
   const reminderSender = createReminderSender({
@@ -562,6 +586,7 @@ const main = async () => {
     clock,
     post: async (channel, text, thread) => void (await slackAdmin.post(channel, text, thread)),
     log: (msg) => console.error(`[remind] ${msg}`),
+    onError: onDbError,
   });
   const pendingReminders = reminders.waiting().length;
   if (pendingReminders > 0) console.log(`[remind] ${pendingReminders} reminder(s) waiting from before the restart`);
@@ -612,10 +637,16 @@ const main = async () => {
     },
     log: (msg) => console.error(`[inner-child] ${msg}`),
   });
+  // A rejection on a bare timer is unhandled, and an unhandled rejection kills
+  // the process - mid-turn, for whoever is talking to the bot. Never let one out.
+  const tickFailed = (name: string) => (e: unknown): void => {
+    console.error(`[${name}] tick failed: ${e instanceof Error ? e.message : String(e)}`);
+    onDbError(e);
+  };
   const watchTimer = setInterval(() => {
-    void watcher.tick();
-    void reminderSender.tick();
-    void innerChild.tick();
+    void watcher.tick().catch(tickFailed("watch"));
+    void reminderSender.tick().catch(tickFailed("remind"));
+    void innerChild.tick().catch(tickFailed("inner-child"));
   }, WATCH_TICK_MS);
   (watchTimer as { unref?: () => void }).unref?.();
 
