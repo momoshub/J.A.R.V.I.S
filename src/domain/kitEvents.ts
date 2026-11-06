@@ -287,7 +287,7 @@ const GATHERING = new Set([
  * Slack has no disabled checkbox, so a settled one can still be unticked on
  * screen. Writing the message back over itself puts the ticks where they were.
  */
-export const snapsBack = (type: string | undefined): boolean => !!type && GATHERING.has(type);
+export const snapsBack = (type: string | undefined): boolean => !!type && (GATHERING.has(type) || FORM_FIELDS.has(type));
 
 /**
  * The settled message to write back after a stray tick. Slack keeps a box's
@@ -371,11 +371,40 @@ const settleGathering = (e: Gathering, held: KitElementState | undefined): Eleme
   return { ...rest, action_id, ...(initial?.length ? { initial_options: initial } : {}) };
 };
 
+/** Where a single pick lives on a posted element, so a settled one shows it. */
+const initialOf = (held: KitElementState | undefined): Record<string, unknown> | undefined => {
+  if (!held) return undefined;
+  if (held.selected_option) return { initial_option: held.selected_option };
+  if (held.selected_date) return { initial_date: held.selected_date };
+  if (held.selected_time) return { initial_time: held.selected_time };
+  if (typeof held.selected_date_time === "number") return { initial_date_time: held.selected_date_time };
+  if (held.selected_user) return { initial_user: held.selected_user };
+  if (held.selected_conversation) return { initial_conversation: held.selected_conversation };
+  if (held.selected_channel) return { initial_channel: held.selected_channel };
+  return undefined;
+};
+
+/**
+ * A filled form field made inert, showing what was picked. The option object
+ * is taken from the element itself, since Slack refuses an `initial_option`
+ * that does not match one of its options exactly.
+ */
+const settleField = (e: Gathering & { option_groups?: { options?: Option[] }[] }, held: KitElementState | undefined): KitBlock[] => {
+  const initial = initialOf(held);
+  if (!initial) return [];
+  const action_id = `${KIT_SETTLED_PREFIX}${(idOf(e) ?? "").slice(KIT_PREFIX.length)}`;
+  if (!held?.selected_option) return [{ ...e, action_id, ...initial }];
+  const options = [...(e.options ?? []), ...(e.option_groups ?? []).flatMap((g) => g.options ?? [])];
+  const own = options.find((o) => o.value === held.selected_option?.value);
+  return own ? [{ ...e, action_id, initial_option: own }] : [];
+};
+
 const settleElement = (e: unknown, picked: string | undefined, picks: KitPicks): unknown[] => {
   if (!isKitElement(e)) return [e];
   const type = (e as Element).type;
   if (type === "button") return [settleButton(e as Element, picked)];
   if (typeof type === "string" && GATHERING.has(type)) return [settleGathering(e as Gathering, picks[idOf(e) ?? ""])];
+  if (typeof type === "string" && FORM_FIELDS.has(type)) return settleField(e as Gathering, picks[idOf(e) ?? ""]);
   return [];
 };
 
@@ -383,8 +412,9 @@ const settleElement = (e: unknown, picked: string | undefined, picks: KitPicks):
  * The message once its question is settled. Our buttons stay where they were
  * but go inert, the one pressed (`picked`) marked as chosen. Checkboxes and
  * multi-selects stay too, inert, showing what was ticked (`picks`, the message
- * state at the press). Single selects and pickers are taken out, since one left
- * in place still looks like an open question. One context line saying how it
+ * state at the press). Single selects, radios and pickers stay inert showing
+ * their pick, and are taken out when nothing was picked, since an empty one
+ * still looks like an open question. One context line saying how it
  * was settled goes after the last block we touched, so it closes the question
  * rather than splitting it. Everything else is kept as it was.
  */
