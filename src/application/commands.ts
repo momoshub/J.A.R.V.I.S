@@ -801,7 +801,7 @@ export const COMMANDS: readonly CommandDef[] = [
       }
 
       if (off) {
-        return deps.follows.remove(target.channel, target.ts)
+        return deps.follows.remove(target.channel, target.ts, deps.clock())
           ? "stopped following that one - I will only answer there when tagged now 🫧"
           : "I was not following that thread.";
       }
