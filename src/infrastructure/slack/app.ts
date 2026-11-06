@@ -80,6 +80,7 @@ import {
   pressedNote,
   repliedNote,
   retireKit,
+  snapsBack,
   submittedNote,
   voteLines,
   waitsForButton,
@@ -671,7 +672,18 @@ export const createKitListeners = (
 
     const pressed = body.message;
     const channel = body.channel?.id;
-    if (!modal && isSettled(actionId)) return; // an answered question: the press means nothing now
+    if (!modal && isSettled(actionId)) {
+      // An answered question: the press means nothing now, but a box ticked
+      // or unticked on screen has to go back to what was settled.
+      if (snapsBack(action.type) && pressed?.ts && pressed.blocks && channel) {
+        try {
+          await (client as KitClient).chat.update?.({ channel, ts: pressed.ts, text: pressed.text ?? "", blocks: pressed.blocks });
+        } catch (err) {
+          log(`kit snap back ${actionId} on ${pressed.ts} failed: ${slackRefusal(err)}`);
+        }
+      }
+      return;
+    }
 
     // A vote: picks only change the tally on the message, and the turn waits
     // for submit. Presses on one message run one after another, each on the
