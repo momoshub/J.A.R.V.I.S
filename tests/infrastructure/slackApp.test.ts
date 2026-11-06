@@ -148,6 +148,36 @@ describe("createHandler streaming truth table", () => {
     expect(said).toEqual([{ text: "full reply", reply_broadcast: true }]);
   });
 
+  test("a stream Slack already closed is rewritten into the answer, not posted again", async () => {
+    // a long turn: Slack closed the stream before the end, so the stop fails
+    const rec: Recorded = { appends: [], stops: 0, stopThrows: true, appendThrows: false };
+    const { handle, msg, said, updates } = build({
+      llm: streamingLlm("the full answer", [{ type: "text", delta: "half of it" }]),
+      streamUpdates: true,
+      rec,
+    });
+    await handle(msg("hi", "000.9"));
+    expect(said).toHaveLength(0);
+    expect(updates).toHaveLength(1);
+    expect(updates[0]).toMatchObject({ ts: "222.2", text: "the full answer" });
+  });
+
+  test("a closed stream that rolled over keeps the answer on its first message only", async () => {
+    const rec: Recorded = { appends: [], stops: 0, stopThrows: true, appendThrows: false };
+    const head = "a".repeat(10_000);
+    const tail = "b".repeat(3_000);
+    const r = build({
+      llm: streamingLlm("the full answer", [{ type: "text", delta: head }, { type: "text", delta: tail }]),
+      streamUpdates: true,
+      rec,
+    });
+    await r.handle(r.msg("hi", "000.9"));
+    expect(r.said).toHaveLength(0);
+    expect(r.updates.map((u) => u.ts)).toEqual(["222.2"]);
+    expect(r.deletes).toHaveLength(1);
+    expect(r.deletes).not.toContain("222.2");
+  });
+
   test("a reply that rolled over is tidied message by message, footer on the last", async () => {
     const steps: LlmStreamEvent[] = [
       { type: "tool", id: "t1", title: "run: one", status: "complete" },

@@ -82,7 +82,8 @@ export type SlackStream = {
    * each one actually carried (a Block Kit chunk as its ```blockkit fence).
    * More than one means it rolled over, and `ts` is only the LAST of them - so
    * rewriting that one with the whole answer posts it twice. Each message is
-   * tidied with its own part instead.
+   * tidied with its own part instead. Only messages Slack actually took an
+   * append for are listed: one whose first append failed never existed.
    */
   readonly parts: readonly StreamPart[];
   /** Await pending appends and close the stream. False if it broke or showed no content. */
@@ -159,13 +160,13 @@ export const createSlackStream = (
   };
 
   /** Per opened message: the streamer, and the text it was sent. */
-  const opened: { streamer: Streamer; text: string }[] = [];
+  const opened: { streamer: Streamer; text: string; live: boolean }[] = [];
   /** Message ts already reported through `onOpen`. */
   const announced = new Set<string>();
   const ensure = (): Streamer => {
     if (!streamer) {
       streamer = makeStreamer();
-      opened.push({ streamer, text: "" });
+      opened.push({ streamer, text: "", live: false });
     }
     return streamer;
   };
@@ -214,6 +215,7 @@ export const createSlackStream = (
   const record = (args: Parameters<Streamer["append"]>[0]): void => {
     const current = opened[opened.length - 1];
     if (!current) return;
+    current.live = true;
     if (args.markdown_text) current.text += args.markdown_text;
     for (const c of args.chunks ?? []) {
       const blocks = (c as { type?: string; blocks?: unknown }).type === "blocks" ? (c as { blocks: unknown }).blocks : undefined;
@@ -459,7 +461,7 @@ export const createSlackStream = (
       return usage;
     },
     get parts() {
-      return opened.flatMap((o) => (o.streamer.ts ? [{ ts: o.streamer.ts, text: o.text }] : []));
+      return opened.flatMap((o) => (o.live && o.streamer.ts ? [{ ts: o.streamer.ts, text: o.text }] : []));
     },
     abandon: async () => {
       cancelPending();
