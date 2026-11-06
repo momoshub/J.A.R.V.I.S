@@ -181,11 +181,19 @@ describe("answered questions lock", () => {
     expect(locksOnPress(undefined, "jv:x")).toBe(false);
   });
 
-  test("only gathering elements beside a live button wait for it", () => {
+  test("gathering elements and form fields beside a live button wait for it", () => {
     const button = { type: "actions", elements: [{ type: "button", action_id: "jv:go" }] };
     expect(waitsForButton("checkboxes", [button])).toBe(true);
     expect(waitsForButton("multi_static_select", [button])).toBe(true);
-    expect(waitsForButton("static_select", [button])).toBe(false);
+    expect(waitsForButton("radio_buttons", [button])).toBe(true);
+    expect(waitsForButton("static_select", [button])).toBe(true);
+    expect(waitsForButton("users_select", [button])).toBe(true);
+    expect(waitsForButton("datepicker", [button])).toBe(true);
+    expect(waitsForButton("timepicker", [button])).toBe(true);
+    expect(waitsForButton("overflow", [button])).toBe(false);
+    expect(waitsForButton("button", [button])).toBe(false);
+    expect(waitsForButton("radio_buttons", [])).toBe(false);
+    expect(waitsForButton("static_select", [{ type: "actions", elements: [{ type: "button", action_id: "jv:modal:x" }] }])).toBe(false);
     expect(waitsForButton("checkboxes", [])).toBe(false);
     expect(waitsForButton("checkboxes", [{ type: "actions", elements: [{ type: "button", action_id: "jv:settled:go" }] }])).toBe(false);
     expect(waitsForButton("checkboxes", [{ type: "actions", elements: [{ type: "button", action_id: "jv:modal:x" }] }])).toBe(false);

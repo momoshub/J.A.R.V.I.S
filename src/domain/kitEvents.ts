@@ -195,7 +195,7 @@ export const kitRules = (kitUrl: string): string => {
 
 Interactive Block Kit (buttons, selects, modals):
 - any element whose action_id starts with "jv:" is yours: when someone uses it, the press comes back to this thread as a new turn starting "[block kit event]", from the person who pressed. Every element type works - buttons, static/user/channel selects, multi-selects, overflow, checkboxes, radio buttons, date/time pickers
-- checkboxes and multi-selects on a message that also has a jv: button are silent: ticking them does not reach you, and the button press comes with everything picked on the message. Without a button every tick is its own turn, so always give them one
+- checkboxes, multi-selects, radio buttons, single selects and date/time pickers on a message that also has a jv: button are silent: picking them does not reach you, and the button press comes with everything picked on the message. Without a button every pick is its own turn, so give a form a button
 - post interactive blocks yourself with chat.postMessage and the bot token, always with thread_ts of this thread so the event finds its way back here. A blockkit fence is for display only
 - give each element a meaningful id ("jv:approve-refund") and a value that tells you what it was about, since the turn only sees the id, the value and who pressed
 - a modal opens only from a click. Store it first, then post a button whose action_id is the one it gives back:
@@ -303,12 +303,27 @@ export const snapBackBlocks = (blocks: readonly KitBlock[]): KitBlock[] =>
 
 const SNAP_MARK = "~";
 
+/**
+ * Single picks that fill in a form rather than answer it. Next to a button the
+ * button is the answer, so a radio or a date chosen first is only a field.
+ */
+const FORM_FIELDS = new Set([
+  "radio_buttons",
+  "static_select",
+  "users_select",
+  "conversations_select",
+  "channels_select",
+  "datepicker",
+  "timepicker",
+  "datetimepicker",
+]);
+
 const isLiveButton = (e: unknown): boolean =>
   isKitElement(e) && (e as Element).type === "button" && !modalIdOf(idOf(e) ?? "");
 
 /** Whether a pick should wait for a button on the same message instead of becoming a turn. */
 export const waitsForButton = (type: string | undefined, blocks: readonly KitBlock[] | undefined): boolean =>
-  !!type && GATHERING.has(type) && (blocks ?? []).some((b) => elementsOf(b).some(isLiveButton));
+  !!type && (GATHERING.has(type) || FORM_FIELDS.has(type)) && (blocks ?? []).some((b) => elementsOf(b).some(isLiveButton));
 
 /** Whether the message is a vote, still open for picks. */
 export const isVote = (blocks: readonly KitBlock[] | undefined): boolean =>
