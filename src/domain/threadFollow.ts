@@ -90,6 +90,31 @@ export const isOneOnOneThread = (opts: {
 };
 
 /**
+ * Is this thread still one person talking to the bot, so it should start
+ * following it for good?
+ *
+ * Unlike `isOneOnOneThread`, the bot need not have replied yet: this runs as
+ * the first tagged message comes in, before there is a reply. Once followed
+ * the thread stays followed when others join - only an explicit "off" ends it.
+ */
+export const startsAutoFollow = (opts: {
+  readonly participants: readonly string[];
+  readonly author: string;
+  readonly botUserId: string;
+}): boolean => {
+  const humans = new Set([...opts.participants, opts.author]);
+  humans.delete(opts.botUserId);
+  return humans.size === 1;
+};
+
+/** The owner's reaction that switches following off in a thread, silently. */
+export const FOLLOW_OFF_REACTION = "rock";
+
+/** Does this reaction (skin tone and all) switch following off? */
+export const isFollowOffReaction = (reaction: string): boolean =>
+  (reaction.split("::")[0] ?? reaction) === FOLLOW_OFF_REACTION;
+
+/**
  * Does this untagged thread message get an answer?
  *
  * Two routes in, and they are not the same decision. The bot follows a thread
@@ -115,8 +140,12 @@ export const shouldFollowThread = (opts: {
   readonly ownThreadsOff: boolean;
   /** Only the bot and one person have written in the thread. */
   readonly oneOnOne?: boolean;
+  /** Following was switched off here, which outranks every automatic route. */
+  readonly optedOut?: boolean;
 }): boolean => {
-  if (opts.asked || opts.oneOnOne) return true;
+  if (opts.asked) return true;
+  if (opts.optedOut) return false;
+  if (opts.oneOnOne) return true;
   if (opts.ownThreadsOff) return false;
   return opts.ownThread;
 };
@@ -129,6 +158,7 @@ export const shouldFollowThread = (opts: {
  */
 export const followVerdict = (opts: Parameters<typeof shouldFollowThread>[0]): { follow: boolean; why: string } => {
   if (opts.asked) return { follow: true, why: "asked" };
+  if (opts.optedOut) return { follow: false, why: "opted-out" };
   if (opts.oneOnOne) return { follow: true, why: "one-on-one" };
   if (opts.ownThreadsOff) return { follow: false, why: "own-threads-off" };
   return opts.ownThread ? { follow: true, why: "own-thread" } : { follow: false, why: "not-ours" };

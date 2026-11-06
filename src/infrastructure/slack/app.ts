@@ -53,7 +53,8 @@ import { annotateMentions, extractMentionIds } from "../../domain/mentions.ts";
 import { isTimeout } from "../../domain/threadSession.ts";
 import { toMrkdwn } from "../../domain/slackFormat.ts";
 import { toBlockMessage, type Block } from "../../domain/blockKit.ts";
-import { couldFollowThread, followVerdict, isOneOnOneThread } from "../../domain/threadFollow.ts";
+import { couldFollowThread, followVerdict, isOneOnOneThread, startsAutoFollow } from "../../domain/threadFollow.ts";
+import { unfollowOnReaction } from "../../application/followReaction.ts";
 import { collapsedBlocks, collapseSteps } from "../../domain/collapseSteps.ts";
 import { usageFooter } from "../../domain/usageFooter.ts";
 import { isSilenceNote } from "../../domain/silence.ts";
@@ -505,6 +506,7 @@ export const createSlackApp = (config: SlackAppConfig, deps: Deps) => {
   app.event("app_mention", async ({ event, client, say, context }) => {
     const e = event as { channel: string; user?: string; text: string; ts: string; thread_ts?: string };
     if (!e.user) return;
+    await autoFollow(asClient(client), e.channel, threadKeyOf(e), e.user);
     await handle({
       channelId: e.channel,
       userId: e.user,
@@ -880,6 +882,20 @@ export const createSlackApp = (config: SlackAppConfig, deps: Deps) => {
       return;
     }
     try {
+      const unfollow = await unfollowOnReaction(deps, {
+        slackUserId: e.user,
+        reaction: e.reaction,
+        channel: e.item.channel,
+        ts: e.item.ts,
+      });
+      if (unfollow.kind === "unfollowed") {
+        log(`follow off by reaction channel=${e.item.channel} thread=${unfollow.threadTs}`);
+        return;
+      }
+    } catch (err) {
+      log(`follow-off reaction failed: ${err instanceof Error ? err.message : String(err)}`);
+    }
+    try {
       const outcome = await decideAccessRequest(deps, {
         slackUserId: e.user,
         reaction: e.reaction,
@@ -937,6 +953,24 @@ export const createSlackApp = (config: SlackAppConfig, deps: Deps) => {
     return info;
   };
 
+  /**
+   * A thread that is just one person and the bot is followed for good, so it
+   * keeps answering untagged after others join. Checked as a tagged message
+   * comes in, before the bot has even replied; an earlier "off" wins.
+   */
+  const autoFollow = async (client: SlackClient, channel: string, threadTs: string, author: string): Promise<void> => {
+    const follows = deps.follows;
+    if (!follows || channel.startsWith("D")) return;
+    if (follows.isFollowed(channel, threadTs) || follows.isOptedOut(channel, threadTs)) return;
+    const me = await deps.slack?.botUserId().catch(() => undefined);
+    if (!me) return;
+    const info = await threadInfo(client, channel, threadTs);
+    if (!startsAutoFollow({ participants: info.participants, author, botUserId: me })) return;
+    if (follows.autoAdd(channel, threadTs, author, deps.clock())) {
+      log(`follow auto channel=${channel} thread=${threadTs} user=${author}: one-on-one`);
+    }
+  };
+
   app.message(async ({ message, client, say, context }) => {
     const m = message as RawMessage & { channel: string; ts: string };
     if (!shouldHandleDm(m)) {
@@ -964,7 +998,11 @@ export const createSlackApp = (config: SlackAppConfig, deps: Deps) => {
       // Every human reply in a thread gets one line, follow or not. So a reply
       // with NO line here never reached the bot at all - Slack did not deliver
       // the event - and that is a different fix from a decision that said no.
-      const verdict = followVerdict({ asked, ownThread, ownThreadsOff, oneOnOne });
+      const optedOut = !asked && deps.follows?.isOptedOut(m.channel, m.thread_ts!) === true;
+      const verdict = followVerdict({ asked, ownThread, ownThreadsOff, oneOnOne, optedOut });
+      // A one-on-one is followed for good from here, so a second person
+      // joining does not end it.
+      if (verdict.why === "one-on-one") deps.follows?.autoAdd(m.channel, m.thread_ts!, m.user!, deps.clock());
       log(
         `follow ${verdict.follow ? "yes" : "skip"} channel=${m.channel} (${m.channel_type ?? "?"}) ` +
           `thread=${m.thread_ts} user=${m.user}: ${verdict.why}` +
