@@ -27,6 +27,15 @@ export const tierOf = (policy?: { skipPermissions?: boolean }): SessionTier =>
   policy?.skipPermissions ? "full" : "sandbox";
 
 /**
+ * The display name a thread's session runs under: `jarvis-<channel>-<ts>`, the
+ * same two ids a Slack thread link carries. Another thread's session can then
+ * find this one by name and message it, instead of guessing between sessions
+ * that are all named after the working directory.
+ */
+export const threadSessionName = (channelId: string, threadTs: string): string =>
+  `jarvis-${channelId}-${threadTs}`;
+
+/**
  * Did this run fail because the session it was told to resume is gone? Matched
  * on the CLI's own wording, loosely: the cost of a false positive is one cold
  * turn, the cost of a false negative is a thread that answers nothing until

@@ -192,6 +192,7 @@ const buildArgs = (
   // A workflow keeps one CLI session alive across turns: claim the id on the
   // first call, resume it on every later one, and the model keeps its context.
   if (session) args.push(session.resume ? "--resume" : "--session-id", session.id);
+  if (session?.name) args.push("--name", session.name);
 
   // A per-call policy overrides the adapter default. skipPermissions -> full
   // access; otherwise sandbox with an explicit allow/deny tool list.

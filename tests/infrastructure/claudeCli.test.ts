@@ -115,6 +115,20 @@ describe("createClaudeCliLlm", () => {
     expect(out).toBe("haiku");
   });
 
+  test("a named session passes its name to the CLI", async () => {
+    // a thread's session is named after the thread, so another one can find it
+    const bin = fakeBin(
+      `#!/usr/bin/env bash\ncat > /dev/null\nARGS="$*"\nif [[ "$ARGS" == *"--name jarvis-C1-1.2"* ]]; then R="named"; else R="$ARGS"; fi\necho "{\\"type\\":\\"result\\",\\"subtype\\":\\"success\\",\\"is_error\\":false,\\"result\\":\\"$R\\"}"`,
+    );
+    const llm = createClaudeCliLlm({ binPath: bin });
+    const out = await llm.complete({
+      system: "s",
+      messages: [{ role: "user", content: "hi" }],
+      session: { id: "abc", resume: true, name: "jarvis-C1-1.2" },
+    });
+    expect(out).toBe("named");
+  });
+
   test("a denial still reaches the CLI at full access", async () => {
     // the bug: disallowedTools used to be passed only in the sandboxed branch,
     // so a full-access role could reach a tool it was merely asked to avoid

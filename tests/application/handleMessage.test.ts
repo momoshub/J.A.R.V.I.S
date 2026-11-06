@@ -418,12 +418,12 @@ describe("handleMessage", () => {
     };
 
     await handleMessage(deps, { channelId: "C1", slackUserId: OWNER, text: "first", threadTs: "100.1", messageTs: "100.1" });
-    expect(seen[0]?.session).toEqual({ id: "sess-1", resume: false });
+    expect(seen[0]?.session).toEqual({ id: "sess-1", resume: false, name: "jarvis-C1-100.1" });
     expect(seen[0]?.messages).toHaveLength(1); // cold start: the thread so far
 
     await handleMessage(deps, { channelId: "C1", slackUserId: OWNER, text: "second", threadTs: "100.1", messageTs: "100.2" });
     // same session, resumed - and only the new turn, not the thread again
-    expect(seen[1]?.session).toEqual({ id: "sess-1", resume: true });
+    expect(seen[1]?.session).toEqual({ id: "sess-1", resume: true, name: "jarvis-C1-100.1" });
     expect(seen[1]?.messages.map((m) => m.content)).toEqual(["second"]);
   });
 
@@ -452,7 +452,7 @@ describe("handleMessage", () => {
 
     await handleMessage(deps, { ...inbound, text: "try again", messageTs: "500.2" });
     // the retry resumed the dead turn's session rather than opening a new one
-    expect(seen[1]?.session).toEqual({ id: "sess-1", resume: true });
+    expect(seen[1]?.session).toEqual({ id: "sess-1", resume: true, name: "jarvis-C1-500.1" });
   });
 
   test("a session opened under different rules is abandoned, not resumed", async () => {
@@ -472,16 +472,16 @@ describe("handleMessage", () => {
 
     const inbound = { channelId: "C1", slackUserId: OWNER, text: "hi", threadTs: "700.1", messageTs: "700.1" };
     await handleMessage(deps, inbound);
-    expect(seen[0]?.session).toEqual({ id: "sess-1", resume: false });
+    expect(seen[0]?.session).toEqual({ id: "sess-1", resume: false, name: "jarvis-C1-700.1" });
 
     // same rules - resumed
     await handleMessage(deps, { ...inbound, messageTs: "700.2" });
-    expect(seen[1]?.session).toEqual({ id: "sess-1", resume: true });
+    expect(seen[1]?.session).toEqual({ id: "sess-1", resume: true, name: "jarvis-C1-700.1" });
 
     // the persona changes, so the session is dropped and reopened cold
     deps.promptContext = () => ({ learnings: [], base: "a different persona entirely" });
     await handleMessage(deps, { ...inbound, messageTs: "700.3" });
-    expect(seen[2]?.session).toEqual({ id: "sess-2", resume: false });
+    expect(seen[2]?.session).toEqual({ id: "sess-2", resume: false, name: "jarvis-C1-700.1" });
   });
 
   test("a watch hand-back keeps the old session through a rule change, once", async () => {
@@ -503,11 +503,11 @@ describe("handleMessage", () => {
     deps.promptContext = () => ({ learnings: [], base: "a different persona entirely" });
 
     await handleMessage(deps, { ...inbound, text: "the build is ready", messageTs: "710.2", keepSession: true });
-    expect(seen[1]?.session).toEqual({ id: "sess-1", resume: true });
+    expect(seen[1]?.session).toEqual({ id: "sess-1", resume: true, name: "jarvis-C1-710.1" });
 
     // the next ordinary turn still gets the new rules
     await handleMessage(deps, { ...inbound, messageTs: "710.3" });
-    expect(seen[2]?.session).toEqual({ id: "sess-2", resume: false });
+    expect(seen[2]?.session).toEqual({ id: "sess-2", resume: false, name: "jarvis-C1-710.1" });
   });
 
   test("a session the CLI no longer has is replaced, not surfaced as an error", async () => {

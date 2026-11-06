@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { isAuthFailure, isMissingSession, isTimeout, tierOf, unseenTurns } from "../../src/domain/threadSession.ts";
+import { isAuthFailure, isMissingSession, isTimeout, threadSessionName, tierOf, unseenTurns } from "../../src/domain/threadSession.ts";
 import type { StoredMessage } from "../../src/domain/types.ts";
 
 const turn = (ts: string, content = ts): StoredMessage => ({
@@ -87,5 +87,11 @@ describe("isAuthFailure", () => {
     expect(isAuthFailure(new Error("claude CLI exited with code 143: no output"))).toBe(false);
     expect(isAuthFailure(new Error("rate limited"))).toBe(false);
     expect(isAuthFailure(undefined)).toBe(false);
+  });
+});
+
+describe("threadSessionName", () => {
+  test("names a session after the channel and thread it serves", () => {
+    expect(threadSessionName("C0TEST00004", "1793875220.595309")).toBe("jarvis-C0TEST00004-1793875220.595309");
   });
 });
