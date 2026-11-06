@@ -60,6 +60,37 @@ describe("parseNoteArgs", () => {
     expect(a.ok && a.mode).toBe("replace");
   });
 
+  test("a comment can be typed inline, with no file", () => {
+    const a = parseNoteArgs(["--comment", "1a2b3c4d5e6f7081920a1b2c3d4e5f60", "looks", "good"]);
+    expect(a.ok && a.mode).toBe("comment");
+    expect(a.ok && a.text).toBe("looks good");
+    expect(a.ok && a.path).toBe("");
+  });
+
+  test("a comment can come from a file, and then has no inline text", () => {
+    const a = parseNoteArgs(["/tmp/c.md", "--comment", "<https://notion.so/x1a2b3c4d5e6f7081920a1b2c3d4e5f60|x>"]);
+    expect(a.ok && a.mode).toBe("comment");
+    expect(a.ok && a.path).toBe("/tmp/c.md");
+    expect(a.ok && a.text).toBeUndefined();
+    expect(a.ok && a.target).toBe("https://notion.so/x1a2b3c4d5e6f7081920a1b2c3d4e5f60");
+  });
+
+  test("a notion link inside a comment stays in the comment", () => {
+    const a = parseNoteArgs(["--comment", "1a2b3c4d5e6f7081920a1b2c3d4e5f60", "see", "https://notion.so/y1a2b3c4d5e6f7081920a1b2c3d4e5f61"]);
+    expect(a.ok && a.target).toBe("1a2b3c4d5e6f7081920a1b2c3d4e5f60");
+    expect(a.ok && a.text).toContain("notion.so/y");
+  });
+
+  test("an empty comment or a pageless one is refused", () => {
+    expect(parseNoteArgs(["--comment", "1a2b3c4d5e6f7081920a1b2c3d4e5f60"]).ok).toBe(false);
+    const a = parseNoteArgs(["--comment"]);
+    expect(!a.ok && a.error).toContain("--comment");
+  });
+
+  test("only a comment may skip the file", () => {
+    expect(parseNoteArgs(["--comment", "1a2b3c4d5e6f7081920a1b2c3d4e5f60", "--append", "1a2b3c4d5e6f7081920a1b2c3d4e5f60"]).ok).toBe(false);
+  });
+
   test("no file is no note", () => {
     expect(parseNoteArgs([]).ok).toBe(false);
   });

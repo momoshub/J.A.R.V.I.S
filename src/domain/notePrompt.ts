@@ -39,8 +39,10 @@ export type NoteRequest = {
   readonly askedBy: string;
   /** Create a page, replace an existing one's body, or add to its end. */
   readonly mode?: NoteMode;
-  /** The page being edited. Required by `replace` and `append`. */
+  /** The page being edited. Required by `replace`, `append` and `comment`. */
   readonly target?: string;
+  /** An inline comment, when there is no file. */
+  readonly text?: string;
 };
 
 /** What each mode is allowed to do, and what it must refuse. */
@@ -82,19 +84,32 @@ What you must NOT do:
 - do NOT create a new page. If ${req.target} cannot be opened or written to, STOP and say so
 - do not edit, reorder or tidy anything that was already on the page. You are adding to the end of it, nothing more
 - do not touch any page other than that one`,
+
+  comment: (req) => `The page to comment on: ${req.target}
+
+How:
+1. ${req.text ? "The comment is the text given above, word for word." : "Read the file at that path, all of it - that is the comment. If it is not there, say so and stop."}
+2. Open ${req.target} so you know it is the right page.
+3. Add it as a COMMENT with the Notion connector's comment tool. If the url points at a discussion (a \`d=\` or \`#discussion\` part), reply in that discussion; otherwise comment on the page itself.
+
+What you must NOT do:
+- do NOT edit the page's body, title or properties. A comment sits beside the page, it does not change it
+- do not create a page, and do not resolve or delete anyone else's comments
+- if the page or the comment tool cannot be reached, STOP and say exactly that. Do not fall back to writing the text into the page instead`,
 };
 
 const VERB: Record<NoteMode, string> = {
   create: "publishing a document into Notion",
   replace: "updating a document in Notion",
   append: "adding to a document in Notion",
+  comment: "commenting on a page in Notion",
 };
 
 export const notePrompt = (req: NoteRequest, botName: string): string => {
   const mode = req.mode ?? "create";
   return `You are ${botName}, ${VERB[mode]} for <@${req.askedBy}>.
 
-The document: \`${req.path}\`
+${req.text ? `The comment:\n${req.text}` : `The document: \`${req.path}\``}
 ${req.title ? `Title: ${req.title}` : mode === "create" ? "Title: take it from the document's own first heading." : ""}
 You have the account's Notion connector in this session. It writes as the human who authorised it, so everything below is about not exceeding what you were asked to do.
 
@@ -103,7 +118,7 @@ ${PLAN[mode](req)}
 - do not post to Slack, send anything, or touch any other connector
 
 Report back, briefly. Whatever you return is posted into the thread for you, so never apologise for being unable to post and never hand anyone text "ready to paste". ${SLACK_FORMAT}
-- first line: the page url, and nothing else of substance${mode === "create" ? "" : " - the page you edited, not a new one"}
+- first line: the page url, and nothing else of substance${mode === "create" ? "" : mode === "comment" ? " - the page you commented on" : " - the page you edited, not a new one"}
 - then at most two lines: anything that did not carry across cleanly, or anything in the document that looked wrong to you${mode === "replace" ? ", and anything that was on the page before and is not in the document" : ""}
 - do not describe the document back to whoever asked. They wrote it`;
 };
