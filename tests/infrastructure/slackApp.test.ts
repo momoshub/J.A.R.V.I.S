@@ -330,6 +330,68 @@ describe("createHandler streaming truth table", () => {
     expect(said).toHaveLength(1);
     expect(said[0]?.text).toContain("error");
   });
+
+  const card: LlmStreamEvent = { type: "tool", id: "t1", title: "run: git status", status: "complete" };
+
+  test("a streamed note about not replying is taken back, and nothing is posted", async () => {
+    const { handle, msg, said, updates, deletes } = build({
+      llm: streamingLlm("No response requested.", [card, { type: "text", delta: "No response requested." }]),
+      streamUpdates: true,
+    });
+    await handle(msg("ok", "000.9"));
+    expect(deletes).toEqual(["222.2"]);
+    expect(updates).toHaveLength(0);
+    expect(said).toHaveLength(0);
+  });
+
+  test("a turn that showed only cards and wrote nothing never leaves an empty message", async () => {
+    const { handle, msg, said, updates, deletes } = build({
+      llm: streamingLlm("", [card]),
+      streamUpdates: true,
+    });
+    await handle(msg("ok", "000.9"));
+    expect(deletes).toHaveLength(0);
+    expect(updates).toHaveLength(1);
+    expect(updates[0]).toMatchObject({ ts: "222.2" });
+    expect(String(updates[0]?.text).trim()).not.toBe("");
+    expect(said).toHaveLength(0);
+  });
+
+  test("a following turn that only looked around and stayed quiet leaves nothing", async () => {
+    const { handle, msg, said, updates, deletes } = build({
+      llm: streamingLlm("nothing to add", [card, { type: "text", delta: "nothing to add" }]),
+      streamUpdates: true,
+    });
+    await handle({ ...msg("hi", "000.9"), following: true });
+    expect(deletes).toEqual(["222.2"]);
+    expect(updates).toHaveLength(0);
+    expect(said).toHaveLength(0);
+  });
+
+  test("an answer that never streamed as text lands on the card message", async () => {
+    const big = (id: string): LlmStreamEvent => ({ ...card, id, details: "d".repeat(250) });
+    const cards = Array.from({ length: 40 }, (_, i) => big(`t${i}`));
+    const r = build({ llm: streamingLlm("the answer", cards), streamUpdates: true });
+    await r.handle(r.msg("hi", "000.9"));
+    expect(r.updates.map((u) => [u.ts, String(u.text)])).toEqual([["222.2", "the answer"]]);
+    expect(r.deletes.length).toBeGreaterThan(0);
+    expect(r.deletes).not.toContain("222.2");
+    expect(r.said).toHaveLength(0);
+  });
+
+  test("a turn that fails after showing cards takes the card message back", async () => {
+    const failing: LlmPort = {
+      complete: async () => "x",
+      stream: async (_p, sink) => {
+        sink(card);
+        throw new Error("llm down");
+      },
+    };
+    const { handle, msg, said, deletes } = build({ llm: failing, streamUpdates: true });
+    await handle(msg("hi", "000.9"));
+    expect(deletes).toEqual(["222.2"]);
+    expect(said[0]?.text).toContain("error");
+  });
 });
 
 describe("Block Kit the brain built", () => {

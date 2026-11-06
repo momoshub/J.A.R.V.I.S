@@ -230,6 +230,7 @@ const spawnClaude = (
   useHostLogin?: boolean,
   signal?: AbortSignal,
   runTicket?: string,
+  session?: LlmSession,
 ) => {
   const proc = Bun.spawn({
     cmd: [config.binPath ?? "claude", ...args],
@@ -243,7 +244,15 @@ const spawnClaude = (
     // A caller's own token replaces the bot's for this spawn only: the CLI honours
     // CLAUDE_CODE_OAUTH_TOKEN over any login on the host, so the turn is billed to
     // them and runs with their account's access.
-    env: { ...hostLoginEnv(oauthToken, useHostLogin), ...(runTicket ? { JARVIS_RUN_TICKET: runTicket } : {}) },
+    // The session id lets a turn recognise its own process: a long turn that
+    // lists processes otherwise finds `claude -p --resume <id>` working in its
+    // repo and reports itself as a second writer. A one-shot run has no
+    // session, and an inherited id from a parent turn must not leak into it.
+    env: {
+      ...hostLoginEnv(oauthToken, useHostLogin),
+      ...(runTicket ? { JARVIS_RUN_TICKET: runTicket } : {}),
+      BOT_SESSION_ID: session?.id,
+    },
   });
   // Stopping kills the whole TREE, not just the CLI: the model's shell commands
   // are its children, and a turn wedged inside one of them ignores a signal to
@@ -293,7 +302,7 @@ export const createClaudeCliLlm = (config: ClaudeCliConfig = {}): LlmPort => {
   };
 
   const completeOneShot = async ({ system, messages, assistantName, policy, session, oauthToken, useHostLogin, signal, runTicket, bill }: LlmCompleteParams) => {
-    const proc = spawnClaude(config, [...buildArgs(config, false, policy, session), "--append-system-prompt", system], renderPrompt(messages, assistantName), policy, oauthToken, useHostLogin, signal, runTicket);
+    const proc = spawnClaude(config, [...buildArgs(config, false, policy, session), "--append-system-prompt", system], renderPrompt(messages, assistantName), policy, oauthToken, useHostLogin, signal, runTicket, session);
     const [stdout, stderr, exitCode] = await Promise.all([
       new Response(proc.stdout).text(),
       new Response(proc.stderr).text(),
@@ -322,7 +331,7 @@ export const createClaudeCliLlm = (config: ClaudeCliConfig = {}): LlmPort => {
    * record of what it ran.
    */
   const runStreaming = async ({ system, messages, assistantName, policy, session, oauthToken, useHostLogin, signal, runTicket, bill }: LlmCompleteParams, sink: LlmStreamSink) => {
-    const proc = spawnClaude(config, [...buildArgs(config, true, policy, session), "--append-system-prompt", system], renderPrompt(messages, assistantName), policy, oauthToken, useHostLogin, signal, runTicket);
+    const proc = spawnClaude(config, [...buildArgs(config, true, policy, session), "--append-system-prompt", system], renderPrompt(messages, assistantName), policy, oauthToken, useHostLogin, signal, runTicket, session);
     const stderrPromise = new Response(proc.stderr).text();
 
     /**

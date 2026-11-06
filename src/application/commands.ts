@@ -2637,6 +2637,36 @@ Up to ${BOMB_SIZE} reactions; no category means *${DEFAULT_CATEGORY}*.`;
     },
   },
   {
+    name: "tell",
+    aliases: ["relay"],
+    // It puts words into another conversation as the sender, which is a
+    // decision about a room the sender may not be watching.
+    minRole: "admin",
+    usage: "<thread-link> <message>",
+    summary: "send a message into another thread's session, as if you typed it there",
+    run: async ({ deps, actor, args, prefix, channelId, threadTs }) => {
+      // A session in one thread could not steer the session in another, so the
+      // owner copied instructions between threads by hand. This delivers the
+      // message to that thread's own session (its workflow if it has one),
+      // verbatim and as the sender, through the ordinary turn path.
+      if (!deps.runTurn) return "I cannot start a turn from here right now.";
+      const link = (args[0] ?? "").replace(/^<|>$/g, "").replace(/&amp;/g, "&");
+      const ref = parseMessageLink(link);
+      if (!ref) return `Paste a Slack thread link: \`${prefix} tell <thread-link> <message>\``;
+      const root = link.match(/[?&]thread_ts=(\d+\.\d+)/)?.[1] ?? ref.ts;
+      const message = args.slice(1).join(" ").trim();
+      if (!message) return `And what to tell it? \`${prefix} tell <thread-link> <message>\``;
+      if (ref.channel === channelId && root === threadTs) return "That is this thread - just say it here.";
+      // Shown in the target thread first, so its answer has the question above
+      // it and nobody there wonders who asked.
+      await deps.slack?.post(ref.channel, `📨 <@${actor.slackId}>: ${message}`, root);
+      void deps
+        .runTurn({ channelId: ref.channel, threadTs: root, slackUserId: actor.slackId, text: message, keepSession: true })
+        .catch(() => {});
+      return "sent - that thread is on it 📨";
+    },
+  },
+  {
     name: "reply",
     aliases: ["jrp"],
     minRole: "admin",
