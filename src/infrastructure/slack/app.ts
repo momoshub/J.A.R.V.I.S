@@ -81,6 +81,7 @@ import {
   repliedNote,
   retireKit,
   snapsBack,
+  snapBackBlocks,
   submittedNote,
   voteLines,
   waitsForButton,
@@ -677,7 +678,8 @@ export const createKitListeners = (
       // or unticked on screen has to go back to what was settled.
       if (snapsBack(action.type) && pressed?.ts && pressed.blocks && channel) {
         try {
-          await (client as KitClient).chat.update?.({ channel, ts: pressed.ts, text: pressed.text ?? "", blocks: pressed.blocks });
+          await (client as KitClient).chat.update?.({ channel, ts: pressed.ts, text: pressed.text ?? "", blocks: snapBackBlocks(pressed.blocks) });
+          log(`kit snap back ${actionId} on ${pressed.ts}`);
         } catch (err) {
           log(`kit snap back ${actionId} on ${pressed.ts} failed: ${slackRefusal(err)}`);
         }

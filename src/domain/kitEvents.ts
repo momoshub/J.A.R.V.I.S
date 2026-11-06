@@ -289,6 +289,20 @@ const GATHERING = new Set([
  */
 export const snapsBack = (type: string | undefined): boolean => !!type && GATHERING.has(type);
 
+/**
+ * The settled message to write back after a stray tick. Slack keeps a box's
+ * on-screen state across an update that leaves its block untouched, so the
+ * block ids of the ticked lists flip each time, which makes Slack redraw them.
+ */
+export const snapBackBlocks = (blocks: readonly KitBlock[]): KitBlock[] =>
+  blocks.map((b) => {
+    if (typeof b.block_id !== "string" || !elementsOf(b).some((e) => snapsBack((e as Element).type as string))) return b;
+    const id = b.block_id;
+    return { ...b, block_id: id.endsWith(SNAP_MARK) ? id.slice(0, -SNAP_MARK.length) : `${id}${SNAP_MARK}` };
+  });
+
+const SNAP_MARK = "~";
+
 const isLiveButton = (e: unknown): boolean =>
   isKitElement(e) && (e as Element).type === "button" && !modalIdOf(idOf(e) ?? "");
 
