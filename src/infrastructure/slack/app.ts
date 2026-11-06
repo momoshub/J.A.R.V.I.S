@@ -340,6 +340,42 @@ export const createHandler =
       // armed, and only finishing cancels it.
       const streamed = stream ? await stream.finish() : false;
       const broadcast = shouldBroadcast(msg);
+      const parts = stream?.parts ?? [];
+      const fail = (e: unknown) => log(`collapse failed: ${e instanceof Error ? e.message : String(e)}`);
+      const collapsed = collapseSteps(stream?.steps ?? []);
+      const footer = stream?.usage ? usageFooter(stream.usage) : undefined;
+      const tidy = (text: string, withTail: boolean) => {
+        const tailCollapsed = withTail ? collapsed : undefined;
+        const tailFooter = withTail ? footer : undefined;
+        const body = toMrkdwn(text);
+        const rich = toBlockMessage(text, toMrkdwn);
+        const blocks = rich?.blocks
+          ? [...rich.blocks, ...collapsedBlocks("", tailCollapsed, tailFooter)]
+          : collapsedBlocks(body, tailCollapsed, tailFooter);
+        return { text: body, blocks };
+      };
+      /** Put the whole answer on the first message the stream opened, and drop the rest. */
+      const rewriteDeadStream = async (): Promise<boolean> => {
+        const [first, ...rest] = parts;
+        if (!first) return false;
+        const rewritten = await msg.client.chat
+          .update({ channel: msg.channelId, ts: first.ts, ...tidy(result.text, true) })
+          .then(() => true)
+          .catch((e: unknown) => {
+            log(`rewrite of dead stream failed: ${e instanceof Error ? e.message : String(e)}`);
+            return false;
+          });
+        if (!rewritten) return false;
+        for (const part of rest) {
+          await msg.client.chat.delete?.({ channel: msg.channelId, ts: part.ts }).catch(fail);
+        }
+        if (broadcast) {
+          await msg.client.chat
+            .update({ channel: msg.channelId, ts: first.ts, reply_broadcast: true })
+            .catch((e: unknown) => log(`broadcast failed: ${e instanceof Error ? e.message : String(e)}`));
+        }
+        return true;
+      };
       if (streamed) {
         // chat.startStream takes no reply_broadcast, so promote the finished
         // message instead. Sending no content leaves the streamed blocks intact.
@@ -358,20 +394,6 @@ export const createHandler =
         // its cards; the summary and footer go on the last one with content.
         // Rewriting the last with the whole answer posted the reply twice.
         // A message left holding nothing but cards is deleted.
-        const parts = stream?.parts ?? [];
-        const collapsed = collapseSteps(stream?.steps ?? []);
-        const footer = stream?.usage ? usageFooter(stream.usage) : undefined;
-        const fail = (e: unknown) => log(`collapse failed: ${e instanceof Error ? e.message : String(e)}`);
-        const tidy = (text: string, withTail: boolean) => {
-          const tailCollapsed = withTail ? collapsed : undefined;
-          const tailFooter = withTail ? footer : undefined;
-          const body = toMrkdwn(text);
-          const rich = toBlockMessage(text, toMrkdwn);
-          const blocks = rich?.blocks
-            ? [...rich.blocks, ...collapsedBlocks("", tailCollapsed, tailFooter)]
-            : collapsedBlocks(body, tailCollapsed, tailFooter);
-          return { text: body, blocks };
-        };
         if (parts.length === 1 && stream?.ts && (collapsed || footer)) {
           await msg.client.chat
             .update({ channel: msg.channelId, ts: stream.ts, ...tidy(result.text, true) })
@@ -392,6 +414,11 @@ export const createHandler =
           }
         }
       } else if (result.text.trim() && !isSilenceNote(result.text)) {
+        // The stream died part way - Slack closes one left open for about ten
+        // minutes, so a long turn finds it gone at the end - but its message
+        // is still there, showing half the reply. Posting the answer as a new
+        // message under it read as the reply twice, so it is rewritten instead.
+        if (await rewriteDeadStream()) return;
         // Converted at the boundary, not merely asked for in the prompt: a rule
         // the model may ignore is not a guarantee, and what it ignores is the
         // one thing the reader sees.
