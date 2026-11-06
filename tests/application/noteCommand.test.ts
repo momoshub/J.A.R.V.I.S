@@ -77,6 +77,20 @@ describe("note", () => {
     expect(seen[0]?.system).toContain("looks good to me");
   });
 
+  test("editing a comment runs on the host login with the edit plan", async () => {
+    const seen: { system?: string }[] = [];
+    const llm: LlmPort = {
+      complete: async (p) => {
+        seen.push({ system: p.system });
+        return "https://notion.so/page";
+      },
+    };
+    const out = await run(deps({ llm }), "note --edit-comment https://app.notion.com/p/0123456789abcdef0123456789abcdef softer now");
+    expect(out).toContain("https://notion.so/page");
+    expect(seen[0]?.system).toContain("editing a comment in Notion");
+    expect(seen[0]?.system).toContain("softer now");
+  });
+
   test("publishing under someone else's identity is gated, and names who can", async () => {
     const d = deps();
     d.settings?.set(SETTING_KEYS.notionParent, "https://notion.so/team");

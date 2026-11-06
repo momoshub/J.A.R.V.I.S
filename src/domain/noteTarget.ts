@@ -17,7 +17,8 @@
 /** A Notion page url, as pasted, as Slack wraps it, or as a bare page id. */
 export const isNotionUrl = (token: string): boolean => {
   const t = unwrap(token);
-  if (/^https?:\/\/(www\.)?notion\.(so|com)\//i.test(t)) return true;
+  // `www.`, `app.` and workspace subdomains all reach the same page.
+  if (/^https?:\/\/([a-z0-9-]+\.)?notion\.(so|com|site)\//i.test(t)) return true;
   // A bare 32-character page id, dashed or not.
   return /^[0-9a-f]{32}$/i.test(t.replaceAll("-", "")) && /^[0-9a-f-]+$/i.test(t);
 };
@@ -34,7 +35,12 @@ export const unwrap = (token: string): string => {
  * comment on a page, the bot had no way to do it at all: every mode wrote the
  * body, so the only honest answer was that it could not.
  */
-export type NoteMode = "create" | "replace" | "append" | "comment";
+/**
+ * `edit-comment` rewrites a comment already there. Without it, a comment with
+ * a typo or the wrong tone could only be fixed by hand or by posting a second
+ * one under it, and the bot told people to paste the fix in themselves.
+ */
+export type NoteMode = "create" | "replace" | "append" | "comment" | "edit-comment";
 
 export type NoteArgs =
   | {
@@ -56,13 +62,14 @@ export type NoteArgs =
  * `note <file> --append <notion-url>`   - add to the end, change nothing above
  * `note --comment <notion-url> <text>`  - comment on that page, body untouched
  * `note <file> --comment <notion-url>`  - the same, with the comment in a file
+ * `note --edit-comment <notion-url> <text>` - rewrite a comment already there
  */
 export const parseNoteArgs = (args: readonly string[]): NoteArgs => {
   const lead = (args[0] ?? "").trim();
   if (!lead) return { ok: false, error: "no file" };
   // A comment is usually a line or two, so it may be typed inline instead of
   // written to a file. Only a comment may skip the file.
-  const inline = /^--(comment|reply)$/i.test(lead);
+  const inline = /^--(comment|reply|edit-comment|edit)$/i.test(lead);
   const path = inline ? "" : lead;
 
   const rest = inline ? args : args.slice(1);
@@ -83,6 +90,11 @@ export const parseNoteArgs = (args: readonly string[]): NoteArgs => {
       target = unwrap(rest[++i] ?? "");
       continue;
     }
+    if (flag === "--edit-comment" || flag === "--edit") {
+      mode = "edit-comment";
+      target = unwrap(rest[++i] ?? "");
+      continue;
+    }
     if (flag === "--append" || flag === "--add") {
       mode = "append";
       target = unwrap(rest[++i] ?? "");
@@ -99,14 +111,14 @@ export const parseNoteArgs = (args: readonly string[]): NoteArgs => {
   }
 
   if (mode !== "create" && !target) {
-    const flag = mode === "append" ? "append" : mode === "comment" ? "comment" : "into";
+    const flag = mode === "replace" ? "into" : mode;
     return { ok: false, error: `\`--${flag}\` needs the page to put it in` };
   }
   if (target && !isNotionUrl(target)) {
     return { ok: false, error: `\`${target}\` is not a Notion page` };
   }
   const joined = words.join(" ").trim();
-  if (mode === "comment") {
+  if (mode === "comment" || mode === "edit-comment") {
     if (!path && !joined) return { ok: false, error: "an empty comment says nothing" };
     // With a file, the words are noise; without one, they ARE the comment.
     return { ok: true, path, mode, target: target as string, ...(path ? {} : { text: joined }) };
