@@ -484,6 +484,32 @@ describe("handleMessage", () => {
     expect(seen[2]?.session).toEqual({ id: "sess-2", resume: false });
   });
 
+  test("a watch hand-back keeps the old session through a rule change, once", async () => {
+    // a restart to ship a feature changes the rules; the session that set the
+    // watch is the one that knows what the job was
+    const seen: LlmCompleteParams[] = [];
+    const deps = build({
+      complete: async (p) => {
+        seen.push(p);
+        return "ok";
+      },
+    });
+    deps.threadSessions = createThreadSessionRepo(db);
+    let n = 0;
+    deps.newSessionId = () => `sess-${++n}`;
+
+    const inbound = { channelId: "C1", slackUserId: OWNER, text: "hi", threadTs: "710.1", messageTs: "710.1" };
+    await handleMessage(deps, inbound);
+    deps.promptContext = () => ({ learnings: [], base: "a different persona entirely" });
+
+    await handleMessage(deps, { ...inbound, text: "the build is ready", messageTs: "710.2", keepSession: true });
+    expect(seen[1]?.session).toEqual({ id: "sess-1", resume: true });
+
+    // the next ordinary turn still gets the new rules
+    await handleMessage(deps, { ...inbound, messageTs: "710.3" });
+    expect(seen[2]?.session).toEqual({ id: "sess-2", resume: false });
+  });
+
   test("a session the CLI no longer has is replaced, not surfaced as an error", async () => {
     let calls = 0;
     const deps = build({

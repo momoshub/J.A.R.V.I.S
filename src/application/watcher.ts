@@ -45,6 +45,8 @@ export type WatcherDeps = {
     threadTs: string;
     slackUserId: string;
     text: string;
+    /** Resume the thread's session even if its rules changed since. */
+    keepSession?: boolean;
   }) => Promise<void>;
   /** Say something in the thread without spending a turn. */
   say?: (channelId: string, text: string, threadTs: string) => Promise<void>;
@@ -78,6 +80,9 @@ export const createWatcher = (deps: WatcherDeps): Watcher => {
         threadTs: w.threadTs,
         slackUserId: w.slackUserId,
         text,
+        // The session that set the watch holds the job; a restart in between
+        // (shipping a feature, say) must not hand it to a cold turn.
+        keepSession: true,
       });
     } catch (e) {
       // The turn is the point of the watch, so losing it is worth a word in

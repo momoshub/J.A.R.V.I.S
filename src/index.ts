@@ -350,11 +350,13 @@ const main = async () => {
       threadTs,
       slackUserId,
       text,
+      keepSession,
     }: {
       channelId: string;
       threadTs: string;
       slackUserId: string;
       text: string;
+      keepSession?: boolean;
     }) => {
       const result = await respond(deps, {
         channelId,
@@ -364,6 +366,7 @@ const main = async () => {
         messageTs: syntheticTs(clock()),
         viaSlash: false,
         following: false,
+        keepSession,
       });
       if (result.kind !== "ignored" && result.text.trim()) {
         await slackAdmin.post(channelId, result.text, threadTs);

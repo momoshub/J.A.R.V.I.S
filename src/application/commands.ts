@@ -176,6 +176,8 @@ export type CommandDeps = {
     threadTs: string;
     slackUserId: string;
     text: string;
+    /** Resume the thread's session even if its rules changed since. */
+    keepSession?: boolean;
   }) => Promise<void>;
   /** Slack Web API operations, for the power tools (bomb, reply). */
   slack?: SlackAdminPort;

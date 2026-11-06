@@ -171,6 +171,14 @@ export type InboundMessage = {
   following?: boolean;
   /** A retry: a restart cut the first attempt at this message off part way. */
   interrupted?: boolean;
+  /**
+   * Resume the thread's session even if it was opened under older rules.
+   * A watch handing a thread back is finishing work that session started -
+   * the build it kicked off, the PR it opened - and a restart to ship a new
+   * feature changes the rules, so the ordinary "abandon a stale session" rule
+   * would hand the job to a cold turn that never saw any of it.
+   */
+  keepSession?: boolean;
 };
 
 export type HandleResult =
@@ -311,10 +319,14 @@ export const handleMessage = async (
     ctx.adapter ? adapterRules(ctx.adapter) : undefined,
   );
   const found = key ? sessions?.find(key.channelId, key.threadTs, tier) : undefined;
-  if (found && found.promptHash && found.promptHash !== fingerprint && key) {
+  const stale = !!found?.promptHash && found.promptHash !== fingerprint;
+  // A hand-back keeps the stale session for its own turn only and leaves the
+  // old fingerprint in place, so the next ordinary turn still picks up the
+  // new rules.
+  if (found && stale && key && !inbound.keepSession) {
     sessions?.drop(key.channelId, key.threadTs, tier);
   }
-  const bound = found && (!found.promptHash || found.promptHash === fingerprint) ? found : undefined;
+  const bound = found && (!stale || inbound.keepSession) ? found : undefined;
   const cold = () => buildContextWindow(history, window);
   const newestTs = history[history.length - 1]?.slackTs ?? inbound.messageTs ?? "";
 
