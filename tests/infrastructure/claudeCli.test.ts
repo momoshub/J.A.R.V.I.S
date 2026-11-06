@@ -345,6 +345,58 @@ describe("createClaudeCliLlm.stream", () => {
     expect(final).toBe("first.\n\nsecond");
   });
 
+  test("text the model writes before a tool call never reaches the reply", async () => {
+    // the leak: "Partial work exists. Resume the agent." was the model talking
+    // to itself before a SendMessage call, and it went out at the top of the reply
+    const se = (event: unknown) => ({ type: "stream_event", event });
+    const events = [
+      se({ type: "message_start" }),
+      se({ type: "content_block_start", index: 0, content_block: { type: "text" } }),
+      se({ type: "content_block_delta", index: 0, delta: { type: "text_delta", text: "Partial work exists. Resume the agent." } }),
+      se({ type: "content_block_stop", index: 0 }),
+      se({ type: "content_block_start", index: 1, content_block: { type: "tool_use", id: "t1", name: "Bash" } }),
+      se({ type: "content_block_delta", index: 1, delta: { type: "input_json_delta", partial_json: '{"command":"ls"}' } }),
+      se({ type: "content_block_stop", index: 1 }),
+      se({ type: "message_delta", delta: { stop_reason: "tool_use" } }),
+      se({ type: "message_stop" }),
+      { type: "user", message: { content: [{ type: "tool_result", tool_use_id: "t1", is_error: false }] } },
+      se({ type: "message_start" }),
+      se({ type: "content_block_start", index: 0, content_block: { type: "text" } }),
+      se({ type: "content_block_delta", index: 0, delta: { type: "text_delta", text: "sorry, " } }),
+      se({ type: "content_block_delta", index: 0, delta: { type: "text_delta", text: "resumed it" } }),
+      se({ type: "content_block_stop", index: 0 }),
+      se({ type: "message_delta", delta: { stop_reason: "end_turn" } }),
+      se({ type: "message_stop" }),
+    ];
+    const llm = createClaudeCliLlm({ binPath: fakeStreamBin(events) });
+    const deltas: string[] = [];
+    const final = await llm.stream!({ system: "s", messages: [{ role: "user", content: "hi" }] }, (e) => {
+      if (e.type === "text") deltas.push(e.delta);
+    });
+    expect(deltas).toEqual(["sorry, ", "resumed it"]);
+    expect(final).toBe("sorry, resumed it");
+  });
+
+  test("an answer written before a closing tool call is kept when nothing follows it", async () => {
+    const se = (event: unknown) => ({ type: "stream_event", event });
+    const events = [
+      se({ type: "content_block_start", index: 0, content_block: { type: "text" } }),
+      se({ type: "content_block_delta", index: 0, delta: { type: "text_delta", text: "here is the answer" } }),
+      se({ type: "content_block_start", index: 1, content_block: { type: "tool_use", id: "t1", name: "Bash" } }),
+      se({ type: "content_block_stop", index: 1 }),
+      se({ type: "message_delta", delta: { stop_reason: "tool_use" } }),
+      { type: "user", message: { content: [{ type: "tool_result", tool_use_id: "t1", is_error: false }] } },
+      se({ type: "message_delta", delta: { stop_reason: "end_turn" } }),
+    ];
+    const llm = createClaudeCliLlm({ binPath: fakeStreamBin(events) });
+    const deltas: string[] = [];
+    const final = await llm.stream!({ system: "s", messages: [{ role: "user", content: "hi" }] }, (e) => {
+      if (e.type === "text") deltas.push(e.delta);
+    });
+    expect(deltas.join("")).toBe("here is the answer");
+    expect(final).toBe("here is the answer");
+  });
+
   test("a run killed after it spoke is reported as aborted, not as an answer", async () => {
     const dir = mkdtempSync(join(tmpdir(), "ev-claude-abort-"));
     const path = join(dir, "claude");
