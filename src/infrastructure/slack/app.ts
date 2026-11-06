@@ -64,7 +64,12 @@ import {
   describeClosed,
   describeSubmission,
   elementValue,
+  castVote,
+  describeVote,
   hasLiveKit,
+  isSettled,
+  isSubmit,
+  isVote,
   KIT_PATTERN,
   locksOnPress,
   modalIdOf,
@@ -72,6 +77,8 @@ import {
   pressedNote,
   repliedNote,
   retireKit,
+  submittedNote,
+  voteLines,
   prepareModal,
   stateLines,
   type KitBlock,
@@ -581,6 +588,17 @@ export const createKitListeners = (
     });
   };
 
+  // The blocks each vote message was last written with, and a queue per
+  // message so concurrent picks do not overwrite each other.
+  const latestBlocks = new Map<string, KitBlock[]>();
+  const queues = new Map<string, Promise<void>>();
+  const onMessage = (ts: string, job: () => Promise<void>): Promise<void> => {
+    const next = (queues.get(ts) ?? Promise.resolve()).then(job, job);
+    queues.set(ts, next);
+    void next.finally(() => queues.get(ts) === next && queues.delete(ts));
+    return next;
+  };
+
   const onKitAction = async ({ ack, body, action, client, context }: KitActionArgs) => {
     await ack();
     const by = body.user?.id;
@@ -622,16 +640,48 @@ export const createKitListeners = (
       return;
     }
 
-    // Lock the question before the turn starts: a turn takes seconds, and a
-    // button still live in that gap gets pressed again.
     const pressed = body.message;
-    if (!modal && pressed?.ts && pressed.blocks && body.channel?.id && locksOnPress(action.type, actionId)) {
+    const channel = body.channel?.id;
+    if (!modal && isSettled(actionId)) return; // an answered question: the press means nothing now
+
+    // A vote: picks only change the tally on the message, and the turn waits
+    // for submit. Presses on one message run one after another, each on the
+    // blocks the last one wrote, so two people picking at once both count.
+    if (!modal && pressed?.ts && pressed.blocks && channel && isVote(latestBlocks.get(pressed.ts) ?? pressed.blocks)) {
+      const ts = pressed.ts;
+      const blockId = action.block_id;
+      const submit = isSubmit(actionId);
+      if (!submit && (action.type !== "button" || !blockId)) return;
+      let lines: string[] = [];
+      await onMessage(ts, async () => {
+        const current = latestBlocks.get(ts) ?? pressed.blocks ?? [];
+        const blocks = submit
+          ? retireKit(current, submittedNote(by), actionId)
+          : castVote(current, blockId ?? "", by, pickedLabel(action) ?? elementValue(action) ?? actionId);
+        if (submit) lines = voteLines(current);
+        latestBlocks.set(ts, blocks);
+        try {
+          await (client as KitClient).chat.update?.({ channel, ts, text: pressed.text ?? "", blocks });
+        } catch (err) {
+          log(`kit vote ${actionId} on ${ts} failed: ${slackRefusal(err)}`);
+        }
+      });
+      if (submit) {
+        latestBlocks.delete(ts);
+        await kitTurn(client, context, by, thread, describeVote(by, actionId, lines));
+      }
+      return;
+    }
+
+    // Settle the question before the turn starts: a turn takes seconds, and a
+    // button still live in that gap gets pressed again.
+    if (!modal && pressed?.ts && pressed.blocks && channel && locksOnPress(action.type, actionId)) {
       try {
         await (client as KitClient).chat.update?.({
-          channel: body.channel.id,
+          channel,
           ts: pressed.ts,
           text: pressed.text ?? "",
-          blocks: retireKit(pressed.blocks, pressedNote(by, pickedLabel(action))),
+          blocks: retireKit(pressed.blocks, pressedNote(by, pickedLabel(action)), actionId),
         });
       } catch (err) {
         log(`kit lock ${actionId} on ${pressed.ts} failed: ${slackRefusal(err)}`);
@@ -698,7 +748,7 @@ export const retireOpenKit = async (
   try {
     const res = await web.conversations.replies({ channel: m.channel, ts: m.thread_ts, limit: 200 });
     const open = (res.messages ?? []).filter(
-      (x) => x.user === botUserId && x.ts && Number(x.ts) < Number(m.ts) && hasLiveKit(x.blocks),
+      (x) => x.user === botUserId && x.ts && Number(x.ts) < Number(m.ts) && hasLiveKit(x.blocks) && !isVote(x.blocks),
     );
     for (const x of open) {
       await web.chat.update({
