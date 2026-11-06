@@ -76,6 +76,7 @@ import {
   locksOnPress,
   modalIdOf,
   pickedLabel,
+  picksOf,
   pressedNote,
   repliedNote,
   retireKit,
@@ -685,7 +686,7 @@ export const createKitListeners = (
       await onMessage(ts, async () => {
         const current = latestBlocks.get(ts) ?? pressed.blocks ?? [];
         const blocks = submit
-          ? retireKit(current, submittedNote(by), actionId)
+          ? retireKit(current, submittedNote(by), actionId, picksOf(body.state?.values))
           : castVote(current, blockId ?? "", by, pickedLabel(action) ?? elementValue(action) ?? actionId);
         if (submit) lines = voteLines(current);
         latestBlocks.set(ts, blocks);
@@ -714,7 +715,7 @@ export const createKitListeners = (
           channel,
           ts: pressed.ts,
           text: pressed.text ?? "",
-          blocks: retireKit(pressed.blocks, pressedNote(by, pickedLabel(action)), actionId),
+          blocks: retireKit(pressed.blocks, pressedNote(by, pickedLabel(action)), actionId, picksOf(body.state?.values)),
         });
       } catch (err) {
         log(`kit lock ${actionId} on ${pressed.ts} failed: ${slackRefusal(err)}`);
