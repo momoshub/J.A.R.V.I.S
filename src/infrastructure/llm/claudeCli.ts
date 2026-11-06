@@ -360,6 +360,29 @@ export const createClaudeCliLlm = (config: ClaudeCliConfig = {}): LlmPort => {
     const cardById = new Map<string, { title: string; command?: string }>();
     let finalText = "";
     let streamedText = "";
+    // Text the model writes in a message that goes on to call a tool is it
+    // talking to itself ("Partial work exists. Resume the agent."), not the
+    // answer - and it went straight into the Slack thread. So a message's text
+    // is held until the message ends, sent if it ended the turn, and dropped
+    // if a tool call followed. `held` keeps the last dropped piece, in case the
+    // turn then ends with nothing to say: an answer written before a closing
+    // tool call is still the answer.
+    let pending: string[] = [];
+    let held = "";
+    const flush = (): void => {
+      const text = pending.join("");
+      if (text.trim()) {
+        for (const d of pending) emit({ type: "text", delta: d });
+        streamedText += text;
+        held = "";
+      }
+      pending = [];
+    };
+    const drop = (): void => {
+      const text = pending.join("");
+      if (text.trim()) held = text;
+      pending = [];
+    };
     let resultEvent: Record<string, unknown> | undefined;
     // The background tasks the CLI says are still running, as of its latest
     // `background_tasks_changed`. Whatever is left here when the process exits
@@ -372,14 +395,14 @@ export const createClaudeCliLlm = (config: ClaudeCliConfig = {}): LlmPort => {
         const index = ev.index as number | undefined;
         if (ev.type === "content_block_start") {
           const block = (ev.content_block ?? {}) as Record<string, unknown>;
-          if (block.type === "text" && streamedText.trim() && !streamedText.endsWith("\n\n")) {
+          const sofar = streamedText + pending.join("");
+          if (block.type === "text" && sofar.trim() && !sofar.endsWith("\n\n")) {
             // A fresh text block is a new paragraph: the model wrote it after a
             // tool call, not mid-sentence. Without this the deltas run together
             // and the message reads as one mangled line.
-            const gap = streamedText.endsWith("\n") ? "\n" : "\n\n";
-            streamedText += gap;
-            emit({ type: "text", delta: gap });
+            pending.push(sofar.endsWith("\n") ? "\n" : "\n\n");
           }
+          if (block.type === "tool_use") drop();
           if (block.type === "tool_use" && typeof index === "number") {
             toolByIndex.set(index, {
               id: (block.id as string) ?? `t${index}`,
@@ -390,12 +413,17 @@ export const createClaudeCliLlm = (config: ClaudeCliConfig = {}): LlmPort => {
         } else if (ev.type === "content_block_delta") {
           const delta = (ev.delta ?? {}) as Record<string, unknown>;
           if (delta.type === "text_delta" && typeof delta.text === "string") {
-            streamedText += delta.text;
-            emit({ type: "text", delta: delta.text });
+            pending.push(delta.text);
           } else if (delta.type === "input_json_delta" && typeof delta.partial_json === "string" && typeof index === "number") {
             const tb = toolByIndex.get(index);
             if (tb) tb.json += delta.partial_json;
           }
+        } else if (ev.type === "message_delta") {
+          const stop = ((ev.delta ?? {}) as Record<string, unknown>).stop_reason;
+          if (stop === "tool_use") drop();
+          else if (typeof stop === "string") flush();
+        } else if (ev.type === "message_stop") {
+          flush();
         } else if (ev.type === "content_block_stop" && typeof index === "number") {
           const tb = toolByIndex.get(index);
           if (tb) trace({ kind: "call", id: tb.id, name: tb.name, input: tb.json });
@@ -490,6 +518,12 @@ export const createClaudeCliLlm = (config: ClaudeCliConfig = {}): LlmPort => {
         consume(decoder.decode(value, { stream: true }));
       }
       if (buffer.trim()) consume("\n");
+      // A run cut off mid-message still hands back what it had said.
+      flush();
+      if (!streamedText.trim() && held.trim()) {
+        emit({ type: "text", delta: held });
+        streamedText = held;
+      }
     } catch (err) {
       stopProcess(proc);
       throw err;
