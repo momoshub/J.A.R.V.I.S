@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import {
   createHandler,
+  createKitListeners,
   shouldHandleDm,
   threadKeyOf,
   type Incoming,
@@ -328,5 +329,151 @@ describe("createHandler streaming truth table", () => {
     await handle(msg("hi"));
     expect(said).toHaveLength(1);
     expect(said[0]?.text).toContain("error");
+  });
+});
+
+describe("Block Kit the brain built", () => {
+  const rig = (views: Record<string, Record<string, unknown>> = {}, refuse?: string) => {
+    const turns: Incoming[] = [];
+    const opened: { how: string; args: Record<string, unknown> }[] = [];
+    const posted: Record<string, unknown>[] = [];
+    const acks: number[] = [];
+    const call = (how: string) => async (args: Record<string, unknown>) => {
+      if (refuse) throw Object.assign(new Error("boom"), { data: { error: refuse, response_metadata: { messages: ["[ERROR] bad block"] } } });
+      opened.push({ how, args });
+      return {};
+    };
+    const client = {
+      chat: { postMessage: async (a: Record<string, unknown>) => void posted.push(a) },
+      views: { open: call("open"), push: call("push") },
+    };
+    const { onKitAction, onKitView } = createKitListeners(
+      { get: (id) => views[id] },
+      async (m) => void turns.push(m),
+      () => {},
+    );
+    const ack = async () => void acks.push(1);
+    return { onKitAction, onKitView, turns, opened, posted, acks, client, ack };
+  };
+
+  test("a press on a message is acked and becomes a turn in that thread, from whoever pressed", async () => {
+    const r = rig();
+    await r.onKitAction({
+      ack: r.ack,
+      client: r.client,
+      body: { user: { id: "U2" }, channel: { id: "C1" }, message: { ts: "200.2", thread_ts: "100.1" } },
+      action: { action_id: "jv:approve", type: "button", value: "refund-42" },
+    });
+    expect(r.acks).toHaveLength(1);
+    const [turn] = r.turns;
+    expect(turn).toMatchObject({ channelId: "C1", threadTs: "100.1", userId: "U2" });
+    expect(turn?.text).toContain("`jv:approve`");
+    expect(turn?.text).toContain("`refund-42`");
+    // never the pressed message's own ts, or the turn reads that message instead
+    expect(turn?.messageTs).not.toBe("200.2");
+    await turn?.say({ text: "done" });
+    expect(r.posted).toEqual([{ channel: "C1", text: "done" }]);
+  });
+
+  test("a top-level message is its own thread", async () => {
+    const r = rig();
+    await r.onKitAction({
+      ack: r.ack,
+      client: r.client,
+      body: { user: { id: "U2" }, channel: { id: "C1" }, message: { ts: "200.2" } },
+      action: { action_id: "jv:pick", type: "static_select", selected_option: { value: "p1" } },
+    });
+    expect(r.turns[0]?.threadTs).toBe("200.2");
+    expect(r.turns[0]?.text).toContain("`p1`");
+  });
+
+  test("a modal button opens the stored view, routed home, without a turn", async () => {
+    const r = rig({ abc: { title: { type: "plain_text", text: "Ticket" }, blocks: [] } });
+    await r.onKitAction({
+      ack: r.ack,
+      client: r.client,
+      body: { user: { id: "U2" }, trigger_id: "T1", channel: { id: "C1" }, message: { ts: "200.2", thread_ts: "100.1" } },
+      action: { action_id: "jv:modal:abc", type: "button" },
+    });
+    expect(r.turns).toHaveLength(0);
+    expect(r.opened).toHaveLength(1);
+    const { how, args } = r.opened[0]!;
+    expect(how).toBe("open");
+    const view = args.view as Record<string, unknown>;
+    expect(args.trigger_id).toBe("T1");
+    expect(view.callback_id).toBe("jv:view:abc");
+    expect(String(view.private_metadata)).toContain("100.1");
+  });
+
+  test("a modal button inside a modal stacks the next one", async () => {
+    const r = rig({ abc: { title: { type: "plain_text", text: "Step 2" }, blocks: [] } });
+    await r.onKitAction({
+      ack: r.ack,
+      client: r.client,
+      body: { user: { id: "U2" }, trigger_id: "T1", view: { private_metadata: '{"c":"C1","t":"100.1"}' } },
+      action: { action_id: "jv:modal:abc", type: "button" },
+    });
+    expect(r.opened[0]?.how).toBe("push");
+  });
+
+  test("a modal Slack refuses comes back to the thread with Slack's reason", async () => {
+    const r = rig({ abc: { title: { type: "plain_text", text: "T" }, blocks: [] } }, "invalid_arguments");
+    await r.onKitAction({
+      ack: r.ack,
+      client: r.client,
+      body: { user: { id: "U2" }, trigger_id: "T1", channel: { id: "C1" }, message: { ts: "200.2" } },
+      action: { action_id: "jv:modal:abc", type: "button" },
+    });
+    expect(r.turns[0]?.text).toContain("invalid_arguments");
+    expect(r.turns[0]?.text).toContain("bad block");
+  });
+
+  test("a modal that was never stored says so rather than doing nothing", async () => {
+    const r = rig();
+    await r.onKitAction({
+      ack: r.ack,
+      client: r.client,
+      body: { user: { id: "U2" }, trigger_id: "T1", channel: { id: "C1" }, message: { ts: "200.2" } },
+      action: { action_id: "jv:modal:gone", type: "button" },
+    });
+    expect(r.turns[0]?.text).toContain("not stored");
+  });
+
+  test("a submission becomes a turn in the thread it came from, listing the fields", async () => {
+    const r = rig();
+    await r.onKitView({
+      ack: r.ack,
+      client: r.client,
+      body: { type: "view_submission", user: { id: "U2" } },
+      view: {
+        callback_id: "jv:view:abc",
+        title: { text: "Ticket app" },
+        private_metadata: '{"c":"C1","t":"100.1","m":"t-9"}',
+        state: { values: { title: { input: { type: "plain_text_input", value: "login broken" } } } },
+      },
+    });
+    expect(r.acks).toHaveLength(1);
+    expect(r.turns[0]).toMatchObject({ channelId: "C1", threadTs: "100.1", userId: "U2" });
+    expect(r.turns[0]?.text).toContain("- `title.input`: login broken");
+    expect(r.turns[0]?.text).toContain("`t-9`");
+  });
+
+  test("a close is reported, and a view with no thread is acked and dropped", async () => {
+    const r = rig();
+    await r.onKitView({
+      ack: r.ack,
+      client: r.client,
+      body: { type: "view_closed", user: { id: "U2" } },
+      view: { callback_id: "jv:view:abc", private_metadata: '{"c":"C1","t":"100.1"}' },
+    });
+    await r.onKitView({
+      ack: r.ack,
+      client: r.client,
+      body: { type: "view_submission", user: { id: "U2" } },
+      view: { callback_id: "jv:x" },
+    });
+    expect(r.acks).toHaveLength(2);
+    expect(r.turns).toHaveLength(1);
+    expect(r.turns[0]?.text).toContain("closed the modal");
   });
 });

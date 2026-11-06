@@ -40,6 +40,7 @@ import { createTurnLogRepo } from "./infrastructure/db/turnLogRepo.ts";
 import { createWatchRepo } from "./infrastructure/db/watchRepo.ts";
 import { createReminderRepo } from "./infrastructure/db/reminderRepo.ts";
 import { createFollowRepo } from "./infrastructure/db/followRepo.ts";
+import { createKitViewRepo } from "./infrastructure/db/kitViewRepo.ts";
 import { createWatcher } from "./application/watcher.ts";
 import { createReviewGuard } from "./application/reviewGuard.ts";
 import { createReviewInbox } from "./application/reviewInbox.ts";
@@ -141,6 +142,7 @@ const main = async () => {
   const watches = createWatchRepo(db);
   const reminders = createReminderRepo(db);
   const follows = createFollowRepo(db);
+  const kitViews = createKitViewRepo(db);
   const adapterDeps = () => ({
     store: adapterStore,
     revisions: adapterRevisions,
@@ -425,6 +427,7 @@ const main = async () => {
     // same way the dashboard does - offered to admins/owner conversations only.
     learnUrl: `http://127.0.0.1:${config.dashboardPort}/api/learnings`,
     runUrl: `http://127.0.0.1:${config.dashboardPort}/api/commands/run`,
+    kitUrl: `http://127.0.0.1:${config.dashboardPort}/api/kit/views`,
     commandBudget: () => config.commandTicketUses,
     runScript,
     commandTickets,
@@ -485,6 +488,7 @@ const main = async () => {
       users,
       messages,
       learnings,
+      kitViews,
       adapter: adapterStore.exists()
         ? {
             status: () => adapterStatus(adapterDeps()),
@@ -566,7 +570,7 @@ const main = async () => {
       commandPrefix: config.commandPrefix,
       slashCommand: config.slashCommand,
     },
-    { ...deps, log: activity.line },
+    { ...deps, kitViews, log: activity.line },
   );
   slackApp = slack;
   await slack.start();

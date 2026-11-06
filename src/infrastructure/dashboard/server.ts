@@ -22,6 +22,8 @@ import type { UsageRepo } from "../db/usageRepo.ts";
 import type { MessageRepo } from "../db/messageRepo.ts";
 import type { UserRepo } from "../db/userRepo.ts";
 import type { LearningsRepo } from "../db/learningsRepo.ts";
+import type { KitViewRepo } from "../db/kitViewRepo.ts";
+import { KIT_MODAL_PREFIX, viewProblem, type KitView } from "../../domain/kitEvents.ts";
 import { SETTING_KEYS, type SettingsRepo } from "../db/settingsRepo.ts";
 
 export type DashboardConfig = {
@@ -103,6 +105,8 @@ export type DashboardDeps = {
    * reaches it through this endpoint when a chat request is really a command.
    */
   runCommand?: (req: RunCommandRequest) => Promise<{ result: string; posted: boolean }>;
+  /** Modals the brain stores for a `jv:modal:<id>` button to open on click. */
+  kitViews?: KitViewRepo;
   /**
    * Exit so the supervisor restarts us, after a delay long enough for the reply
    * that asked for it to land. Absent means self-restart is not wired up.
@@ -347,6 +351,16 @@ export const createDashboard = (config: DashboardConfig, deps: DashboardDeps) =>
           if (slackId === config.ownerSlackId) return jsonError("The owner cannot be removed");
           deps.users.remove(slackId);
           return Response.json({ ok: true });
+        }
+        case "/api/kit/views": {
+          // The brain cannot open a modal from a turn, so it stores one here
+          // and posts a button naming it. Shape is checked now, not on click,
+          // where a bad view could only fail silently in front of someone.
+          if (!deps.kitViews) return jsonError("Modals are not wired up", 503);
+          const problem = viewProblem(body.view);
+          if (problem) return jsonError(problem);
+          const id = deps.kitViews.save(body.view as KitView, deps.clock());
+          return Response.json({ ok: true, id, action_id: `${KIT_MODAL_PREFIX}${id}` });
         }
         case "/api/learnings": {
           const content = String(body.content ?? "").trim();

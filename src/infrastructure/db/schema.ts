@@ -90,6 +90,28 @@ export const migrate = (db: Database): void => {
   migrateReminders(db);
   migrateSelfIssues(db);
   migrateUnfollowedThreads(db);
+  migrateKitViews(db);
+};
+
+/**
+ * Migration v19: modals the brain built, waiting for a click to open them.
+ *
+ * A turn cannot open a modal - only a click carries the trigger_id - so the
+ * view is stored first and the button names it. Kept in the database rather
+ * than in memory so a button posted before a restart still opens.
+ */
+const migrateKitViews = (db: Database): void => {
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS kit_views (
+      id         TEXT PRIMARY KEY,
+      view       TEXT NOT NULL,
+      created_at INTEGER NOT NULL
+    );
+  `);
+  const { user_version } = db.query<{ user_version: number }, []>("PRAGMA user_version").get() ?? {
+    user_version: 0,
+  };
+  if (user_version < 19) db.exec("PRAGMA user_version = 19;");
 };
 
 /**

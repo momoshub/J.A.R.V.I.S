@@ -58,6 +58,20 @@ import { unfollowOnReaction } from "../../application/followReaction.ts";
 import { collapsedBlocks, collapseSteps } from "../../domain/collapseSteps.ts";
 import { usageFooter } from "../../domain/usageFooter.ts";
 import { isSilenceNote } from "../../domain/silence.ts";
+import {
+  decodeKitMeta,
+  describeAction,
+  describeClosed,
+  describeSubmission,
+  elementValue,
+  KIT_PATTERN,
+  modalIdOf,
+  prepareModal,
+  stateLines,
+  type KitElementState,
+  type KitThread,
+} from "../../domain/kitEvents.ts";
+import type { KitViewRepo } from "../db/kitViewRepo.ts";
 import { createSlackStream, type Streamer } from "./stream.ts";
 import type { InboxContext, InboxReceiver } from "./inboxReceiver.ts";
 import {
@@ -109,6 +123,8 @@ export type SlackAppConfig = {
 type Deps = RespondDeps & {
   /** Optional logger override, mostly for tests. */
   log?: (msg: string) => void;
+  /** Modals the brain stored, opened by a `jv:modal:<id>` button. */
+  kitViews?: Pick<KitViewRepo, "get">;
 };
 
 /** The slice of the Slack WebClient the handler needs (kept minimal for testing). */
@@ -213,6 +229,60 @@ type ViewArgs = {
     state?: { values?: Record<string, Record<string, { value?: string | null }>> };
   };
 };
+
+/** A press on an element the brain posted (`jv:` action id), anywhere. */
+export type KitActionArgs = {
+  ack: () => Promise<unknown>;
+  body: {
+    user?: { id?: string };
+    trigger_id?: string;
+    channel?: { id?: string };
+    message?: { ts?: string; thread_ts?: string };
+    /** Set when the element sits inside a modal rather than on a message. */
+    view?: { private_metadata?: string; title?: { text?: string } };
+  };
+  action: KitElementState & { action_id?: string; block_id?: string; action_ts?: string };
+  client: unknown;
+  context?: InboxContext & { teamId?: string };
+};
+
+/** A submitted or closed modal the brain built (`jv:` callback id). */
+export type KitViewArgs = {
+  ack: () => Promise<unknown>;
+  body: { type?: string; user?: { id?: string } };
+  view: {
+    callback_id?: string;
+    private_metadata?: string;
+    title?: { text?: string };
+    state?: { values?: Record<string, Record<string, KitElementState>> };
+  };
+  client: unknown;
+  context?: InboxContext & { teamId?: string };
+};
+
+/** The two WebClient calls the Block Kit listeners make. */
+type KitClient = {
+  chat: { postMessage: (a: Record<string, unknown>) => Promise<unknown> };
+  views: {
+    open: (a: Record<string, unknown>) => Promise<unknown>;
+    push: (a: Record<string, unknown>) => Promise<unknown>;
+  };
+};
+
+/** What Slack said when it refused a view, detailed enough to fix it from. */
+const slackRefusal = (err: unknown): string => {
+  const data = (err as { data?: { error?: string; response_metadata?: { messages?: string[] } } }).data;
+  const detail = data?.response_metadata?.messages?.join("; ");
+  const base = data?.error ?? (err instanceof Error ? err.message : String(err));
+  return detail ? `${base} (${detail})` : base;
+};
+
+/**
+ * A ts for a turn that no Slack message carries. The trigger is matched
+ * against the thread's history by ts, so reusing the pressed message's own
+ * ts would make the turn read that message instead of the press.
+ */
+const syntheticTs = (now = Date.now()): string => (now / 1000).toFixed(6);
 
 export type Incoming = {
   channelId: string;
@@ -447,6 +517,111 @@ export const createHandler =
         .catch(() => undefined);
     }
   };
+};
+
+/**
+ * Block Kit the brain built: any element with a `jv:` action id, and any
+ * modal with a `jv:` callback id. Acked at once - Slack shows the person an
+ * error after three seconds - and handed to the thread as a turn from
+ * whoever pressed, so their role decides what it may do, as if they typed.
+ */
+export const createKitListeners = (
+  kitViews: Deps["kitViews"],
+  handle: (msg: Incoming) => Promise<void>,
+  log: (msg: string) => void,
+  inboxOf: (context: InboxContext) => Incoming["inbox"] = () => undefined,
+) => {
+  type Context = InboxContext & { teamId?: string };
+  const kitTurn = async (client: unknown, context: Context | undefined, userId: string, thread: KitThread, text: string) => {
+    const web = client as KitClient;
+    await handle({
+      channelId: thread.channelId,
+      userId,
+      teamId: context?.teamId,
+      inbox: context ? inboxOf(context) : undefined,
+      text,
+      threadTs: thread.threadTs,
+      messageTs: syntheticTs(),
+      client: client as SlackClient,
+      say: (m) => web.chat.postMessage({ channel: thread.channelId, ...m }),
+    });
+  };
+
+  const onKitAction = async ({ ack, body, action, client, context }: KitActionArgs) => {
+    await ack();
+    const by = body.user?.id;
+    const actionId = action.action_id ?? "";
+    if (!by || !actionId) return;
+    const modal = body.view;
+    const thread: KitThread | undefined = modal
+      ? decodeKitMeta(modal.private_metadata).thread
+      : body.channel?.id && body.message?.ts
+        ? { channelId: body.channel.id, threadTs: body.message.thread_ts ?? body.message.ts }
+        : undefined;
+    if (!thread) {
+      log(`kit action ${actionId} by ${by}: no thread to route it to`);
+      return;
+    }
+
+    const modalId = modalIdOf(actionId);
+    if (modalId) {
+      const stored = kitViews?.get(modalId);
+      let refused = stored ? undefined : "that modal is not stored, so there was nothing to open";
+      if (stored && body.trigger_id) {
+        try {
+          const view = prepareModal(stored, modalId, thread);
+          // From inside a modal it stacks on top; from a message it opens fresh.
+          const web = client as KitClient;
+          const args = { trigger_id: body.trigger_id, view };
+          await (modal ? web.views.push(args) : web.views.open(args));
+          log(`kit modal ${modalId} opened for ${by}`);
+          return;
+        } catch (err) {
+          refused = `Slack refused to open it: ${slackRefusal(err)}`;
+        }
+      }
+      refused ??= "the click carried no trigger_id";
+      log(`kit modal ${modalId} for ${by} failed: ${refused}`);
+      // Back to the thread, so whoever built it can fix it rather than the
+      // person who pressed staring at a button that does nothing.
+      await kitTurn(client, context, by, thread, `${describeAction({ userId: by, actionId })} - but ${refused}`);
+      return;
+    }
+
+    await kitTurn(
+      client,
+      context,
+      by,
+      thread,
+      describeAction({
+        userId: by,
+        actionId,
+        type: action.type,
+        value: elementValue(action),
+        blockId: action.block_id,
+        inModal: modal ? (modal.title?.text ?? "untitled") : undefined,
+      }),
+    );
+  };
+
+  const onKitView = async ({ ack, body, view, client, context }: KitViewArgs) => {
+    await ack();
+    const by = body.user?.id;
+    const callbackId = view.callback_id ?? "";
+    const { thread, own } = decodeKitMeta(view.private_metadata);
+    if (!by || !thread) {
+      log(`kit view ${callbackId}: no ${by ? "thread" : "user"} to route it to`);
+      return;
+    }
+    const title = view.title?.text;
+    const text =
+      body.type === "view_closed"
+        ? describeClosed({ userId: by, callbackId, title })
+        : describeSubmission({ userId: by, callbackId, title, own, fields: stateLines(view.state?.values) });
+    await kitTurn(client, context, by, thread, text);
+  };
+
+  return { onKitAction, onKitView };
 };
 
 export const createSlackApp = (config: SlackAppConfig, deps: Deps) => {
@@ -813,6 +988,11 @@ export const createSlackApp = (config: SlackAppConfig, deps: Deps) => {
     await runFromMenu(by, req.channelId, req.threadTs, `${req.command} ${args}`.trim());
   }) as never);
 
+
+  const { onKitAction, onKitView } = createKitListeners(deps.kitViews, handle, log, inboxOf);
+  app.action(KIT_PATTERN, onKitAction as never);
+  app.view({ callback_id: KIT_PATTERN, type: "view_submission" }, onKitView as never);
+  app.view({ callback_id: KIT_PATTERN, type: "view_closed" }, onKitView as never);
 
   /**
    * Slack's OWN stop button, on an agent session.

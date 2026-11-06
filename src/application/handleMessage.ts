@@ -145,6 +145,8 @@ export type HandleMessageDeps = {
   learnUrl?: string;
   /** Local endpoint the bot can POST a command to. */
   runUrl?: string;
+  /** Local endpoint the bot stores a modal at, for a `jv:modal:` button to open. */
+  kitUrl?: string;
   /** Absolute path of the command helper, granted to every role. */
   runScript?: string;
   /** Mints the per-turn ticket that decides who a triggered command runs as. */
@@ -289,6 +291,9 @@ export const handleMessage = async (
     // runs, so asking in words can never do more than typing it would.
     runUrl: deps.runUrl,
     runScript: deps.runScript,
+    // Offered to everyone too: a press runs as whoever pressed it, under
+    // their own role, so a button can do no more than typing would.
+    kitUrl: deps.kitUrl,
     runTicket,
     commandBudget: deps.commandBudget?.(),
     // A watch belongs to a thread it can come back to, and setting one needs
