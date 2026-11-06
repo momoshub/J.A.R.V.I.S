@@ -3,6 +3,7 @@ import { mkdtempSync, writeFileSync, chmodSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
+  backgroundCutOffNotice,
   createClaudeCliLlm,
   payerOf,
   renderPrompt,
@@ -560,5 +561,54 @@ describe("payerOf", () => {
     expect(payerOf(undefined, false)).toBe("bot");
     // the caller's token replaces the bot's in the spawn env, so it wins
     expect(payerOf("sk-ant-oat01-x", true)).toBe("caller");
+  });
+});
+
+describe("background work cut off when the run ends", () => {
+  const text = (t: string) => ({
+    type: "stream_event",
+    event: { type: "content_block_delta", index: 0, delta: { type: "text_delta", text: t } },
+  });
+  const tasks = (list: Array<{ task_id: string; description: string }>) => ({
+    type: "system",
+    subtype: "background_tasks_changed",
+    tasks: list.map((t) => ({ ...t, task_type: "local_agent" })),
+  });
+
+  test("a job still running when the CLI exits is named in the reply, not dropped", async () => {
+    const llm = createClaudeCliLlm({
+      binPath: fakeStreamBin([
+        tasks([{ task_id: "a1", description: "Build scheduled reports backend" }]),
+        text("started on the backend"),
+        { type: "result", subtype: "success", is_error: false, result: "started on the backend" },
+      ]),
+    });
+    const deltas: string[] = [];
+    const out = await llm.stream!({ system: "s", messages: [{ role: "user", content: "hi" }] }, (e) => {
+      if (e.type === "text") deltas.push(e.delta);
+    });
+    expect(out).toStartWith("started on the backend\n\n");
+    expect(out).toContain("`Build scheduled reports backend`");
+    expect(out).toContain("stopped before finishing");
+    // Streamed too, so an open message shows it without waiting for a rewrite.
+    expect(deltas.join("")).toBe(out);
+  });
+
+  test("jobs that finished before the exit say nothing", async () => {
+    const llm = createClaudeCliLlm({
+      binPath: fakeStreamBin([
+        tasks([{ task_id: "b1", description: "sleep 5" }]),
+        text("done"),
+        { type: "result", subtype: "success", is_error: false, result: "done" },
+        tasks([]),
+      ]),
+    });
+    const out = await llm.stream!({ system: "s", messages: [{ role: "user", content: "hi" }] }, () => {});
+    expect(out).toBe("done");
+  });
+
+  test("the notice names every job left", () => {
+    expect(backgroundCutOffNotice(["one", "two"])).toContain("2 background jobs were still going");
+    expect(backgroundCutOffNotice(["one"])).toContain("a background job was still going");
   });
 });
