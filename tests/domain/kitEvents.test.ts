@@ -6,6 +6,10 @@ import {
   describeSubmission,
   elementValue,
   encodeKitMeta,
+  hasLiveKit,
+  locksOnPress,
+  pickedLabel,
+  retireKit,
   KIT_PATTERN,
   kitRules,
   modalIdOf,
@@ -142,5 +146,58 @@ describe("the prompt rules", () => {
     expect(rules).toContain("http://127.0.0.1:2002/api/kit/views");
     expect(rules).toContain('"jv:"');
     expect(rules).toContain("thread_ts");
+  });
+});
+
+describe("answered questions lock", () => {
+  const question = [
+    { type: "section", text: { type: "mrkdwn", text: "Which one?" } },
+    {
+      type: "actions",
+      elements: [
+        { type: "button", action_id: "jv:pick-a", text: { type: "plain_text", text: "a) backup" }, value: "a" },
+        { type: "button", action_id: "jv:pick-b", text: { type: "plain_text", text: "b) API" }, value: "b" },
+      ],
+    },
+  ];
+
+  test("single-shot presses lock, multi-selects and modal openers do not", () => {
+    expect(locksOnPress("button", "jv:pick-a")).toBe(true);
+    expect(locksOnPress("static_select", "jv:x")).toBe(true);
+    expect(locksOnPress("checkboxes", "jv:x")).toBe(false);
+    expect(locksOnPress("multi_static_select", "jv:x")).toBe(false);
+    expect(locksOnPress("button", "jv:modal:abc")).toBe(false);
+    expect(locksOnPress(undefined, "jv:x")).toBe(false);
+  });
+
+  test("retiring drops our elements, keeps the question and leaves one note", () => {
+    const out = retireKit(question, "chose a");
+    expect(out).toEqual([question[0]!, { type: "context", elements: [{ type: "mrkdwn", text: "chose a" }] }]);
+    expect(hasLiveKit(question)).toBe(true);
+    expect(hasLiveKit(out)).toBe(false);
+  });
+
+  test("elements that are not ours stay, and an accessory of ours goes", () => {
+    const mixed = [
+      { type: "section", text: { type: "mrkdwn", text: "q" }, accessory: { type: "button", action_id: "jv:go" } },
+      { type: "actions", elements: [{ type: "button", action_id: "approve" }, { type: "button", action_id: "jv:b" }] },
+    ];
+    const out = retireKit(mixed, "done");
+    expect(out).toEqual([
+      { type: "section", text: { type: "mrkdwn", text: "q" } },
+      { type: "context", elements: [{ type: "mrkdwn", text: "done" }] },
+      { type: "actions", elements: [{ type: "button", action_id: "approve" }] },
+    ]);
+    expect(hasLiveKit(undefined)).toBe(false);
+  });
+
+  test("the picked label is what the person saw", () => {
+    expect(pickedLabel({ type: "button", value: "a", text: { text: "a) backup" } })).toBe("a) backup");
+    expect(pickedLabel({ selected_option: { value: "p1", text: { text: "Plan 1" } } })).toBe("Plan 1");
+    expect(pickedLabel({ value: "v" })).toBe("v");
+  });
+
+  test("the brain is told to ask choices with buttons", () => {
+    expect(kitRules("http://x")).toContain("asked with buttons");
   });
 });

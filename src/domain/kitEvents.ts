@@ -194,5 +194,84 @@ Interactive Block Kit (buttons, selects, modals):
   curl -s -X POST -H "Content-Type: application/json" -d '{"view":{"type":"modal","title":{"type":"plain_text","text":"..."},"submit":{"type":"plain_text","text":"Submit"},"blocks":[...]}}' ${kitUrl}
   -> {"ok":true,"action_id":"jv:modal:<id>"}. The submission comes back here as a turn listing every field as block_id.action_id: value. Add "notify_on_close":true to hear about a cancel too
 - external selects (options loaded live) are not supported: use static options
+- a question with a fixed set of answers (a or b, yes or no, pick one of these) is asked with buttons, never as lettered options in text. Put the question in a section block and one jv: button per answer, the value naming the answer
+- you do not disable them yourself: a press locks the message at once, showing who chose what, and a typed reply in the thread retires any buttons still open. Just act on the answer
 - a turn is not instant, so when a press needs a visible reaction, update the message with chat.update once you have acted on it`;
 };
+
+/**
+ * A choice question is answered once. Buttons that stay live after the
+ * answer invite a second press, and a stale question sitting under a typed
+ * answer reads as still open. So a press on a single-shot element locks the
+ * message, and a typed reply in the thread retires whatever is still open.
+ * Multi-selects and checkboxes are left alone: picking several IS the point.
+ */
+const SINGLE_SHOT = new Set([
+  "button",
+  "overflow",
+  "static_select",
+  "radio_buttons",
+  "users_select",
+  "conversations_select",
+  "channels_select",
+  "datepicker",
+  "timepicker",
+  "datetimepicker",
+]);
+
+/** Whether a press answers the question it sits on (and so should lock it). */
+export const locksOnPress = (type: string | undefined, actionId: string): boolean =>
+  !!type && SINGLE_SHOT.has(type) && !modalIdOf(actionId);
+
+export type KitBlock = Record<string, unknown>;
+
+type Element = { action_id?: unknown; text?: { text?: unknown } };
+
+const isKitElement = (e: unknown): boolean =>
+  typeof e === "object" && e !== null && typeof (e as Element).action_id === "string" &&
+  KIT_PATTERN.test((e as Element).action_id as string);
+
+const blockHasKit = (b: KitBlock): boolean =>
+  (Array.isArray(b.elements) && b.type === "actions" && b.elements.some(isKitElement)) || isKitElement(b.accessory);
+
+/** Whether a posted message still carries elements of ours someone could press. */
+export const hasLiveKit = (blocks: readonly KitBlock[] | undefined): boolean => (blocks ?? []).some(blockHasKit);
+
+/** What the person picked, as they saw it: the button's label, or the option's. */
+export const pickedLabel = (a: KitElementState & { text?: { text?: string } }): string | undefined =>
+  a.text?.text ?? a.selected_option?.text?.text ?? elementValue(a);
+
+/**
+ * The message with every `jv:` element taken out and one context line where
+ * the first of them stood, saying how it was settled. Anything else - the
+ * question, other people's elements - is kept as it was.
+ */
+export const retireKit = (blocks: readonly KitBlock[], note: string): KitBlock[] => {
+  const out: KitBlock[] = [];
+  let noted = false;
+  const mark = () => {
+    if (noted) return;
+    noted = true;
+    out.push({ type: "context", elements: [{ type: "mrkdwn", text: note }] });
+  };
+  for (const b of blocks) {
+    if (!blockHasKit(b)) {
+      out.push(b);
+      continue;
+    }
+    if (b.type === "actions" && Array.isArray(b.elements)) {
+      const rest = b.elements.filter((e) => !isKitElement(e));
+      if (rest.length) out.push({ ...b, elements: rest });
+    } else {
+      const { accessory: _gone, ...kept } = b;
+      out.push(kept);
+    }
+    mark();
+  }
+  return out;
+};
+
+export const pressedNote = (userId: string, label: string | undefined): string =>
+  `:white_check_mark: <@${userId}> chose${label ? ` *${label}*` : ""}`;
+
+export const repliedNote = (userId: string): string => `:speech_balloon: <@${userId}> answered in the thread`;

@@ -2,6 +2,7 @@ import { describe, expect, test } from "bun:test";
 import {
   createHandler,
   createKitListeners,
+  retireOpenKit,
   shouldHandleDm,
   threadKeyOf,
   type Incoming,
@@ -373,6 +374,86 @@ describe("Block Kit the brain built", () => {
     expect(turn?.messageTs).not.toBe("200.2");
     await turn?.say({ text: "done" });
     expect(r.posted).toEqual([{ channel: "C1", text: "done" }]);
+  });
+
+  const choice = [
+    { type: "section", text: { type: "mrkdwn", text: "Which?" } },
+    { type: "actions", elements: [{ type: "button", action_id: "jv:a", text: { type: "plain_text", text: "Option A" }, value: "a" }] },
+  ];
+
+  test("a pressed button locks its message before the turn, naming the choice", async () => {
+    const r = rig();
+    const updates: Record<string, unknown>[] = [];
+    const order: string[] = [];
+    const client = { ...r.client, chat: { ...r.client.chat, update: async (a: Record<string, unknown>) => void (updates.push(a), order.push("update")) } };
+    const { onKitAction } = createKitListeners(undefined, async () => void order.push("turn"), () => {});
+    await onKitAction({
+      ack: r.ack,
+      client,
+      body: { user: { id: "U2" }, channel: { id: "C1" }, message: { ts: "200.2", thread_ts: "100.1", text: "Which?", blocks: choice } },
+      action: { action_id: "jv:a", type: "button", value: "a", text: { text: "Option A" } },
+    });
+    expect(order).toEqual(["update", "turn"]);
+    expect(updates[0]).toMatchObject({ channel: "C1", ts: "200.2", text: "Which?" });
+    const blocks = updates[0]?.blocks as { type: string; elements?: { text?: string }[] }[];
+    expect(blocks.map((b) => b.type)).toEqual(["section", "context"]);
+    expect(blocks[1]?.elements?.[0]?.text).toContain("<@U2> chose *Option A*");
+  });
+
+  test("a checkbox press leaves the message live", async () => {
+    const updates: unknown[] = [];
+    const r = rig();
+    const client = { ...r.client, chat: { ...r.client.chat, update: async (a: unknown) => void updates.push(a) } };
+    await r.onKitAction({
+      ack: r.ack,
+      client,
+      body: { user: { id: "U2" }, channel: { id: "C1" }, message: { ts: "200.2", blocks: choice } },
+      action: { action_id: "jv:a", type: "checkboxes", selected_options: [{ value: "a" }] },
+    });
+    expect(updates).toHaveLength(0);
+    expect(r.turns).toHaveLength(1);
+  });
+
+  test("a failed lock still hands the press to the thread", async () => {
+    const r = rig();
+    const client = { ...r.client, chat: { ...r.client.chat, update: async () => { throw new Error("cant_update_message"); } } };
+    await r.onKitAction({
+      ack: r.ack,
+      client,
+      body: { user: { id: "U2" }, channel: { id: "C1" }, message: { ts: "200.2", blocks: choice } },
+      action: { action_id: "jv:a", type: "button", value: "a" },
+    });
+    expect(r.turns).toHaveLength(1);
+  });
+
+  test("a typed reply retires our open questions earlier in the thread, nothing else", async () => {
+    const updates: Record<string, unknown>[] = [];
+    const client = {
+      conversations: {
+        replies: async () => ({
+          messages: [
+            { ts: "100.1", user: "U1", text: "hi" },
+            { ts: "150.0", user: "UBOT", text: "Which?", blocks: choice },
+            { ts: "160.0", user: "UBOT", text: "plain" },
+            { ts: "170.0", user: "UOTHER", text: "theirs", blocks: choice },
+            { ts: "300.0", user: "UBOT", text: "later", blocks: choice },
+          ],
+        }),
+      },
+      chat: { update: async (a: Record<string, unknown>) => void updates.push(a) },
+    };
+    const n = await retireOpenKit(client, "UBOT", { channel: "D1", ts: "200.0", thread_ts: "100.1", user: "U1" }, () => {});
+    expect(n).toBe(1);
+    expect(updates[0]).toMatchObject({ channel: "D1", ts: "150.0", text: "Which?" });
+    expect(JSON.stringify(updates[0]?.blocks)).toContain("<@U1> answered in the thread");
+  });
+
+  test("a top-level message or an unknown bot id looks nothing up", async () => {
+    let calls = 0;
+    const client = { conversations: { replies: async () => (calls++, { messages: [] }) }, chat: { update: async () => {} } };
+    expect(await retireOpenKit(client, "UBOT", { channel: "D1", ts: "1.0", user: "U1" }, () => {})).toBe(0);
+    expect(await retireOpenKit(client, undefined, { channel: "D1", ts: "2.0", thread_ts: "1.0", user: "U1" }, () => {})).toBe(0);
+    expect(calls).toBe(0);
   });
 
   test("a top-level message is its own thread", async () => {
