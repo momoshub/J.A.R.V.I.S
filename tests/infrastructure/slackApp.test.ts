@@ -523,14 +523,16 @@ describe("Block Kit the brain built", () => {
     const r = rig();
     const updates: Record<string, unknown>[] = [];
     const client = { ...r.client, chat: { ...r.client.chat, update: async (a: Record<string, unknown>) => void updates.push(a) } };
-    const settled = [{ type: "actions", elements: [{ type: "checkboxes", action_id: "jv:settled:team", options: [], initial_options: [] }] }];
+    const boxes = { type: "checkboxes", action_id: "jv:settled:team", options: [], initial_options: [] };
+    const settled = [{ type: "actions", block_id: "team", elements: [boxes] }];
     await r.onKitAction({
       ack: r.ack,
       client,
       body: { user: { id: "U2" }, channel: { id: "C1" }, message: { ts: "200.2", text: "Team", blocks: settled } },
       action: { action_id: "jv:settled:team", type: "checkboxes", selected_options: [] },
     });
-    expect(updates).toEqual([{ channel: "C1", ts: "200.2", text: "Team", blocks: settled }]);
+    // a new block id each time, or Slack keeps the box as the person left it
+    expect(updates).toEqual([{ channel: "C1", ts: "200.2", text: "Team", blocks: [{ type: "actions", block_id: "team~", elements: [boxes] }] }]);
     expect(r.turns).toHaveLength(0);
 
     await r.onKitAction({

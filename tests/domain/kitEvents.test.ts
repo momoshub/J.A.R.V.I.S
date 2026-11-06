@@ -11,6 +11,7 @@ import {
   waitsForButton,
   pickedLabel,
   picksOf,
+  snapBackBlocks,
   retireKit,
   castVote,
   describeVote,
@@ -241,6 +242,16 @@ describe("answered questions lock", () => {
     expect((none[0] as { elements: Record<string, unknown>[] }).elements[0]).not.toHaveProperty("initial_options");
     const kept = retireKit(team, "replied");
     expect((kept[0] as { elements: Record<string, unknown>[] }).elements[0]).toHaveProperty("initial_options", [opt("c")]);
+  });
+
+  test("snapping back flips the block id of ticked lists only", () => {
+    const blocks = [
+      { type: "section", block_id: "q", text: { type: "mrkdwn", text: "q" } },
+      { type: "actions", block_id: "team", elements: [{ type: "checkboxes", action_id: "jv:settled:team" }] },
+    ];
+    const once = snapBackBlocks(blocks);
+    expect(once.map((b) => b.block_id)).toEqual(["q", "team~"]);
+    expect(snapBackBlocks(once).map((b) => b.block_id)).toEqual(["q", "team"]);
   });
 
   test("settling without a pick drops colours, and selects of ours go", () => {
