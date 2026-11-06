@@ -89,11 +89,12 @@ export const migrate = (db: Database): void => {
   migrateFollowedThreads(db);
   migrateReminders(db);
   migrateSelfIssues(db);
+  migrateUnfollowedThreads(db);
   migrateKitViews(db);
 };
 
 /**
- * Migration v18: modals the brain built, waiting for a click to open them.
+ * Migration v19: modals the brain built, waiting for a click to open them.
  *
  * A turn cannot open a modal - only a click carries the trigger_id - so the
  * view is stored first and the button names it. Kept in the database rather
@@ -105,6 +106,28 @@ const migrateKitViews = (db: Database): void => {
       id         TEXT PRIMARY KEY,
       view       TEXT NOT NULL,
       created_at INTEGER NOT NULL
+    );
+  `);
+  const { user_version } = db.query<{ user_version: number }, []>("PRAGMA user_version").get() ?? {
+    user_version: 0,
+  };
+  if (user_version < 19) db.exec("PRAGMA user_version = 19;");
+};
+
+/**
+ * Migration v18: threads it was told to stop following.
+ *
+ * A thread that starts as one person and the bot is followed by itself. Once
+ * the owner turns that off, the next one-on-one line must not quietly turn it
+ * back on, so the "off" is a row of its own rather than a missing follow.
+ */
+const migrateUnfollowedThreads = (db: Database): void => {
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS unfollowed_threads (
+      channel_id TEXT NOT NULL,
+      thread_ts  TEXT NOT NULL,
+      created_at INTEGER NOT NULL,
+      PRIMARY KEY (channel_id, thread_ts)
     );
   `);
   const { user_version } = db.query<{ user_version: number }, []>("PRAGMA user_version").get() ?? {

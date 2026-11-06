@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { couldFollowThread, followSkipReason, followVerdict, isOneOnOneThread, mentionsBot, shouldFollowThread } from "../../src/domain/threadFollow.ts";
+import { couldFollowThread, followSkipReason, followVerdict, isFollowOffReaction, isOneOnOneThread, mentionsBot, shouldFollowThread, startsAutoFollow } from "../../src/domain/threadFollow.ts";
 import { buildSystemPrompt } from "../../src/domain/personality.ts";
 import { promptFingerprint } from "../../src/domain/promptFingerprint.ts";
 
@@ -208,9 +208,44 @@ describe("followVerdict", () => {
     for (const asked of [false, true])
       for (const ownThread of [false, true])
         for (const ownThreadsOff of [false, true])
-          for (const oneOnOne of [false, true]) {
-            const o = { asked, ownThread, ownThreadsOff, oneOnOne };
+          for (const oneOnOne of [false, true])
+            for (const optedOut of [false, true]) {
+            const o = { asked, ownThread, ownThreadsOff, oneOnOne, optedOut };
             expect(followVerdict(o).follow).toBe(shouldFollowThread(o));
           }
+  });
+});
+
+describe("an opted-out thread", () => {
+  const base = { asked: false, ownThread: true, ownThreadsOff: false, oneOnOne: true, optedOut: true };
+
+  test("no automatic route lets a message in", () => {
+    expect(followVerdict(base)).toEqual({ follow: false, why: "opted-out" });
+  });
+
+  test("asking for it again still does", () => {
+    expect(followVerdict({ ...base, asked: true })).toEqual({ follow: true, why: "asked" });
+  });
+});
+
+describe("startsAutoFollow", () => {
+  test("one person and the bot, even before the bot has replied", () => {
+    expect(startsAutoFollow({ participants: ["U1"], author: "U1", botUserId: BOT })).toBe(true);
+    expect(startsAutoFollow({ participants: ["U1", BOT], author: "U1", botUserId: BOT })).toBe(true);
+    expect(startsAutoFollow({ participants: [], author: "U1", botUserId: BOT })).toBe(true);
+  });
+
+  test("not a thread two people were already talking in", () => {
+    expect(startsAutoFollow({ participants: ["U1", "U2"], author: "U1", botUserId: BOT })).toBe(false);
+    expect(startsAutoFollow({ participants: ["U1", BOT], author: "U2", botUserId: BOT })).toBe(false);
+  });
+});
+
+describe("isFollowOffReaction", () => {
+  test("rock, skin tone or not, and nothing else", () => {
+    expect(isFollowOffReaction("rock")).toBe(true);
+    expect(isFollowOffReaction("rock::skin-tone-2")).toBe(true);
+    expect(isFollowOffReaction("rocket")).toBe(false);
+    expect(isFollowOffReaction("eyes")).toBe(false);
   });
 });
