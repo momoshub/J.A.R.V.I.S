@@ -23,6 +23,7 @@ import {
   prepareModal,
   stateLines,
   viewProblem,
+  voteSubmitters,
 } from "../../src/domain/kitEvents.ts";
 
 const thread = { channelId: "C1", threadTs: "100.1" };
@@ -270,5 +271,23 @@ describe("votes wait for submit", () => {
     expect(turn).toStartWith("[block kit event] <@U3> pressed submit");
     expect(turn).toContain("<@U1> A, <@U2> B");
     expect(describeVote("U3", "jv:submit", [])).toContain("nobody picked");
+  });
+});
+
+describe("voteSubmitters", () => {
+  test("is the thread owner and the last human before the vote, never a bot or a later reply", () => {
+    const msgs = [
+      { ts: "1.0", user: "UOWNER" },
+      { ts: "2.0", user: "UASK" },
+      { ts: "2.5", user: "UBOT", bot_id: "B1" },
+      { ts: "3.0", user: "UBOT", bot_id: "B1" },
+      { ts: "4.0", user: "ULATE" },
+    ];
+    expect([...voteSubmitters(msgs, "1.0", "3.0")]).toEqual(["UOWNER", "UASK"]);
+  });
+
+  test("a bot-opened thread leaves only the person asked", () => {
+    const msgs = [{ ts: "1.0", user: "UBOT", bot_id: "B1" }, { ts: "2.0", user: "UASK" }];
+    expect([...voteSubmitters(msgs, "1.0", "3.0")]).toEqual(["UASK"]);
   });
 });
