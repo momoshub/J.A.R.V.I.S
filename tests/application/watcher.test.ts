@@ -7,7 +7,7 @@ import { MAX_CONSECUTIVE_ERRORS } from "../../src/domain/watch.ts";
 let db: DbClient;
 let watches: WatchRepo;
 let now: number;
-let turns: { threadTs: string; text: string; slackUserId: string }[];
+let turns: { threadTs: string; text: string; slackUserId: string; keepSession?: boolean }[];
 let said: string[];
 
 const EVERY = 60_000;
@@ -19,7 +19,8 @@ const build = (check: (cmd: string) => Promise<CheckResult>) => {
     watches,
     clock: () => now,
     check: async (cmd) => check(cmd),
-    runTurn: async (r) => void turns.push({ threadTs: r.threadTs, text: r.text, slackUserId: r.slackUserId }),
+    runTurn: async (r) =>
+      void turns.push({ threadTs: r.threadTs, text: r.text, slackUserId: r.slackUserId, keepSession: r.keepSession }),
     say: async (_c, text) => void said.push(text),
   });
 };
@@ -166,6 +167,13 @@ describe("watcher", () => {
     now += EVERY;
     await w.tick();
     expect(said[0]).toContain("could not pick the thread back up");
+  });
+  test("a hand-back resumes the session that set the watch, rules changed or not", async () => {
+    add({ check: "true" });
+    now += EVERY;
+    const w = build(async () => ({ code: 0, output: "" }));
+    await w.tick();
+    expect(turns[0]?.keepSession).toBe(true);
   });
 });
 
