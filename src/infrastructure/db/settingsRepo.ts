@@ -44,6 +44,10 @@ export const SETTING_KEYS = {
   innerChild: "inner_child",
   /** Where its last triage stopped (ms), so a restart neither re-reads nor skips. */
   innerChildCursor: "inner_child_cursor",
+  /** Channel GitHub review requests of the bot's account are posted and reviewed in. Empty = off. */
+  reviewInboxChannel: "review_inbox_channel",
+  /** ISO time of the last review request handled. */
+  reviewInboxCursor: "review_inbox_cursor",
 } as const;
 
 /** Model override for one role, e.g. `model:pal`. Empty means "use the default". */

@@ -69,6 +69,7 @@ import {
   repoRefOf,
   type ReviewPolicy,
 } from "../domain/reviewPolicy.ts";
+import { GITHUB_LINK_PREFIX, githubLinkKey } from "../domain/reviewInbox.ts";
 import { BOMB_SIZE, DEFAULT_CATEGORY, parseCategories, pickBomb, renderCategories } from "../domain/emoji.ts";
 import { mentionedId } from "../domain/mentions.ts";
 import { parseMessageLink } from "../domain/slackLinks.ts";
@@ -2093,6 +2094,64 @@ export const COMMANDS: readonly CommandDef[] = [
       const order = parseLogSources(asked.join(","));
       deps.settings?.set(SETTING_KEYS.logSources, order.join(","));
       return describe(order);
+    },
+  },
+  {
+    name: "review-inbox",
+    minRole: "pal",
+    usage: "| channel <#channel>|off | link <github-login> [@someone] | unlink <github-login>",
+    summary: "where GitHub review requests of my account are posted and reviewed, and who is who",
+    run: ({ deps, actor, args, prefix }) => {
+      const settings = deps.settings;
+      if (!settings) return "I have nowhere to keep settings right now.";
+      const sub = (args[0] ?? "").toLowerCase();
+      const admin = RANK[actor.role] >= RANK.admin;
+
+      if (sub === "channel") {
+        if (!admin) return "Only admins can move the review inbox.";
+        const raw = args[1] ?? "";
+        if (/^(off|none|stop)$/i.test(raw)) {
+          settings.remove(SETTING_KEYS.reviewInboxChannel);
+          return "review inbox off - review requests stay on GitHub";
+        }
+        const id = raw.match(/^<#([CG][A-Z0-9]+)(?:\|[^>]*)?>$/)?.[1] ?? raw.match(/^[CG][A-Z0-9]+$/)?.[0];
+        if (!id) return `Which channel? \`${prefix} review-inbox channel #channel\``;
+        settings.set(SETTING_KEYS.reviewInboxChannel, id);
+        // From now: a backlog of old requests is not what this was turned on for.
+        settings.set(SETTING_KEYS.reviewInboxCursor, new Date(deps.clock()).toISOString());
+        return `review requests of my GitHub account now land in <#${id}>, reviewed first and approved only if clean, on the requester's own token`;
+      }
+
+      if (sub === "link" || sub === "unlink") {
+        const login = (args[1] ?? "").replace(/^@/, "");
+        if (!/^[A-Za-z0-9-]+$/.test(login)) return `Which GitHub login? \`${prefix} review-inbox ${sub} <github-login>\``;
+        const target = args[2]?.match(/^<@([UW][A-Z0-9]+)(?:\|[^>]*)?>$/)?.[1];
+        const current = settings.get(githubLinkKey(login));
+        // Yourself is anyone's call; somebody else's is an admin's, since it
+        // decides whose token a review runs on.
+        if ((target && target !== actor.slackId) || (current && current !== actor.slackId)) {
+          if (!admin) return "That links someone else - only an admin can do that.";
+        }
+        if (sub === "unlink") {
+          settings.remove(githubLinkKey(login));
+          return `\`${login}\` is not linked to anyone now`;
+        }
+        const who = target ?? actor.slackId;
+        settings.set(githubLinkKey(login), who);
+        return `\`${login}\` on GitHub is <@${who}> now`;
+      }
+
+      const channel = settings.get(SETTING_KEYS.reviewInboxChannel)?.trim();
+      const links = settings
+        .list()
+        .filter((e) => e.key.startsWith(GITHUB_LINK_PREFIX))
+        .map((e) => `- \`${e.key.slice(GITHUB_LINK_PREFIX.length)}\` -> <@${e.value}>`);
+      return [
+        channel
+          ? `review requests of my GitHub account land in <#${channel}>, reviewed then approved only if clean, on the requester's own token`
+          : `review inbox is off - \`${prefix} review-inbox channel #channel\``,
+        ...(links.length ? ["GitHub links:", ...links] : []),
+      ].join("\n");
     },
   },
   {
