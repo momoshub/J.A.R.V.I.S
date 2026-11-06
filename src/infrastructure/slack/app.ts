@@ -64,10 +64,17 @@ import {
   describeClosed,
   describeSubmission,
   elementValue,
+  hasLiveKit,
   KIT_PATTERN,
+  locksOnPress,
   modalIdOf,
+  pickedLabel,
+  pressedNote,
+  repliedNote,
+  retireKit,
   prepareModal,
   stateLines,
+  type KitBlock,
   type KitElementState,
   type KitThread,
 } from "../../domain/kitEvents.ts";
@@ -237,11 +244,11 @@ export type KitActionArgs = {
     user?: { id?: string };
     trigger_id?: string;
     channel?: { id?: string };
-    message?: { ts?: string; thread_ts?: string };
+    message?: { ts?: string; thread_ts?: string; text?: string; blocks?: KitBlock[] };
     /** Set when the element sits inside a modal rather than on a message. */
     view?: { private_metadata?: string; title?: { text?: string } };
   };
-  action: KitElementState & { action_id?: string; block_id?: string; action_ts?: string };
+  action: KitElementState & { action_id?: string; block_id?: string; action_ts?: string; text?: { text?: string } };
   client: unknown;
   context?: InboxContext & { teamId?: string };
 };
@@ -262,7 +269,10 @@ export type KitViewArgs = {
 
 /** The two WebClient calls the Block Kit listeners make. */
 type KitClient = {
-  chat: { postMessage: (a: Record<string, unknown>) => Promise<unknown> };
+  chat: {
+    postMessage: (a: Record<string, unknown>) => Promise<unknown>;
+    update?: (a: Record<string, unknown>) => Promise<unknown>;
+  };
   views: {
     open: (a: Record<string, unknown>) => Promise<unknown>;
     push: (a: Record<string, unknown>) => Promise<unknown>;
@@ -588,6 +598,22 @@ export const createKitListeners = (
       return;
     }
 
+    // Lock the question before the turn starts: a turn takes seconds, and a
+    // button still live in that gap gets pressed again.
+    const pressed = body.message;
+    if (!modal && pressed?.ts && pressed.blocks && body.channel?.id && locksOnPress(action.type, actionId)) {
+      try {
+        await (client as KitClient).chat.update?.({
+          channel: body.channel.id,
+          ts: pressed.ts,
+          text: pressed.text ?? "",
+          blocks: retireKit(pressed.blocks, pressedNote(by, pickedLabel(action))),
+        });
+      } catch (err) {
+        log(`kit lock ${actionId} on ${pressed.ts} failed: ${slackRefusal(err)}`);
+      }
+    }
+
     await kitTurn(
       client,
       context,
@@ -622,6 +648,48 @@ export const createKitListeners = (
   };
 
   return { onKitAction, onKitView };
+};
+
+/** The calls retiring open questions makes. */
+type RetireClient = {
+  conversations: {
+    replies: (a: Record<string, unknown>) => Promise<{ messages?: (RawMessage & { ts?: string; blocks?: KitBlock[] })[] }>;
+  };
+  chat: { update: (a: Record<string, unknown>) => Promise<unknown> };
+};
+
+/**
+ * Someone answered in text instead of pressing: every question of ours still
+ * open in the thread is retired, so nobody presses a stale button later.
+ * Best effort - a failure here never touches the turn.
+ */
+export const retireOpenKit = async (
+  client: unknown,
+  botUserId: string | undefined,
+  m: { channel: string; ts: string; thread_ts?: string; user?: string },
+  log: (msg: string) => void,
+): Promise<number> => {
+  if (!botUserId || !m.user || !m.thread_ts || m.thread_ts === m.ts) return 0;
+  const web = client as RetireClient;
+  try {
+    const res = await web.conversations.replies({ channel: m.channel, ts: m.thread_ts, limit: 200 });
+    const open = (res.messages ?? []).filter(
+      (x) => x.user === botUserId && x.ts && Number(x.ts) < Number(m.ts) && hasLiveKit(x.blocks),
+    );
+    for (const x of open) {
+      await web.chat.update({
+        channel: m.channel,
+        ts: x.ts,
+        text: x.text ?? "",
+        blocks: retireKit(x.blocks ?? [], repliedNote(m.user)),
+      });
+    }
+    if (open.length) log(`kit retired ${open.length} open question(s) in ${m.channel}/${m.thread_ts}: answered in text`);
+    return open.length;
+  } catch (err) {
+    log(`kit retire in ${m.channel}/${m.thread_ts} failed: ${slackRefusal(err)}`);
+    return 0;
+  }
 };
 
 export const createSlackApp = (config: SlackAppConfig, deps: Deps) => {
@@ -676,11 +744,14 @@ export const createSlackApp = (config: SlackAppConfig, deps: Deps) => {
       : undefined;
   // The real WebClient is a superset of the minimal SlackClient seam.
   const asClient = (client: WebClient) => client as unknown as SlackClient;
+  const retireOnReply = async (client: unknown, m: Parameters<typeof retireOpenKit>[2]) =>
+    retireOpenKit(client, await deps.slack?.botUserId().catch(() => undefined), m, log);
 
   // @-mentions in channels -> reply in the same thread.
   app.event("app_mention", async ({ event, client, say, context }) => {
     const e = event as { channel: string; user?: string; text: string; ts: string; thread_ts?: string };
     if (!e.user) return;
+    void retireOnReply(client, { ...e, user: e.user });
     await autoFollow(asClient(client), e.channel, threadKeyOf(e), e.user);
     await handle({
       channelId: e.channel,
@@ -1153,6 +1224,9 @@ export const createSlackApp = (config: SlackAppConfig, deps: Deps) => {
 
   app.message(async ({ message, client, say, context }) => {
     const m = message as RawMessage & { channel: string; ts: string };
+    // Any human reply in a thread, handled or not: a typed answer settles a
+    // question whoever it was asked of.
+    if (m.user && !m.bot_id && !m.subtype) void retireOnReply(client, m);
     if (!shouldHandleDm(m)) {
       // Three ways a thread is one it keeps up with, tag or no tag. It OPENED
       // this one - it started the conversation, so it is expected to follow
