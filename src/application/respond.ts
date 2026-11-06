@@ -4,6 +4,7 @@
  * command registry and everything else to the chat use case, so the transport
  * adapter stays dumb.
  */
+import type { ReviewGuard } from "./reviewGuard.ts";
 import { decideAccess } from "../domain/access.ts";
 import { cleanInboundText } from "../domain/conversation.ts";
 import { commandLineOf, dispatchCommand, notifiesOwner } from "./commands.ts";
@@ -29,6 +30,8 @@ export type RespondDeps = HandleMessageDeps & {
   threadQueue?: ThreadQueue;
   /** In-flight turns, so one can be stopped from a button or a command. */
   runs?: RunRegistry;
+  /** One review per PR at a time, across the review inbox and `review`. */
+  reviewGuard?: ReviewGuard;
 };
 
 const RANK: Record<UserRole, number> = { pal: 0, executer: 1, admin: 2, owner: 3 };

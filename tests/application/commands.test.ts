@@ -13,6 +13,7 @@ import { createFollowRepo } from "../../src/infrastructure/db/followRepo.ts";
 import { createReminderRepo } from "../../src/infrastructure/db/reminderRepo.ts";
 import { DEFAULT_SNUB_REPLY } from "../../src/domain/snub.ts";
 import { createRunRegistry } from "../../src/application/runRegistry.ts";
+import { createReviewGuard } from "../../src/application/reviewGuard.ts";
 import { commandLineOf, dispatchCommand, type CommandDeps, isQuietCommand } from "../../src/application/commands.ts";
 import { respond, type RespondDeps } from "../../src/application/respond.ts";
 import type { AllowedUser } from "../../src/domain/types.ts";
@@ -868,6 +869,55 @@ describe("dispatchCommand", () => {
     // the resolved account reaches the prompt, so the brain need not look it up
     expect(system).toContain("Write it as Kai, an engineer");
     expect(system).toContain("kai-at-acme");
+  });
+
+  test("a PR already under review is pointed at, not reviewed twice", async () => {
+    // a GitHub review request and a typed `review` landed together on #8436
+    const PR = "https://github.com/o/r/pull/1";
+    const approved: string[] = [];
+    const github: GitHubPort = {
+      whoami: async () => undefined,
+      reviewDecision: async () => undefined,
+      approve: async (url) => {
+        approved.push(url);
+        return { ok: true };
+      },
+    };
+    let brains = 0;
+    let finish: (v: string) => void = () => {};
+    const slow: LlmPort = {
+      complete: () => {
+        brains++;
+        return new Promise<string>((r) => {
+          finish = r;
+        });
+      },
+    };
+    const base = build();
+    const deps: CommandDeps = {
+      ...base,
+      github,
+      llm: slow,
+      reviewGuard: createReviewGuard(() => 0),
+      slack: { ...base.slack!, permalink: async (c, ts) => `https://x.slack.com/archives/${c}/p${ts}` },
+    };
+    const first = dispatchCommand(deps, actor(), "C1", `rv ${PR}`, { threadTs: "1.1", reply: async () => {} });
+    await new Promise((r) => setTimeout(r, 0));
+    const lines: string[] = [];
+    const second = await dispatchCommand(deps, actor(), "C2", `rv ${PR}`, {
+      threadTs: "2.2",
+      reply: async (t: string) => {
+        lines.push(t);
+      },
+    });
+    expect(second).toBe(`👯 ${PR} is already being reviewed <https://x.slack.com/archives/C1/p1.1|in this thread>`);
+    expect(lines).toEqual([]);
+    expect(brains).toBe(1);
+    expect(approved).toEqual([PR]);
+    finish("the review");
+    await first;
+    // still fresh right after it lands, so a late GitHub request does not redo it
+    expect(await dispatchCommand(deps, actor(), "C2", `rv ${PR}`, { threadTs: "2.2" })).toContain("was just reviewed");
   });
 
   test("rv reports a refused approval and reviews anyway", async () => {

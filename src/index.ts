@@ -41,6 +41,7 @@ import { createWatchRepo } from "./infrastructure/db/watchRepo.ts";
 import { createReminderRepo } from "./infrastructure/db/reminderRepo.ts";
 import { createFollowRepo } from "./infrastructure/db/followRepo.ts";
 import { createWatcher } from "./application/watcher.ts";
+import { createReviewGuard } from "./application/reviewGuard.ts";
 import { createReviewInbox } from "./application/reviewInbox.ts";
 import { createGhReviewRequests } from "./infrastructure/github/reviewRequests.ts";
 import { createInnerChild } from "./application/innerChild.ts";
@@ -394,6 +395,7 @@ const main = async () => {
     // Handles on the turns in flight, so one can be stopped from a button or
     // `stop` instead of being waited out.
     runs,
+    reviewGuard: createReviewGuard(clock),
     system,
     threadSessionsOn: () => settings.get(SETTING_KEYS.threadSessions)?.trim().toLowerCase() !== "off",
     // A stranger is put to the owner for a ✅ / ❌ rather than refused outright.
