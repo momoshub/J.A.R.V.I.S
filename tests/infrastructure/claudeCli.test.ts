@@ -226,6 +226,26 @@ describe("createClaudeCliLlm", () => {
     expect(without).toBe("[]");
   });
 
+  test("a turn is told which session it is, so it never mistakes itself for another writer", async () => {
+    // a long turn listing processes found `claude -p --resume <id>` in its own
+    // repo, called it a rogue builder, and blocked asking to kill it - itself.
+    const bin = fakeBin(
+      `#!/usr/bin/env bash\ncat > /dev/null\necho "{\\"type\\":\\"result\\",\\"subtype\\":\\"success\\",\\"is_error\\":false,\\"result\\":\\"[$BOT_SESSION_ID]\\"}"`,
+    );
+    const llm = createClaudeCliLlm({ binPath: bin });
+    delete process.env.BOT_SESSION_ID;
+
+    const inSession = await llm.complete({
+      system: "s",
+      messages: [{ role: "user", content: "hi" }],
+      session: { id: "11111111-2222-3333-4444-555555555555", resume: true },
+    });
+    expect(inSession).toBe("[11111111-2222-3333-4444-555555555555]");
+
+    const oneShot = await llm.complete({ system: "s", messages: [{ role: "user", content: "hi" }] });
+    expect(oneShot).toBe("[]");
+  });
+
   test("summarizeTool renders a Bash command", () => {
     const out = summarizeTool("Bash", '{"command":"ls -la","description":"list"}');
     expect(out.title).toContain("ls -la");

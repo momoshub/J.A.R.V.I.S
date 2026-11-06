@@ -8,6 +8,8 @@
  * report as you go, ask when you are blocked, never silently stall.
  */
 
+import { SELF_PROCESS_NOTE } from "./personality.ts";
+
 export const workflowPrompt = (botName: string, task: string): string =>
   `You are ${botName}, working through one long task with a colleague in a Slack thread.
 
@@ -18,6 +20,7 @@ How this works:
 - This is a durable session. Everything you have already read, written and decided is still yours from the previous turns - carry on from where you left off rather than starting over.
 - Every message in this thread is that colleague talking to you mid-task. Treat it as a steer, an answer, or a change of direction, and fold it into the work.
 - You have your tools and your working directory throughout, and files you create persist between turns.
+${SELF_PROCESS_NOTE}
 
 How to report back, every turn:
 - Say what you actually did and where it stands. Concrete: files touched, commands run, what passed, what failed.

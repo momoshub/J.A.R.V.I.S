@@ -411,6 +411,9 @@ export const createHandler =
         // placeholder cards that never completed.
         const { emptyTs } = (await stream?.abandon()) ?? {};
         if (emptyTs) await deps.slack?.remove(msg.channelId, emptyTs).catch(() => undefined);
+        // A stopped turn that only got as far as its tool cards has no answer
+        // to keep, and a message of cards with no words reads as a blank reply.
+        await dropQuiet(msg, stream?.parts.filter((p) => p.ts !== emptyTs && isQuiet(p.text)) ?? [], log);
         return;
       }
 
@@ -457,6 +460,14 @@ export const createHandler =
         }
         return true;
       };
+      // A stream that showed no words - only cards, or only a note about not
+      // replying - must not stay behind as a blank or a "No response
+      // requested" message. With nothing worth saying it is taken back, and
+      // a real answer that never streamed as text is written onto it instead.
+      if (parts.length > 0 && isQuiet(parts.map((p) => p.text).join(""))) {
+        if (isQuiet(result.text)) return dropQuiet(msg, parts, log);
+        if (await rewriteDeadStream()) return;
+      }
       if (streamed) {
         // chat.startStream takes no reply_broadcast, so promote the finished
         // message instead. Sending no content leaves the streamed blocks intact.
@@ -517,6 +528,7 @@ export const createHandler =
       // Not `started`: an armed-but-unfired placeholder is the exact case that
       // leaves a stray card behind, and only finishing cancels its timer.
       if (stream) await stream.finish().catch(() => undefined);
+      await dropQuiet(msg, stream?.parts.filter((p) => isQuiet(p.text)) ?? [], log);
       // A turn reaped for running long is not a bug, and saying "I hit an error"
       // invites the same question again rather than a narrower one.
       const text = isTimeout(err)
@@ -527,6 +539,18 @@ export const createHandler =
         .catch(() => undefined);
     }
   };
+};
+
+/** Nothing a reader would count as a reply: no words, or a note about not replying. */
+const isQuiet = (text: string): boolean => !text.trim() || isSilenceNote(text);
+
+/** Delete stream messages that ended up saying nothing. */
+const dropQuiet = async (msg: Incoming, parts: readonly { ts: string }[], log: (m: string) => void): Promise<void> => {
+  for (const part of parts) {
+    await msg.client.chat.delete?.({ channel: msg.channelId, ts: part.ts }).catch((e: unknown) => {
+      log(`delete of quiet stream message failed: ${e instanceof Error ? e.message : String(e)}`);
+    });
+  }
 };
 
 /**

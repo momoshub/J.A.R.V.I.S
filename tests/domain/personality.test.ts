@@ -406,3 +406,24 @@ describe("the rule against sitting and waiting", () => {
     expect(withWatch(false)).not.toContain("Waiting for something to finish");
   });
 });
+
+describe("a turn can recognise its own process", () => {
+  test("chat and workflow prompts both name the session env var and forbid killing it", async () => {
+    const { workflowPrompt } = await import("../../src/domain/workflowPrompt.ts");
+    for (const prompt of [buildSystemPrompt({}), workflowPrompt("Bot", "build the blog")]) {
+      expect(prompt).toContain("$BOT_SESSION_ID");
+      expect(prompt).toContain("is YOU, never another agent");
+      expect(prompt).toContain("never kill it");
+    }
+  });
+});
+
+describe("steering another thread", () => {
+  test("the tell command is offered alongside watch, and never to a role that cannot run it", () => {
+    const admin = buildSystemPrompt({ commandPrefix: "//bot", runScript: "/r.sh", runUrl: "http://x", runTicket: "t", canWatch: true });
+    expect(admin).toContain("`//bot tell <thread-link> <message>`");
+    expect(admin).toContain("Never ask someone to copy a message");
+    const pal = buildSystemPrompt({ commandPrefix: "//bot", runScript: "/r.sh", runUrl: "http://x", runTicket: "t", canWatch: false });
+    expect(pal).not.toContain("tell <thread-link>");
+  });
+});

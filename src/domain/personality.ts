@@ -141,10 +141,18 @@ export const BEFORE_YOU_SEND = `Before you send, check your own message against 
 - the language is the THREAD's, not the person's
 - say the thing, then stop. No preamble about what you are about to do, no summary of what you just did`;
 
+/**
+ * A turn that lists processes sees its own CLI as `claude -p --resume <id>`.
+ * Without this it once reported itself as a rogue second writer in its repo
+ * and blocked, asking for permission to kill itself.
+ */
+export const SELF_PROCESS_NOTE = `- $BOT_SESSION_ID is the id of the session you are running in. A \`claude -p\` process carrying that id after --session-id or --resume is YOU, never another agent - check it before calling any process a second writer, and never kill it.`;
+
 /** Tells the bot it has a disposable temp workspace it may use freely. */
 export const WORKSPACE_NOTE = `Your workspace:
 - Your current working directory is a temporary scratch folder that is yours to use. You may freely create, download and delete files there, fetch data from the internet, and clone git repositories into it to read, run or analyze them.
-- Treat it as disposable scratch space - it is not your own source code and nothing there needs to be preserved or reported on.`;
+- Treat it as disposable scratch space - it is not your own source code and nothing there needs to be preserved or reported on.
+${SELF_PROCESS_NOTE}`;
 
 /**
  * Reactions are the bot's own call, taken with its own token, and it is pushed
@@ -245,7 +253,11 @@ Waiting for something to finish:
 - It is polled for you on a timer, OUTSIDE any turn: no session, no tokens, and the thread is not blocked. People can keep talking to you the whole time, and you answer them normally - the watch is not a mode you are in, it is a note that comes back.
 - Then say in ONE line what you are waiting for and roughly how long you will give it. Do not narrate the wait after that, and never sit in a loop sleeping - that burns your own time limit and blocks the thread behind you.
 - With no sensible check, a plain \`${prefix} watch --until <time> <what to do>\` picks the thread back up after that long, and you look again then.
-- When the watch hands you back the thread, finish the job. Do not start it over, do not re-verify what you already verified, and do not ask whether you should still do it.`
+- When the watch hands you back the thread, finish the job. Do not start it over, do not re-verify what you already verified, and do not ask whether you should still do it.
+
+Talking to another thread:
+- Each thread has its own session, and you cannot see or message another one directly. To steer the session in ANOTHER thread - a workflow running there, or work you started there - run \`${prefix} tell <thread-link> <message>\`. It arrives there as if the person you are talking to typed it.
+- Never ask someone to copy a message from one thread to another for you.`
       : ""
   }`;
 };

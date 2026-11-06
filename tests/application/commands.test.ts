@@ -1091,6 +1091,43 @@ describe("dispatchCommand", () => {
     expect(await dispatchCommand(build(), actor(), "C1", `jrp ${LINK}`)).toContain("cannot start a turn");
   });
 
+  test("tell hands the message to that thread's session as a turn, and shows it there", async () => {
+    const ran: { channelId: string; threadTs: string; slackUserId: string; text: string; keepSession?: boolean }[] = [];
+    const deps = { ...build(), runTurn: async (r: (typeof ran)[number]) => void ran.push(r) };
+    const out = await dispatchCommand(deps, actor(), "C1", `tell ${LINK} reset main and open a PR for phase 0`, {
+      threadTs: "1700000000.000001",
+    });
+    expect(out).toContain("sent");
+    expect(ran).toHaveLength(1);
+    // verbatim, as the person who sent it, into the thread's own session
+    expect(ran[0]).toMatchObject({
+      channelId: "C0TEST00001",
+      threadTs: "1787122692.303399",
+      slackUserId: OWNER,
+      text: "reset main and open a PR for phase 0",
+      keepSession: true,
+    });
+    // the thread sees what it was told and by whom, so its answer has a question above it
+    expect(slackCalls.posts).toHaveLength(1);
+    expect(slackCalls.posts[0]).toMatchObject({ channel: "C0TEST00001", threadTs: "1787122692.303399" });
+    expect(slackCalls.posts[0]?.text).toContain("reset main and open a PR for phase 0");
+    expect(slackCalls.posts[0]?.text).toContain(`<@${OWNER}>`);
+  });
+
+  test("tell needs a thread link and a message, and not this same thread", async () => {
+    const deps = { ...build(), runTurn: async () => {} };
+    expect(await dispatchCommand(deps, actor(), "C1", "tell nope hello")).toContain("thread link");
+    expect(await dispatchCommand(deps, actor(), "C1", `tell ${LINK}`)).toContain("what to tell");
+    const here = await dispatchCommand(deps, actor(), "C0TEST00001", `tell ${LINK} hi`, { threadTs: "1787122692.303399" });
+    expect(here).toContain("this thread");
+    expect(slackCalls.posts).toHaveLength(0);
+  });
+
+  test("tell is admin-gated", async () => {
+    const pal = actor({ slackId: "U9", role: "pal" });
+    expect(await dispatchCommand({ ...build(), runTurn: async () => {} }, pal, "C1", `tell ${LINK} hi`)).toContain("access");
+  });
+
   test("rm-msg deletes the linked message", async () => {
     const deps = build();
     const out = await dispatchCommand(deps, actor(), "C1", `rm-msg ${LINK}`);

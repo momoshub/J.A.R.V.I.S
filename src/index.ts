@@ -10,6 +10,7 @@ import { mkdirSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { tmpdir } from "node:os";
 import { loadConfig, modelLabel, type AppConfig } from "./config/env.ts";
+import { isSilenceNote } from "./domain/silence.ts";
 import { openDatabase } from "./infrastructure/db/client.ts";
 import { createThreadSessionRepo } from "./infrastructure/db/threadSessionRepo.ts";
 import { createThreadQueue } from "./application/threadQueue.ts";
@@ -379,7 +380,9 @@ const main = async () => {
         following: false,
         keepSession,
       });
-      if (result.kind !== "ignored" && result.text.trim()) {
+      // A turn nobody watched live can still answer with a note about not
+      // answering; posted, it reads as the whole reply.
+      if (result.kind !== "ignored" && result.text.trim() && !isSilenceNote(result.text)) {
         await slackAdmin.post(channelId, result.text, threadTs);
       }
     },
