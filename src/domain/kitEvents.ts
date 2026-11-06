@@ -197,7 +197,7 @@ Interactive Block Kit (buttons, selects, modals):
 - a question with a fixed set of answers (a or b, yes or no, pick one of these) is asked with buttons, never as lettered options in text. Put the question in a section block and one jv: button per answer, the value naming the answer
 - you do not disable them yourself: a press settles the message at once - the buttons stay, inert, the chosen one marked - and a typed reply in the thread settles any buttons still open. Just act on the answer
 - make it look good: a header block, a section with an image accessory when one fits, emoji in button labels, a divider and a context line. Never colour a button in a way that gives away the answer
-- for a question several people should answer (a quiz or poll in a channel), add a "jv:submit" button. Then a press only records that person's pick in a tally under the question (one per person, pressing it again takes it back) and nothing comes to you, and typed replies leave it open. You get one turn when someone presses submit, listing everyone's picks
+- for a question several people should answer (a quiz or poll in a channel), add a "jv:submit" button. Then a press only records that person's pick in a tally under the question (one per person, pressing it again takes it back) and nothing comes to you, and typed replies leave it open. You get one turn when someone presses submit, listing everyone's picks. Only the thread owner and the person the question was put to may submit, others are told so privately
 - a turn is not instant, so when a press needs a visible reaction, update the message with chat.update once you have acted on it`;
 };
 
@@ -389,3 +389,32 @@ export const describeVote = (userId: string, actionId: string, lines: readonly s
     `[block kit event] <@${userId}> pressed submit (\`${actionId}\`) on a vote in this thread. The answers:`,
     ...(lines.length ? lines : ["- nobody picked anything"]),
   ].join("\n");
+
+type ThreadMessage = { ts?: string; user?: string; bot_id?: string; subtype?: string };
+
+const isHuman = (m: ThreadMessage): m is ThreadMessage & { user: string } =>
+  !!m.user && !m.bot_id && m.subtype !== "bot_message";
+
+/**
+ * Who may close a vote: the person who opened the thread, and the person the
+ * question was put to - the last human who wrote before the vote was posted.
+ * Anyone else may pick, but a bystander pressing submit would end the vote
+ * for everybody. Empty when the thread has no human in it to go by.
+ */
+export const voteSubmitters = (
+  messages: readonly ThreadMessage[],
+  threadTs: string,
+  voteTs: string,
+): Set<string> => {
+  const allowed = new Set<string>();
+  const root = messages.find((m) => m.ts === threadTs);
+  if (root && isHuman(root)) allowed.add(root.user);
+  const asker = messages.filter((m) => m.ts && Number(m.ts) < Number(voteTs) && isHuman(m)).at(-1);
+  if (asker?.user) allowed.add(asker.user);
+  return allowed;
+};
+
+export const submitRefusal = (allowed: ReadonlySet<string>): string =>
+  allowed.size
+    ? `only ${[...allowed].map((u) => `<@${u}>`).join(" or ")} can submit this vote - your pick is still counted :ballot_box_with_ballot:`
+    : "I could not check who may submit this vote, so it stays open - try again in a moment";

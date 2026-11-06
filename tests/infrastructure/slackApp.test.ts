@@ -484,10 +484,19 @@ describe("Block Kit the brain built", () => {
     { type: "actions", block_id: "go", elements: [{ type: "button", action_id: "jv:submit", text: { type: "plain_text", text: "Submit" } }] },
   ];
 
+  // U9 opened the thread, U3 asked for the quiz, U1 chatted after it went up.
+  const thread = [
+    { ts: "100.1", user: "U9", text: "hey" },
+    { ts: "200.0", user: "U3", text: "quiz us" },
+    { ts: "300.0", user: "UBOT", bot_id: "B1", text: "Quiz" },
+    { ts: "310.0", user: "U1", text: "hmm" },
+  ];
+
   test("a vote counts every pick on the message, even at once, and only submit makes a turn", async () => {
     const r = rig();
     const updates: Record<string, unknown>[] = [];
-    const client = { ...r.client, chat: { ...r.client.chat, update: async (a: Record<string, unknown>) => {
+    const client = { ...r.client, conversations: { replies: async () => ({ messages: thread }) },
+      chat: { ...r.client.chat, update: async (a: Record<string, unknown>) => {
       await new Promise((ok) => setTimeout(ok, 5));
       updates.push(a);
     } } };
@@ -506,6 +515,44 @@ describe("Block Kit the brain built", () => {
     expect(r.turns[0]?.text).toContain("pressed submit");
     expect(r.turns[0]?.text).toContain("<@U1> A, <@U2> B");
     expect(JSON.stringify(updates.at(-1)?.blocks)).toContain("<@U3> submitted");
+  });
+
+  test("only the thread owner or the person asked may submit a vote, others are told privately", async () => {
+    const r = rig();
+    const updates: Record<string, unknown>[] = [];
+    const whispers: Record<string, unknown>[] = [];
+    const client = { ...r.client, conversations: { replies: async () => ({ messages: thread }) },
+      chat: { ...r.client.chat, update: async (a: Record<string, unknown>) => void updates.push(a),
+        postEphemeral: async (a: Record<string, unknown>) => void whispers.push(a) } };
+    const submit = (user: string) =>
+      r.onKitAction({
+        ack: r.ack,
+        client,
+        body: { user: { id: user }, channel: { id: "C1" }, message: { ts: "300.0", thread_ts: "100.1", text: "Quiz", blocks: vote } },
+        action: { action_id: "jv:submit", type: "button", block_id: "go", text: { text: "Submit" } },
+      });
+    await submit("U1");
+    expect(r.turns).toHaveLength(0);
+    expect(updates).toHaveLength(0);
+    expect(whispers[0]).toMatchObject({ channel: "C1", user: "U1", thread_ts: "100.1" });
+    expect(whispers[0]?.text).toContain("only <@U9> or <@U3> can submit");
+    await submit("U9");
+    expect(r.turns).toHaveLength(1);
+  });
+
+  test("a vote stays open when the submit check cannot read the thread", async () => {
+    const r = rig();
+    const whispers: Record<string, unknown>[] = [];
+    const client = { ...r.client, conversations: { replies: async () => { throw new Error("ratelimited"); } },
+      chat: { ...r.client.chat, update: async () => undefined, postEphemeral: async (a: Record<string, unknown>) => void whispers.push(a) } };
+    await r.onKitAction({
+      ack: r.ack,
+      client,
+      body: { user: { id: "U9" }, channel: { id: "C1" }, message: { ts: "300.0", thread_ts: "100.1", text: "Quiz", blocks: vote } },
+      action: { action_id: "jv:submit", type: "button", block_id: "go", text: { text: "Submit" } },
+    });
+    expect(r.turns).toHaveLength(0);
+    expect(whispers[0]?.text).toContain("could not check");
   });
 
   test("a typed reply leaves an open vote alone", async () => {

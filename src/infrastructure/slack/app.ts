@@ -70,6 +70,8 @@ import {
   isSettled,
   isSubmit,
   isVote,
+  submitRefusal,
+  voteSubmitters,
   KIT_PATTERN,
   locksOnPress,
   modalIdOf,
@@ -279,6 +281,10 @@ type KitClient = {
   chat: {
     postMessage: (a: Record<string, unknown>) => Promise<unknown>;
     update?: (a: Record<string, unknown>) => Promise<unknown>;
+    postEphemeral?: (a: Record<string, unknown>) => Promise<unknown>;
+  };
+  conversations?: {
+    replies: (a: Record<string, unknown>) => Promise<{ messages?: { ts?: string; user?: string; bot_id?: string; subtype?: string }[] }>;
   };
   views: {
     open: (a: Record<string, unknown>) => Promise<unknown>;
@@ -599,6 +605,25 @@ export const createKitListeners = (
     return next;
   };
 
+  // Only the thread owner and the person asked may close a vote. Anyone else
+  // is told so privately and the vote stays open. A failed lookup refuses too:
+  // a vote closed by the wrong person cannot be reopened.
+  const maySubmit = async (web: KitClient, by: string, channel: string, threadTs: string, voteTs: string) => {
+    let allowed = new Set<string>();
+    try {
+      const res = await web.conversations?.replies({ channel, ts: threadTs, limit: 200 });
+      allowed = voteSubmitters(res?.messages ?? [], threadTs, voteTs);
+    } catch (err) {
+      log(`kit vote submit check on ${voteTs} failed: ${slackRefusal(err)}`);
+    }
+    if (allowed.has(by)) return true;
+    log(`kit vote submit on ${voteTs} by ${by} refused`);
+    await web.chat
+      .postEphemeral?.({ channel, user: by, thread_ts: threadTs, text: submitRefusal(allowed) })
+      .catch((err: unknown) => log(`kit vote refusal to ${by} failed: ${slackRefusal(err)}`));
+    return false;
+  };
+
   const onKitAction = async ({ ack, body, action, client, context }: KitActionArgs) => {
     await ack();
     const by = body.user?.id;
@@ -652,6 +677,7 @@ export const createKitListeners = (
       const blockId = action.block_id;
       const submit = isSubmit(actionId);
       if (!submit && (action.type !== "button" || !blockId)) return;
+      if (submit && !(await maySubmit(client as KitClient, by, channel, thread.threadTs, ts))) return;
       let lines: string[] = [];
       await onMessage(ts, async () => {
         const current = latestBlocks.get(ts) ?? pressed.blocks ?? [];
