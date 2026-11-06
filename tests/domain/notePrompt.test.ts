@@ -85,6 +85,21 @@ describe("notePrompt, updating a page that already exists", () => {
     expect(p).not.toContain("Replace that page's body");
   });
 
+  test("commenting leaves the body alone and never writes the text into the page", () => {
+    const p = notePrompt({ ...req, path: "", mode: "comment", target: page, text: "ship it" }, "Bot");
+    expect(p).toContain("commenting on a page in Notion");
+    expect(p).toContain("ship it");
+    expect(p).toContain("do NOT edit the page's body");
+    expect(p).toContain("Do not fall back to writing the text into the page");
+    expect(p).not.toContain("The document:");
+  });
+
+  test("a comment from a file reads the file", () => {
+    const p = notePrompt({ ...req, mode: "comment", target: page }, "Bot");
+    expect(p).toContain("/tmp/runbook.md");
+    expect(p).toContain("that is the comment");
+  });
+
   test("creating is still the default when no mode is given", () => {
     expect(notePrompt(req, "Bot")).toContain("publishing a document into Notion");
   });
@@ -103,5 +118,6 @@ describe("the connector-write rule", () => {
     const rules = credentialGapRules("X/jv");
     expect(rules).toContain("X/jv note");
     expect(rules).toContain('"I cannot write to Notion" is simply wrong');
+    expect(rules).toContain("note --comment <notion url> <text>");
   });
 });

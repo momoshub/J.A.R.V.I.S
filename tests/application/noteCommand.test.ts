@@ -62,6 +62,21 @@ describe("note", () => {
     expect(seen[0]?.system).toContain("Title: CPV2 runbook");
   });
 
+  test("a comment needs no parent and runs on the host login", async () => {
+    const seen: { useHostLogin?: boolean; system?: string }[] = [];
+    const llm: LlmPort = {
+      complete: async (p) => {
+        seen.push({ useHostLogin: (p as { useHostLogin?: boolean }).useHostLogin, system: p.system });
+        return "https://notion.so/page";
+      },
+    };
+    const out = await run(deps({ llm }), "note --comment 1a2b3c4d5e6f7081920a1b2c3d4e5f60 looks good to me");
+    expect(out).toContain("https://notion.so/page");
+    expect(seen[0]?.useHostLogin).toBe(true);
+    expect(seen[0]?.system).toContain("commenting on a page in Notion");
+    expect(seen[0]?.system).toContain("looks good to me");
+  });
+
   test("publishing under someone else's identity is gated, and names who can", async () => {
     const d = deps();
     d.settings?.set(SETTING_KEYS.notionParent, "https://notion.so/team");

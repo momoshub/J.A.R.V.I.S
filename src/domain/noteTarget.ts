@@ -29,7 +29,12 @@ export const unwrap = (token: string): string => {
   return (bar === -1 ? t : t.slice(0, bar)).trim();
 };
 
-export type NoteMode = "create" | "replace" | "append";
+/**
+ * `comment` leaves the page's body alone and adds a comment to it. Asked to
+ * comment on a page, the bot had no way to do it at all: every mode wrote the
+ * body, so the only honest answer was that it could not.
+ */
+export type NoteMode = "create" | "replace" | "append" | "comment";
 
 export type NoteArgs =
   | {
@@ -39,6 +44,8 @@ export type NoteArgs =
       /** The page being edited; absent when creating. */
       readonly target?: string;
       readonly title?: string;
+      /** A comment typed inline rather than written to a file first. */
+      readonly text?: string;
     }
   | { readonly ok: false; readonly error: string };
 
@@ -47,12 +54,18 @@ export type NoteArgs =
  * `note <file> <notion-url>`            - replace that page's body
  * `note <file> --into <notion-url>`     - the same thing, said out loud
  * `note <file> --append <notion-url>`   - add to the end, change nothing above
+ * `note --comment <notion-url> <text>`  - comment on that page, body untouched
+ * `note <file> --comment <notion-url>`  - the same, with the comment in a file
  */
 export const parseNoteArgs = (args: readonly string[]): NoteArgs => {
-  const path = (args[0] ?? "").trim();
-  if (!path) return { ok: false, error: "no file" };
+  const lead = (args[0] ?? "").trim();
+  if (!lead) return { ok: false, error: "no file" };
+  // A comment is usually a line or two, so it may be typed inline instead of
+  // written to a file. Only a comment may skip the file.
+  const inline = /^--(comment|reply)$/i.test(lead);
+  const path = inline ? "" : lead;
 
-  const rest = args.slice(1);
+  const rest = inline ? args : args.slice(1);
   let mode: NoteMode = "create";
   let target: string | undefined;
   const words: string[] = [];
@@ -65,6 +78,11 @@ export const parseNoteArgs = (args: readonly string[]): NoteArgs => {
       target = unwrap(rest[++i] ?? "");
       continue;
     }
+    if (flag === "--comment" || flag === "--reply") {
+      mode = "comment";
+      target = unwrap(rest[++i] ?? "");
+      continue;
+    }
     if (flag === "--append" || flag === "--add") {
       mode = "append";
       target = unwrap(rest[++i] ?? "");
@@ -72,7 +90,7 @@ export const parseNoteArgs = (args: readonly string[]): NoteArgs => {
     }
     // A bare page url is unambiguous - nobody titles a document
     // `notion.so/...` - so it means the obvious thing.
-    if (isNotionUrl(a)) {
+    if (isNotionUrl(a) && !target) {
       if (mode === "create") mode = "replace";
       target = unwrap(a);
       continue;
@@ -81,11 +99,18 @@ export const parseNoteArgs = (args: readonly string[]): NoteArgs => {
   }
 
   if (mode !== "create" && !target) {
-    return { ok: false, error: `\`--${mode === "append" ? "append" : "into"}\` needs the page to put it in` };
+    const flag = mode === "append" ? "append" : mode === "comment" ? "comment" : "into";
+    return { ok: false, error: `\`--${flag}\` needs the page to put it in` };
   }
   if (target && !isNotionUrl(target)) {
     return { ok: false, error: `\`${target}\` is not a Notion page` };
   }
-  const title = words.join(" ").trim();
-  return { ok: true, path, mode, ...(target ? { target } : {}), ...(title ? { title } : {}) };
+  const joined = words.join(" ").trim();
+  if (mode === "comment") {
+    if (!path && !joined) return { ok: false, error: "an empty comment says nothing" };
+    // With a file, the words are noise; without one, they ARE the comment.
+    return { ok: true, path, mode, target: target as string, ...(path ? {} : { text: joined }) };
+  }
+  if (inline) return { ok: false, error: "only a comment can skip the file" };
+  return { ok: true, path, mode, ...(target ? { target } : {}), ...(joined ? { title: joined } : {}) };
 };
