@@ -31,6 +31,16 @@ describe("macUiRules", () => {
     expect(macUiRules("/x/mac-ui.js")).toContain("REAL screen");
   });
 
+  test("agent-desktop is offered beside it, and kept off Arc", () => {
+    expect(macUiRules("/x/mac-ui.js")).not.toContain("agent-desktop");
+    const r = macUiRules("/x/mac-ui.js", "/opt/homebrew/bin/agent-desktop");
+    expect(r).toContain("/opt/homebrew/bin/agent-desktop snapshot --app <app> -i --compact");
+    expect(r).toContain("every app EXCEPT Arc");
+    expect(r).toContain("STALE_REF");
+    // a turn that cannot drive the desktop hears about neither
+    expect(macUiRules(undefined, "/opt/homebrew/bin/agent-desktop")).toBe("");
+  });
+
   test("a turn without the helper is not told about a door that is locked", () => {
     const p = buildSystemPrompt({ base: "p", botName: "Evie" });
     expect(p).not.toContain("Driving a desktop app");

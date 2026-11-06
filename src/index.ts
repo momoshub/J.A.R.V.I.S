@@ -217,6 +217,10 @@ const main = async () => {
   const slackWaitScript = join(import.meta.dir, "..", "bin", "slack-wait.sh");
   // Drives any Mac app through the Accessibility API - no Automation needed.
   const macUiScript = join(import.meta.dir, "..", "bin", "mac-ui.js");
+  // The second driver, for every app but Arc. launchd's PATH has no Homebrew,
+  // so look there too; absent means it is simply not offered.
+  const agentDesktop =
+    Bun.which("agent-desktop", { PATH: `${process.env.PATH ?? ""}:/opt/homebrew/bin:/usr/local/bin` }) ?? undefined;
   // Real clicks and keystrokes for web content that ignores AXPress.
   const browserScriptsDir = join(import.meta.dir, "..", "data", "adapter", "skills", "browser-ui-test", "scripts");
   const browserScripts = ["click.js", "keys.js", "press-exact.js"].map((f) => join(browserScriptsDir, f));
@@ -249,6 +253,7 @@ const main = async () => {
       grafanaGetScript,
       slackReadScript,
       macUiScript,
+      agentDesktop,
       browserScripts,
       uploadScript,
       models: modelsForRoles(),
@@ -341,6 +346,7 @@ const main = async () => {
     reminders,
     slackWaitScript,
     macUiScript,
+    agentDesktop,
     // Re-run a dead turn, or nudge a quiet thread, from `mindful`. It goes
     // through the ordinary respond path on purpose: same queue, same session,
     // same role checks - a retry that took a shortcut would not be a retry of

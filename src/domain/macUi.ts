@@ -19,9 +19,21 @@
  * It also sees MORE than AppleScript. Arc's "Little Arc" windows are invisible
  * to it - `count windows` said 1 where AX said 4 - so anything tab-based
  * silently misses them and reports success.
+ *
+ * `agent-desktop` (vercel-labs) sits beside it, not in place of it: same AX
+ * grant, ref-based JSON snapshots, and it reads the other apps well - but it
+ * refuses Arc outright ("Renderer did not enable accessibility activation",
+ * vercel-labs/agent-desktop#465), and Arc is what this host mostly drives.
  */
 
-export const macUiRules = (script?: string): string => {
+const agentDesktopRules = (bin?: string): string =>
+  bin
+    ? `
+- \`${bin}\` (agent-desktop) is the second driver, for every app EXCEPT Arc. It returns JSON with a ref per element: \`${bin} snapshot --app <app> -i --compact\`, then \`${bin} click @<ref>\` / \`type @<ref> <text>\` / \`press cmd+c\`, then snapshot again to check. Refs belong to their snapshot - on \`STALE_REF\` take a new one. For a dense app map it first with \`--skeleton\` and drill in with \`--root @<ref>\`. \`${bin} skills get desktop\` has its full rules
+- Arc refuses agent-desktop ("Renderer did not enable accessibility activation", an open upstream bug). For Arc use the first helper, and do not retry agent-desktop there`
+    : "";
+
+export const macUiRules = (script?: string, agentDesktop?: string): string => {
   if (!script) return "";
   return `
 
@@ -33,5 +45,5 @@ Driving a desktop app (any Mac app, not just a browser):
 - Electron apps (Slack, VS Code, Arc, Discord, Postman) look like empty nested groups to every other tool. This one flips \`AXManualAccessibility\` first, so the real tree appears. The tree fills in asynchronously, so if it looks bare, ask again a second later
 - a click on web content sometimes reports success and does nothing, because the page wants a real pointer event. \`--real\` forces one
 - always \`tree\` or \`find\` before you \`click\`. Clicking by guessed name on somebody's actual desktop is how you press the wrong thing
-- it drives the REAL screen the person is sitting at. Windows will move and things will be typed where they can see it. Use it for what was asked and nothing else, and say what you did`;
+- it drives the REAL screen the person is sitting at. Windows will move and things will be typed where they can see it. Use it for what was asked and nothing else, and say what you did${agentDesktopRules(agentDesktop)}`;
 };

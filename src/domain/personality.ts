@@ -279,6 +279,8 @@ export type BuildSystemPromptOptions = PromptContext & {
   readonly slackReadScript?: string;
   /** Absolute path of the desktop driver; without it, driving apps is not offered. */
   readonly macUiScript?: string;
+  /** Absolute path of the agent-desktop binary, offered beside the driver for non-Arc apps. */
+  readonly agentDesktop?: string;
   readonly repoPath?: string;
   readonly restartScript?: string;
   /** this turn's ticket, which carries who a triggered command runs as */
@@ -346,7 +348,7 @@ export const buildSystemPrompt = (options: Partial<BuildSystemPromptOptions> = {
   const tickets = ticketChatRules(options.commandPrefix ?? "//bot", options.canRaiseTickets === true);
   const reaching = credentialGapRules(options.commandPrefix ?? "//bot");
   const slackReading = slackReadRules(options.slackReadScript);
-  const desktop = macUiRules(options.macUiScript);
+  const desktop = macUiRules(options.macUiScript, options.agentDesktop);
   const selfWork = selfUpdateRules(options.repoPath, options.restartScript);
   const commands = commandRules(
     options.runScript ?? "",
