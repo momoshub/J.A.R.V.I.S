@@ -186,7 +186,7 @@ export const EXECUTER_CODE_TOOLS: readonly string[] = [
 ];
 
 /**
- * What an executer needs to test a UI change in Arc on the host Mac and show
+ * What an executer needs to test a UI change in Brave on the host Mac and show
  * the result: the Accessibility driver, the JXA input helpers (each by path -
  * a bare `osascript` would run any AppleScript), screenshots, cropping them,
  * and the upload helper that can only post a file into a Slack thread.
