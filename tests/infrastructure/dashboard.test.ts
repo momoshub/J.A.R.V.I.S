@@ -3,6 +3,7 @@ import { openDatabase } from "../../src/infrastructure/db/client.ts";
 import { createUserRepo } from "../../src/infrastructure/db/userRepo.ts";
 import { createMessageRepo } from "../../src/infrastructure/db/messageRepo.ts";
 import { createLearningsRepo } from "../../src/infrastructure/db/learningsRepo.ts";
+import { createKitViewRepo } from "../../src/infrastructure/db/kitViewRepo.ts";
 import { createSettingsRepo, SETTING_KEYS } from "../../src/infrastructure/db/settingsRepo.ts";
 import { loadBotProfile } from "../../src/application/botProfile.ts";
 import { createDashboard, type DashboardDeps } from "../../src/infrastructure/dashboard/server.ts";
@@ -337,5 +338,34 @@ describe("running a command through the API", () => {
     );
     expect(res.status).toBeGreaterThanOrEqual(400);
     expect(seen).toHaveLength(0);
+  });
+});
+
+describe("storing a modal for a button to open", () => {
+  const withViews = () => {
+    const db = openDatabase(":memory:");
+    const kitViews = createKitViewRepo(db);
+    return { ...build({ kitViews }), kitViews };
+  };
+
+  test("a valid modal is stored and its button id handed back", async () => {
+    const { dash, kitViews } = withViews();
+    const view = { type: "modal", title: { type: "plain_text", text: "Ticket" }, blocks: [] };
+    const res = await dash.handle(postJson("/api/kit/views", { view }));
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as { id: string; action_id: string };
+    expect(body.action_id).toBe(`jv:modal:${body.id}`);
+    expect(kitViews.get(body.id)).toEqual(view);
+  });
+
+  test("a view that could not open is refused now, not on click", async () => {
+    const res = await withViews().dash.handle(postJson("/api/kit/views", { view: { type: "modal", blocks: [] } }));
+    expect(res.status).toBe(400);
+    expect(((await res.json()) as { error: string }).error).toContain("title");
+  });
+
+  test("without storage wired it says so", async () => {
+    const res = await build().dash.handle(postJson("/api/kit/views", { view: {} }));
+    expect(res.status).toBe(503);
   });
 });

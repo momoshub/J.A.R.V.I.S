@@ -35,6 +35,7 @@ const SENTINELS = {
   runScript: "/fp/run",
   runUrl: "http://fp/run",
   learnUrl: "http://fp/learn",
+  kitUrl: "http://fp/kit",
   slackReadScript: "/fp/slack",
   repoPath: "/fp/repo",
   restartScript: "/fp/restart",

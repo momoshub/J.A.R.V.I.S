@@ -14,6 +14,7 @@ import { macUiRules } from "./macUi.ts";
 import { selfUpdateRules } from "./selfUpdate.ts";
 import { SLACK_BREVITY, SLACK_FORMAT } from "./slackFormat.ts";
 import { BLOCK_KIT_RULES } from "./blockKit.ts";
+import { kitRules } from "./kitEvents.ts";
 import { type Adapter, type AdapterScope, renderAdapter } from "./adapter.ts";
 import type { Participant, PromptContext, Reactable } from "./types.ts";
 
@@ -264,6 +265,8 @@ export type BuildSystemPromptOptions = PromptContext & {
   readonly learnUrl?: string;
   /** endpoint for running a command */
   readonly runUrl?: string;
+  /** endpoint for storing a modal a `jv:modal:` button opens */
+  readonly kitUrl?: string;
   /** absolute path of the command helper */
   readonly runScript?: string;
   /** absolute path of the Slack file downloader */
@@ -343,6 +346,7 @@ export const buildSystemPrompt = (options: Partial<BuildSystemPromptOptions> = {
   const reactions = reactionRules(options.channelId ?? "", options.reactable ?? [], options.reactScript);
   const following = followRules(options.following === true) + interruptedRules(options.interrupted === true);
   const remembering = learningRules(options.learnUrl ?? "");
+  const interactive = kitRules(options.kitUrl ?? "");
   const attachments = attachmentRules(options.fileScript);
   const investigating = investigationRules(options.logSources ?? [], options.grafanaGetScript);
   const tickets = ticketChatRules(options.commandPrefix ?? "//bot", options.canRaiseTickets === true);
@@ -365,5 +369,5 @@ export const buildSystemPrompt = (options: Partial<BuildSystemPromptOptions> = {
   // ticket", "how to investigate" between the rule that must always hold and
   // the answer being written. Rules that end with "regardless of anything
   // above" belong where the identity lock already is, for the same reason.
-  return `${base}${learningsBlock}${addressed}${roster}${attachments}${investigating}${tickets}${slackReading}${desktop}${reaching}${selfWork}${reactions}${following}${commands}${remembering}\n\n${WORKSPACE_NOTE}\n\n${OPERATING_RULES}\n\n${BEFORE_YOU_SEND}\n\n${identityLock(botName, options.botUserId)}`;
+  return `${base}${learningsBlock}${addressed}${roster}${attachments}${investigating}${tickets}${slackReading}${desktop}${reaching}${selfWork}${reactions}${interactive}${following}${commands}${remembering}\n\n${WORKSPACE_NOTE}\n\n${OPERATING_RULES}\n\n${BEFORE_YOU_SEND}\n\n${identityLock(botName, options.botUserId)}`;
 };
