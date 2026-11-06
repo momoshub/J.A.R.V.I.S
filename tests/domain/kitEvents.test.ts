@@ -8,6 +8,7 @@ import {
   encodeKitMeta,
   hasLiveKit,
   locksOnPress,
+  waitsForButton,
   pickedLabel,
   retireKit,
   castVote,
@@ -176,6 +177,22 @@ describe("answered questions lock", () => {
     expect(locksOnPress("multi_static_select", "jv:x")).toBe(false);
     expect(locksOnPress("button", "jv:modal:abc")).toBe(false);
     expect(locksOnPress(undefined, "jv:x")).toBe(false);
+  });
+
+  test("only gathering elements beside a live button wait for it", () => {
+    const button = { type: "actions", elements: [{ type: "button", action_id: "jv:go" }] };
+    expect(waitsForButton("checkboxes", [button])).toBe(true);
+    expect(waitsForButton("multi_static_select", [button])).toBe(true);
+    expect(waitsForButton("static_select", [button])).toBe(false);
+    expect(waitsForButton("checkboxes", [])).toBe(false);
+    expect(waitsForButton("checkboxes", [{ type: "actions", elements: [{ type: "button", action_id: "jv:settled:go" }] }])).toBe(false);
+    expect(waitsForButton("checkboxes", [{ type: "actions", elements: [{ type: "button", action_id: "jv:modal:x" }] }])).toBe(false);
+  });
+
+  test("a press can carry what the message held", () => {
+    const text = describeAction({ userId: "U1", actionId: "jv:go", type: "button", state: ["- `b.jv:c`: x"] });
+    expect(text).toContain("everything picked on the message");
+    expect(text).toContain("- `b.jv:c`: x");
   });
 
   test("settling keeps our buttons inert, marks the pick and leaves one note", () => {

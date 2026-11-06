@@ -81,6 +81,7 @@ import {
   retireKit,
   submittedNote,
   voteLines,
+  waitsForButton,
   prepareModal,
   stateLines,
   type KitBlock,
@@ -254,6 +255,8 @@ export type KitActionArgs = {
     trigger_id?: string;
     channel?: { id?: string };
     message?: { ts?: string; thread_ts?: string; text?: string; blocks?: KitBlock[] };
+    /** What the message's stateful elements hold at the press. */
+    state?: { values?: Record<string, Record<string, KitElementState>> };
     /** Set when the element sits inside a modal rather than on a message. */
     view?: { private_metadata?: string; title?: { text?: string } };
   };
@@ -699,6 +702,10 @@ export const createKitListeners = (
       return;
     }
 
+    // A tick on a checkbox next to a button is not an answer yet: the button
+    // is, and its turn reads every pick from the message state.
+    if (!modal && waitsForButton(action.type, pressed?.blocks)) return;
+
     // Settle the question before the turn starts: a turn takes seconds, and a
     // button still live in that gap gets pressed again.
     if (!modal && pressed?.ts && pressed.blocks && channel && locksOnPress(action.type, actionId)) {
@@ -726,6 +733,7 @@ export const createKitListeners = (
         value: elementValue(action),
         blockId: action.block_id,
         inModal: modal ? (modal.title?.text ?? "untitled") : undefined,
+        state: !modal && action.type === "button" ? stateLines(body.state?.values) : undefined,
       }),
     );
   };
