@@ -41,6 +41,8 @@ import { createWatchRepo } from "./infrastructure/db/watchRepo.ts";
 import { createReminderRepo } from "./infrastructure/db/reminderRepo.ts";
 import { createFollowRepo } from "./infrastructure/db/followRepo.ts";
 import { createWatcher } from "./application/watcher.ts";
+import { createReviewInbox } from "./application/reviewInbox.ts";
+import { createGhReviewRequests } from "./infrastructure/github/reviewRequests.ts";
 import { createInnerChild } from "./application/innerChild.ts";
 import { createSelfIssueRepo } from "./infrastructure/db/selfIssueRepo.ts";
 import { NO_TOOLS } from "./domain/toolPolicy.ts";
@@ -597,6 +599,33 @@ const main = async () => {
     log: (msg) => console.error(`[remind] ${msg}`),
     onError: onDbError,
   });
+  // GitHub review requests of the bot's account, posted and reviewed in a
+  // channel as whoever asked - on their own token, review before approve.
+  const ghRequests = createGhReviewRequests();
+  const reviewInbox = createReviewInbox({
+    clock,
+    settings,
+    channel: () => settings.get(SETTING_KEYS.reviewInboxChannel) ?? "",
+    cursorKey: SETTING_KEYS.reviewInboxCursor,
+    requests: ghRequests.requests,
+    account: async () => (await deps.github?.whoami())?.login,
+    githubName: ghRequests.githubName,
+    users,
+    hasToken: (id) => claudeTokens.has(id),
+    post: async (channel, text, thread) => (await slackAdmin.post(channel, text, thread))?.ts,
+    runReview: async ({ actor, channelId, threadTs, line }) => {
+      const reply = async (text: string) => void (await slackAdmin.post(channelId, text, threadTs));
+      const out = await dispatchCommand(deps, actor, channelId, line, {
+        prefix: config.commandPrefix,
+        slash: config.slashCommand,
+        threadTs,
+        reply,
+      });
+      if (out.trim()) await reply(out);
+    },
+    prefix: config.commandPrefix,
+    log: (msg) => console.error(`[review-inbox] ${msg}`),
+  });
   const pendingReminders = reminders.waiting().length;
   if (pendingReminders > 0) console.log(`[remind] ${pendingReminders} reminder(s) waiting from before the restart`);
   const waiting = watches.waiting().length;
@@ -656,6 +685,7 @@ const main = async () => {
     void watcher.tick().catch(tickFailed("watch"));
     void reminderSender.tick().catch(tickFailed("remind"));
     void innerChild.tick().catch(tickFailed("inner-child"));
+    void reviewInbox.tick().catch(tickFailed("review-inbox"));
   }, WATCH_TICK_MS);
   (watchTimer as { unref?: () => void }).unref?.();
 

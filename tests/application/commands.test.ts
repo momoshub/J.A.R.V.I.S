@@ -2343,3 +2343,32 @@ describe("snub", () => {
     expect(out).toContain("needs *admin*");
   });
 });
+
+describe("review-inbox command", () => {
+  test("admin sets the channel and starts from now", async () => {
+    const deps = build();
+    deps.settings = createSettingsRepo(db);
+    const out = await dispatchCommand(deps, actor(), "C1", "review-inbox channel <#C0TEST00003|pull-requests>");
+    expect(out).toContain("<#C0TEST00003>");
+    expect(deps.settings.get("review_inbox_channel")).toBe("C0TEST00003");
+    expect(deps.settings.get("review_inbox_cursor")).toBe(new Date(42).toISOString());
+  });
+
+  test("a pal links their own GitHub login, not someone else's", async () => {
+    const deps = build();
+    deps.settings = createSettingsRepo(db);
+    const pal = actor({ slackId: "U0PAL0099", role: "pal" });
+    await dispatchCommand(deps, pal, "C1", "review-inbox link pal-gh");
+    expect(deps.settings.get("github_login:pal-gh")).toBe("U0PAL0099");
+    expect(await dispatchCommand(deps, pal, "C1", "review-inbox link other-gh <@U0OTHER01>")).toContain("only an admin");
+    expect(await dispatchCommand(deps, pal, "C1", "review-inbox channel <#C123>")).toContain("Only admins");
+  });
+
+  test("an admin links someone else", async () => {
+    const deps = build();
+    deps.settings = createSettingsRepo(db);
+    await dispatchCommand(deps, actor(), "C1", "review-inbox link Dev-GH <@U0DEV0001>");
+    expect(deps.settings.get("github_login:dev-gh")).toBe("U0DEV0001");
+    expect(await dispatchCommand(deps, actor(), "C1", "review-inbox")).toContain("`dev-gh` -> <@U0DEV0001>");
+  });
+});
