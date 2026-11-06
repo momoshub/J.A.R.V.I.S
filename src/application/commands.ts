@@ -1436,8 +1436,8 @@ export const COMMANDS: readonly CommandDef[] = [
     // bot used to finish a twenty minute job and tell someone to paste it in.
     quiet: true,
     minRole: "pal",
-    usage: "<file> [title | <notion url> | --append <notion url>] | --comment <notion url> <text> | parent <notion url> | access <role>",
-    summary: "publish a document into Notion, update a page that is already there, or comment on one",
+    usage: "<file> [title | <notion url> | --append <notion url>] | --comment <notion url> <text> | --edit-comment <notion url> <text> | parent <notion url> | access <role>",
+    summary: "publish a document into Notion, update a page that is already there, or comment on one and edit that comment",
     run: async (ctx) => {
       const { deps, actor, args, prefix, reply, channelId } = ctx;
       const first = (args[0] ?? "").trim();
@@ -1467,7 +1467,7 @@ export const COMMANDS: readonly CommandDef[] = [
       // Creating needs somewhere to put it; updating already knows where it is
       // going, so a missing parent must not stand in the way of an edit.
       const aim = parseNoteArgs(args);
-      if (!aim.ok) return `${aim.error}. \`${prefix} note <file> [title]\`, \`${prefix} note <file> <notion url>\` to update that page, or \`${prefix} note --comment <notion url> <text>\` to comment on it.`;
+      if (!aim.ok) return `${aim.error}. \`${prefix} note <file> [title]\`, \`${prefix} note <file> <notion url>\` to update that page, \`${prefix} note --comment <notion url> <text>\` to comment on it, or \`${prefix} note --edit-comment <notion url> <text>\` to rewrite your last comment there.`;
       if (aim.mode === "create" && !parent) {
         return `I have nowhere to put it - no Notion parent is configured. An admin can set one: \`${prefix} note parent <notion url>\``;
       }
@@ -1487,8 +1487,8 @@ export const COMMANDS: readonly CommandDef[] = [
             content:
               aim.mode === "create"
                 ? `publish ${aim.path}${title ? ` as "${title}"` : ""}`
-                : aim.mode === "comment"
-                  ? `comment on ${aim.target}${aim.text ? `: ${aim.text}` : ` from ${aim.path}`}`
+                : aim.mode === "comment" || aim.mode === "edit-comment"
+                  ? `${aim.mode === "comment" ? "comment on" : "edit my comment on"} ${aim.target}${aim.text ? `: ${aim.text}` : ` from ${aim.path}`}`
                   : `${aim.mode === "append" ? "append" : "update"} ${aim.target} from ${aim.path}`,
           },
         ],
@@ -1507,7 +1507,7 @@ export const COMMANDS: readonly CommandDef[] = [
       await reply(
         aim.mode === "create"
           ? `📝 publishing that to Notion for <@${actor.slackId}>`
-          : `📝 ${aim.mode === "append" ? "adding that to" : aim.mode === "comment" ? "commenting on" : "updating"} ${aim.target} for <@${actor.slackId}>`,
+          : `📝 ${aim.mode === "append" ? "adding that to" : aim.mode === "comment" ? "commenting on" : aim.mode === "edit-comment" ? "editing a comment on" : "updating"} ${aim.target} for <@${actor.slackId}>`,
       );
       let out = "";
       try {

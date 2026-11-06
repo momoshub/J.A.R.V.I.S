@@ -39,7 +39,7 @@ export type NoteRequest = {
   readonly askedBy: string;
   /** Create a page, replace an existing one's body, or add to its end. */
   readonly mode?: NoteMode;
-  /** The page being edited. Required by `replace`, `append` and `comment`. */
+  /** The page being edited. Required by every mode but `create`. */
   readonly target?: string;
   /** An inline comment, when there is no file. */
   readonly text?: string;
@@ -96,6 +96,18 @@ What you must NOT do:
 - do NOT edit the page's body, title or properties. A comment sits beside the page, it does not change it
 - do not create a page, and do not resolve or delete anyone else's comments
 - if the page or the comment tool cannot be reached, STOP and say exactly that. Do not fall back to writing the text into the page instead`,
+
+  "edit-comment": (req) => `The page whose comment to edit: ${req.target}
+
+How:
+1. ${req.text ? "The new text is the text given above, word for word." : "Read the file at that path, all of it - that is the new text. If it is not there, say so and stop."}
+2. List the comments on ${req.target} with the Notion connector's get-comments tool. Pick the ONE comment to edit: if the url points at a discussion (a \`d=\` or \`#discussion\` part), the latest comment written by you (the connector's own identity) in that discussion; otherwise the latest comment written by you anywhere on the page.
+3. Replace that comment's text with the update-comment tool. It replaces the whole comment, so send the full new text, and keep any @mentions as real Notion mentions.
+
+What you must NOT do:
+- do NOT delete the comment and post a new one, and do not add a reply instead. The point is that the same comment changes
+- do not edit anyone else's comment, and do not touch the page's body, title or properties
+- if no comment of yours is there, or the update tool refuses, STOP and say exactly that`,
 };
 
 const VERB: Record<NoteMode, string> = {
@@ -103,13 +115,14 @@ const VERB: Record<NoteMode, string> = {
   replace: "updating a document in Notion",
   append: "adding to a document in Notion",
   comment: "commenting on a page in Notion",
+  "edit-comment": "editing a comment in Notion",
 };
 
 export const notePrompt = (req: NoteRequest, botName: string): string => {
   const mode = req.mode ?? "create";
   return `You are ${botName}, ${VERB[mode]} for <@${req.askedBy}>.
 
-${req.text ? `The comment:\n${req.text}` : `The document: \`${req.path}\``}
+${req.text ? `${mode === "edit-comment" ? "The new comment text" : "The comment"}:\n${req.text}` : `The document: \`${req.path}\``}
 ${req.title ? `Title: ${req.title}` : mode === "create" ? "Title: take it from the document's own first heading." : ""}
 You have the account's Notion connector in this session. It writes as the human who authorised it, so everything below is about not exceeding what you were asked to do.
 
@@ -118,7 +131,7 @@ ${PLAN[mode](req)}
 - do not post to Slack, send anything, or touch any other connector
 
 Report back, briefly. Whatever you return is posted into the thread for you, so never apologise for being unable to post and never hand anyone text "ready to paste". ${SLACK_FORMAT}
-- first line: the page url, and nothing else of substance${mode === "create" ? "" : mode === "comment" ? " - the page you commented on" : " - the page you edited, not a new one"}
+- first line: the page url, and nothing else of substance${mode === "create" ? "" : mode === "comment" || mode === "edit-comment" ? " - the page you commented on" : " - the page you edited, not a new one"}
 - then at most two lines: anything that did not carry across cleanly, or anything in the document that looked wrong to you${mode === "replace" ? ", and anything that was on the page before and is not in the document" : ""}
 - do not describe the document back to whoever asked. They wrote it`;
 };

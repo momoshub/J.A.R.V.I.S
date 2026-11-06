@@ -100,6 +100,17 @@ describe("notePrompt, updating a page that already exists", () => {
     expect(p).toContain("that is the comment");
   });
 
+  test("editing a comment updates it in place, never reposts or touches the body", () => {
+    const p = notePrompt({ ...req, path: "", mode: "edit-comment", target: page, text: "Hi Paul, could you help confirm" }, "Bot");
+    expect(p).toContain("editing a comment in Notion");
+    expect(p).toContain("The new comment text:");
+    expect(p).toContain("Hi Paul, could you help confirm");
+    expect(p).toContain("update-comment tool");
+    expect(p).toContain("do NOT delete the comment and post a new one");
+    expect(p).toContain("do not edit anyone else's comment");
+    expect(p).not.toContain("The document:");
+  });
+
   test("creating is still the default when no mode is given", () => {
     expect(notePrompt(req, "Bot")).toContain("publishing a document into Notion");
   });
@@ -119,5 +130,6 @@ describe("the connector-write rule", () => {
     expect(rules).toContain("X/jv note");
     expect(rules).toContain('"I cannot write to Notion" is simply wrong');
     expect(rules).toContain("note --comment <notion url> <text>");
+    expect(rules).toContain("note --edit-comment <notion url> <text>");
   });
 });

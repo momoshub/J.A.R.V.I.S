@@ -9,6 +9,13 @@ describe("isNotionUrl", () => {
     expect(isNotionUrl("1a2b3c4d-5e6f-7081-920a-1b2c3d4e5f60")).toBe(true);
   });
 
+  test("the app.notion.com links Notion now hands out", () => {
+    // these were refused as "not a Notion page", so every first try failed
+    expect(isNotionUrl("https://app.notion.com/p/example/Canvas-0123456789abcdef0123456789abcdef")).toBe(true);
+    expect(isNotionUrl("<https://app.notion.com/p/fedcba9876543210fedcba9876543210|page>")).toBe(true);
+    expect(isNotionUrl("https://evilnotion.so/x")).toBe(false);
+  });
+
   test("a title is not a page", () => {
     expect(isNotionUrl("Deployment Runbook")).toBe(false);
     expect(isNotionUrl("https://github.com/o/r/pull/1")).toBe(false);
@@ -100,5 +107,26 @@ describe("unwrap", () => {
   test("takes the url out of Slack's wrapper", () => {
     expect(unwrap("<https://x.test/a|label>")).toBe("https://x.test/a");
     expect(unwrap("  plain  ")).toBe("plain");
+  });
+
+  test("an inline comment edit needs no file", () => {
+    const a = parseNoteArgs(["--edit-comment", "https://app.notion.com/p/0123456789abcdef0123456789abcdef", "softer", "wording"]);
+    expect(a.ok && a.mode).toBe("edit-comment");
+    expect(a.ok && a.text).toBe("softer wording");
+    expect(a.ok && a.path).toBe("");
+  });
+
+  test("a comment edit can come from a file", () => {
+    const a = parseNoteArgs(["/tmp/c.md", "--edit", "1a2b3c4d5e6f7081920a1b2c3d4e5f60"]);
+    expect(a.ok && a.mode).toBe("edit-comment");
+    expect(a.ok && a.path).toBe("/tmp/c.md");
+    expect(a.ok && a.text).toBeUndefined();
+  });
+
+  test("a comment edit with no page or no text is refused", () => {
+    const none = parseNoteArgs(["--edit-comment"]);
+    expect(!none.ok && none.error).toContain("--edit-comment");
+    const empty = parseNoteArgs(["--edit-comment", "1a2b3c4d5e6f7081920a1b2c3d4e5f60"]);
+    expect(empty.ok).toBe(false);
   });
 });
