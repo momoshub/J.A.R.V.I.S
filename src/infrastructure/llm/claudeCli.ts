@@ -157,6 +157,16 @@ const num = (v: unknown): number => (typeof v === "number" && Number.isFinite(v)
  * that actually served the run - which is not always the one that was asked
  * for, and the difference is the whole point of recording it.
  */
+/**
+ * What the thread is told when a run ended with background work still going.
+ * Names each task so whoever asked knows what to have picked back up.
+ */
+export const backgroundCutOffNotice = (tasks: readonly string[]): string => {
+  const names = tasks.map((t) => `\`${t.replace(/\s+/g, " ").slice(0, 80)}\``).join(", ");
+  const what = tasks.length === 1 ? "a background job was" : `${tasks.length} background jobs were`;
+  return `_heads up: my run ended while ${what} still going, so it stopped before finishing: ${names}. ask me to pick it up again_`;
+};
+
 export const usageOf = (result: Record<string, unknown>): LlmUsage | undefined => {
   const r = result as ResultUsage;
   if (!r.usage && r.total_cost_usd === undefined) return undefined;
@@ -351,6 +361,10 @@ export const createClaudeCliLlm = (config: ClaudeCliConfig = {}): LlmPort => {
     let finalText = "";
     let streamedText = "";
     let resultEvent: Record<string, unknown> | undefined;
+    // The background tasks the CLI says are still running, as of its latest
+    // `background_tasks_changed`. Whatever is left here when the process exits
+    // was killed with it.
+    let backgroundTasks: string[] = [];
 
     const handleEvent = (e: Record<string, unknown>): void => {
       if (e.type === "stream_event") {
@@ -430,6 +444,10 @@ export const createClaudeCliLlm = (config: ClaudeCliConfig = {}): LlmPort => {
             });
           }
         }
+      } else if (e.type === "system" && e.subtype === "background_tasks_changed" && Array.isArray(e.tasks)) {
+        backgroundTasks = (e.tasks as Record<string, unknown>[]).map((t) =>
+          typeof t.description === "string" && t.description.trim() ? t.description.trim() : String(t.task_id ?? "a task"),
+        );
       } else if (e.type === "result") {
         // Recorded even when the run errored: a turn that burned nine minutes
         // and then failed cost exactly as much as one that worked.
@@ -481,14 +499,23 @@ export const createClaudeCliLlm = (config: ClaudeCliConfig = {}): LlmPort => {
 
     const exitCode = await proc.exited;
     const finished = (finalText || streamedText).trim();
-    return { exitCode, finished, finalText, resultEvent, stderr: stderrPromise, emit };
+    return { exitCode, finished, finalText, resultEvent, stderr: stderrPromise, emit, backgroundTasks };
   };
 
   const stream = async (params: LlmCompleteParams, sink: LlmStreamSink) => {
-    const { exitCode, finished, stderr, emit } = await runStreaming(params, sink);
-    if (exitCode !== 0 && !finished) {
+    const { exitCode, finished: answer, stderr, emit, backgroundTasks } = await runStreaming(params, sink);
+    if (exitCode !== 0 && !answer) {
       throw new Error(`claude CLI exited with code ${exitCode}: ${(await stderr).trim() || "no output"}`);
     }
+    // Background work still listed when the CLI exited died with it. The CLI
+    // gives it a grace period after the answer (about ten minutes), then kills
+    // it - and nothing said so, so a long job just stopped and somebody had to
+    // ask "???" to find out. Say it in the reply itself: streamed if the
+    // message is still open, and in the returned text for a caller that posts
+    // or rewrites it.
+    const notice = backgroundTasks.length > 0 ? backgroundCutOffNotice(backgroundTasks) : "";
+    if (notice) emit({ type: "text", delta: `\n\n${notice}` });
+    const finished = notice ? `${answer}\n\n${notice}` : answer;
     // Killed after it had already said something. What we hold is a fragment of
     // a run, not its answer - 143 is the timeout reaping it. Say so rather than
     // letting a caller hand the fragment over as the finished work.
