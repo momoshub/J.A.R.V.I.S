@@ -11,12 +11,14 @@ import type { SlackMessage } from "./slackAdmin.ts";
 export type DraftReplyDeps = {
   llm: LlmPort;
   promptContext: () => PromptContext;
+  /** The console is the owner's own tool, so its drafts are billed to the owner. */
+  ownerSlackId: string;
 };
 
-export type DraftReply = (thread: readonly SlackMessage[]) => Promise<string>;
+export type DraftReply = (thread: readonly SlackMessage[], channel?: string) => Promise<string>;
 
 export const createDraftReply = (deps: DraftReplyDeps): DraftReply => {
-  return async (thread) => {
+  return async (thread, channel) => {
     const ctx = deps.promptContext();
     const botName = ctx.botName ?? "You";
     const system = buildSystemPrompt({ botName: ctx.botName, base: ctx.base, learnings: ctx.learnings });
@@ -31,6 +33,7 @@ export const createDraftReply = (deps: DraftReplyDeps): DraftReply => {
       transcript || "(no messages yet)",
     ].join("\n");
     const messages: PromptMessage[] = [{ role: "user", content }];
-    return (await deps.llm.complete({ system, messages, assistantName: ctx.botName })).trim();
+    const bill = { actor: deps.ownerSlackId, kind: "draft", ...(channel ? { channel } : {}) };
+    return (await deps.llm.complete({ system, messages, assistantName: ctx.botName, bill })).trim();
   };
 };

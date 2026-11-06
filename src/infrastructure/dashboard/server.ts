@@ -475,7 +475,7 @@ export const createDashboard = (config: DashboardConfig, deps: DashboardDeps) =>
             const thread = threadTs
               ? await deps.slack!.replies(channel, threadTs)
               : (await deps.slack!.history(channel, 15)).messages;
-            return { draft: await deps.draft(thread) };
+            return { draft: await deps.draft(thread, channel) };
           });
       }
       return jsonError("Not found", 404);

@@ -303,7 +303,7 @@ const main = async () => {
     learnings: learnings.list().map((l) => l.content),
     adapter: adapterReader.read(),
   });
-  const draft = createDraftReply({ llm, promptContext });
+  const draft = createDraftReply({ llm, promptContext, ownerSlackId: config.ownerSlackId });
 
   // Filled in once the Slack app exists, so /health and `sys` can report the
   // socket from the moment it does and never trip over the order things are
