@@ -250,6 +250,12 @@ export type ToolPolicyOptions = {
    * dispatches, so this hands over no authority of its own.
    */
   readonly runScript?: string;
+  /**
+   * Absolute path of the GitHub App comment helper. Granted to every role: it
+   * can only post to the issue the turn's own thread was opened for, and only
+   * with that turn's ticket.
+   */
+  readonly githubCommentScript?: string;
   /** Absolute path of the Slack file downloader. Reading what people share is
    * table stakes, so every role gets it - it can only reach files.slack.com. */
   readonly fileScript?: string;
@@ -299,6 +305,7 @@ const withHelpers = (tools: readonly string[], opts: ToolPolicyOptions): readonl
   ...(opts.fileScript ? [`Bash(${opts.fileScript}:*)`] : []),
   ...(opts.grafanaGetScript ? [`Bash(${opts.grafanaGetScript}:*)`] : []),
   ...(opts.slackReadScript ? [`Bash(${opts.slackReadScript}:*)`] : []),
+  ...(opts.githubCommentScript ? [`Bash(${opts.githubCommentScript}:*)`] : []),
 ];
 
 /** Channel beats role beats the adapter default. */

@@ -10,8 +10,10 @@ no classes.
 
 ```
       Slack (Socket Mode)                          GitHub
-            |   ^                                    ^
-  envelopes |   | replies (Web API, chat.startStream)| review requests (polled)
+            |   ^                                    ^ |
+  envelopes |   | replies (Web API, chat.startStream)| | review requests (polled)
+            |   |                                    | | App webhook (Funnel ->
+            |   |                                    | | 127.0.0.1:2003)
             v   |                                    |
   +-----------------+                                |
   | src/gateway.ts  |  holds the socket, never       |
@@ -36,7 +38,9 @@ no classes.
   |  timers, outside every turn:                                            |
   |    watcher | reminders | reviewInbox | workflow continues | innerChild  |
   |                                                                         |
-  |  dashboard + JSON API (Bun.serve, loopback), /api/commands/run          |
+  |  dashboard + JSON API (Bun.serve, loopback), /api/commands/run,         |
+  |    /api/github-app/comment                                              |
+  |  GitHub App webhook listener (loopback, own port) -> githubApp          |
   +-------------------------------------------------------------------------+
             |                                   |
             v                                   v
@@ -65,6 +69,14 @@ no classes.
   requester; `workflowContinue` resumes long workflows after a restart;
   `innerChild` watches the bot's own conversations and queues fixes to itself.
   None of them hold a session or a queue slot while they wait.
+- **GitHub App.** A loopback listener (`GITHUB_APP_PORT`, reached through
+  Tailscale Funnel) verifies each webhook, answers 202 and hands it to
+  `githubApp`, which keeps only real calls (a mention of the app or its label,
+  never from a bot, only in allowed owners' repos) as rows keyed by delivery id
+  - the dedupe and the queue, held while a restart drains. Each is posted into
+  a channel and run as a turn in that thread as the matched Slack person; the
+  turn answers on GitHub through `bin/github-app-comment.sh` ->
+  `/api/github-app/comment`, ticketed and bound to that one issue.
 - **Self-update.** `bin/jarvis-restart.sh` runs typecheck and tests and only
   restarts when both pass. `restartWhenIdle` then drains: the inbox is no
   longer read and timers that start turns hold, so it waits only for the turns
@@ -97,6 +109,7 @@ No I/O, no frameworks. Just data shapes and functions of their inputs.
 - `threadSession.ts`, `agentSession.ts` - one CLI session per thread and when it may be resumed
 - `adapter.ts`, `adapterCheck.ts` - memory as a checked, versioned directory (facts + skills) instead of an ever-growing list
 - `watch.ts`, `reminder.ts`, `selfUpdate.ts`, `runControl.ts` - waits, reminders, draining restart, stopping a turn
+- `githubApp.ts` - webhook signature, owner allowlist, trigger detection and what the GitHub App says
 - `*Prompt.ts` - prompts for the preset tasks (review, ticket, investigate, read, note, workflow, ...)
 - `blockKit.ts`, `kitEvents.ts`, `slackFormat.ts`, `slackLinks.ts` - Slack formatting, Block Kit and links
 
@@ -112,6 +125,7 @@ Orchestrates the domain and depends on **ports**, not concrete adapters.
 - `commands.ts`, `commandTickets.ts`, `commandLimits.ts`, `brainRun.ts` - the command registry (configurable prefix + slash, role gates, help), the brain's tickets, allowances and result delivery
 - `threadQueue.ts`, `runRegistry.ts` - one turn per thread, and stopping one
 - `watcher.ts`, `reminders.ts`, `reviewInbox.ts`, `reviewGuard.ts`, `innerChild.ts` - the timers
+- `githubApp.ts` - calls from the GitHub App: dedupe/queue, identity mapping, the turn, the answer back
 - `workflow.ts`, `workflowFront.ts`, `workflowContinue.ts` - long tasks driven from one thread on a durable session
 - `accessRequests.ts` - unknown people ask the owner and admins, who decide with a reaction
 - `adapterMemory.ts`, `botProfile.ts`, `claudeTokens.ts` - memory, instance identity and CLI tokens
@@ -133,7 +147,7 @@ Concrete implementations of the seams and the transports.
 - `llm/anthropic.ts` - alternative `LlmPort` backed by the Anthropic API
 - `db/` - `bun:sqlite` client, schema + migrations, one repo per table (users, messages, sessions, watches, reminders, workflows, usage, turn and command logs, ...), `secretBox.ts` for encrypted tokens
 - `adapter/adapterStore.ts` - the memory adapter in the `adapter_files` table, mirrored to `data/adapter-mirror` so skills can be read by path
-- `github/` - `gh` CLI wrapper and review-request polling
+- `github/` - `gh` CLI wrapper and review-request polling; the GitHub App's fetch client (`appClient.ts`, RS256 JWT -> cached installation token), credentials from files (`appCredentials.ts`) and webhook listener (`webhookServer.ts`)
 - `system/` - host probes (system load, Accessibility access, shell checks for watches)
 - `dashboard/server.ts` - `Bun.serve` JSON API under `/api` plus the React SPA built to `web/dist`
 - `web/` - the dashboard front end: React 19 + Vite + React Router 7

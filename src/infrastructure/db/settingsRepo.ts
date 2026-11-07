@@ -48,6 +48,8 @@ export const SETTING_KEYS = {
   reviewInboxChannel: "review_inbox_channel",
   /** ISO time of the last review request handled. */
   reviewInboxCursor: "review_inbox_cursor",
+  /** Channel calls from the GitHub App are posted and run in. Empty falls back to `review_inbox_channel`. */
+  githubAppChannel: "github_app_channel",
 } as const;
 
 /** Model override for one role, e.g. `model:pal`. Empty means "use the default". */

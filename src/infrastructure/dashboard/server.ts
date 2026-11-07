@@ -105,6 +105,11 @@ export type DashboardDeps = {
    * reaches it through this endpoint when a chat request is really a command.
    */
   runCommand?: (req: RunCommandRequest) => Promise<{ result: string; posted: boolean }>;
+  /**
+   * Post a turn's answer to GitHub as the GitHub App. Same ticket as
+   * `runCommand`: the thread it resolves to decides which issue may be written.
+   */
+  githubComment?: (req: { ticket: string; repo: string; number: number; body: string }) => Promise<{ url?: string }>;
   /** Modals the brain stores for a `jv:modal:<id>` button to open on click. */
   kitViews?: KitViewRepo;
   /**
@@ -443,6 +448,21 @@ export const createDashboard = (config: DashboardConfig, deps: DashboardDeps) =>
           if (!ticket || !line) return jsonError("ticket and line are required");
           try {
             return Response.json({ ok: true, ...(await deps.runCommand({ ticket, line })) });
+          } catch (e) {
+            return jsonError(e instanceof Error ? e.message : String(e), 500);
+          }
+        }
+        case "/api/github-app/comment": {
+          if (!deps.githubComment) return jsonError("The GitHub App is not configured", 503);
+          const ticket = String(body.ticket ?? "").trim();
+          const repo = String(body.repo ?? "").trim();
+          const number = Number(body.number);
+          const text = typeof body.body === "string" ? body.body : "";
+          if (!ticket || !/^[\w.-]+\/[\w.-]+$/.test(repo) || !Number.isInteger(number) || number <= 0 || !text.trim()) {
+            return jsonError("ticket, repo (owner/name), number and body are required");
+          }
+          try {
+            return Response.json({ ok: true, ...(await deps.githubComment({ ticket, repo, number, body: text })) });
           } catch (e) {
             return jsonError(e instanceof Error ? e.message : String(e), 500);
           }

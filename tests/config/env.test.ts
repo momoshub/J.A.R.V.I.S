@@ -18,6 +18,21 @@ describe("loadConfig", () => {
     expect(c.slashCommand).toBe("/bot");
   });
 
+  test("GitHub App defaults keep every secret in files outside the repo", () => {
+    const g = loadConfig(base).githubApp;
+    expect(g.port).toBe(2003);
+    expect(g.slug).toBe("jarvis-at-acme");
+    expect(g.label).toBe("jarvis");
+    expect(g.allowedOwners).toEqual(["acme"]);
+    expect(g.privateKeyPath).toMatch(/\.config\/jarvis\/github-app\/private-key\.pem$/);
+    expect(g.webhookSecretPath).toMatch(/\.config\/jarvis\/github-app\/webhook-secret$/);
+    expect(g.webhookSecret).toBeUndefined();
+    expect(g.appId).toBeUndefined();
+    const o = loadConfig({ ...base, GITHUB_APP_ALLOWED_OWNERS: "acme, kai-at-acme", GITHUB_APP_PORT: "2010" }).githubApp;
+    expect(o.allowedOwners).toEqual(["acme", "kai-at-acme"]);
+    expect(o.port).toBe(2010);
+  });
+
   test("throws a readable error when required vars are missing", () => {
     expect(() => loadConfig({})).toThrow(/Invalid configuration/);
   });

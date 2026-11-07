@@ -94,6 +94,50 @@ export const migrate = (db: Database): void => {
   migrateWorkflowContinue(db);
   migrateWorkflowFront(db);
   migrateAdapterFiles(db);
+  migrateGithubApp(db);
+};
+
+/**
+ * Migration v23: calls from the GitHub App.
+ *
+ * `github_app_deliveries` is the webhook's queue and its dedupe: one row per
+ * `X-GitHub-Delivery` that was a real call, so a redelivery after a restart is
+ * recognised and never run twice, and a call that arrived while a restart was
+ * draining waits on its row for the next process. The request itself is kept
+ * only until it is handled - this database is committed, and a private repo's
+ * comment has no business in git. `github_app_threads` binds the Slack thread a
+ * call runs in to the issue/PR it came from, which is what lets a turn post its
+ * answer back to THAT issue and nowhere else.
+ */
+const migrateGithubApp = (db: Database): void => {
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS github_app_deliveries (
+      id            TEXT PRIMARY KEY,
+      trigger       TEXT NOT NULL DEFAULT '',
+      state         TEXT NOT NULL DEFAULT 'pending',
+      slack_channel TEXT NOT NULL DEFAULT '',
+      slack_ts      TEXT NOT NULL DEFAULT '',
+      received_at   INTEGER NOT NULL,
+      updated_at    INTEGER NOT NULL
+    );
+  `);
+  db.exec("CREATE INDEX IF NOT EXISTS idx_github_app_deliveries_state ON github_app_deliveries (state, received_at);");
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS github_app_threads (
+      channel_id      TEXT NOT NULL,
+      thread_ts       TEXT NOT NULL,
+      repo            TEXT NOT NULL,
+      number          INTEGER NOT NULL,
+      installation_id INTEGER NOT NULL,
+      comments        INTEGER NOT NULL DEFAULT 0,
+      created_at      INTEGER NOT NULL,
+      PRIMARY KEY (channel_id, thread_ts)
+    );
+  `);
+  const { user_version } = db.query<{ user_version: number }, []>("PRAGMA user_version").get() ?? {
+    user_version: 0,
+  };
+  if (user_version < 23) db.exec("PRAGMA user_version = 23;");
 };
 
 /**

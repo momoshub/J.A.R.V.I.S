@@ -54,6 +54,13 @@ Required / notable env (see `.env.example`):
 | `SLASH_COMMAND` | Slack slash command to register (default `/bot`) |
 | `OWNER_SLACK_ID` | the owner, cannot be removed |
 | `DRAIN_NOTICE_CHANNEL` | channel for the one restart notice listing waiting threads (unset: silent) |
+| `GITHUB_APP_ID` | GitHub App id (unset: `app.json` beside the private key) - see [Calling it from GitHub](#calling-it-from-github) |
+| `GITHUB_APP_PRIVATE_KEY_PATH` | app private key (default `~/.config/jarvis/github-app/private-key.pem`) |
+| `GITHUB_APP_WEBHOOK_SECRET_PATH` / `GITHUB_APP_WEBHOOK_SECRET` | webhook secret file (default `~/.config/jarvis/github-app/webhook-secret`), or the value itself |
+| `GITHUB_APP_PORT` | loopback port of the webhook listener (default `2003`) |
+| `GITHUB_APP_SLUG` | app slug, `@<slug>` calls it (default `jarvis-at-acme`) |
+| `GITHUB_APP_ALLOWED_OWNERS` | repo owners the app acts for, comma list (default `acme`) |
+| `GITHUB_APP_LABEL` | label that calls it on an issue/PR (default `jarvis`) |
 | `DASHBOARD_PORT` | dashboard port (local, loopback-only, no auth) |
 | `DASHBOARD_ALLOWED_ORIGINS` | extra browser origins allowed to POST (proxy/tunnel access) |
 | `DATABASE_PATH` | sqlite file (default `data/bot.db`) |
@@ -568,6 +575,32 @@ thread back in", silently. A genuine failure still surfaces.
 //bot session off      admins: back to a cold call per turn
 //bot session on       admins: back on
 ```
+
+## Calling it from GitHub
+
+A GitHub App lets people call the bot where the work is. Mention it in an
+issue or PR comment, a review comment or a submitted review
+(`@jarvis-at-acme why does this fail?`), or add the `jarvis` label to an issue
+or PR. It puts 👀 on the comment, posts the request into a Slack channel
+(`github-app channel #channel`, else the review inbox channel) and runs a turn
+in that post's thread **as the person who called**, matched like the review
+inbox does (`review-inbox link <github-login>`, else exactly one display-name
+match), so their role and their own Claude token apply. Someone it cannot
+place gets one comment explaining how to link, and nothing runs.
+
+The turn posts its answer back on the issue/PR, as the app, through
+`bin/github-app-comment.sh <owner/repo> <number> <body-file>` -> loopback
+`/api/github-app/comment`. The request carries the turn's ticket, and the bot
+only posts to the issue that turn's thread was opened for. If the turn ends
+without posting, its reply is posted for it.
+
+Setup: the webhook listener binds `127.0.0.1:GITHUB_APP_PORT` (2003) and only
+starts when the app id, private key and webhook secret are found. Tailscale
+Funnel maps `https://<host>/github` to it; `/github/webhook` and `/webhook`
+both work, as do `/github/setup` and `/setup`. Deliveries are verified with
+`X-Hub-Signature-256`, answered 202 at once, deduped on `X-GitHub-Delivery`,
+and only acted on for repositories owned by `GITHUB_APP_ALLOWED_OWNERS`.
+Bots, the app itself included, never trigger it.
 
 ## Asking for a review in words
 
