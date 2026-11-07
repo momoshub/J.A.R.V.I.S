@@ -314,7 +314,9 @@ const main = async () => {
   // Filled in once the Slack app exists, so /health and `sys` can report the
   // socket from the moment it does and never trip over the order things are
   // built in.
-  let slackApp: { health: () => ConnectionHealth; inFlight: () => number } | undefined;
+  let slackApp:
+    | { health: () => ConnectionHealth; inFlight: () => number; pauseIntake: () => void; markCut: () => number }
+    | undefined;
   const runs = createRunRegistry();
   // Vitals, sampled on a timer: a snapshot answers "is it bad now", a short
   // history answers "has it been bad for a while", which is the question
@@ -453,9 +455,23 @@ const main = async () => {
   const uiAccess = createUiAccessProbe();
   // Exit, and let launchd bring us back. Deferred so the reply that asked
   // for it has landed, and held until no turn is running anywhere.
+  // Set once a restart is asked for. From then on no new work starts: the
+  // inbox is not read, timers that start turns hold, and pending workflow
+  // steps stay on their rows for the next process.
+  let draining = false;
+  deps.draining = () => draining;
   const requestRestart = (reason: string): void => {
     activity.line(`restart requested: ${reason}`);
+    if (draining) return;
+    draining = true;
     restartWhenIdle({
+      onDrain: () => slackApp?.pauseIntake(),
+      // The rows still running are redelivered by the next process, at once
+      // and on the same session, instead of being judged too old to pick up.
+      onForce: () => {
+        const cut = slackApp?.markCut() ?? 0;
+        activity.line(`restart cut ${cut} turn(s) still running; the next process picks them up again`);
+      },
       // An envelope still being handled is work too - a slash command or
       // a button press is not a tracked run, and exiting under it loses it.
       isIdle: () => runs.all().length === 0 && (slackApp?.inFlight() ?? 0) === 0,
@@ -703,8 +719,11 @@ const main = async () => {
     onDbError(e);
   };
   const watchTimer = setInterval(() => {
-    void watcher.tick().catch(tickFailed("watch"));
     void reminderSender.tick().catch(tickFailed("remind"));
+    // These start turns. While a restart waits they hold: watches and review
+    // requests stay on their rows, and the next process carries on with them.
+    if (draining) return;
+    void watcher.tick().catch(tickFailed("watch"));
     void innerChild.tick().catch(tickFailed("inner-child"));
     void reviewInbox.tick().catch(tickFailed("review-inbox"));
   }, WATCH_TICK_MS);

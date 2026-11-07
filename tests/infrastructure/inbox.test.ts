@@ -54,6 +54,14 @@ describe("inbox rules", () => {
     expect(recoveryFor({ receivedAt: T0, attempts: 1 }, T0 + REDELIVER_MAX_AGE_MS + 1)).toBe("drop");
     // Age counts from the last attempt: a message still being worked on is not stale.
     expect(recoveryFor({ receivedAt: T0, claimedAt: T0 + 20 * 60_000, attempts: 2 }, T0 + 21 * 60_000)).toBe("defer");
+    // cut by a planned restart: the cause is known, so at once, aged from the cut
+    expect(recoveryFor({ receivedAt: T0, claimedAt: T0, attempts: 2, cutAt: T0 + 40 * 60_000 }, T0 + 41 * 60_000)).toBe(
+      "redeliver",
+    );
+    expect(
+      recoveryFor({ receivedAt: T0, claimedAt: T0, attempts: 1, cutAt: T0 }, T0 + REDELIVER_MAX_AGE_MS + 1),
+    ).toBe("drop");
+    expect(recoveryFor({ receivedAt: T0, attempts: MAX_ATTEMPTS, cutAt: T0 }, T0 + 1)).toBe("drop");
   });
   test("a stale heartbeat means disconnected, whatever the row last said", () => {
     const s = { state: "connected" as const, since: T0, beatAt: T0 };
@@ -93,6 +101,19 @@ describe("inbox repo", () => {
     inbox.claim(1, T0);
     expect(inbox.recover(T0 + 1_000)).toEqual({ redelivered: 1, deferred: 0, dropped: 1, interrupted: [] });
     expect(inbox.counts()).toMatchObject({ pending: 1, running: 0, dropped: 1 });
+  });
+
+  test("a long turn cut by a planned restart is picked up again, not dropped as old", () => {
+    const inbox = openInbox(":memory:");
+    inbox.enqueue({ envelopeId: "e1", type: "events_api", body: message("Ev1") }, T0);
+    inbox.claim(1, T0);
+    const cutAt = T0 + 40 * 60_000; // it had been running for forty minutes
+    expect(inbox.markCut(cutAt)).toBe(1);
+    expect(inbox.recover(cutAt + 5_000)).toMatchObject({ redelivered: 1, deferred: 0, dropped: 0 });
+    // the mark is spent: cut again later without one, it is judged as usual
+    const [again] = inbox.claim(1, cutAt + 6_000);
+    expect(again?.attempts).toBe(2);
+    expect(inbox.recover(cutAt + 7_000)).toMatchObject({ redelivered: 0, deferred: 1 });
   });
 
   test("the gateway heartbeat round-trips", () => {
@@ -136,6 +157,17 @@ describe("inbox receiver", () => {
     release();
     await done;
     expect(receiver.inFlight()).toBe(0);
+  });
+
+  test("a paused receiver takes nothing, and the rows wait in the inbox", async () => {
+    const inbox = openInbox(":memory:");
+    inbox.enqueue({ envelopeId: "e1", type: "events_api", body: message("Ev1") }, T0);
+    const app: EventProcessor = { processEvent: async () => undefined };
+    const receiver = createInboxReceiver({ inbox, now: () => T0, log: () => undefined });
+    receiver.init(app);
+    receiver.pause();
+    expect(receiver.drain()).toEqual([]);
+    expect(inbox.counts()).toMatchObject({ pending: 1, running: 0 });
   });
 
   test("the ack Bolt gives is recorded for the gateway", async () => {

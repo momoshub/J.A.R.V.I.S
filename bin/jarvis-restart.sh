@@ -7,6 +7,8 @@
 # the turn that asked for it, so the reply never lands. Instead this asks the
 # running bot, over loopback, to exit once it is idle - after its reply has
 # posted and no turn is running in any thread - and launchd brings it back.
+# While it waits it takes no new work (messages queue in the inbox), and past
+# 15 minutes it exits anyway; the turns it cut are picked up again after.
 #
 # Typecheck and tests both have to pass. Restarting into code that does not
 # compile means crash-looping every fifteen seconds with no way back from Slack.
@@ -37,7 +39,7 @@ echo "== asking the bot to restart"
 out=$(curl -s --max-time 10 -X POST "http://127.0.0.1:${PORT}/api/restart" \
   -H 'content-type: application/json' -d '{}')
 if printf '%s' "$out" | grep -q '"ok":true'; then
-  echo "checks passed; restarting once idle (reply lands first, running turns finish)"
+  echo "checks passed; restarting once idle (reply lands first, new messages queue, running turns get up to 15 min, then are cut and picked up again)"
 else
   echo "checks passed, but the restart request failed: $out" >&2
   exit 1
