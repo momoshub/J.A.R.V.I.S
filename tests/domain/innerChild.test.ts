@@ -1,4 +1,5 @@
 import { describe, expect, test } from "bun:test";
+import { STANDALONE_REVIEW_RULE } from "../../src/domain/selfUpdate.ts";
 import {
   afterNotice,
   beforeNotice,
@@ -98,6 +99,12 @@ describe("messages", () => {
     expect(text).not.toContain("do not commit");
     // the restart comes last, after the merge is pulled home
     expect(text.indexOf("pull --ff-only")).toBeLessThan(text.indexOf("/src/bin/restart.sh"));
+    // a standalone reviewer reads the PR before it is merged
+    expect(text).toContain(STANDALONE_REVIEW_RULE);
+    expect(text.indexOf(STANDALONE_REVIEW_RULE)).toBeLessThan(text.indexOf("then merge it yourself"));
+    // a review that never comes back clean ends the fix unmerged, with a result line
+    expect(text).toMatch(/still not clean after 3 rounds[^\n]*RESULT: not fixed`, and stop there/);
+    expect(text.indexOf("still not clean after 3 rounds")).toBeLessThan(text.indexOf("then merge it yourself"));
   });
 
   test("after notices", () => {
