@@ -42,6 +42,13 @@ export const couldFollowThread = (m: FollowCandidate, botUserId?: string): boole
   followSkipReason(m, botUserId) === undefined;
 
 /**
+ * Whether a message subtype is still a person talking. A message with files
+ * attached arrives as `file_share`, and it is as much a message as plain text:
+ * dropping it lost every reply that carried a screenshot.
+ */
+export const isSpeech = (subtype?: string): boolean => !subtype || subtype === "file_share";
+
+/**
  * Why a message is not even a follow candidate, or undefined when it is.
  *
  * The same checks as `couldFollowThread`, named, so a skip can be logged with
@@ -50,7 +57,7 @@ export const couldFollowThread = (m: FollowCandidate, botUserId?: string): boole
  */
 export const followSkipReason = (m: FollowCandidate, botUserId?: string): string | undefined => {
   // Edits, joins, deletions and other subtypes are not somebody talking.
-  if (m.subtype) return `subtype:${m.subtype}`;
+  if (!isSpeech(m.subtype)) return `subtype:${m.subtype}`;
   if (m.bot_id) return "bot";
   if (!m.user || !m.text?.trim()) return "empty";
   // DMs already get answered; this is for channels.

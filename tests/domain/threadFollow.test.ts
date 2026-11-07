@@ -49,6 +49,7 @@ describe("couldFollowThread", () => {
 
   test("edits, joins and empty messages are not somebody talking", () => {
     expect(couldFollowThread(reply({ subtype: "message_changed" }), BOT)).toBe(false);
+    expect(couldFollowThread(reply({ subtype: "file_share" }), BOT)).toBe(true);
     expect(couldFollowThread(reply({ text: "   " }), BOT)).toBe(false);
     expect(couldFollowThread(reply({ user: undefined }), BOT)).toBe(false);
   });

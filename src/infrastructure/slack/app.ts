@@ -54,7 +54,7 @@ import { annotateMentions, extractMentionIds } from "../../domain/mentions.ts";
 import { isTimeout } from "../../domain/threadSession.ts";
 import { toMrkdwn } from "../../domain/slackFormat.ts";
 import { toBlockMessage, type Block } from "../../domain/blockKit.ts";
-import { couldFollowThread, followVerdict, isOneOnOneThread, startsAutoFollow } from "../../domain/threadFollow.ts";
+import { couldFollowThread, followVerdict, isOneOnOneThread, isSpeech, startsAutoFollow } from "../../domain/threadFollow.ts";
 import { unfollowOnReaction } from "../../application/followReaction.ts";
 import { collapsedBlocks, collapseSteps } from "../../domain/collapseSteps.ts";
 import { usageFooter } from "../../domain/usageFooter.ts";
@@ -179,7 +179,7 @@ export const threadKeyOf = (m: { ts: string; thread_ts?: string }): string => m.
 
 /** Only plain human DMs: reject bot echoes, edits/joins (subtypes) and non-DM channels. */
 export const shouldHandleDm = (m: RawMessage): boolean =>
-  !m.subtype && !m.bot_id && !!m.user && !!m.text && m.channel_type === "im";
+  isSpeech(m.subtype) && !m.bot_id && !!m.user && !!m.text && m.channel_type === "im";
 
 /** Best-effort display name lookup; never throws, worst case returns undefined. */
 const fetchDisplayName = async (client: SlackClient, userId: string): Promise<string | undefined> => {
@@ -1354,7 +1354,7 @@ export const createSlackApp = (config: SlackAppConfig, deps: Deps) => {
     const m = message as RawMessage & { channel: string; ts: string };
     // Any human reply in a thread, handled or not: a typed answer settles a
     // question whoever it was asked of.
-    if (m.user && !m.bot_id && !m.subtype) void retireOnReply(client, m);
+    if (m.user && !m.bot_id && isSpeech(m.subtype)) void retireOnReply(client, m);
     if (!shouldHandleDm(m)) {
       // Three ways a thread is one it keeps up with, tag or no tag. It OPENED
       // this one - it started the conversation, so it is expected to follow
