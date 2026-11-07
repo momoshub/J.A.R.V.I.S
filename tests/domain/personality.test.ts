@@ -427,3 +427,22 @@ describe("steering another thread", () => {
     expect(pal).not.toContain("tell <thread-link>");
   });
 });
+
+describe("a message with several questions", () => {
+  test("is split and its independent parts run in parallel", () => {
+    const out = buildSystemPrompt({ learnings: [] });
+    expect(out).toContain("A message with several questions in it:");
+    expect(out).toContain("background agents");
+  });
+
+  test("each part is handed over as it lands, folded into one message", () => {
+    const out = buildSystemPrompt({ learnings: [] });
+    expect(out).toContain("never hold the whole reply for the slowest part");
+    expect(out).toContain("chat.update");
+  });
+
+  test("sits before the always-apply rules", () => {
+    const out = buildSystemPrompt({ learnings: [] });
+    expect(out.indexOf("A message with several questions in it:")).toBeLessThan(out.indexOf("Operating rules"));
+  });
+});
