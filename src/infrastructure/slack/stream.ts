@@ -57,6 +57,25 @@ export const THINKING_AFTER_MS = 5_000;
  */
 export const STREAM_CHAR_BUDGET = 11_000;
 
+/**
+ * Where to cut `text` so the piece fits in `room`: all of it when it fits,
+ * else just after the last line break, else after the last space. A cut in
+ * the middle of a word showed up as "I restart o" / "nce idle" across two
+ * messages - and since task cards eat the same allowance, a short reply in a
+ * tool-heavy turn is exactly where it happens. With no break in reach it
+ * answers 0 (roll over first, the whole room is then free), unless the
+ * message is already fresh, where only a hard cut can make progress.
+ */
+export const rolloverCut = (text: string, room: number, fresh: boolean): number => {
+  if (text.length <= room) return text.length;
+  const head = text.slice(0, room);
+  const line = head.lastIndexOf("\n");
+  if (line > 0) return line + 1;
+  const space = head.lastIndexOf(" ");
+  if (space > 0) return space + 1;
+  return fresh ? room : 0;
+};
+
 export type SlackStream = {
   sink: LlmStreamSink;
   /** Show a leading "thinking" task card now (id is reserved, auto-completes). */
@@ -244,9 +263,13 @@ export const createSlackStream = (
       let rest = text;
       while (rest) {
         if (used >= STREAM_CHAR_BUDGET) await rollover();
-        const room = STREAM_CHAR_BUDGET - used;
-        const piece = rest.length <= room ? rest : rest.slice(0, room);
-        rest = rest.slice(piece.length);
+        const cut = rolloverCut(rest, STREAM_CHAR_BUDGET - used, used === 0);
+        if (cut === 0) {
+          await rollover();
+          continue;
+        }
+        const piece = rest.slice(0, cut);
+        rest = rest.slice(cut);
         await send({ markdown_text: piece }, piece.length);
       }
     });
