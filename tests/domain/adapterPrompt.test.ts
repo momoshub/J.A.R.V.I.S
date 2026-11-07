@@ -95,3 +95,26 @@ describe("the fingerprint and the adapter", () => {
     expect(fp(adapter())).toBe(fp(adapter({ people: new Map([["U7", "- changed"]]), channels: new Map() })));
   });
 });
+
+describe("self-fixing follows whether a skill can be read", () => {
+  const self = { repoPath: "/repo", restartScript: "/bin/restart.sh" };
+  const POINTER = "read the skill in your memory about changing your own source";
+  const FULL = "holds until no turn is running in any thread";
+
+  test("with visible skills the prompt points at the skill", () => {
+    const prompt = buildSystemPrompt({ ...self, adapter: adapter() });
+    expect(prompt).toContain(POINTER);
+    expect(prompt).not.toContain(FULL);
+  });
+
+  test("with no adapter, no skills or skills hidden, the full block stays", () => {
+    for (const prompt of [
+      buildSystemPrompt({ ...self }),
+      buildSystemPrompt({ ...self, adapter: adapter({ skills: [] }) }),
+      buildSystemPrompt({ ...self, adapter: adapter(), adapterScope: { canReadFiles: false } }),
+    ]) {
+      expect(prompt).toContain(FULL);
+      expect(prompt).not.toContain(POINTER);
+    }
+  });
+});
