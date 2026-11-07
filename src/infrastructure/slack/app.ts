@@ -1484,5 +1484,9 @@ export const createSlackApp = (config: SlackAppConfig, deps: Deps) => {
     health: () => (config.inbox ? config.inbox.health() : { ...health }),
     /** Envelopes being handled right now; zero when not reading an inbox. */
     inFlight: () => config.inbox?.inFlight() ?? 0,
+    /** Stop taking envelopes from the inbox, ahead of a restart. No-op on a socket. */
+    pauseIntake: (): void => config.inbox?.pause(),
+    /** Mark the envelopes still running as cut by a planned restart. */
+    markCut: (): number => config.inbox?.markCut() ?? 0,
   };
 };

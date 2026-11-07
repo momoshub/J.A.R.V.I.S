@@ -66,8 +66,11 @@ no classes.
   `innerChild` watches the bot's own conversations and queues fixes to itself.
   None of them hold a session or a queue slot while they wait.
 - **Self-update.** `bin/jarvis-restart.sh` runs typecheck and tests and only
-  restarts when both pass, and `restartWhenIdle` waits until no turn is running
-  in any thread.
+  restarts when both pass. `restartWhenIdle` then drains: the inbox is no
+  longer read and timers that start turns hold, so it waits only for the turns
+  already running. Past 15 minutes it exits anyway and the rows it cut are
+  redelivered to the next process on the same session. Where this goes next is
+  in [`docs/rolling-restart.md`](docs/rolling-restart.md).
 
 ## Layers
 
@@ -92,7 +95,7 @@ No I/O, no frameworks. Just data shapes and functions of their inputs.
 - `personality.ts`, `conversation.ts`, `mentions.ts` - the system prompt from generic defaults + injected identity, context windowing, `<@ID>` annotation
 - `threadSession.ts`, `agentSession.ts` - one CLI session per thread and when it may be resumed
 - `adapter.ts`, `adapterCheck.ts` - memory as a checked, versioned directory (facts + skills) instead of an ever-growing list
-- `watch.ts`, `reminder.ts`, `selfUpdate.ts`, `runControl.ts` - waits, reminders, idle restart, stopping a turn
+- `watch.ts`, `reminder.ts`, `selfUpdate.ts`, `runControl.ts` - waits, reminders, draining restart, stopping a turn
 - `*Prompt.ts` - prompts for the preset tasks (review, ticket, investigate, read, note, workflow, ...)
 - `blockKit.ts`, `kitEvents.ts`, `slackFormat.ts`, `slackLinks.ts` - Slack formatting, Block Kit and links
 

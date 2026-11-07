@@ -35,6 +35,8 @@ export type RespondDeps = HandleMessageDeps & Pick<FrontDeps, "workerCalls"> & {
   runs?: RunRegistry;
   /** One review per PR at a time, across the review inbox and `review`. */
   reviewGuard?: ReviewGuard;
+  /** True while a restart waits for running turns; pending workflow steps hold. */
+  draining?: () => boolean;
 };
 
 const RANK: Record<UserRole, number> = { pal: 0, executer: 1, admin: 2, owner: 3 };

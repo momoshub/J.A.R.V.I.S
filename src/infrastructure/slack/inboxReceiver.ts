@@ -57,6 +57,8 @@ export const createInboxReceiver = (opts: InboxReceiverOptions) => {
   let app: EventProcessor | undefined;
   let timer: ReturnType<typeof setInterval> | undefined;
   let lastPrune = 0;
+  // A pending restart stops taking rows; the gateway keeps queueing them.
+  let paused = false;
   const inFlight = new Set<number>();
 
   const asPayload = (response: unknown): Record<string, unknown> | undefined =>
@@ -64,7 +66,7 @@ export const createInboxReceiver = (opts: InboxReceiverOptions) => {
 
   /** Claim what is waiting and hand each row to Bolt. Returns the dispatches, for tests. */
   const drain = (): Promise<void>[] => {
-    if (!app) return [];
+    if (!app || paused) return [];
     const target = app;
     const rows = opts.inbox.claim(opts.batch ?? 20, now());
     return rows.map((row) => {
@@ -136,6 +138,15 @@ export const createInboxReceiver = (opts: InboxReceiverOptions) => {
         log(`could not record stream ${ts} for row ${rowId}: ${err instanceof Error ? err.message : String(err)}`);
       }
     },
+    /**
+     * Take no more rows. For a restart: the bot finishes what it has, and
+     * everything that arrives meanwhile waits in the inbox for the next process.
+     */
+    pause: (): void => {
+      paused = true;
+    },
+    /** Mark the rows still running as cut by a planned restart. */
+    markCut: (): number => opts.inbox.markCut(now()),
     /** Rows handed to Bolt and not yet finished. */
     inFlight: () => inFlight.size,
     /** Whether the gateway is hearing Slack, for /health and `sys`. */

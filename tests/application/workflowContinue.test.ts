@@ -235,6 +235,23 @@ describe("workflow auto-continue", () => {
     expect(b.calls[1]?.messages.map((m) => m.content)).toEqual([CONTINUE_MESSAGE]);
   });
 
+  test("a step due while a restart waits stays on its row for the next process", async () => {
+    const b = build(keepGoing);
+    await b.start();
+    let draining = true;
+    b.deps.draining = () => draining;
+    await b.tick();
+    // nothing started, and the step is still pending
+    expect(b.calls).toHaveLength(1);
+    expect(b.live()?.continueAs).toBe(OWNER);
+
+    // the next process resumes it at boot
+    draining = false;
+    expect(resumeContinues(b.deps, 1)).toBe(1);
+    await b.tick();
+    expect(b.calls).toHaveLength(2);
+  });
+
   test("the marker never reaches the live stream", async () => {
     const b = build(keepGoing);
     await b.start("x");

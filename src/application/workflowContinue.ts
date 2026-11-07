@@ -47,6 +47,11 @@ export type ContinueDeps = {
   /** To tell whether the worker is busy before a steer kicks a step. */
   threadQueue?: ThreadQueue;
   runs?: RunRegistry;
+  /**
+   * True while a restart waits for running turns. A step is then left pending
+   * on its row instead of started, and the next process resumes it at boot.
+   */
+  draining?: () => boolean;
 };
 
 const defaultTimer = (fn: () => void, ms: number): void => {
@@ -70,6 +75,8 @@ const later = (deps: ContinueDeps, fn: () => Promise<unknown>, ms = CONTINUE_DEL
 export const kickContinue = async (deps: ContinueDeps, id: number, seq: number): Promise<boolean> => {
   const w = deps.workflows?.get(id);
   if (!w || w.status !== "active" || !w.continueAs || !deps.runTurn) return false;
+  // Leave it on the row: `resumeContinues` starts it in the next process.
+  if (deps.draining?.()) return false;
   const as = w.continueAs;
   if (!deps.workflows?.takeContinue(id, seq, deps.clock())) return false;
   await deps.runTurn({

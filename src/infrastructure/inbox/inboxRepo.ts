@@ -102,6 +102,11 @@ export type InboxRepo = {
    * redelivered or dropped, and pending rows too old to matter are dropped.
    */
   recover: (now: number) => { redelivered: number; deferred: number; dropped: number; interrupted: Interrupted[] };
+  /**
+   * Mark every running row as cut by a planned restart, just before the
+   * process exits under it, so recovery picks it up again at once.
+   */
+  markCut: (at: number) => number;
   /** Delete finished rows past their keep time. */
   prune: (now: number) => number;
   counts: () => Record<InboxState, number>;
@@ -149,6 +154,8 @@ export const openInbox = (path: string): InboxRepo => {
   if (!columns.has("stream_ts")) db.exec(`ALTER TABLE inbox ADD COLUMN stream_ts TEXT`);
   // A deferred retry is pending but not claimable until then.
   if (!columns.has("not_before")) db.exec(`ALTER TABLE inbox ADD COLUMN not_before INTEGER`);
+  // Set on running rows when a planned restart cuts them.
+  if (!columns.has("cut_at")) db.exec(`ALTER TABLE inbox ADD COLUMN cut_at INTEGER`);
 
   const insert = db.prepare(
     `INSERT OR IGNORE INTO inbox (dedupe_key, type, body, retry_num, retry_reason, received_at)
@@ -210,16 +217,17 @@ export const openInbox = (path: string): InboxRepo => {
         channel: string | null;
         stream_ts: string | null;
         claimed_at: number | null;
+        cut_at: number | null;
       })[];
       for (const r of running) {
         const outcome = recoveryFor(
-          { receivedAt: r.received_at, claimedAt: r.claimed_at ?? undefined, attempts: r.attempts },
+          { receivedAt: r.received_at, claimedAt: r.claimed_at ?? undefined, attempts: r.attempts, cutAt: r.cut_at ?? undefined },
           now,
         );
         if (outcome !== "drop") {
           // The streams are reported once, here, and forgotten: the retry
           // opens its own, and must not have these tidied a second time.
-          db.prepare(`UPDATE inbox SET state = 'pending', stream_ts = NULL, not_before = ? WHERE id = ?`).run(
+          db.prepare(`UPDATE inbox SET state = 'pending', stream_ts = NULL, cut_at = NULL, not_before = ? WHERE id = ?`).run(
             outcome === "defer" ? now + RETRY_DELAY_MS : null,
             r.id,
           );
@@ -240,6 +248,7 @@ export const openInbox = (path: string): InboxRepo => {
       dropped += stale.changes;
       return { redelivered, deferred, dropped, interrupted };
     },
+    markCut: (at) => db.prepare(`UPDATE inbox SET cut_at = ? WHERE state = 'running'`).run(at).changes,
     prune: (now) =>
       db
         .prepare(`DELETE FROM inbox WHERE state IN ('done', 'failed', 'dropped') AND finished_at < ?`)

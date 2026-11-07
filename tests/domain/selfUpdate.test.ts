@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { RESTART_DELAY_MS, restartWhenIdle, selfUpdateRules } from "../../src/domain/selfUpdate.ts";
+import { RESTART_DELAY_MS, RESTART_MAX_WAIT_MS, restartWhenIdle, selfUpdateRules } from "../../src/domain/selfUpdate.ts";
 
 const rules = selfUpdateRules("/repo", "/bin/jarvis-restart.sh");
 
@@ -16,6 +16,9 @@ describe("selfUpdateRules", () => {
   test("the restart is deferred, and it is told why that matters", () => {
     expect(rules).toContain("waits a few seconds so your reply lands first");
     expect(rules).toContain("holds until no turn is running in any thread");
+    expect(rules).toContain("taking no new message meanwhile");
+    expect(rules).toContain(`after ${RESTART_MAX_WAIT_MS / 60_000} minutes it restarts anyway`);
+    expect(rules).toContain("picked up again by the new process on the same session");
     expect(rules).toContain("expect to be a new process");
   });
 
@@ -44,14 +47,19 @@ describe("selfUpdateRules", () => {
 });
 
 describe("restartWhenIdle", () => {
-  const harness = (busy: boolean[]) => {
+  const harness = (busy: boolean[], maxWaitMs = 1_000) => {
     const pending: { fn: () => void; ms: number }[] = [];
     const logs: string[] = [];
+    const events: string[] = [];
     let exits = 0;
     restartWhenIdle({
+      onDrain: () => events.push("drain"),
+      onForce: () => events.push("force"),
+      maxWaitMs,
       isIdle: () => !(busy.shift() ?? false),
       exit: () => {
         exits += 1;
+        events.push("exit");
       },
       schedule: (fn, ms) => {
         pending.push({ fn, ms });
@@ -65,7 +73,7 @@ describe("restartWhenIdle", () => {
       next?.fn();
       return next?.ms;
     };
-    return { pending, logs, tick, exits: () => exits };
+    return { pending, logs, events, tick, exits: () => exits };
   };
 
   test("nothing happens before the delay, so the reply lands first", () => {
@@ -93,6 +101,39 @@ describe("restartWhenIdle", () => {
     h.tick();
     expect(h.exits()).toBe(1);
     expect(h.pending).toHaveLength(0);
-    expect(h.logs).toEqual(["restart deferred: turns still running, waiting for idle"]);
+    expect(h.logs).toEqual(["restart deferred: turns still running, taking no new work until they finish"]);
+    expect(h.events).toEqual(["drain", "exit"]);
+  });
+
+  test("new work stops the moment it is asked, before the delay even runs", () => {
+    // a busy thread must not keep the bot from ever being idle
+    const h = harness([]);
+    expect(h.events).toEqual(["drain"]);
+    expect(h.exits()).toBe(0);
+  });
+
+  test("past the longest wait it marks what it cuts, then exits anyway", () => {
+    const h = harness(Array(1_000).fill(true), 30);
+    h.tick(); // the delay
+    h.tick(); // waited 10
+    h.tick(); // waited 20
+    expect(h.exits()).toBe(0);
+    h.tick(); // waited 30 -> forced
+    expect(h.events).toEqual(["drain", "force", "exit"]);
+    expect(h.pending).toHaveLength(0);
+    expect(h.logs.at(-1)).toContain("restart forced");
+  });
+
+  test("going idle inside the wait never forces anything", () => {
+    const h = harness([true, true, false], 1_000);
+    h.tick();
+    h.tick();
+    h.tick();
+    expect(h.events).toEqual(["drain", "exit"]);
+  });
+
+  test("the default wait is bounded, and long enough for an ordinary turn", () => {
+    expect(RESTART_MAX_WAIT_MS).toBeGreaterThanOrEqual(5 * 60_000);
+    expect(RESTART_MAX_WAIT_MS).toBeLessThanOrEqual(60 * 60_000);
   });
 });

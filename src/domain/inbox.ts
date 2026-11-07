@@ -82,12 +82,19 @@ export const waitsForAck = (type: EnvelopeType): boolean => type !== "events_api
  * What to do with a row found `running` when the bot starts. Its age counts
  * from the last attempt, not from when it arrived: a message still being
  * worked on is not stale, however many restarts it has been through.
+ *
+ * A row cut by a PLANNED restart (`cutAt`, set just before a restart that ran
+ * out of waiting) is different: the cause is known and already gone, so it is
+ * redelivered at once rather than deferred, and its age counts from the cut -
+ * a turn that had been running for forty minutes is exactly the one somebody
+ * is still waiting on.
  */
 export const recoveryFor = (
-  row: { receivedAt: number; claimedAt?: number; attempts: number },
+  row: { receivedAt: number; claimedAt?: number; attempts: number; cutAt?: number },
   now: number,
 ): Recovery => {
   if (row.attempts >= MAX_ATTEMPTS) return "drop";
+  if (row.cutAt !== undefined) return now - row.cutAt > REDELIVER_MAX_AGE_MS ? "drop" : "redeliver";
   if (now - (row.claimedAt ?? row.receivedAt) > REDELIVER_MAX_AGE_MS) return "drop";
   return row.attempts <= 1 ? "redeliver" : "defer";
 };
