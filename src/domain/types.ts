@@ -109,6 +109,16 @@ export type Workflow = {
   readonly startedBy: string;
   readonly status: "active" | "stopped";
   readonly turns: number;
+  /** Steps it has taken on its own since a human last spoke in the thread. */
+  readonly autoTurns: number;
+  /**
+   * Who the next step runs as, when one is pending. Set when a turn asked to
+   * carry on and cleared when that step starts, so a restart in between can
+   * pick it back up.
+   */
+  readonly continueAs?: string;
+  /** Bumped on each request, so a stale timer cannot start a second chain. */
+  readonly continueSeq: number;
   readonly createdAt: number;
   readonly updatedAt: number;
 };

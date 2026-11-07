@@ -53,6 +53,7 @@ import { createReminderSender } from "./application/reminders.ts";
 import { createShellCheck } from "./infrastructure/system/shellCheck.ts";
 
 import { createWorkflowRepo } from "./infrastructure/db/workflowRepo.ts";
+import { resumeContinues } from "./application/workflowContinue.ts";
 import { createAccessRequestRepo } from "./infrastructure/db/accessRequestRepo.ts";
 import { createCommandApprovalRepo } from "./infrastructure/db/commandApprovalRepo.ts";
 import { createSettingsRepo, modelKey, SETTING_KEYS } from "./infrastructure/db/settingsRepo.ts";
@@ -363,12 +364,14 @@ const main = async () => {
       slackUserId,
       text,
       keepSession,
+      autoContinue,
     }: {
       channelId: string;
       threadTs: string;
       slackUserId: string;
       text: string;
       keepSession?: boolean;
+      autoContinue?: boolean;
     }) => {
       const result = await respond(deps, {
         channelId,
@@ -379,6 +382,7 @@ const main = async () => {
         viaSlash: false,
         following: false,
         keepSession,
+        autoContinue,
       });
       // A turn nobody watched live can still answer with a note about not
       // answering; posted, it reads as the whole reply.
@@ -637,6 +641,9 @@ const main = async () => {
   });
   const pendingReminders = reminders.waiting().length;
   if (pendingReminders > 0) console.log(`[remind] ${pendingReminders} reminder(s) waiting from before the restart`);
+  // Workflows a restart caught between two steps carry on where they were.
+  const resumed = resumeContinues(deps, 15_000);
+  if (resumed > 0) console.log(`[workflow] resuming ${resumed} workflow(s) that were mid-way between steps`);
   const waiting = watches.waiting().length;
   if (waiting > 0) console.log(`[watch] carrying on with ${waiting} watch(es) from before the restart`);
   // The inner child: watches the bot's own turns and fixes the bot in its

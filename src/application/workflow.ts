@@ -9,6 +9,7 @@
  * The session id lives in the database, so a bot restart does not lose it.
  */
 import { workflowPrompt } from "../domain/workflowPrompt.ts";
+import { createMarkerFilter, parseContinue } from "../domain/workflowContinue.ts";
 import { tokenFor, type ClaudeTokenPort } from "./claudeTokens.ts";
 import type { AllowedUser, UserRole, Workflow } from "../domain/types.ts";
 import type { ToolPolicy } from "../domain/toolPolicy.ts";
@@ -35,6 +36,31 @@ export type WorkflowDeps = {
 
 const botNameOf = (deps: WorkflowDeps): string => deps.botInfo?.().botName ?? "Assistant";
 
+/** What one workflow turn said, and whether it asked to carry on by itself. */
+export type WorkflowTurn = {
+  readonly text: string;
+  readonly wantsContinue: boolean;
+};
+
+/**
+ * The live stream minus the `[continue]` marker, so it never flashes up in
+ * the thread. A held-back fragment is released before anything that is not
+ * text, so ordering is kept.
+ */
+const filteredSink = (sink: LlmStreamSink): LlmStreamSink => {
+  const filter = createMarkerFilter();
+  return (event) => {
+    if (event.type === "text") {
+      const delta = filter.push(event.delta);
+      if (delta) sink({ type: "text", delta });
+      return;
+    }
+    const held = filter.flush();
+    if (held) sink({ type: "text", delta: held });
+    sink(event);
+  };
+};
+
 /**
  * Run one turn against the workflow's session. `first` claims the session id,
  * every later turn resumes it.
@@ -48,8 +74,8 @@ export const runWorkflowTurn = async (
   sink?: LlmStreamSink,
   /** Ends the turn when aborted, so a long one can be stopped. */
   signal?: AbortSignal,
-): Promise<string> => {
-  if (!deps.llm) return "My brain is not wired up right now.";
+): Promise<WorkflowTurn> => {
+  if (!deps.llm) return { text: "My brain is not wired up right now.", wantsContinue: false };
   const name = botNameOf(deps);
   const base = deps.toolPolicy?.(actor.role, workflow.channelId) ?? { skipPermissions: true };
   const params = {
@@ -64,10 +90,11 @@ export const runWorkflowTurn = async (
     bill: { actor: actor.slackId, kind: "workflow", channel: workflow.channelId, threadTs: workflow.threadTs },
   };
 
-  const out = (
-    sink && deps.llm.stream ? await deps.llm.stream(params, sink) : await deps.llm.complete(params)
-  ).trim();
+  const raw =
+    sink && deps.llm.stream ? await deps.llm.stream(params, filteredSink(sink)) : await deps.llm.complete(params);
+  const { text, wantsContinue } = parseContinue(raw);
 
   deps.workflows?.recordTurn(workflow.id, deps.clock());
-  return out || "(nothing came back from that turn)";
+  // A step that only said "carry on" has nothing for the thread to read.
+  return { text: text || (wantsContinue ? "" : "(nothing came back from that turn)"), wantsContinue };
 };

@@ -91,6 +91,27 @@ export const migrate = (db: Database): void => {
   migrateSelfIssues(db);
   migrateUnfollowedThreads(db);
   migrateKitViews(db);
+  migrateWorkflowContinue(db);
+};
+
+/**
+ * Migration v20: workflows that carry on by themselves.
+ *
+ * A turn that asks to continue records who the next step runs as, so a
+ * restart between two steps resumes the chain instead of dropping it. The
+ * count of steps taken on its own is what the cap is checked against.
+ */
+const migrateWorkflowContinue = (db: Database): void => {
+  const cols = db.query<{ name: string }, []>("PRAGMA table_info(workflows)").all();
+  if (!cols.some((c) => c.name === "continue_as")) {
+    db.exec("ALTER TABLE workflows ADD COLUMN continue_as TEXT");
+    db.exec("ALTER TABLE workflows ADD COLUMN continue_seq INTEGER NOT NULL DEFAULT 0");
+    db.exec("ALTER TABLE workflows ADD COLUMN auto_turns INTEGER NOT NULL DEFAULT 0");
+  }
+  const { user_version } = db.query<{ user_version: number }, []>("PRAGMA user_version").get() ?? {
+    user_version: 0,
+  };
+  if (user_version < 20) db.exec("PRAGMA user_version = 20;");
 };
 
 /**
