@@ -89,6 +89,12 @@ export type InboxRepo = {
   enqueue: (e: NewEnvelope, at: number) => number | undefined;
   /** Mark up to `limit` pending rows running, oldest first, and return them. */
   claim: (limit: number, at: number) => InboxRow[];
+  /**
+   * What is waiting, WITHOUT claiming it. Used while a restart holds the
+   * intake: the rows must stay pending for the next process, but whoever is
+   * waiting on them can still be told that somebody is coming.
+   */
+  peek: (limit: number, at: number) => InboxRow[];
   /** The bot acked a row; the gateway passes `payload` on to Slack. */
   recordAck: (id: number, payload: Record<string, unknown> | undefined, at: number) => void;
   /** The ack the bot gave, once it has. */
@@ -187,6 +193,8 @@ export const openInbox = (path: string): InboxRepo => {
       return res.changes > 0 ? Number(res.lastInsertRowid) : undefined;
     },
     claim: (limit, at) => claimTx(limit, at),
+    // Looks, never claims: the rows must stay pending for the next process.
+    peek: (limit, at) => (pending.all(at, limit) as Row[]).map(toRow),
     recordAck: (id, payload, at) => {
       db.prepare(`UPDATE inbox SET acked_at = ?, ack_body = ? WHERE id = ? AND acked_at IS NULL`).run(
         at,

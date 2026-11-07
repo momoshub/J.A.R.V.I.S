@@ -29,6 +29,15 @@ export const RESTART_POLL_MS = 5_000;
  * thread paid for the slowest one. Past this the turns still running are cut,
  * and the inbox hands each one back to the new process to pick up again.
  */
+/**
+ * How long a restart waits for running turns before cutting them.
+ *
+ * Left at fifteen minutes on purpose. The incident that made this painful was
+ * a BACKGROUND worker holding it open, and those no longer count towards
+ * idleness at all - so what remains is a foreground turn somebody is waiting
+ * on, and cutting one of those early is a worse trade than waiting. The
+ * silence is handled where it belongs, by telling the thread.
+ */
 export const RESTART_MAX_WAIT_MS = 15 * 60_000;
 
 export type IdleRestartDeps = {

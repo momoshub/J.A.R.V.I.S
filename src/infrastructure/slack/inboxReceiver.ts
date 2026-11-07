@@ -13,6 +13,7 @@
  */
 import type { ConnectionHealth } from "../../domain/connectionHealth.ts";
 import { gatewayHealth } from "../../domain/inbox.ts";
+import { envelopeThread, unnotified } from "../../domain/drainNotice.ts";
 import type { InboxRepo, Interrupted } from "../inbox/inboxRepo.ts";
 
 /**
@@ -33,6 +34,12 @@ export type EventProcessor = {
 };
 
 export type InboxReceiverOptions = {
+  /**
+   * Told about a thread whose message is waiting on a restart, once per
+   * thread. Optional: an instance that wires nothing simply stays silent, as
+   * it did before.
+   */
+  onDeferred?: (channel: string, threadTs?: string) => void | Promise<void>;
   readonly inbox: InboxRepo;
   readonly now?: () => number;
   /** How often to look for new rows. Cheap: an indexed read of an empty set. */
@@ -59,6 +66,8 @@ export const createInboxReceiver = (opts: InboxReceiverOptions) => {
   let lastPrune = 0;
   // A pending restart stops taking rows; the gateway keeps queueing them.
   let paused = false;
+  /** Threads already told that a restart is holding their message. */
+  const told = new Set<string>();
   const inFlight = new Set<number>();
 
   const asPayload = (response: unknown): Record<string, unknown> | undefined =>
@@ -91,8 +100,33 @@ export const createInboxReceiver = (opts: InboxReceiverOptions) => {
     });
   };
 
+  /**
+   * While paused, look at what is waiting and tell each thread once.
+   *
+   * Nothing is claimed: the rows have to stay pending for the next process.
+   * This exists because silence and death look identical from a thread - a
+   * question, then "??", then "??" into nothing is how a planned restart gets
+   * reported as a bug.
+   */
+  const reassure = (): void => {
+    if (!opts.onDeferred) return;
+    const targets = opts.inbox
+      .peek(opts.batch ?? 20, now())
+      .map((row) => envelopeThread(row.body))
+      .filter((t): t is { channel: string; threadTs?: string } => !!t);
+    for (const t of unnotified(targets, told)) {
+      told.add(t.key);
+      try {
+        void opts.onDeferred(t.channel, t.threadTs);
+      } catch {
+        // a courtesy that fails is still only a courtesy
+      }
+    }
+  };
+
   const tick = (): void => {
     try {
+      if (paused) reassure();
       drain();
       if (now() - lastPrune > PRUNE_EVERY_MS) {
         lastPrune = now();
@@ -125,6 +159,8 @@ export const createInboxReceiver = (opts: InboxReceiverOptions) => {
       timer = setInterval(tick, opts.pollMs ?? INBOX_POLL_MS);
       return undefined;
     },
+    /** One poll, for tests: the loop otherwise runs on its own timer. */
+    tickNow: (): void => tick(),
     stop: async () => {
       if (timer) clearInterval(timer);
       timer = undefined;
@@ -144,6 +180,7 @@ export const createInboxReceiver = (opts: InboxReceiverOptions) => {
      */
     pause: (): void => {
       paused = true;
+      told.clear();
     },
     /** Mark the rows still running as cut by a planned restart. */
     markCut: (): number => opts.inbox.markCut(now()),

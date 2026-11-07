@@ -112,6 +112,11 @@ export type DashboardDeps = {
    * that asked for it to land. Absent means self-restart is not wired up.
    */
   requestRestart?: (reason: string) => void;
+  /**
+   * True while a restart waits for running turns. The bot is not reading the
+   * inbox then, so `/health` must not claim it is listening.
+   */
+  draining?: () => boolean;
 };
 
 /**
@@ -507,17 +512,27 @@ export const createDashboard = (config: DashboardConfig, deps: DashboardDeps) =>
       // `ui` rides along without touching `ok`: being unable to drive the
       // desktop does not stop the bot doing its job, it just needs saying.
       const uiPart = ui ? { ui: describeUiAccess(ui.access), uiState: ui.access, uiCheckedAt: ui.checkedAt } : {};
+      // Draining is deliberate, and it is still deaf. The socket can be
+      // perfectly healthy while the inbox is not being read at all, and
+      // reporting "listening" through that is the same lie the connection
+      // watchdog exists to stop - it just arrives from the other side.
+      const draining = deps.draining?.() === true;
+      const drainPart = draining
+        ? { draining: true, slack: "not taking new work - restarting once running turns finish" }
+        : {};
+      const listening = !draining && (health ? isListening(health.state) : true);
       return Response.json(
         health
           ? {
-              ok: isListening(health.state),
+              ok: listening,
               slack: describeConnection(health, deps.clock()),
               state: health.state,
               since: health.since,
               ...uiPart,
+              ...drainPart,
             }
-          : { ok: true, ...uiPart },
-        { status: health && !isListening(health.state) ? 503 : 200 },
+          : { ok: listening, ...uiPart, ...drainPart },
+        { status: listening ? 200 : 503 },
       );
     }
     if (url.pathname === "/api" || url.pathname.startsWith("/api/")) return api(req, url);

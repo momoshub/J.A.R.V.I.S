@@ -119,6 +119,11 @@ export const respond = async (
     // Track the turn so it can be stopped: a chat turn may run for the better
     // part of an hour, and waiting one out is not a way to correct course.
     const runId = `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
+    // A thread driving a workflow is a worker carrying on by itself. Looked up
+    // here rather than inside the turn because the restart needs to know
+    // before the turn starts whether this one should hold it open.
+    const workflowThread =
+      inbound.threadTs !== undefined && deps.workflows?.activeFor(inbound.channelId, inbound.threadTs) !== undefined;
     const tracked = deps.runs?.track({
       id: runId,
       key,
@@ -128,6 +133,7 @@ export const respond = async (
       what,
       messageTs: inbound.messageTs,
       startedAt: deps.clock(),
+      ...(workflowThread ? { background: true } : {}),
     });
     // The "still working on ..." notice this message got, if it had to wait.
     let busy: PostedRef | undefined;

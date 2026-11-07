@@ -36,6 +36,13 @@ export type TrackedRun = {
   /** The message that asked for it, so a notice can link to it. */
   readonly messageTs?: string;
   readonly startedAt: number;
+  /**
+   * A long job nobody is sitting watching - a workflow worker carrying on by
+   * itself. It is still a run, and still stoppable, but it must not be able to
+   * hold a restart open: it gets cut and redelivered on the same session, so
+   * waiting for it only buys deafness.
+   */
+  readonly background?: boolean;
   /** Mutable: a stop flips it to `stopping`, which the next press must see. */
   state: RunState;
   /** Set once someone stops it; the Slack id of whoever did. */

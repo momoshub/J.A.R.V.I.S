@@ -65,6 +65,7 @@ import { createClaudeCliLlm } from "./infrastructure/llm/claudeCli.ts";
 import { WebClient } from "@slack/web-api";
 import { createSlackApp } from "./infrastructure/slack/app.ts";
 import { createInboxReceiver, tidyInterrupted } from "./infrastructure/slack/inboxReceiver.ts";
+import { drainNotice } from "./domain/drainNotice.ts";
 import { interruptedNotice } from "./domain/inbox.ts";
 import { openInbox } from "./infrastructure/inbox/inboxRepo.ts";
 import { respond } from "./application/respond.ts";
@@ -474,7 +475,11 @@ const main = async () => {
       },
       // An envelope still being handled is work too - a slash command or
       // a button press is not a tracked run, and exiting under it loses it.
-      isIdle: () => runs.all().length === 0 && (slackApp?.inFlight() ?? 0) === 0,
+      // A background worker does NOT hold it open. It is cut and redelivered
+      // on the same session by the next process, so waiting on one buys
+      // nothing and costs everybody else their replies for up to the cap.
+      isIdle: () =>
+        runs.all().filter((r) => !r.background).length === 0 && (slackApp?.inFlight() ?? 0) === 0,
       exit: () => {
         console.log("Restarting on request ...");
         process.exit(0);
@@ -509,6 +514,7 @@ const main = async () => {
       // Read through a getter: the Slack app is built after this server, and a
       // bot that cannot hear Slack is down however well /health answers.
       slackHealth: () => slackApp?.health(),
+      draining: () => draining,
       // Exit, and let launchd bring us back. Deferred so the reply that asked
       // for it has landed, and held until no turn is running anywhere.
       requestRestart,
@@ -587,6 +593,10 @@ const main = async () => {
             log: (l) => activity.line(`inbox: ${l}`),
             onInterrupted: (row) =>
               tidyInterrupted(slackWeb, row, interruptedNotice(row.outcome, row.retried), (l) => activity.line(`inbox: ${l}`)),
+            // Somebody wrote in while a restart holds the intake. Their
+            // message is safe, but silence reads as death - so say so once.
+            onDeferred: (channel, threadTs) =>
+              void slackAdmin.post(channel, drainNotice(), threadTs).catch(() => undefined),
           })
         : undefined,
       botToken: config.slackBotToken,

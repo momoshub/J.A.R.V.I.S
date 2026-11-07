@@ -5,6 +5,7 @@ import { createMessageRepo } from "../../src/infrastructure/db/messageRepo.ts";
 import { respond, type RespondDeps } from "../../src/application/respond.ts";
 import { createThreadQueue } from "../../src/application/threadQueue.ts";
 import { createRunRegistry } from "../../src/application/runRegistry.ts";
+import { createWorkflowRepo } from "../../src/infrastructure/db/workflowRepo.ts";
 import { createTurnLogRepo } from "../../src/infrastructure/db/turnLogRepo.ts";
 import { createWatchRepo } from "../../src/infrastructure/db/watchRepo.ts";
 import { createCommandTickets } from "../../src/application/commandTickets.ts";
@@ -409,5 +410,54 @@ describe("a turn started by a watch can actually DO things", () => {
     const { deps, seen } = build2();
     await respond(deps, fired);
     expect(seen[0]?.system).toContain("Waiting for something to finish");
+  });
+});
+
+describe("a workflow worker does not hold a restart open", () => {
+  /** What the registry held while the turn was actually in flight. */
+  const runDuring = async (threadTs: string, withWorkflow: boolean) => {
+    const db = openDatabase(":memory:");
+    let t = 1;
+    const runs = createRunRegistry(() => t);
+    const workflows = createWorkflowRepo(db);
+    if (withWorkflow) {
+      workflows.start({ channelId: "C1", threadTs, sessionId: "s1", task: "the blog", startedBy: OWNER }, 1);
+    }
+    let inFlight: ReturnType<typeof runs.all> = [];
+    const deps: RespondDeps = {
+      users: createUserRepo(db),
+      messages: createMessageRepo(db),
+      // Looked at from inside the call, which is the only moment the run exists
+      llm: { complete: async () => ((inFlight = runs.all()), "done") },
+      clock: () => t++,
+      ownerSlackId: OWNER,
+      contextWindow: 10,
+      runs,
+      workflows,
+    };
+    await respond(deps, {
+      channelId: "C1",
+      slackUserId: OWNER,
+      text: "carry on",
+      threadTs,
+      messageTs: threadTs,
+      viaSlash: false,
+    });
+    return inFlight;
+  };
+
+  test("a turn in a workflow thread is marked background", async () => {
+    // the incident: a worker running nine minutes kept the bot deaf, because
+    // idleness counted it. A cut worker is redelivered on the same session,
+    // so waiting on one only costs everybody else their replies
+    const runs = await runDuring("9.9", true);
+    expect(runs).toHaveLength(1);
+    expect(runs[0]?.background).toBe(true);
+  });
+
+  test("an ordinary thread's turn is not background, and still holds it open", async () => {
+    const runs = await runDuring("8.8", false);
+    expect(runs).toHaveLength(1);
+    expect(runs[0]?.background).toBeUndefined();
   });
 });

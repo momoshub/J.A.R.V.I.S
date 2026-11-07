@@ -74,6 +74,30 @@ describe("dashboard static + api", () => {
     expect(((await good.json()) as { ok: boolean }).ok).toBe(true);
   });
 
+  test("a draining bot is NOT listening, however healthy its socket", async () => {
+    // the socket can be perfect while the inbox is not read at all. Reporting
+    // "listening" through that is the same lie the watchdog exists to stop,
+    // arriving from the other side - and it is how a planned restart got
+    // reported as a bug after four unanswered messages
+    const drain = build({
+      slackHealth: () => ({ state: "connected", since: 0 }),
+      draining: () => true,
+    });
+    const res = await drain.dash.handle(api("/health"));
+    expect(res.status).toBe(503);
+    const body = (await res.json()) as { ok: boolean; slack: string; draining?: boolean };
+    expect(body.ok).toBe(false);
+    expect(body.draining).toBe(true);
+    expect(body.slack).toContain("not taking new work");
+  });
+
+  test("once it is done draining it is listening again", async () => {
+    const back = build({ slackHealth: () => ({ state: "connected", since: 0 }), draining: () => false });
+    const res = await back.dash.handle(api("/health"));
+    expect(res.status).toBe(200);
+    expect(((await res.json()) as { ok: boolean }).ok).toBe(true);
+  });
+
   test("health reports desktop access without letting it fail the bot", async () => {
     // it is not fatal - almost nothing needs the UI - which is exactly why its
     // absence goes unnoticed for weeks unless something says so

@@ -421,3 +421,43 @@ describe("a reply cut off by a restart", () => {
     expect(systems[1]).toContain("handled a SECOND time");
   });
 });
+
+describe("a restart holding the intake", () => {
+  test("waiting threads are told once, and their rows stay pending", async () => {
+    // the incident: four messages into total silence while a restart waited
+    // on a long turn. Nothing was lost - but silence and death look identical
+    const inbox = openInbox(":memory:");
+    inbox.enqueue({ envelopeId: "e1", type: "events_api", body: message("Ev1", "bug là gì???") }, T0);
+    inbox.enqueue({ envelopeId: "e2", type: "events_api", body: message("Ev2", "??") }, T0);
+
+    const told: { channel: string; threadTs?: string }[] = [];
+    const receiver = createInboxReceiver({
+      inbox,
+      now: () => T0,
+      log: () => undefined,
+      onDeferred: (channel, threadTs) => void told.push({ channel, threadTs }),
+    });
+    receiver.init({ processEvent: async () => undefined });
+    receiver.pause();
+
+    receiver.tickNow();
+    receiver.tickNow();
+
+    // one notice for the thread, however many messages are waiting
+    expect(told).toEqual([{ channel: "D1", threadTs: undefined }]);
+    // and nothing was consumed: the next process still has both
+    expect(inbox.counts()).toMatchObject({ pending: 2, running: 0, done: 0 });
+  });
+
+  test("a paused receiver still dispatches nothing", async () => {
+    const inbox = openInbox(":memory:");
+    inbox.enqueue({ envelopeId: "e1", type: "events_api", body: message("Ev1") }, T0);
+    const seen: unknown[] = [];
+    const receiver = createInboxReceiver({ inbox, now: () => T0, log: () => undefined });
+    receiver.init({ processEvent: async (e) => void seen.push(e.body) });
+    receiver.pause();
+    await Promise.all(receiver.drain());
+    expect(seen).toEqual([]);
+    expect(inbox.counts()).toMatchObject({ pending: 1 });
+  });
+});
