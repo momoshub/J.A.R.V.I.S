@@ -452,6 +452,7 @@ describe("a message with several questions", () => {
     expect(out).toContain("worker-start --run <runId>");
     expect(out).toContain('length > 0 and all(. == "completed" or . == "failed")');
     expect(out).toContain("inbox --terminal run:<runId> --full");
+    expect(out).toContain("never through the Workflow tool");
   });
 
   test("each part is handed over as it lands, folded into one message", () => {
