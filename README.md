@@ -133,11 +133,21 @@ A `workflow` turns a thread into a long-running job you can talk to.
 //bot workflow migrate the webhook handler to the new signature check
 ```
 
-The bot claims a Claude CLI session id, runs the first turn, and keeps that
-session for the thread. Every later message in the thread resumes it, so the
-model keeps its own context and its files between turns - it is still mid-task,
-not re-reading a transcript. Answer its questions, change direction, ask where
-it got to; `workflow stop` ends it and the thread goes back to normal chat.
+The bot claims a Claude CLI session id (the *worker*) and keeps that session
+for the thread. The worker does the task one step at a time, carrying on by
+itself between steps, and posts a short status line after each - it keeps its
+own context and files throughout, it is still mid-task, not re-reading a
+transcript.
+
+What you say in the thread goes to a separate *front* session on its own
+queue, so it is answered while a step is still running. The front gets a
+fresh digest each time - is a step running and since when, the worker's last
+replies, its most recent tool calls - and answers "status?" from that. When
+what you said is meant for the work (an answer to its question, a correction,
+a change of plan), the front passes it on: the worker's next step gets
+"<you> said mid-task: ...", and an idle worker (blocked on a question, paused,
+or done) starts a step for it right away. `workflow stop` ends both and the
+thread goes back to normal chat.
 
 - one live workflow per thread, `workflow status` shows it
 - `executer`, `admin` and `owner` may drive one; anyone lower still chats
@@ -145,7 +155,9 @@ it got to; `workflow stop` ends it and the thread goes back to normal chat.
 - tools are whatever the driver's role allows - a sandboxed `executer` gets a
   sandboxed workflow
 - the session id is in the database, so a bot restart does not lose the session
-- turns may run up to 15 minutes each
+- worker steps may run up to 15 minutes each; front answers are read-only and
+  capped at 4 minutes
+- an instruction reaches a running worker at its next step boundary, not mid-step
 
 Because it lives in a thread, start it with the message form (`//bot workflow ...`)
 rather than the slash command - a slash command has no thread to bind to.

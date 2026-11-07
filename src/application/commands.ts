@@ -96,6 +96,9 @@ import { asksForHelp, commandHelp } from "../domain/commandHelp.ts";
 import { nearestCommand } from "../domain/commandSuggest.ts";
 import { forHowLong, stillStoppingNotice, stoppedNotice } from "../domain/runControl.ts";
 import type { RunRegistry } from "./runRegistry.ts";
+import type { ThreadQueue } from "./threadQueue.ts";
+import { frontKeyOf } from "../domain/workflowFront.ts";
+import { workerStateOf } from "./workflowFront.ts";
 import type { ThreadSessionRepo } from "../infrastructure/db/threadSessionRepo.ts";
 import type { AllowedUser, PromptContext, UserRole } from "../domain/types.ts";
 import { NO_TOOLS, type ToolPolicy } from "../domain/toolPolicy.ts";
@@ -208,6 +211,8 @@ export type CommandDeps = {
   totp?: TotpPort;
   /** In-flight turns, so `stop` can end one without waiting it out. */
   runs?: RunRegistry;
+  /** Per-thread turn queue; a workflow's first step takes its place in it. */
+  threadQueue?: ThreadQueue;
   /** One review per PR at a time, across the review inbox and `review`. */
   reviewGuard?: ReviewGuard;
   /** Read-only Grafana helper, so an investigation can reach a non-Loki datasource. */
@@ -2580,16 +2585,28 @@ Up to ${BOMB_SIZE} reactions; no category means *${DEFAULT_CATEGORY}*.`;
       const live = deps.workflows.activeFor(channelId, threadTs);
       const sub = rest.trim();
 
+      const workerKey = `${channelId}:${threadTs}`;
       if (/^stop$/i.test(sub)) {
         if (!live) return "No workflow running in this thread.";
         deps.workflows.stop(live.id, deps.clock());
+        // Both halves: the worker's step in flight and the front's answer.
+        // Queued worker steps find the workflow stopped and stand down.
+        deps.runs?.stopThread(workerKey, actor.slackId);
+        deps.runs?.stopThread(frontKeyOf(workerKey), actor.slackId);
         return `🛑 workflow stopped after ${live.turns} turn${live.turns === 1 ? "" : "s"}. The thread goes back to normal chat.`;
       }
       if (/^status$/i.test(sub)) {
         if (!live) return "No workflow running in this thread.";
-        const alone = live.autoTurns > 0 ? `, ${live.autoTurns} on its own since anyone spoke` : "";
-        const next = live.continueAs ? " Next step is queued." : "";
-        return `⚙️ workflow running - started by <@${live.startedBy}>, ${live.turns} turn${live.turns === 1 ? "" : "s"} so far${alone}.${next}\n> ${live.task}`;
+        const alone = live.autoTurns > 0 ? `, ${live.autoTurns} on its own since it was last steered` : "";
+        const state = workerStateOf(deps, live, workerKey);
+        const now =
+          state.state === "running"
+            ? ` A step is running (${forHowLong(deps.clock() - state.since)} so far).`
+            : state.state === "queued"
+              ? " Next step is queued."
+              : " Idle - waiting on someone.";
+        const steers = live.steers.length > 0 ? ` ${live.steers.length} instruction(s) waiting for the next step.` : "";
+        return `⚙️ workflow running - started by <@${live.startedBy}>, ${live.turns} turn${live.turns === 1 ? "" : "s"} so far${alone}.${now}${steers}\n> ${live.task}`;
       }
       if (live) {
         return `A workflow is already running in this thread (${live.turns} turns). Just talk to it, or \`${prefix} workflow stop\` to end it.`;
@@ -2608,17 +2625,48 @@ Up to ${BOMB_SIZE} reactions; no category means *${DEFAULT_CATEGORY}*.`;
         deps.clock(),
       );
 
+      // The first step is the worker's like every later one: on the thread's
+      // queue, so a steer cannot start a second step beside it, and tracked,
+      // so it can be stopped.
+      const tracked = deps.runs?.track({
+        id: `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`,
+        key: workerKey,
+        channelId,
+        threadTs,
+        actor: actor.slackId,
+        what: "workflow start",
+        startedAt: deps.clock(),
+      });
+      const firstStep = async () => {
+        tracked?.running();
+        try {
+          return await runWorkflowTurn(deps as WorkflowDeps, workflow, actor, sub, true, undefined, tracked?.signal);
+        } finally {
+          tracked?.done();
+        }
+      };
+      const runFirst = async () => {
+        try {
+          return await (deps.threadQueue ? deps.threadQueue.run(workerKey, firstStep) : firstStep());
+        } catch (err) {
+          if (tracked?.signal.aborted) return undefined;
+          throw err;
+        }
+      };
+
       // No live destination (tests / slack off): run the turn and return it.
       if (!reply) {
-        const turn = await runWorkflowTurn(deps as WorkflowDeps, workflow, actor, sub, true);
+        const turn = await runFirst();
+        if (!turn) return "";
         await afterWorkflowTurn(deps, workflow, actor.slackId, turn.wantsContinue, prefix);
         return turn.text;
       }
 
       await reply(
-        `⚙️ workflow started - I will keep this session open and keep working step by step on my own until it is done or I need you. Talk to me here any time; \`${prefix} workflow stop\` ends it.`,
+        `⚙️ workflow started - I will keep working on it step by step in the background until it is done or I need you. Talk to me here any time - I answer while the work runs, and pass on anything meant for it; \`${prefix} workflow stop\` ends it.`,
       );
-      const turn = await runWorkflowTurn(deps as WorkflowDeps, workflow, actor, sub, true);
+      const turn = await runFirst();
+      if (!turn) return "";
       if (turn.text.trim()) await reply(turn.text);
       // The next step goes through the ordinary turn path, behind anything a
       // human said meanwhile.

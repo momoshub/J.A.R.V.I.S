@@ -54,6 +54,7 @@ import { createShellCheck } from "./infrastructure/system/shellCheck.ts";
 
 import { createWorkflowRepo } from "./infrastructure/db/workflowRepo.ts";
 import { resumeContinues } from "./application/workflowContinue.ts";
+import { WORKER_BILL_KIND } from "./application/workflow.ts";
 import { createAccessRequestRepo } from "./infrastructure/db/accessRequestRepo.ts";
 import { createCommandApprovalRepo } from "./infrastructure/db/commandApprovalRepo.ts";
 import { createSettingsRepo, modelKey, SETTING_KEYS } from "./infrastructure/db/settingsRepo.ts";
@@ -83,7 +84,7 @@ import { createCommandTickets, refusalMessage } from "./application/commandTicke
 import { createActivityLog } from "./infrastructure/logger.ts";
 import type { CommandLogRepo } from "./infrastructure/db/commandLogRepo.ts";
 import type { LlmPort, ToolTraceSink, UsageSink } from "./application/ports.ts";
-import { createToolTraceLog } from "./infrastructure/llm/toolTraceLog.ts";
+import { createToolTraceLog, readTraceCalls } from "./infrastructure/llm/toolTraceLog.ts";
 import type { RespondDeps } from "./application/respond.ts";
 
 /**
@@ -396,6 +397,9 @@ const main = async () => {
     github: createGhCli(),
     // Long tasks driven from a thread, each holding its own CLI session.
     workflows,
+    // The worker's recent tool calls, from the per-thread trace, for the front's digest.
+    workerCalls: (channelId: string, threadTs: string, limit: number) =>
+      readTraceCalls(join(config.logDir, "threads"), channelId, threadTs, WORKER_BILL_KIND, limit),
     threadSessions,
     // One turn at a time per thread. Two messages a few minutes apart used to
     // run at once, doing the same work twice - two branches, two PRs - and

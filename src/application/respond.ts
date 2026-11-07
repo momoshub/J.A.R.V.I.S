@@ -8,8 +8,10 @@ import type { ReviewGuard } from "./reviewGuard.ts";
 import { decideAccess } from "../domain/access.ts";
 import { cleanInboundText } from "../domain/conversation.ts";
 import { commandLineOf, dispatchCommand, notifiesOwner } from "./commands.ts";
-import { runWorkflowTurn, WORKFLOW_MIN_ROLE } from "./workflow.ts";
-import { afterWorkflowTurn, humanSteers } from "./workflowContinue.ts";
+import { runFrontTurn, runWorkflowTurn, WORKFLOW_MIN_ROLE } from "./workflow.ts";
+import { afterWorkflowTurn, steerWorker } from "./workflowContinue.ts";
+import { frontDigest, type FrontDeps } from "./workflowFront.ts";
+import { frontKeyOf, steeredMessage } from "../domain/workflowFront.ts";
 import { requestAccess } from "./accessRequests.ts";
 import { reviewRequestIn } from "../domain/reviewRequest.ts";
 import { busyNotice, nameOfRequest } from "../domain/runControl.ts";
@@ -22,7 +24,7 @@ import type { TurnOutcome } from "../infrastructure/db/turnLogRepo.ts";
 import { handleMessage, type HandleMessageDeps, type HandleResult, type InboundMessage } from "./handleMessage.ts";
 import type { LlmStreamSink } from "./ports.ts";
 
-export type RespondDeps = HandleMessageDeps & {
+export type RespondDeps = HandleMessageDeps & Pick<FrontDeps, "workerCalls"> & {
   /**
    * Serialises the turns of one thread. Without it two messages sent a few
    * minutes apart run at once, doing the same work twice and resuming the same
@@ -101,7 +103,16 @@ export const respond = async (
     // One function, shared with the agent-session stop handler: if the two ever
     // built this string differently, Slack's stop button would silently find
     // nothing to stop and only the spinner would tell anyone.
-    const key = sessionThreadKey(inbound.channelId, inbound.threadTs ?? inbound.messageTs ?? "");
+    const threadKey = sessionThreadKey(inbound.channelId, inbound.threadTs ?? inbound.messageTs ?? "");
+    // A workflow thread has two lanes. Its worker's steps run on the thread's
+    // own key, as they always did, so the stop button and `stop` still reach
+    // them. A person's message runs on the front's key, so it is answered
+    // while a step is running instead of waiting behind it.
+    const inWorkflow =
+      !inbound.autoContinue && inbound.threadTs
+        ? deps.workflows?.activeFor(inbound.channelId, inbound.threadTs) !== undefined
+        : false;
+    const key = inWorkflow ? frontKeyOf(threadKey) : threadKey;
     const what = nameOfRequest(inbound.text);
     // Track the turn so it can be stopped: a chat turn may run for the better
     // part of an hour, and waiting one out is not a way to correct course.
@@ -156,20 +167,35 @@ export const respond = async (
           // do not get to steer the task.
           if (who.allowed && RANK[who.user.role] >= RANK[WORKFLOW_MIN_ROLE]) {
             if (inbound.autoContinue) {
-              // A human spoke while this step waited in the queue: their turn
-              // already decided whether to carry on, so this one stands down.
-              if (workflow.autoTurns === 0) return { kind: "ignored" };
-            } else {
-              humanSteers(deps, workflow);
+              // The worker's step. What people said meanwhile rides along with
+              // it, and is only cleared once the step has run.
+              const steers = workflow.steers;
+              const text = steeredMessage(
+                cleanInboundText(inbound.text),
+                steers,
+                (id) => deps.users.get(id)?.displayName,
+              );
+              const turn = await runWorkflowTurn(deps, workflow, who.user, text, false, sink, tracked?.signal);
+              if (steers.length > 0) deps.workflows?.dropSteers(workflow.id, steers.length);
+              record("ok");
+              // Stopped part way: whatever it said, nobody wants the next step.
+              if (!tracked?.signal.aborted) {
+                await afterWorkflowTurn(deps, workflow, who.user.slackId, turn.wantsContinue, deps.commandPrefix);
+              }
+              return { kind: "reply", text: turn.text };
             }
-            const text = cleanInboundText(inbound.text);
-            const turn = await runWorkflowTurn(deps, workflow, who.user, text, false, sink, tracked?.signal);
-            record("ok");
-            // Stopped part way: whatever it said, nobody wants the next step.
-            if (!tracked?.signal.aborted) {
-              await afterWorkflowTurn(deps, workflow, who.user.slackId, turn.wantsContinue, deps.commandPrefix);
+            if (key !== threadKey) {
+              // The front: answer now, from a digest of where the worker is,
+              // and pass on anything meant for the work.
+              const digest = frontDigest(deps, workflow, threadKey);
+              const text = cleanInboundText(inbound.text);
+              const turn = await runFrontTurn(deps, workflow, who.user, text, digest, sink, tracked?.signal);
+              record("ok");
+              if (turn.steers.length > 0 && !tracked?.signal.aborted) {
+                steerWorker(deps, workflow, who.user.slackId, turn.steers, threadKey);
+              }
+              return { kind: "reply", text: turn.text };
             }
-            return { kind: "reply", text: turn.text };
           }
         }
         // A step the bot queued for a workflow that has since ended, or for

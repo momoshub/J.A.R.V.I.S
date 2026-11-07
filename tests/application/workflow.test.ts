@@ -11,6 +11,7 @@ import type { LlmCompleteParams, LlmPort } from "../../src/application/ports.ts"
 
 const OWNER = "U0OWNER0001";
 const SESSION = "11111111-2222-3333-4444-555555555555";
+const FRONT = "99999999-2222-3333-4444-555555555555";
 
 const actor = (over: Partial<AllowedUser> = {}): AllowedUser => ({
   slackId: OWNER,
@@ -40,7 +41,10 @@ const build = () => {
     clock: () => 42,
     ownerSlackId: OWNER,
     botInfo: () => ({ botName: "Evie", model: "claude-cli (opus)" }),
-    newSessionId: () => SESSION,
+    newSessionId: (() => {
+      let n = 0;
+      return () => (n++ === 0 ? SESSION : FRONT);
+    })(),
     toolPolicy: () => ({ skipPermissions: true, cwd: "/work" }),
   };
   return { deps, calls };
@@ -100,7 +104,7 @@ describe("workflow command", () => {
 });
 
 describe("workflow routing", () => {
-  test("plain messages in the thread resume the session instead of chatting", async () => {
+  test("plain messages in the thread go to the front's own session, not the worker's", async () => {
     const { deps, calls } = build();
     await dispatchCommand(deps, actor(), "C1", "workflow add a retry", { threadTs: "100.1" });
 
@@ -114,10 +118,22 @@ describe("workflow routing", () => {
 
     expect(res.kind).toBe("reply");
     expect(calls).toHaveLength(2);
-    expect(calls[1]?.session).toEqual({ id: SESSION, resume: true }); // resumed, not re-created
-    // only the new message goes up - the session is holding the rest
-    expect(calls[1]?.messages.map((m) => m.content)).toEqual(["use exponential backoff"]);
-    expect(deps.workflows!.activeFor("C1", "100.1")?.turns).toBe(2);
+    // the front claims a session of its own, read-only and quick
+    expect(calls[1]?.session).toEqual({ id: FRONT, resume: false });
+    expect(calls[1]?.bill?.kind).toBe("workflow-front");
+    expect(calls[1]?.policy?.skipPermissions).toBe(false);
+    expect(calls[1]?.policy?.timeoutMs).toBeLessThanOrEqual(300_000);
+    // the new message goes up with a digest of where the worker is
+    const content = calls[1]?.messages.map((m) => m.content).join("\n") ?? "";
+    expect(content).toContain("Progress digest");
+    expect(content).toContain("on it, cloned the repo");
+    expect(content).toContain("use exponential backoff");
+    // the worker did not take a turn
+    expect(deps.workflows!.activeFor("C1", "100.1")?.turns).toBe(1);
+
+    // and the next message resumes the front's session
+    await respond(deps, { channelId: "C1", slackUserId: OWNER, text: "status?", threadTs: "100.1" });
+    expect(calls[2]?.session).toEqual({ id: FRONT, resume: true });
   });
 
   test("a neighbouring thread is untouched by the workflow", async () => {

@@ -92,6 +92,29 @@ export const migrate = (db: Database): void => {
   migrateUnfollowedThreads(db);
   migrateKitViews(db);
   migrateWorkflowContinue(db);
+  migrateWorkflowFront(db);
+};
+
+/**
+ * Migration v21: a workflow's front and its worker.
+ *
+ * Human messages in a workflow thread go to a front session of their own, so
+ * "status?" is answered while a step runs. `front_session_id` is that session,
+ * claimed on its first turn. `steers` holds what the front passed on that the
+ * worker has not seen yet (JSON), so a restart does not lose it, and
+ * `worker_replies` keeps the worker's last few replies for the front's digest.
+ */
+const migrateWorkflowFront = (db: Database): void => {
+  const cols = db.query<{ name: string }, []>("PRAGMA table_info(workflows)").all();
+  if (!cols.some((c) => c.name === "front_session_id")) {
+    db.exec("ALTER TABLE workflows ADD COLUMN front_session_id TEXT");
+    db.exec("ALTER TABLE workflows ADD COLUMN steers TEXT NOT NULL DEFAULT '[]'");
+    db.exec("ALTER TABLE workflows ADD COLUMN worker_replies TEXT NOT NULL DEFAULT '[]'");
+  }
+  const { user_version } = db.query<{ user_version: number }, []>("PRAGMA user_version").get() ?? {
+    user_version: 0,
+  };
+  if (user_version < 21) db.exec("PRAGMA user_version = 21;");
 };
 
 /**

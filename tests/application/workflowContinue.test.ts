@@ -18,6 +18,7 @@ import type { SlackAdminPort } from "../../src/application/slackAdmin.ts";
 const OWNER = "U0OWNER";
 const EXEC = "U0EXEC";
 const SESSION = "11111111-2222-3333-4444-555555555555";
+const FRONT = "99999999-2222-3333-4444-555555555555";
 const C = "C1";
 const T = "100.1";
 
@@ -59,7 +60,11 @@ const build = (reply: Reply) => {
     clock: () => 42,
     ownerSlackId: OWNER,
     botInfo: () => ({ botName: "Evie", model: "claude-cli (opus)" }),
-    newSessionId: () => SESSION,
+    // the worker's session first, then the front's
+    newSessionId: (() => {
+      let n = 0;
+      return () => (n++ === 0 ? SESSION : FRONT);
+    })(),
     toolPolicy: () => ({ skipPermissions: true, cwd: "/work" }),
     threadQueue: createThreadQueue(),
     runs: createRunRegistry(),
@@ -99,7 +104,13 @@ const build = (reply: Reply) => {
   return { deps, calls, timers, posts, tick, start, say, live };
 };
 
-const keepGoing: Reply = () => "did one step.\n[continue]";
+/** Front turns are told apart from worker steps by how they are billed. */
+const isFront = (p: LlmCompleteParams): boolean => p.bill?.kind === "workflow-front";
+const workerCalls = (calls: LlmCompleteParams[]) => calls.filter((c) => !isFront(c));
+
+/** The worker carries on; the front passes on whatever it is told. */
+const keepGoing: Reply = (p) =>
+  isFront(p) ? `passing it on\n[steer] ${p.messages.at(-1)?.content.split("\n").at(-1)}` : "did one step.\n[continue]";
 
 describe("workflow auto-continue", () => {
   test("a turn ending in [continue] hides the marker and queues the next step through respond", async () => {
@@ -140,7 +151,7 @@ describe("workflow auto-continue", () => {
     expect(paused[0]?.text).toContain("carry on");
     expect(b.live()?.continueAs).toBeUndefined();
 
-    // a human message resumes it, with the count back at zero
+    // a steer through the front resumes it, with the count back at zero
     await b.say("carry on");
     expect(b.live()?.autoTurns).toBe(0);
     expect(b.timers).toHaveLength(1);
@@ -148,43 +159,22 @@ describe("workflow auto-continue", () => {
     expect(b.live()?.autoTurns).toBe(1);
   });
 
-  test("a human message resets the count and supersedes a pending step", async () => {
+  test("a steer resets the count and rides along with the pending step", async () => {
     const b = build(keepGoing);
     await b.start();
     await b.tick();
     await b.tick();
     expect(b.live()?.autoTurns).toBe(2);
-    const stale = b.timers.shift()!;
+    expect(b.timers).toHaveLength(1);
 
     await b.say("use the dark theme");
     expect(b.live()?.autoTurns).toBe(0);
-    const calls = b.calls.length;
-    // the step queued before the human spoke does nothing
-    stale.fn();
-    await Bun.sleep(5);
-    expect(b.calls).toHaveLength(calls);
-    // the human turn's own request is the one that runs
+    // a step was already pending, so no second one is started
     expect(b.timers).toHaveLength(1);
     await b.tick();
-    expect(b.calls).toHaveLength(calls + 1);
-  });
-
-  test("an auto step queued behind a human message stands down", async () => {
-    const b = build(keepGoing);
-    await b.start();
-    const w = b.live()!;
-    // claim the step as the timer would, then let a human get in first
-    expect(b.deps.workflows!.takeContinue(w.id, b.live()!.continueSeq, 42)).toBe(true);
-    b.deps.workflows!.humanTurn(w.id);
-    const res = await respond(b.deps, {
-      channelId: C,
-      slackUserId: OWNER,
-      text: CONTINUE_MESSAGE,
-      threadTs: T,
-      autoContinue: true,
-    });
-    expect(res.kind).toBe("ignored");
-    expect(b.calls).toHaveLength(1);
+    const last = workerCalls(b.calls).at(-1)!;
+    expect(last.messages.at(-1)?.content).toContain("said mid-task: use the dark theme");
+    expect(b.live()?.steers).toEqual([]);
   });
 
   test("no next step once the workflow is stopped", async () => {
@@ -220,11 +210,11 @@ describe("workflow auto-continue", () => {
     expect(b.timers).toHaveLength(0);
   });
 
-  test("the next step runs as whoever drove the last one, with their role checked", async () => {
-    const b = build(keepGoing);
+  test("a step a steer started runs as whoever steered, with their role checked", async () => {
+    const b = build((p) => (isFront(p) ? "ok\n[steer] go on" : "which theme, A or B?"));
     await b.start();
-    b.timers.length = 0;
-    await b.say("go on", EXEC);
+    expect(b.timers).toHaveLength(0);
+    await b.say("A", EXEC);
     expect(b.live()?.continueAs).toBe(EXEC);
     // demoted meanwhile: the step is dropped, not handed to the chat brain
     b.deps.users.upsert({ slackId: EXEC, role: "pal", displayName: "Ex", addedBy: "x", createdAt: 1 });
