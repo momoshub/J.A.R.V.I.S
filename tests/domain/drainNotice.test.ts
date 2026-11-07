@@ -31,6 +31,14 @@ describe("envelopeThread", () => {
     expect(envelopeThread(msg({ subtype: "thread_broadcast", thread_ts: "9.9" }))).toEqual({ channel: "D1", threadTs: "9.9" });
   });
 
+  test("only a 1:1 DM is told, never a channel or a group DM", () => {
+    expect(envelopeThread(msg({ channel: "C1", channel_type: "channel" }))).toBeUndefined();
+    expect(envelopeThread(msg({ channel: "C2", channel_type: "group" }))).toBeUndefined();
+    expect(envelopeThread(msg({ channel: "C3", channel_type: "mpim", thread_ts: "9.9" }))).toBeUndefined();
+    expect(envelopeThread(msg({ channel: "C4" }))).toBeUndefined();
+    expect(envelopeThread(msg({ channel_type: "im" }))).toEqual({ channel: "D1" });
+  });
+
   test("a press or a slash command has no thread to reassure", () => {
     expect(envelopeThread({ type: "block_actions", actions: [] })).toBeUndefined();
     expect(envelopeThread({})).toBeUndefined();
