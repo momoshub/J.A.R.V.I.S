@@ -1,7 +1,9 @@
 import { describe, expect, test } from "bun:test";
 import { type Adapter, adapterRules, parseManifest } from "../../src/domain/adapter.ts";
 import { buildSystemPrompt } from "../../src/domain/personality.ts";
+import { createHash } from "node:crypto";
 import { promptFingerprint } from "../../src/domain/promptFingerprint.ts";
+import { selfUpdateRules } from "../../src/domain/selfUpdate.ts";
 
 const adapter = (over: Partial<Adapter> = {}): Adapter => ({
   manifest: parseManifest({
@@ -93,6 +95,23 @@ describe("the fingerprint and the adapter", () => {
 
   test("neither does a note about one person or channel", () => {
     expect(fp(adapter())).toBe(fp(adapter({ people: new Map([["U7", "- changed"]]), channels: new Map() })));
+  });
+});
+
+describe("the fingerprint and the short self-update block", () => {
+  test("the short block a turn with a visible skill gets is part of the hash", () => {
+    // the sentinels carry no adapter, so the build renders the full block; the
+    // short one must be hashed on its own or a change to it never reopens a thread
+    const build = () => "prompt";
+    const hash = (...parts: string[]) => {
+      const h = createHash("sha256");
+      for (const p of parts) h.update(p);
+      return h.digest("hex").slice(0, 16);
+    };
+    const short = selfUpdateRules("/fp/repo", "/fp/restart", true);
+    expect(short).toContain("read the skill in your memory");
+    expect(promptFingerprint(build, "persona")).toBe(hash("prompt", "", short));
+    expect(promptFingerprint(build, "persona")).not.toBe(hash("prompt", ""));
   });
 });
 
