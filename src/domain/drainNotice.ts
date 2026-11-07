@@ -29,6 +29,8 @@ export const drainNotice = (): string =>
  * or a slash command is its own thing, and a notice about a restart posted
  * into one would land where nobody is looking.
  */
+const ASKING_SUBTYPES: ReadonlySet<string> = new Set(["file_share", "thread_broadcast"]);
+
 export const envelopeThread = (
   body: Record<string, unknown>,
 ): { channel: string; threadTs?: string } | undefined => {
@@ -36,6 +38,10 @@ export const envelopeThread = (
   if (!event || event.type !== "message") return undefined;
   // The bot's own messages are not somebody waiting for an answer.
   if (event.bot_id || event.subtype === "bot_message") return undefined;
+  // An edit or a delete is not somebody asking either. A message_changed
+  // carries the bot id inside `event.message` and no thread_ts at the top, so
+  // the bot's own chat.update used to earn a notice at the channel root.
+  if (typeof event.subtype === "string" && !ASKING_SUBTYPES.has(event.subtype)) return undefined;
   const channel = typeof event.channel === "string" ? event.channel : "";
   if (!channel) return undefined;
   const threadTs = typeof event.thread_ts === "string" ? event.thread_ts : undefined;
