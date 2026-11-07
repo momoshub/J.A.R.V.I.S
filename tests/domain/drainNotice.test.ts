@@ -20,6 +20,17 @@ describe("envelopeThread", () => {
     expect(envelopeThread(msg({ subtype: "bot_message" }))).toBeUndefined();
   });
 
+  test("an edit or a delete is nobody asking", () => {
+    const edited = { type: "message", bot_id: "B1", text: "edited", ts: "5.5", thread_ts: "4.4" };
+    expect(envelopeThread(msg({ subtype: "message_changed", user: undefined, message: edited }))).toBeUndefined();
+    expect(envelopeThread(msg({ subtype: "message_deleted" }))).toBeUndefined();
+  });
+
+  test("a file or a broadcast from a person still counts", () => {
+    expect(envelopeThread(msg({ subtype: "file_share", thread_ts: "9.9" }))).toEqual({ channel: "D1", threadTs: "9.9" });
+    expect(envelopeThread(msg({ subtype: "thread_broadcast", thread_ts: "9.9" }))).toEqual({ channel: "D1", threadTs: "9.9" });
+  });
+
   test("a press or a slash command has no thread to reassure", () => {
     expect(envelopeThread({ type: "block_actions", actions: [] })).toBeUndefined();
     expect(envelopeThread({})).toBeUndefined();
