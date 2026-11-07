@@ -88,7 +88,12 @@ export type HandleMessageDeps = {
     threadTs: string;
     slackUserId: string;
     text: string;
+    keepSession?: boolean;
+    /** A workflow step the bot started itself, not a human message. */
+    autoContinue?: boolean;
   }) => Promise<void>;
+  /** Timer for a workflow's next step; injected so tests need not wait. */
+  continueTimer?: (fn: () => void, ms: number) => void;
   /** Set of disabled command names (managed from the dashboard). */
   disabledCommands?: () => ReadonlySet<string>;
   /** Slack Web API operations, for the power-tool commands (br, jrp). */
@@ -183,6 +188,12 @@ export type InboundMessage = {
    * would hand the job to a cold turn that never saw any of it.
    */
   keepSession?: boolean;
+  /**
+   * A workflow step the bot queued itself after a turn ended with
+   * `[continue]`. It only ever drives a live workflow: with none in the
+   * thread it is dropped rather than handed to the chat brain.
+   */
+  autoContinue?: boolean;
 };
 
 export type HandleResult =

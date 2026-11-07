@@ -76,6 +76,7 @@ import { mentionedId } from "../domain/mentions.ts";
 import { parseMessageLink } from "../domain/slackLinks.ts";
 import { postedBody } from "../domain/ghCommand.ts";
 import { runWorkflowTurn, WORKFLOW_MIN_ROLE, type WorkflowDeps } from "./workflow.ts";
+import { afterWorkflowTurn } from "./workflowContinue.ts";
 import { allowanceFor, holdForApproval, limitFor, PAL_WINDOW_MS, setLimit, type CommandLimitDeps } from "./commandLimits.ts";
 import {
   encodeRequest,
@@ -180,7 +181,11 @@ export type CommandDeps = {
     text: string;
     /** Resume the thread's session even if its rules changed since. */
     keepSession?: boolean;
+    /** A workflow step the bot started itself, not a human message. */
+    autoContinue?: boolean;
   }) => Promise<void>;
+  /** Timer for a workflow's next step; injected so tests need not wait. */
+  continueTimer?: (fn: () => void, ms: number) => void;
   /** Slack Web API operations, for the power tools (bomb, reply). */
   slack?: SlackAdminPort;
   /** GitHub actions the bot takes itself - the up-front approve in `review`. */
@@ -2582,7 +2587,9 @@ Up to ${BOMB_SIZE} reactions; no category means *${DEFAULT_CATEGORY}*.`;
       }
       if (/^status$/i.test(sub)) {
         if (!live) return "No workflow running in this thread.";
-        return `⚙️ workflow running - started by <@${live.startedBy}>, ${live.turns} turn${live.turns === 1 ? "" : "s"} so far.\n> ${live.task}`;
+        const alone = live.autoTurns > 0 ? `, ${live.autoTurns} on its own since anyone spoke` : "";
+        const next = live.continueAs ? " Next step is queued." : "";
+        return `⚙️ workflow running - started by <@${live.startedBy}>, ${live.turns} turn${live.turns === 1 ? "" : "s"} so far${alone}.${next}\n> ${live.task}`;
       }
       if (live) {
         return `A workflow is already running in this thread (${live.turns} turns). Just talk to it, or \`${prefix} workflow stop\` to end it.`;
@@ -2602,11 +2609,20 @@ Up to ${BOMB_SIZE} reactions; no category means *${DEFAULT_CATEGORY}*.`;
       );
 
       // No live destination (tests / slack off): run the turn and return it.
-      if (!reply) return runWorkflowTurn(deps as WorkflowDeps, workflow, actor, sub, true);
+      if (!reply) {
+        const turn = await runWorkflowTurn(deps as WorkflowDeps, workflow, actor, sub, true);
+        await afterWorkflowTurn(deps, workflow, actor.slackId, turn.wantsContinue, prefix);
+        return turn.text;
+      }
 
-      await reply(`⚙️ workflow started - I will keep this session open. Talk to me here; \`${prefix} workflow stop\` ends it.`);
-      const out = await runWorkflowTurn(deps as WorkflowDeps, workflow, actor, sub, true);
-      await reply(out);
+      await reply(
+        `⚙️ workflow started - I will keep this session open and keep working step by step on my own until it is done or I need you. Talk to me here any time; \`${prefix} workflow stop\` ends it.`,
+      );
+      const turn = await runWorkflowTurn(deps as WorkflowDeps, workflow, actor, sub, true);
+      if (turn.text.trim()) await reply(turn.text);
+      // The next step goes through the ordinary turn path, behind anything a
+      // human said meanwhile.
+      await afterWorkflowTurn(deps, workflow, actor.slackId, turn.wantsContinue, prefix);
       return ""; // already delivered to the thread
     },
   },

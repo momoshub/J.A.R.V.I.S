@@ -9,6 +9,7 @@ import { decideAccess } from "../domain/access.ts";
 import { cleanInboundText } from "../domain/conversation.ts";
 import { commandLineOf, dispatchCommand, notifiesOwner } from "./commands.ts";
 import { runWorkflowTurn, WORKFLOW_MIN_ROLE } from "./workflow.ts";
+import { afterWorkflowTurn, humanSteers } from "./workflowContinue.ts";
 import { requestAccess } from "./accessRequests.ts";
 import { reviewRequestIn } from "../domain/reviewRequest.ts";
 import { busyNotice, nameOfRequest } from "../domain/runControl.ts";
@@ -154,12 +155,26 @@ export const respond = async (
           // Anyone below the workflow role can still chat in the thread; they just
           // do not get to steer the task.
           if (who.allowed && RANK[who.user.role] >= RANK[WORKFLOW_MIN_ROLE]) {
+            if (inbound.autoContinue) {
+              // A human spoke while this step waited in the queue: their turn
+              // already decided whether to carry on, so this one stands down.
+              if (workflow.autoTurns === 0) return { kind: "ignored" };
+            } else {
+              humanSteers(deps, workflow);
+            }
             const text = cleanInboundText(inbound.text);
-            const out = await runWorkflowTurn(deps, workflow, who.user, text, false, sink, tracked?.signal);
+            const turn = await runWorkflowTurn(deps, workflow, who.user, text, false, sink, tracked?.signal);
             record("ok");
-            return { kind: "reply", text: out };
+            // Stopped part way: whatever it said, nobody wants the next step.
+            if (!tracked?.signal.aborted) {
+              await afterWorkflowTurn(deps, workflow, who.user.slackId, turn.wantsContinue, deps.commandPrefix);
+            }
+            return { kind: "reply", text: turn.text };
           }
         }
+        // A step the bot queued for a workflow that has since ended, or for
+        // someone who may no longer steer it, is not a chat message.
+        if (inbound.autoContinue) return { kind: "ignored" };
         const result = await handleMessage(deps, inbound, sink, tracked?.signal);
         // "ignored" is not a turn that happened - it was not for us, or it was
         // dropped before it began - so there is nothing to record about it.
@@ -193,7 +208,9 @@ export const respond = async (
       // Not when following: nobody asked, so nobody is waiting on a place in
       // the queue, and "yours is next" in a channel is noise about the bot's
       // own scheduling rather than anything the thread needs.
-      if (!inbound.following) busy = await announceBusy(deps, inbound, key);
+      // Nor for a workflow's own next step: nobody typed it.
+      if (inbound.autoContinue) busy = undefined;
+      else if (!inbound.following) busy = await announceBusy(deps, inbound, key);
     }
     return queue.run(key, chatTurn);
   }
