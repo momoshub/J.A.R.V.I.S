@@ -10,7 +10,7 @@ import { createRunRegistry } from "../../src/application/runRegistry.ts";
 import { resumeContinues } from "../../src/application/workflowContinue.ts";
 import { runWorkflowTurn } from "../../src/application/workflow.ts";
 import { sessionThreadKey } from "../../src/domain/agentSession.ts";
-import { AUTO_CONTINUE_CAP, CONTINUE_MESSAGE } from "../../src/domain/workflowContinue.ts";
+import { AUTO_CONTINUE_CAP, CONTINUE_MESSAGE, RETRY_MESSAGE } from "../../src/domain/workflowContinue.ts";
 import type { AllowedUser } from "../../src/domain/types.ts";
 import type { LlmCompleteParams, LlmPort, LlmStreamEvent } from "../../src/application/ports.ts";
 import type { SlackAdminPort } from "../../src/application/slackAdmin.ts";
@@ -70,6 +70,7 @@ const build = (reply: Reply) => {
     runs: createRunRegistry(),
     slack,
     commandPrefix: "//jv",
+    stepFailures: new Map<number, number>(),
     continueTimer: (fn, ms) => {
       timers.push({ fn, ms });
     },
@@ -234,6 +235,60 @@ describe("workflow auto-continue", () => {
     await b.tick();
     expect(b.calls).toHaveLength(2);
     expect(b.timers).toHaveLength(0);
+  });
+
+  test("a failed step says so and retries once, carrying the notes queued for it", async () => {
+    let failing = 0;
+    const b = build((p) => {
+      if (!isFront(p) && p.session?.resume && failing > 0) {
+        failing -= 1;
+        throw new Error("claude CLI exited with code 143: no output");
+      }
+      return keepGoing(p);
+    });
+    await b.start();
+    // a note passed on while the step ran, which then times out
+    b.deps.workflows!.addSteers(b.live()!.id, [{ by: OWNER, text: "make the whole card a link", at: 42 }]);
+    failing = 1;
+    await b.tick();
+    expect(b.posts.at(-1)?.text).toContain("retrying once");
+    expect(b.posts.at(-1)?.text).toContain("code 143");
+    expect(b.live()?.steers).toHaveLength(1);
+    expect(b.timers).toHaveLength(1);
+
+    await b.tick();
+    const retry = workerCalls(b.calls).at(-1)!;
+    expect(retry.messages.at(-1)?.content).toContain(RETRY_MESSAGE);
+    expect(retry.messages.at(-1)?.content).toContain("make the whole card a link");
+    expect(b.live()?.steers).toEqual([]);
+    // it worked, so the next failure gets its own retry again
+    expect(b.deps.stepFailures?.size).toBe(0);
+  });
+
+  test("a second failure in a row stops and waits for a human, keeping the notes", async () => {
+    let failing = 0;
+    const b = build((p) => {
+      if (!isFront(p) && p.session?.resume && failing > 0) {
+        failing -= 1;
+        throw new Error("claude CLI exited with code 143: no output");
+      }
+      return keepGoing(p);
+    });
+    await b.start();
+    b.deps.workflows!.addSteers(b.live()!.id, [{ by: OWNER, text: "fix the hero", at: 42 }]);
+    failing = 2;
+    await b.tick();
+    await b.tick();
+    expect(b.posts.at(-1)?.text).toContain("failed again");
+    expect(b.timers).toHaveLength(0);
+    expect(b.live()?.continueAs).toBeUndefined();
+    expect(b.live()?.steers).toHaveLength(1);
+
+    // anyone speaking resumes it
+    await b.say("carry on");
+    expect(b.timers).toHaveLength(1);
+    await b.tick();
+    expect(workerCalls(b.calls).at(-1)?.messages.at(-1)?.content).toContain("fix the hero");
   });
 
   test("a step a steer started runs as whoever steered, with their role checked", async () => {

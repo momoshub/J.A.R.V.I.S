@@ -401,6 +401,8 @@ const main = async () => {
     github: createGhCli(),
     // Long tasks driven from a thread, each holding its own CLI session.
     workflows,
+    // Failed worker steps in a row, so a timed-out step is retried once.
+    stepFailures: new Map<number, number>(),
     // The worker's recent tool calls, from the per-thread trace, for the front's digest.
     workerCalls: (channelId: string, threadTs: string, limit: number) =>
       readTraceCalls(join(config.logDir, "threads"), channelId, threadTs, WORKER_BILL_KIND, limit),

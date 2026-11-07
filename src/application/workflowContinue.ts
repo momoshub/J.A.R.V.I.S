@@ -18,6 +18,9 @@ import {
   AUTO_CONTINUE_CAP,
   CONTINUE_DELAY_MS,
   CONTINUE_MESSAGE,
+  FAILED_STEP_RETRIES,
+  RETRY_MESSAGE,
+  failedStepNotice,
   pausedNotice,
 } from "../domain/workflowContinue.ts";
 import type { Clock } from "./ports.ts";
@@ -52,6 +55,11 @@ export type ContinueDeps = {
    * on its row instead of started, and the next process resumes it at boot.
    */
   draining?: () => boolean;
+  /**
+   * Failed worker steps in a row, per workflow id. In memory: a restart
+   * starting the count again costs at most one more retry.
+   */
+  stepFailures?: Map<number, number>;
 };
 
 const defaultTimer = (fn: () => void, ms: number): void => {
@@ -72,7 +80,12 @@ const later = (deps: ContinueDeps, fn: () => Promise<unknown>, ms = CONTINUE_DEL
  * update, so a stale timer, a stopped workflow or a human who spoke since all
  * leave it a no-op.
  */
-export const kickContinue = async (deps: ContinueDeps, id: number, seq: number): Promise<boolean> => {
+export const kickContinue = async (
+  deps: ContinueDeps,
+  id: number,
+  seq: number,
+  text: string = CONTINUE_MESSAGE,
+): Promise<boolean> => {
   const w = deps.workflows?.get(id);
   if (!w || w.status !== "active" || !w.continueAs || !deps.runTurn) return false;
   // Leave it on the row: `resumeContinues` starts it in the next process.
@@ -83,7 +96,7 @@ export const kickContinue = async (deps: ContinueDeps, id: number, seq: number):
     channelId: w.channelId,
     threadTs: w.threadTs,
     slackUserId: as,
-    text: CONTINUE_MESSAGE,
+    text,
     keepSession: true,
     autoContinue: true,
   });
@@ -149,6 +162,7 @@ export const afterWorkflowTurn = async (
 ): Promise<AfterTurn> => {
   const repo = deps.workflows;
   const live = repo?.get(workflow.id);
+  deps.stepFailures?.delete(workflow.id);
   if (!repo || !live || live.status !== "active") return "idle";
   if (live.steers.length > 0 && deps.runTurn) {
     repo.resetAutoTurns(live.id);
@@ -173,6 +187,42 @@ export const afterWorkflowTurn = async (
   const seq = repo.requestContinue(live.id, actorId, deps.clock());
   if (seq === undefined) return "idle";
   later(deps, () => kickContinue(deps, live.id, seq));
+  return "continue";
+};
+
+/**
+ * After a worker step failed - timed out, crashed. It used to end there: the
+ * step had no reply to post, `afterWorkflowTurn` was never asked, and notes
+ * passed on while it ran sat on the row with nothing left to deliver them, so
+ * the thread just went quiet. Now the thread is told, and the step is retried
+ * once (steers still on the row ride along); a second failure in a row waits
+ * for a human, who resumes it by saying anything.
+ */
+export const afterFailedStep = async (
+  deps: ContinueDeps,
+  workflow: Workflow,
+  actorId: string,
+  error: string,
+  prefix?: string,
+): Promise<AfterTurn> => {
+  const repo = deps.workflows;
+  const live = repo?.get(workflow.id);
+  if (!repo || !live || live.status !== "active") return "idle";
+  const failures = (deps.stepFailures?.get(live.id) ?? 0) + 1;
+  deps.stepFailures?.set(live.id, failures);
+  const retrying = deps.runTurn !== undefined && deps.stepFailures !== undefined && failures <= FAILED_STEP_RETRIES;
+  try {
+    await deps.slack?.post(live.channelId, failedStepNotice(error, retrying, prefix), live.threadTs);
+  } catch {
+    // the retry matters more than the notice
+  }
+  if (!retrying) {
+    repo.clearContinue(live.id);
+    return "paused";
+  }
+  const seq = repo.requestContinue(live.id, actorId, deps.clock());
+  if (seq === undefined) return "idle";
+  later(deps, () => kickContinue(deps, live.id, seq, RETRY_MESSAGE));
   return "continue";
 };
 
