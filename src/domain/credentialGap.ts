@@ -37,6 +37,7 @@ When you cannot see something:
   - "it is private", a 403, an empty page, \`channel_not_found\`
   - a tool you expected to have (\`mcp__...\`) simply not being in your tool list
   They mean: *the credential for this turn is the wrong one*
+- the exception is a LOCAL database server (Postgres, ClickHouse and the like). It is a process on this machine, so it loads on your credential too - but it connects a few seconds AFTER the turn starts, so at first it shows as "still connecting" or with no tools yet. That is not missing. Call ToolSearch with the server's name (\`select:<tool>\` or a keyword like \`postgres\`): it waits for connecting servers and loads their tools. Never report a database as unavailable, and never ask someone to check the MCP setup, before ToolSearch has come back empty. If your role is denied the server, ToolSearch finds nothing - then say so
 - the fix is always the same. Run the command that has the right one - these run on the host login, which does carry the connectors:
 ${routes}
 - run it YOURSELF, in this turn, through the run helper. Do not describe the command and wait for someone to type it, do not ask anyone to reconnect anything, and do not ask for a paste or an export until the command itself has actually failed

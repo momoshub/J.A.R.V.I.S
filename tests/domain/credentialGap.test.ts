@@ -14,6 +14,16 @@ describe("credentialGapRules", () => {
     expect(r).toContain("the credential for this turn is the wrong one");
   });
 
+  test("a local database still connecting is waited for, not reported missing", () => {
+    // a turn said "pg-prod has no tools, sg-prod still connecting"
+    // and asked a person to check the MCP setup - the servers were fine, the
+    // turn simply started before they finished connecting
+    expect(r).toContain("LOCAL database server");
+    expect(r).toContain("still connecting");
+    expect(r).toContain("Call ToolSearch");
+    expect(r).toContain("before ToolSearch has come back empty");
+  });
+
   test("and gives one fix, with every route listed", () => {
     for (const c of HOST_COMMANDS) expect(r).toContain(`X/jv ${c.name}`);
     expect(r).toContain("run it YOURSELF");

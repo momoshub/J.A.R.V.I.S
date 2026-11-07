@@ -104,20 +104,37 @@ describe("toolPolicyFor", () => {
   test("an executer queries the read-only databases, a pal queries none", () => {
     const exe = toolPolicyFor("executer", opts);
     for (const db of ["mcp__pg-prod", "mcp__pg-prod-2", "mcp__pg-staging",
-      "mcp__clickhouse-us-prod", "mcp__clickhouse-sg-prod"]) {
+      "mcp__clickhouse-sql-us-prod-ro", "mcp__clickhouse-sql-sg-prod-ro"]) {
       expect(exe.allowedTools).toContain(db);
       expect(exe.disallowedTools).not.toContain(db);
     }
-    // logs in as a write user, so it stays denied
-    expect(exe.allowedTools).not.toContain("mcp__clickhouse-sg-stg");
-    expect(exe.disallowedTools).toContain("mcp__clickhouse-sg-stg");
+    // a write user, and an org-wide management key, so both stay denied
+    for (const db of ["mcp__clickhouse-sql-sg-stg-rw", "mcp__clickhouse-cloud-mgmt"]) {
+      expect(exe.allowedTools).not.toContain(db);
+      expect(exe.disallowedTools).toContain(db);
+    }
     // and an assigned list does not drop them
     const assigned = toolPolicyFor("executer", { ...opts, executerTools: ["Read"] }).allowedTools;
     expect(assigned).toContain("mcp__pg-prod");
 
     const pal = toolPolicyFor("pal", opts);
     for (const db of DB_MCP_SERVERS) expect(pal.disallowedTools).toContain(db);
-    expect(DB_MCP_SERVERS).toContain("mcp__clickhouse-sg-stg");
+    expect(DB_MCP_SERVERS).toContain("mcp__clickhouse-sql-sg-stg-rw");
+  });
+
+  test("every database server is named as the host config names it", () => {
+    // the list once said clickhouse-us-prod while the host ran
+    // clickhouse-sql-us-prod-ro: a denial of a name nobody uses denies nothing,
+    // and an executer's allow-list entry for it granted nothing either
+    expect([...DB_MCP_SERVERS].sort()).toEqual([
+      "mcp__clickhouse-cloud-mgmt",
+      "mcp__clickhouse-sql-sg-prod-ro",
+      "mcp__clickhouse-sql-sg-stg-rw",
+      "mcp__clickhouse-sql-us-prod-ro",
+      "mcp__pg-prod-2",
+      "mcp__pg-staging",
+      "mcp__pg-prod",
+    ]);
   });
 
   test("pal can read github, notion and the web", () => {
