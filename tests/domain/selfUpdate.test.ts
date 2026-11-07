@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { RESTART_DELAY_MS, RESTART_MAX_WAIT_MS, restartWhenIdle, selfUpdateRules } from "../../src/domain/selfUpdate.ts";
+import { RESTART_DELAY_MS, RESTART_MAX_WAIT_MS, STANDALONE_REVIEW_RULE, restartWhenIdle, selfUpdateRules } from "../../src/domain/selfUpdate.ts";
 
 const rules = selfUpdateRules("/repo", "/bin/jarvis-restart.sh");
 
@@ -33,6 +33,13 @@ describe("selfUpdateRules", () => {
     expect(rules).toContain("no attribution");
     expect(rules).not.toContain("Generated with Jarvis");
     expect(rules).not.toContain("do not commit or push");
+  });
+
+  test("every fix is reviewed by a standalone agent before it is merged", () => {
+    expect(rules).toContain(STANDALONE_REVIEW_RULE);
+    expect(rules).toContain("never the session that wrote the code");
+    // and the step sits in the flow before the merge
+    expect(rules.indexOf("standalone reviewer agent")).toBeLessThan(rules.indexOf("merge it yourself"));
   });
 
   test("with no repo or no helper, there is no block at all", () => {
