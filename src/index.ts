@@ -589,6 +589,9 @@ const main = async () => {
 
   // With a gateway, Slack traffic arrives through its inbox and the socket is
   // not ours to open - a restart here then costs a short wait, not lost messages.
+  // The one drain notice in the log channel, edited as more threads wait.
+  let drainPost: { channel: string; ts: string } | undefined;
+  let drainPosting: Promise<void> = Promise.resolve();
   const inbox = config.slackTransport === "inbox" ? openInbox(config.inboxDatabasePath) : undefined;
   const slack = createSlackApp(
     {
@@ -599,19 +602,32 @@ const main = async () => {
             onInterrupted: (row) =>
               tidyInterrupted(slackWeb, row, interruptedNotice(row.outcome, row.retried), (l) => activity.line(`inbox: ${l}`)),
             // Somebody wrote in while a restart holds the intake. Their
-            // message is safe, but silence reads as death - so say so once.
-            onDeferred: (channel, threadTs) =>
-              void slackAdmin
-                .post(
-                  channel,
-                  drainNotice({
-                    reason: drainReason,
-                    running: runs.all().filter((r) => !r.background).length,
-                    deadlineMs: drainDeadlineMs,
-                  }),
-                  threadTs,
-                )
-                .catch(() => undefined),
+            // message is safe, but silence reads as death - so the log
+            // channel gets one message listing every waiting thread.
+            onDeferred: (waiting) => {
+              const channel = config.drainNoticeChannel;
+              if (!channel) return;
+              drainPosting = drainPosting
+                .then(async () => {
+                  const links = await Promise.all(
+                    waiting.map(
+                      async (w) =>
+                        (w.threadTs ? await slackAdmin.permalink?.(w.channel, w.threadTs) : undefined) ?? `<#${w.channel}>`,
+                    ),
+                  );
+                  const text = drainNotice(
+                    {
+                      reason: drainReason,
+                      running: runs.all().filter((r) => !r.background).length,
+                      deadlineMs: drainDeadlineMs,
+                    },
+                    links,
+                  );
+                  if (drainPost) await slackAdmin.update(drainPost.channel, drainPost.ts, text);
+                  else drainPost = (await slackAdmin.post(channel, text)) ?? undefined;
+                })
+                .catch(() => undefined);
+            },
           })
         : undefined,
       botToken: config.slackBotToken,
