@@ -368,6 +368,7 @@ export const createClaudeCliLlm = (config: ClaudeCliConfig = {}): LlmPort => {
     const toolByIndex = new Map<number, { id: string; name: string; json: string }>();
     const cardById = new Map<string, { title: string; command?: string }>();
     let finalText = "";
+    let lastResult = "";
     let streamedText = "";
     // Text the model writes in a message that goes on to call a tool is it
     // talking to itself ("Partial work exists. Resume the agent."), not the
@@ -492,7 +493,16 @@ export const createClaudeCliLlm = (config: ClaudeCliConfig = {}): LlmPort => {
         // Also handed to the renderer, which puts it under the reply.
         const u = usageOf(e);
         if (u) emit({ type: "usage", usage: u });
-        if (typeof e.result === "string") finalText = e.result;
+        // One run can end more than once. A background agent that reports after
+        // the answer wakes the CLI for another round in the same process, and
+        // that round ends with its own `result`. Keeping only the last one
+        // swapped the answer to the person's question for a status update
+        // about the background job. So every round's text is kept, in order.
+        const text = typeof e.result === "string" ? e.result.trim() : "";
+        if (text && text !== lastResult) {
+          finalText = finalText ? `${finalText}\n\n${text}` : text;
+          lastResult = text;
+        }
         resultEvent = e;
       }
     };
