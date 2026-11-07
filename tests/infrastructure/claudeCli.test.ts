@@ -339,6 +339,30 @@ describe("createClaudeCliLlm.stream", () => {
     expect(tools[1]).toMatchObject({ id: "toolu_1", status: "complete" });
   });
 
+  test("a background agent waking the run again does not replace the answer", async () => {
+    // the bug: the person's question was answered, then a background agent's
+    // notification woke the CLI for another round, and only that round's CI
+    // update reached the thread
+    const events = [
+      { type: "result", subtype: "success", is_error: false, result: "the answer to your question" },
+      { type: "result", subtype: "success", is_error: false, result: "the PR is up" },
+      { type: "result", subtype: "success", is_error: false, result: "CI is green" },
+    ];
+    const llm = createClaudeCliLlm({ binPath: fakeStreamBin(events) });
+    const final = await llm.stream!({ system: "s", messages: [{ role: "user", content: "hi" }] }, () => {});
+    expect(final).toBe("the answer to your question\n\nthe PR is up\n\nCI is green");
+  });
+
+  test("a round that repeats the last result is not said twice", async () => {
+    const events = [
+      { type: "result", subtype: "success", is_error: false, result: "done" },
+      { type: "result", subtype: "success", is_error: false, result: " done " },
+    ];
+    const llm = createClaudeCliLlm({ binPath: fakeStreamBin(events) });
+    const final = await llm.stream!({ system: "s", messages: [{ role: "user", content: "hi" }] }, () => {});
+    expect(final).toBe("done");
+  });
+
   test("falls back to streamed text if no result event arrives", async () => {
     const partial = STREAM_EVENTS.filter((e) => (e as { type: string }).type !== "result");
     const llm = createClaudeCliLlm({ binPath: fakeStreamBin(partial) });
