@@ -194,6 +194,12 @@ export type InboundMessage = {
    * thread it is dropped rather than handed to the chat brain.
    */
   autoContinue?: boolean;
+  /**
+   * Started by the bot itself, not typed by anyone: a watch handing the
+   * thread back. It still queues behind a running turn, but nobody is waiting
+   * on its place in line, so it posts no "yours is next" notice.
+   */
+  unprompted?: boolean;
 };
 
 export type HandleResult =

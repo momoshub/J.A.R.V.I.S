@@ -248,6 +248,35 @@ describe("respond", () => {
     expect(removedBeforeAnswer).toBe(true); // gone before the queued turn answers
   });
 
+  test("a watch hand-back queued behind a running turn posts no busy notice", async () => {
+    // a watch fired mid-turn and "yours is next" landed in the thread,
+    // addressed to someone who had typed nothing
+    const posted: string[] = [];
+    const deps = build({
+      complete: async () => {
+        await new Promise((r) => setTimeout(r, 30));
+        return "ok";
+      },
+    });
+    deps.threadQueue = createThreadQueue();
+    deps.runs = createRunRegistry();
+    deps.slack = {
+      ...quietSlack,
+      post: async (channel, text) => {
+        posted.push(text);
+        return { channel, ts: `9.${posted.length}` };
+      },
+    };
+
+    const inbound = { channelId: "C1", slackUserId: OWNER, threadTs: "500.1" };
+    const first = respond(deps, { ...inbound, text: "the long one", messageTs: "500.1" });
+    await new Promise((r) => setTimeout(r, 10));
+    const handBack = respond(deps, { ...inbound, text: "watch ready", messageTs: "500.2", unprompted: true });
+
+    await Promise.all([first, handBack]);
+    expect(posted.filter((t) => t.includes("yours is next") || t.includes("still on the one before"))).toEqual([]);
+  });
+
   test("a message dropped before it ran never reaches the brain", async () => {
     const runs = createRunRegistry();
     const seen: string[] = [];
