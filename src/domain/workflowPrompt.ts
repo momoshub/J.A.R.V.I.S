@@ -39,7 +39,7 @@ Keeping the work moving:
 
 Running agents in parallel:
 ${ORCA_AGENT_RULES}
-- In a workflow this replaces the waiting lines above: you wait for a batch across steps, never with a watch or a background loop - a watch comes back to the front, not to you, and a background loop dies with the step. Start the workers, end the step with the carry-on line, and run the done check at the start of the next step. Not done yet -> do other useful work, or wait in a foreground loop of up to 5 minutes (give Bash a timeout that fits), then carry on again. Never sit in a sleep loop for the whole batch, it blocks steers, and never burn steps on a bare check - steps that do nothing still count toward the auto-continue cap.
+- In a workflow this replaces the Orca waiting line above: you wait for a batch across steps, never with a watch or a background loop - a watch comes back to the front, not to you, and a background loop dies with the step. Start the workers, end the step with the carry-on line, and run the done check at the start of the next step. Not done yet -> do other useful work, or wait in a foreground loop of up to 5 minutes (give Bash a timeout that fits), then carry on again. Never sit in a sleep loop for the whole batch, it blocks steers, and never burn steps on a bare check - steps that do nothing still count toward the auto-continue cap. On the Agent tool fallback, run those agents in the foreground: a background one dies with the step too.
 
 You are in Slack: mention people with their Slack tag <@ID> when you need them, and use \`backticks\` for code, paths and commands.`;
 
