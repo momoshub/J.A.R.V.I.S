@@ -109,17 +109,15 @@ export const STANDALONE_REVIEW_RULE =
 
 export const selfUpdateRules = (repoPath?: string, restartScript?: string): string => {
   if (!repoPath || !restartScript) return "";
+  // The full procedure lives in a memory skill, so it costs a line here rather
+  // than a screen in every turn (owner's call). What stays is what must hold
+  // even when the skill is not read: the ways to break the bot or skip review.
   return `
 
 Working on your own source (${repoPath}):
-- you may read it like any other repository, but never edit it in place: other sessions share that folder, and two of them editing it at once is how changes get lost or tangled. It is Bun + TypeScript, functional, no classes, no \`any\`, and local imports carry \`.ts\`
-- every change goes this way: \`git fetch\`, \`git worktree add .claude/worktrees/<name> -b <branch> origin/main\`, edit and test there, push the branch, open a PR, get it reviewed by a standalone reviewer agent (next line), merge it yourself, then \`git -C ${repoPath} pull --no-rebase\` to bring it into the main folder, and only then restart
-- ${STANDALONE_REVIEW_RULE}
-- a PR description and commits carry no attribution at all: no "Generated with ..." line (Jarvis or Claude Code) and no co-author trailer
-- adjust or add tests with any behaviour change. A change with no test is a change nobody can keep
-- once it is pulled into the main folder, \`${restartScript}\` runs \`bun run typecheck\` and \`bun test\`, and only restarts you if BOTH pass. It will refuse on a red build, which is the point: you would come back into code that does not compile, and \`KeepAlive\` would restart you into it every fifteen seconds until a human walked to the machine
-- the restart waits a few seconds so your reply lands first, then holds until no turn is running in any thread, taking no new message meanwhile (they queue in the inbox, nothing is lost). If turns are still running after ${Math.round(RESTART_MAX_WAIT_MS / 60_000)} minutes it restarts anyway, and each turn it cut is picked up again by the new process on the same session. Say what you changed and that I restart once idle, then expect to be a new process - anything you were part-way through is gone
-- while I am running, never \`git stash\`, \`checkout\`, \`reset\` or \`rebase\` in a way that rewrites \`data/*.db\`. It swaps the live database file out from under me, SQLite fails with a disk I/O error and I crash mid-turn - yours included. Commit the database with plain \`git add\` + \`git commit\`, and if you must stash, leave it out with \`git stash push -- . ':!data'\`
-- never restart to "see if that fixed it". Run the checks, read what they say, and decide
-- a change left uncommitted in the main folder is not finished: it blocks the next pull and gets swept into someone else's commit`;
+- before changing it, read the skill in your memory about changing your own source: it holds the full procedure. The lines below always hold
+- never edit ${repoPath} in place, other sessions share it: \`git worktree add .claude/worktrees/<name> -b <branch> origin/main\`, docs and tests in the same PR, then a standalone reviewer agent (foreground, fresh context, never you) before you merge it yourself, then \`git -C ${repoPath} pull --no-rebase\` and \`${restartScript}\`, which only restarts you if typecheck and tests pass
+- PR descriptions and commits carry no attribution at all
+- while I am running, never \`git stash\`, \`checkout\`, \`reset\` or \`rebase\` over \`data/*.db\`: it swaps the live database out and I crash mid-turn
+- never restart to "see if that fixed it". Run the checks, read them, decide`;
 };
