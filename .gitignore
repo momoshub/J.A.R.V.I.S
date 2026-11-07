@@ -39,3 +39,7 @@ logs/threads/
 data/inbox.db
 data/inbox.db-shm
 data/inbox.db-wal
+
+# the memory adapter lives in the database (adapter_files); this is the copy
+# rendered from it on every write, so skills can be read by path
+data/adapter-mirror/

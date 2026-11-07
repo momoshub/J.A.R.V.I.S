@@ -136,9 +136,10 @@ const main = async () => {
   const users = createUserRepo(db);
   const messages = createMessageRepo(db);
   const learnings = createLearningsRepo(db);
-  // Memory as a checked directory rather than a growing list of rows. Optional:
-  // without an adapter.yaml at this path the bot keeps using `learnings`.
-  const adapterStore = createAdapterStore(config.adapterPath);
+  // Memory as a checked, versioned adapter in the database, mirrored to disk.
+  // `data/adapter` is where it used to live: imported once, while the table is
+  // still empty. With no adapter at all the bot keeps using `learnings`.
+  const adapterStore = createAdapterStore(db, config.adapterPath, join(import.meta.dir, "..", "data", "adapter"));
   const adapterRevisions = createAdapterRevisionRepo(db);
   const usage = createUsageRepo(db);
   const turns = createTurnLogRepo(db);
@@ -230,7 +231,7 @@ const main = async () => {
   const agentDesktop =
     Bun.which("agent-desktop", { PATH: `${process.env.PATH ?? ""}:/opt/homebrew/bin:/usr/local/bin` }) ?? undefined;
   // Real clicks and keystrokes for web content that ignores AXPress.
-  const browserScriptsDir = join(import.meta.dir, "..", "data", "adapter", "skills", "browser-ui-test", "scripts");
+  const browserScriptsDir = join(adapterStore.root, "skills", "browser-ui-test", "scripts");
   const browserScripts = ["click.js", "keys.js", "press-exact.js"].map((f) => join(browserScriptsDir, f));
   // Posts a file into a thread, so a sandboxed role can share a screenshot.
   const uploadScript = join(import.meta.dir, "..", "bin", "slack-upload.sh");

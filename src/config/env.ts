@@ -60,10 +60,11 @@ const schema = z
     // are always allowed.
     DASHBOARD_ALLOWED_ORIGINS: z.string().optional(),
     DATABASE_PATH: z.string().default("data/bot.db"),
-    // The memory adapter: a Hermit-shaped directory of policy, scoped notes and
-    // skills that replaces the flat learnings list. Unset, or pointing at a
-    // directory with no adapter.yaml, and the bot falls back to that list.
-    ADAPTER_PATH: z.string().default("data/adapter"),
+    // Where the memory adapter is mirrored on disk. The adapter itself lives in
+    // the database (`adapter_files`); this directory is re-rendered from it on
+    // every write so skills and their scripts can be read by path. Never edit
+    // it - use `adapter export` / `adapter import`.
+    ADAPTER_PATH: z.string().default("data/adapter-mirror"),
     // Bytes of the adapter that may load into EVERY prompt. A refine pass must
     // come in under it; teaching may exceed it and says so.
     ADAPTER_BUDGET: z.coerce.number().int().positive().default(8000),
@@ -111,7 +112,7 @@ export type AppConfig = {
   dashboardPort: number;
   dashboardAllowedOrigins: string[];
   databasePath: string;
-  /** Directory of the memory adapter; empty or missing falls back to learnings. */
+  /** Mirror directory of the memory adapter, rendered from the database. */
   adapterPath: string;
   /** Bytes of the adapter allowed to load into every prompt. */
   adapterBudget: number;

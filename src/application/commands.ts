@@ -1206,7 +1206,7 @@ export const COMMANDS: readonly CommandDef[] = [
     name: "adapter",
     aliases: ["memory"],
     minRole: "admin",
-    usage: "[status|check|history|refine [note]|revert <id>|migrate]",
+    usage: "[status|check|history|refine [note]|revert <id>|export|import <dir>|migrate]",
     summary: "inspect and curate what I remember",
     run: async (ctx) => {
       const { deps, actor, args, rest, prefix, reply, channelId } = ctx;
@@ -1260,7 +1260,32 @@ export const COMMANDS: readonly CommandDef[] = [
         ].join("\n");
       }
 
-      if (sub !== "refine") return `Which one? \`${prefix} adapter [status|check|history|refine|revert <id>|migrate]\``;
+      // Memory lives in the database, so a hand edit (a new skill, a fixed
+      // note) goes out to a copy and comes back through the same gate and
+      // revision log a refine pass does. Editing the mirror changes nothing.
+      if (sub === "export") {
+        const dir = a.store.stage();
+        return `Exported to \`${dir}\`. Edit it there, then \`${prefix} adapter import ${dir}\`.`;
+      }
+
+      if (sub === "import") {
+        const dir = args[1];
+        if (!dir) return `From where? \`${prefix} adapter import <dir>\` (start from \`${prefix} adapter export\`)`;
+        const next = a.store.collect(dir);
+        if (next.size === 0) return `Nothing to import in \`${dir}\`.`;
+        const result = commitAdapter(a, next, { reason: `import by ${actor.slackId}`, actor: actor.slackId });
+        if (!result.ok) return `Could not import:\n${result.violations.map((v) => `- ${v}`).join("\n")}`;
+        a.store.discard(dir);
+        return [
+          `Imported${result.revision ? ` (#${result.revision})` : ""}.`,
+          ...result.warnings.map((w) => `:warning: ${w}`),
+          "",
+          adapterStatus(a),
+        ].join("\n");
+      }
+
+      if (sub !== "refine")
+        return `Which one? \`${prefix} adapter [status|check|history|refine|revert <id>|export|import <dir>|migrate]\``;
 
       if (!deps.llm) return "My brain is not wired up right now.";
       const note = rest.slice(rest.toLowerCase().indexOf("refine") + "refine".length).trim();
