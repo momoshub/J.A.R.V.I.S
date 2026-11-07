@@ -20,11 +20,12 @@ Always run `bun run typecheck` AND `bun test` before considering a change done. 
 
 ## Architecture (clean, layered - dependencies point inward)
 
-- `src/domain` - pure logic, no I/O: `types`, `access` (roles), `conversation`, `mentions`, `personality`, `toolPolicy`, `reviewPrompt`, `emoji`, `slackLinks`, `adapter` + `adapterCheck` + `refinePrompt` (memory)
-- `src/application` - use cases + ports: `ports` (`LlmPort`), `handleMessage`, `respond`, `commands` (registry), `botProfile`, `slackAdmin`, `draftReply`, `adapterMemory`
-- `src/infrastructure` - adapters: `db/*` (bun:sqlite repos + schema/migration), `llm/claudeCli` + `llm/anthropic`, `slack/app` + `slack/adminClient` + `slack/stream`, `dashboard/server`, `adapter/adapterStore`
+- Two processes: `src/gateway.ts` holds the Slack socket and writes every envelope to `data/inbox.db`, and never restarts; `src/index.ts` is the bot (`SLACK_TRANSPORT=inbox`), reads the inbox, runs one turn per thread on its own `claude --resume` session, and is the one that restarts
+- `src/domain` - pure logic, no I/O: `types`, `access` + `toolPolicy` (roles), `conversation`, `mentions`, `personality`, `inbox`, `connectionHealth`, `watch`/`reminder`/`selfUpdate`/`runControl`, `*Prompt` (preset tasks), `blockKit`/`slackFormat`/`slackLinks`, `adapter` + `adapterCheck` (memory)
+- `src/application` - use cases + ports: `ports` (`LlmPort`), `respond`, `handleMessage`, `commands` + `commandTickets` + `commandLimits` + `brainRun`, `threadQueue` + `runRegistry`, the timers (`watcher`, `reminders`, `reviewInbox`, `reviewGuard`, `innerChild`), `workflow*`, `accessRequests`, `adapterMemory`, `botProfile`, `slackAdmin`, `draftReply`
+- `src/infrastructure` - adapters: `slack/*` (`gateway`, `inboxReceiver`, `app`, `stream`, `adminClient`), `inbox/inboxRepo`, `db/*` (bun:sqlite repos + schema/migration), `llm/claudeCli` + `llm/anthropic`, `github/*`, `system/*` (host probes), `dashboard/server`, `adapter/adapterStore`
 - `src/config/env.ts` - zod-validated env, fails fast
-- `src/index.ts` - the only composition root; wires everything
+- Composition roots: `src/index.ts` wires the bot, `src/gateway.ts` reads only `SLACK_APP_TOKEN` + the inbox path so a new bot setting can never stop the gateway from starting
 - `web/` - React 19 + Vite + React Router 7 dashboard (JSON API under `/api`)
 - Full docs: `README.md`, `ARCHITECTURE.md`
 
