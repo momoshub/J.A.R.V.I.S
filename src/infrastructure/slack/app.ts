@@ -332,17 +332,6 @@ export type Incoming = {
 };
 
 /**
- * Whether the reply should also show up in the channel, not just the thread.
- *
- * The bot always answers in a thread (streaming needs a ts to anchor to), so a
- * question asked at top level would otherwise get an answer nobody sees without
- * opening the thread. When the bot is the one who opened that thread, broadcast.
- * Inside an existing thread everyone is already looking, so stay quiet there.
- */
-export const shouldBroadcast = (m: { threadTs: string; messageTs: string }): boolean =>
-  m.threadTs === m.messageTs;
-
-/**
  * Build the transport-agnostic message handler. Exported so it can be tested
  * with fake clients/streamers without standing up a real Slack connection.
  */
@@ -443,7 +432,6 @@ export const createHandler =
       // Always finish, started or not: an unfired placeholder timer is still
       // armed, and only finishing cancels it.
       const streamed = stream ? await stream.finish() : false;
-      const broadcast = shouldBroadcast(msg);
       const parts = stream?.parts ?? [];
       const fail = (e: unknown) => log(`collapse failed: ${e instanceof Error ? e.message : String(e)}`);
       const collapsed = collapseSteps(stream?.steps ?? []);
@@ -473,11 +461,6 @@ export const createHandler =
         for (const part of rest) {
           await msg.client.chat.delete?.({ channel: msg.channelId, ts: part.ts }).catch(fail);
         }
-        if (broadcast) {
-          await msg.client.chat
-            .update({ channel: msg.channelId, ts: first.ts, reply_broadcast: true })
-            .catch((e: unknown) => log(`broadcast failed: ${e instanceof Error ? e.message : String(e)}`));
-        }
         return true;
       };
       // A stream that showed no words - only cards, or only a note about not
@@ -489,13 +472,6 @@ export const createHandler =
         if (await rewriteDeadStream()) return;
       }
       if (streamed) {
-        // chat.startStream takes no reply_broadcast, so promote the finished
-        // message instead. Sending no content leaves the streamed blocks intact.
-        if (broadcast && stream?.ts) {
-          await msg.client.chat
-            .update({ channel: msg.channelId, ts: stream.ts, reply_broadcast: true })
-            .catch((e: unknown) => log(`broadcast failed: ${e instanceof Error ? e.message : String(e)}`));
-        }
         // The work is done, so the column of tool cards above the answer is
         // just something to scroll past. Replace it with one line, keeping any
         // step that FAILED - that is the part somebody may have to act on.
@@ -538,7 +514,7 @@ export const createHandler =
         // markdown blocks around them; anything else stays a plain text post.
         // Blocks Slack refuses (`invalid_blocks`) fall back to the plain post.
         const rich = toBlockMessage(result.text, toMrkdwn);
-        const extra = { thread_ts: msg.threadTs, ...(broadcast ? { reply_broadcast: true } : {}) };
+        const extra = { thread_ts: msg.threadTs };
         const plain = () => msg.say({ text: toMrkdwn(result.text), ...extra });
         if (rich) await msg.say({ ...rich, ...extra }).catch(plain);
         else await plain();

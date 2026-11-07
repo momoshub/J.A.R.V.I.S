@@ -150,7 +150,7 @@ describe("createHandler streaming truth table", () => {
       rec,
     });
     await handle(msg("hi"));
-    expect(said).toEqual([{ text: "full reply", reply_broadcast: true }]);
+    expect(said).toEqual([{ text: "full reply" }]);
   });
 
   test("a stream Slack already closed is rewritten into the answer, not posted again", async () => {
@@ -233,17 +233,17 @@ describe("createHandler streaming truth table", () => {
       streamUpdates: false,
     });
     await handle(msg("hi"));
-    expect(said).toEqual([{ text: "plain post", reply_broadcast: true }]);
+    expect(said).toEqual([{ text: "plain post" }]);
     expect(rec.stops).toBe(0);
   });
 
-  test("a thread the bot opened gets broadcast to the channel", async () => {
+  test("a thread the bot opened stays in the thread - broadcast is the owner's reaction", async () => {
     const { handle, msg, updates } = build({
       llm: streamingLlm("hello there", [{ type: "text", delta: "hello there" }]),
       streamUpdates: true,
     });
     await handle(msg("hi"));
-    expect(updates).toEqual([{ channel: "C1", ts: "222.2", reply_broadcast: true }]);
+    expect(updates).toHaveLength(0);
   });
 
   test("a reply inside an existing thread stays in the thread", async () => {
