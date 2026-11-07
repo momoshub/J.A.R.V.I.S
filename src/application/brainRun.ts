@@ -48,10 +48,17 @@ export const runForBrain = async (deps: BrainRunDeps): Promise<BrainRunOutcome> 
     await deps.post(settled.text);
     return { result: settled.text, posted: true };
   }
+  // Nobody is waiting on it any more, so a failure has to be SAID in the
+  // thread. Logged only, the thread sat on "investigating" for good and the
+  // next turn, seeing no result, quietly ran the whole job again.
   run
     .then((text) => {
       if (text.trim()) return deps.post(text);
     })
-    .catch(deps.onLateError);
+    .catch((e: unknown) => {
+      deps.onLateError(e);
+      const why = (e instanceof Error ? e.message : String(e)).slice(0, 300);
+      return deps.post(`⚠️ that one stopped without a result - ${why}`).catch(() => undefined);
+    });
   return { result: STARTED_MESSAGE, posted: true };
 };
