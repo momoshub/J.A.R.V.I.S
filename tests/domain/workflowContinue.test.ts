@@ -75,6 +75,8 @@ describe("prompt and notice", () => {
     expect(p).toContain("never through the Workflow tool");
     expect(p).toContain("orca orchestration run-create");
     expect(p).toContain("run the done check at the start of the next step");
+    expect(p).toContain("never with a watch");
+    expect(p).toContain("bounded loop of up to 5 minutes");
   });
 
   test("the paused notice says how to resume", () => {
