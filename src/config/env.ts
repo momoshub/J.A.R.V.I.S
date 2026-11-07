@@ -4,7 +4,13 @@
  * Fails fast with a readable message if something required is missing, so the bot
  * never limps along half-configured.
  */
+import { homedir } from "node:os";
+import { join } from "node:path";
 import { z } from "zod";
+import { parseAllowedOwners } from "../domain/githubApp.ts";
+
+/** Where the GitHub App's credentials live by default: outside the repo, never in `.env`. */
+export const GITHUB_APP_DIR = join(homedir(), ".config", "jarvis", "github-app");
 
 const boolFromString = (def: boolean) =>
   z
@@ -83,6 +89,26 @@ const schema = z
     // Channel that gets the one restart notice listing the waiting threads.
     // Unset: nobody is told.
     DRAIN_NOTICE_CHANNEL: z.string().optional(),
+
+    // GitHub App: people call the bot from an issue/PR (mention or label) and
+    // the answer is posted back there as the app. Started only when the app id,
+    // the private key and the webhook secret can all be found.
+    // App id. Unset: read from `app.json` beside the private key.
+    GITHUB_APP_ID: z.string().optional(),
+    // PEM private key of the app (RS256 JWT -> installation token).
+    GITHUB_APP_PRIVATE_KEY_PATH: z.string().default(join(GITHUB_APP_DIR, "private-key.pem")),
+    // Webhook secret. Prefer the file; the variable wins when both are set.
+    GITHUB_APP_WEBHOOK_SECRET: z.string().optional(),
+    GITHUB_APP_WEBHOOK_SECRET_PATH: z.string().default(join(GITHUB_APP_DIR, "webhook-secret")),
+    // Loopback port of the webhook listener (Tailscale Funnel proxies to it).
+    GITHUB_APP_PORT: z.coerce.number().int().positive().default(2003),
+    // App slug: `@<slug>` in a comment calls it, `<slug>[bot]` is itself.
+    GITHUB_APP_SLUG: z.string().default("jarvis-at-acme"),
+    // The app is public, so it only acts for repositories owned by these
+    // accounts (comma separated). Everything else is logged and ignored.
+    GITHUB_APP_ALLOWED_OWNERS: z.string().default("acme"),
+    // Label that calls the app when added to an issue or PR.
+    GITHUB_APP_LABEL: z.string().default("jarvis"),
   })
   .refine((env) => env.LLM_PROVIDER !== "anthropic" || !!env.ANTHROPIC_API_KEY, {
     message: "ANTHROPIC_API_KEY is required when LLM_PROVIDER=anthropic",
@@ -126,6 +152,16 @@ export type AppConfig = {
   logDir: string;
   /** Channel for the restart notice listing waiting threads; unset is silent. */
   drainNoticeChannel?: string;
+  githubApp: {
+    appId?: string;
+    privateKeyPath: string;
+    webhookSecret?: string;
+    webhookSecretPath: string;
+    port: number;
+    slug: string;
+    allowedOwners: string[];
+    label: string;
+  };
 };
 
 /** A short human label for the active model, shown on the dashboard. */
@@ -176,5 +212,15 @@ export const loadConfig = (source: Record<string, string | undefined> = process.
     tokenKeyPath: env.TOKEN_KEY_PATH,
     logDir: env.LOG_DIR,
     ...(env.DRAIN_NOTICE_CHANNEL ? { drainNoticeChannel: env.DRAIN_NOTICE_CHANNEL } : {}),
+    githubApp: {
+      ...(env.GITHUB_APP_ID?.trim() ? { appId: env.GITHUB_APP_ID.trim() } : {}),
+      privateKeyPath: env.GITHUB_APP_PRIVATE_KEY_PATH,
+      ...(env.GITHUB_APP_WEBHOOK_SECRET ? { webhookSecret: env.GITHUB_APP_WEBHOOK_SECRET } : {}),
+      webhookSecretPath: env.GITHUB_APP_WEBHOOK_SECRET_PATH,
+      port: env.GITHUB_APP_PORT,
+      slug: env.GITHUB_APP_SLUG.trim(),
+      allowedOwners: parseAllowedOwners(env.GITHUB_APP_ALLOWED_OWNERS),
+      label: env.GITHUB_APP_LABEL.trim(),
+    },
   };
 };

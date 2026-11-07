@@ -56,19 +56,33 @@ export type ReviewInboxDeps = {
 
 export type ReviewInbox = { tick: () => Promise<void> };
 
+export type GithubIdentityDeps = {
+  settings: { get: (key: string) => string | undefined };
+  githubName: (login: string) => Promise<string | undefined>;
+  users: { list: () => AllowedUser[] };
+};
+
+/**
+ * The Slack id a GitHub login belongs to: an explicit `github_login:` link
+ * first, otherwise exactly one allowlisted display name matching the GitHub
+ * name or login. Shared by everything that runs work on GitHub's say-so (the
+ * review inbox, the GitHub App), because a wrong answer spends somebody else's
+ * token.
+ */
+export const slackIdOfGithub = async (deps: GithubIdentityDeps, login: string): Promise<string | undefined> => {
+  const linked = deps.settings.get(githubLinkKey(login))?.trim();
+  if (linked) return linked;
+  const name = await deps.githubName(login).catch(() => undefined);
+  const candidates = deps.users.list().map((u) => ({ slackId: u.slackId, displayName: u.displayName }));
+  return matchByName(login, name, candidates);
+};
+
 export const createReviewInbox = (deps: ReviewInboxDeps): ReviewInbox => {
   const log = deps.log ?? (() => {});
   let running = false;
   let lastPoll = 0;
 
-  /** Explicit link first; otherwise one unique name match among people on the list. */
-  const slackIdOf = async (login: string): Promise<string | undefined> => {
-    const linked = deps.settings.get(githubLinkKey(login))?.trim();
-    if (linked) return linked;
-    const name = await deps.githubName(login).catch(() => undefined);
-    const candidates = deps.users.list().map((u) => ({ slackId: u.slackId, displayName: u.displayName }));
-    return matchByName(login, name, candidates);
-  };
+  const slackIdOf = (login: string) => slackIdOfGithub(deps, login);
 
   const handle = async (channel: string, account: string, r: ReviewRequest): Promise<void> => {
     const slackId = await slackIdOf(r.requester);

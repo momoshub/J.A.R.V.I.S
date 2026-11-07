@@ -46,6 +46,11 @@ import { createWatcher } from "./application/watcher.ts";
 import { createReviewGuard } from "./application/reviewGuard.ts";
 import { createReviewInbox } from "./application/reviewInbox.ts";
 import { createGhReviewRequests } from "./infrastructure/github/reviewRequests.ts";
+import { createGithubApp, type GithubApp } from "./application/githubApp.ts";
+import { createGithubAppClient } from "./infrastructure/github/appClient.ts";
+import { loadGithubAppCredentials, webhookSecretOf } from "./infrastructure/github/appCredentials.ts";
+import { startWebhookServer } from "./infrastructure/github/webhookServer.ts";
+import { createGithubAppRepo } from "./infrastructure/db/githubAppRepo.ts";
 import { createInnerChild } from "./application/innerChild.ts";
 import { createSelfIssueRepo } from "./infrastructure/db/selfIssueRepo.ts";
 import { NO_TOOLS } from "./domain/toolPolicy.ts";
@@ -240,6 +245,8 @@ const main = async () => {
   // `-p` spawn does not.
   const artifactScript = join(import.meta.dir, "..", "bin", "artifact-read.sh");
   const restartScript = join(import.meta.dir, "..", "bin", "jarvis-restart.sh");
+  // Posts a turn's answer to the GitHub issue its thread was opened for, as the app.
+  const githubCommentScript = join(import.meta.dir, "..", "bin", "github-app-comment.sh");
   const repoPath = join(import.meta.dir, "..");
   // Model per role: a dashboard/command override wins, otherwise the env value,
   // otherwise the adapter default. Read per call so a change needs no restart.
@@ -266,6 +273,7 @@ const main = async () => {
       agentDesktop,
       browserScripts,
       uploadScript,
+      githubCommentScript,
       models: modelsForRoles(),
       protectedPaths: [repoPath],
       executerTools: (settings.get(SETTING_KEYS.executerTools) ?? "")
@@ -510,6 +518,8 @@ const main = async () => {
     requestRestart("database file was replaced on disk (SQLITE_IOERR_VNODE)");
   };
 
+  // Set once the GitHub App is wired below; the dashboard reaches it through this.
+  let githubApp: GithubApp | undefined;
   const dashboard = createDashboard(
     {
       port: config.dashboardPort,
@@ -587,6 +597,21 @@ const main = async () => {
           handoffMs: RUN_HANDOFF_MS,
           onLateError: (e) => activity.error("command_failed", { command: line, result: String(e) }),
         });
+      },
+      // A GitHub-called turn answers on GitHub. The ticket names the thread,
+      // and the thread decides which issue may be written - never the turn.
+      githubComment: async ({ ticket, repo, number, body }) => {
+        if (!githubApp) throw new Error("the GitHub App is not configured");
+        const resolved = commandTickets.redeem(ticket);
+        if (!resolved.ok) throw new Error(refusalMessage(resolved.reason, resolved.limit));
+        const url = await githubApp.commentFromTurn({
+          channelId: resolved.ctx.channel,
+          threadTs: resolved.ctx.threadTs,
+          repo,
+          number,
+          body,
+        });
+        return url ? { url } : {};
       },
     },
   );
@@ -706,6 +731,64 @@ const main = async () => {
     prefix: config.commandPrefix,
     log: (msg) => console.error(`[review-inbox] ${msg}`),
   });
+  // Calls from GitHub (a mention of the app, or its label) over a loopback
+  // webhook that Tailscale Funnel exposes. Off unless the app's id, key and
+  // webhook secret are all on disk / in env.
+  const appCreds = loadGithubAppCredentials(config.githubApp);
+  let webhookServer: { stop: () => void } | undefined;
+  if (appCreds.ok) {
+    const creds = appCreds.creds;
+    const appClient = createGithubAppClient({
+      appId: creds.appId,
+      privateKey: creds.privateKey,
+      userAgent: config.githubApp.slug || "github-app",
+    });
+    const app = createGithubApp({
+      clock,
+      repo: createGithubAppRepo(db),
+      github: appClient,
+      slug: config.githubApp.slug,
+      label: config.githubApp.label,
+      allowedOwners: config.githubApp.allowedOwners,
+      channel: () =>
+        settings.get(SETTING_KEYS.githubAppChannel)?.trim() || settings.get(SETTING_KEYS.reviewInboxChannel)?.trim() || "",
+      settings,
+      users,
+      post: async (channel, text, thread) => (await slackAdmin.post(channel, text, thread))?.ts,
+      // The ordinary respond path as the caller: same queue, session, role
+      // and token. Its reply goes in the thread like any turn's, and back to
+      // the caller so a turn that never used the helper is still answered.
+      runTurn: async ({ actor, channelId, threadTs, text }) => {
+        const result = await respond(deps, {
+          channelId,
+          slackUserId: actor.slackId,
+          text,
+          threadTs,
+          messageTs: syntheticTs(clock()),
+          viaSlash: false,
+          following: false,
+        });
+        if (result.kind === "ignored") return "";
+        if (result.text.trim() && !isSilenceNote(result.text)) await slackAdmin.post(channelId, result.text, threadTs);
+        return result.text;
+      },
+      helperPath: githubCommentScript,
+      prefix: config.commandPrefix,
+      draining: () => draining,
+      log: (msg) => console.error(`[github-app] ${msg}`),
+    });
+    githubApp = app;
+    app.recover();
+    webhookServer = startWebhookServer({
+      port: config.githubApp.port,
+      secret: () => webhookSecretOf(creds),
+      onDelivery: app.receive,
+      log: (msg) => console.error(`[github-app] ${msg}`),
+    });
+    console.log(`[github-app] listening on 127.0.0.1:${config.githubApp.port} as @${config.githubApp.slug}`);
+  } else {
+    console.log(`[github-app] off - missing ${appCreds.missing.join(", ")}`);
+  }
   const pendingReminders = reminders.waiting().length;
   if (pendingReminders > 0) console.log(`[remind] ${pendingReminders} reminder(s) waiting from before the restart`);
   // Workflows a restart caught between two steps carry on where they were.
@@ -772,6 +855,8 @@ const main = async () => {
     void watcher.tick().catch(tickFailed("watch"));
     void innerChild.tick().catch(tickFailed("inner-child"));
     void reviewInbox.tick().catch(tickFailed("review-inbox"));
+    // Calls that arrived while a restart drained, or a previous process left.
+    void githubApp?.tick().catch(tickFailed("github-app"));
   }, WATCH_TICK_MS);
   (watchTimer as { unref?: () => void }).unref?.();
 
@@ -779,6 +864,7 @@ const main = async () => {
     console.log("\nShutting down ...");
     clearInterval(watchTimer);
     dashboard.stop();
+    webhookServer?.stop();
     await slack.stop();
     inbox?.close();
     db.close();

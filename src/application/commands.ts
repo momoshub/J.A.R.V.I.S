@@ -2240,6 +2240,35 @@ export const COMMANDS: readonly CommandDef[] = [
     },
   },
   {
+    name: "github-app",
+    minRole: "pal",
+    usage: "| channel <#channel>|off",
+    summary: "where calls from the GitHub App (an @mention or the label on an issue/PR) are posted and run",
+    run: ({ deps, actor, args, prefix }) => {
+      const settings = deps.settings;
+      if (!settings) return "I have nowhere to keep settings right now.";
+      const sub = (args[0] ?? "").toLowerCase();
+      if (sub === "channel") {
+        if (RANK[actor.role] < RANK.admin) return "Only admins can move where GitHub calls land.";
+        const raw = args[1] ?? "";
+        if (/^(off|none|default)$/i.test(raw)) {
+          settings.remove(SETTING_KEYS.githubAppChannel);
+          return "GitHub App calls fall back to the review inbox channel now";
+        }
+        const id = raw.match(/^<#([CG][A-Z0-9]+)(?:\|[^>]*)?>$/)?.[1] ?? raw.match(/^[CG][A-Z0-9]+$/)?.[0];
+        if (!id) return `Which channel? \`${prefix} github-app channel #channel\``;
+        settings.set(SETTING_KEYS.githubAppChannel, id);
+        return `calls from GitHub now land in <#${id}> and run there as whoever called`;
+      }
+      const own = settings.get(SETTING_KEYS.githubAppChannel)?.trim();
+      const fallback = settings.get(SETTING_KEYS.reviewInboxChannel)?.trim();
+      const channel = own || fallback;
+      return channel
+        ? `calls from GitHub land in <#${channel}>${own ? "" : " (the review inbox channel)"}; people are matched with \`${prefix} review-inbox link <github-login>\``
+        : `no channel for GitHub calls - \`${prefix} github-app channel #channel\``;
+    },
+  },
+  {
     name: "review-policy",
     aliases: ["rvpolicy", "repo-policy"],
     minRole: "admin",
