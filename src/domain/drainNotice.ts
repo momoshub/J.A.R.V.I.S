@@ -59,7 +59,13 @@ export const drainNotice = (info?: DrainInfo): string => {
  * Only message events have a thread worth answering in: an interactive press
  * or a slash command is its own thing, and a notice about a restart posted
  * into one would land where nobody is looking.
+ *
+ * And only a 1:1 DM gets one. In a channel or a group DM the notice is noise
+ * for everyone else in it, so the owner asked for it to stay out of them.
  */
+const isDirectMessage = (event: Record<string, unknown>, channel: string): boolean =>
+  typeof event.channel_type === "string" ? event.channel_type === "im" : channel.startsWith("D");
+
 const ASKING_SUBTYPES: ReadonlySet<string> = new Set(["file_share", "thread_broadcast"]);
 
 export const envelopeThread = (
@@ -75,6 +81,7 @@ export const envelopeThread = (
   if (typeof event.subtype === "string" && !ASKING_SUBTYPES.has(event.subtype)) return undefined;
   const channel = typeof event.channel === "string" ? event.channel : "";
   if (!channel) return undefined;
+  if (!isDirectMessage(event, channel)) return undefined;
   const threadTs = typeof event.thread_ts === "string" ? event.thread_ts : undefined;
   return { channel, ...(threadTs ? { threadTs } : {}) };
 };
