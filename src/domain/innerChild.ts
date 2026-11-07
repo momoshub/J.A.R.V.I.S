@@ -188,6 +188,7 @@ export const fixPrompt = (i: IssueBrief, sourceDir: string, restartScript: strin
     "- in the worktree run `bun run typecheck` and `bun test`. if they do not pass, push nothing, remove the worktree and report that",
     `- when they pass: commit (no co-author line), push the branch and open a PR`,
     `- ${STANDALONE_REVIEW_RULE}`,
+    "- if the reviewer is still not clean after 3 rounds, merge nothing, leave the PR open, remove the worktree, and end with RESULT: not fixed naming the PR and what is open",
     `- then merge it yourself - the repo has no CI, the checks you ran and the reviewer are the gate. the PR body carries no attribution line, no "Generated with ..." of any kind`,
     `- then bring it home: \`git -C ${sourceDir} pull --ff-only origin main\`. the main folder may hold someone else's uncommitted work - never revert, reset, stash or rewrite it. if the pull is refused, stop and report that`,
     `- remove the worktree, then run ${restartScript}`,

@@ -38,8 +38,19 @@ describe("selfUpdateRules", () => {
   test("every fix is reviewed by a standalone agent before it is merged", () => {
     expect(rules).toContain(STANDALONE_REVIEW_RULE);
     expect(rules).toContain("never the session that wrote the code");
-    // and the step sits in the flow before the merge
-    expect(rules.indexOf("standalone reviewer agent")).toBeLessThan(rules.indexOf("merge it yourself"));
+    // in the foreground, so the turn cannot end before the review is in
+    expect(rules).toContain("run_in_background: false");
+    // a fix made after review is checked again before it can merge
+    expect(STANDALONE_REVIEW_RULE.indexOf("re-run `bun run typecheck` and `bun test`")).toBeGreaterThan(
+      STANDALONE_REVIEW_RULE.indexOf("Fix every real finding"),
+    );
+    // and the loop is bounded, with a way out that is not a merge
+    expect(STANDALONE_REVIEW_RULE).toContain("At most 3 review rounds");
+    expect(STANDALONE_REVIEW_RULE).toContain("do not merge - leave the PR open");
+    // the step sits in the flow before the merge, and the rule before the restart
+    const flow = rules.split("\n").find((l) => l.includes("every change goes this way")) ?? "";
+    expect(flow.indexOf("standalone reviewer agent")).toBeLessThan(flow.indexOf("merge it yourself"));
+    expect(rules.indexOf(STANDALONE_REVIEW_RULE)).toBeLessThan(rules.indexOf("once it is pulled into the main folder"));
   });
 
   test("with no repo or no helper, there is no block at all", () => {

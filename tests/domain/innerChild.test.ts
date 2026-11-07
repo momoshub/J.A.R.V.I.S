@@ -102,6 +102,8 @@ describe("messages", () => {
     // a standalone reviewer reads the PR before it is merged
     expect(text).toContain(STANDALONE_REVIEW_RULE);
     expect(text.indexOf(STANDALONE_REVIEW_RULE)).toBeLessThan(text.indexOf("then merge it yourself"));
+    // a review that never comes back clean ends the fix unmerged, with a result line
+    expect(text).toContain("still not clean after 3 rounds, merge nothing");
   });
 
   test("after notices", () => {

@@ -105,7 +105,7 @@ export const restartWhenIdle = (deps: IdleRestartDeps): void => {
  * cold is the only review a self-merged repo gets.
  */
 export const STANDALONE_REVIEW_RULE =
-  "before you merge, a standalone reviewer agent reviews the PR - every fix, no exceptions. Spawn a separate agent (the Agent tool, fresh context, never the session that wrote the code) with the PR url and what the change is for. It reads the diff cold and reports correctness bugs, regressions, missing tests and stale docs. Fix every real finding on the branch and run the reviewer again until it comes back clean, and say in your reply what it found. Never merge before that";
+  "before you merge, a standalone reviewer agent reviews the PR - every fix, no exceptions. Spawn a separate agent with the Agent tool in the FOREGROUND (`run_in_background: false`), never a fork and never the session that wrote the code, give it the PR url and what the change is for, and wait for its report before doing anything else. It reads the diff cold and reports correctness bugs, regressions, missing tests and stale docs. Fix every real finding on the branch, re-run `bun run typecheck` and `bun test`, push, and run a fresh reviewer again. Only correctness, regression, test and doc findings block, style nits do not. At most 3 review rounds: if it is still not clean after the third, do not merge - leave the PR open, link it and say what is still open. Say in your reply what the reviewer found. Never merge before a clean review";
 
 export const selfUpdateRules = (repoPath?: string, restartScript?: string): string => {
   if (!repoPath || !restartScript) return "";
