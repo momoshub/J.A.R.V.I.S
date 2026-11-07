@@ -1,7 +1,9 @@
 import { describe, expect, test } from "bun:test";
 import { type Adapter, adapterRules, parseManifest } from "../../src/domain/adapter.ts";
 import { buildSystemPrompt } from "../../src/domain/personality.ts";
+import { createHash } from "node:crypto";
 import { promptFingerprint } from "../../src/domain/promptFingerprint.ts";
+import { selfUpdateRules } from "../../src/domain/selfUpdate.ts";
 
 const adapter = (over: Partial<Adapter> = {}): Adapter => ({
   manifest: parseManifest({
@@ -93,5 +95,45 @@ describe("the fingerprint and the adapter", () => {
 
   test("neither does a note about one person or channel", () => {
     expect(fp(adapter())).toBe(fp(adapter({ people: new Map([["U7", "- changed"]]), channels: new Map() })));
+  });
+});
+
+describe("the fingerprint and the short self-update block", () => {
+  test("the short block a turn with a visible skill gets is part of the hash", () => {
+    // the sentinels carry no adapter, so the build renders the full block; the
+    // short one must be hashed on its own or a change to it never reopens a thread
+    const build = () => "prompt";
+    const hash = (...parts: string[]) => {
+      const h = createHash("sha256");
+      for (const p of parts) h.update(p);
+      return h.digest("hex").slice(0, 16);
+    };
+    const short = selfUpdateRules("/fp/repo", "/fp/restart", true);
+    expect(short).toContain("read the skill in your memory");
+    expect(promptFingerprint(build, "persona")).toBe(hash("prompt", "", short));
+    expect(promptFingerprint(build, "persona")).not.toBe(hash("prompt", ""));
+  });
+});
+
+describe("self-fixing follows whether a skill can be read", () => {
+  const self = { repoPath: "/repo", restartScript: "/bin/restart.sh" };
+  const POINTER = "read the skill in your memory about changing your own source";
+  const FULL = "holds until no turn is running in any thread";
+
+  test("with visible skills the prompt points at the skill", () => {
+    const prompt = buildSystemPrompt({ ...self, adapter: adapter() });
+    expect(prompt).toContain(POINTER);
+    expect(prompt).not.toContain(FULL);
+  });
+
+  test("with no adapter, no skills or skills hidden, the full block stays", () => {
+    for (const prompt of [
+      buildSystemPrompt({ ...self }),
+      buildSystemPrompt({ ...self, adapter: adapter({ skills: [] }) }),
+      buildSystemPrompt({ ...self, adapter: adapter(), adapterScope: { canReadFiles: false } }),
+    ]) {
+      expect(prompt).toContain(FULL);
+      expect(prompt).not.toContain(POINTER);
+    }
   });
 });

@@ -107,9 +107,7 @@ export const restartWhenIdle = (deps: IdleRestartDeps): void => {
 export const STANDALONE_REVIEW_RULE =
   "before you merge, a standalone reviewer agent reviews the PR - every fix, no exceptions. Spawn a separate agent with the Agent tool in the FOREGROUND (`run_in_background: false`), never a fork and never the session that wrote the code, give it the PR url and what the change is for, and wait for its report before doing anything else. It reads the diff cold and reports correctness bugs, regressions, missing tests and stale docs. Fix every real finding on the branch, re-run `bun run typecheck` and `bun test`, push, and run a fresh reviewer again. Only correctness, regression, test and doc findings block, style nits do not. At most 3 review rounds: if it is still not clean after the third, do not merge - leave the PR open, link it and say what is still open. Say in your reply what the reviewer found. Never merge before a clean review";
 
-export const selfUpdateRules = (repoPath?: string, restartScript?: string): string => {
-  if (!repoPath || !restartScript) return "";
-  return `
+const fullRules = (repoPath: string, restartScript: string): string => `
 
 Working on your own source (${repoPath}):
 - you may read it like any other repository, but never edit it in place: other sessions share that folder, and two of them editing it at once is how changes get lost or tangled. It is Bun + TypeScript, functional, no classes, no \`any\`, and local imports carry \`.ts\`
@@ -122,4 +120,27 @@ Working on your own source (${repoPath}):
 - while I am running, never \`git stash\`, \`checkout\`, \`reset\` or \`rebase\` in a way that rewrites \`data/*.db\`. It swaps the live database file out from under me, SQLite fails with a disk I/O error and I crash mid-turn - yours included. Commit the database with plain \`git add\` + \`git commit\`, and if you must stash, leave it out with \`git stash push -- . ':!data'\`
 - never restart to "see if that fixed it". Run the checks, read what they say, and decide
 - a change left uncommitted in the main folder is not finished: it blocks the next pull and gets swept into someone else's commit`;
+
+
+/**
+ * The self-update block of the chat prompt. With a memory skill to read, the
+ * full procedure lives there (owner's call: it cost ~2.5KB in every full-access
+ * turn about every topic) and the prompt keeps a pointer plus what must hold
+ * even when the skill is not read. With no skill to point at - no adapter, no
+ * skills, or skills hidden from this turn - the full block stays, so an
+ * instance without the skill loses nothing. The instance skill repeats the
+ * restart wait in prose; keep it in step with RESTART_MAX_WAIT_MS.
+ */
+export const selfUpdateRules = (repoPath?: string, restartScript?: string, hasSkills = false): string => {
+  if (!repoPath || !restartScript) return "";
+  if (!hasSkills) return fullRules(repoPath, restartScript);
+  return `
+
+Working on your own source (${repoPath}):
+- before changing it, read the skill in your memory about changing your own source: it holds the full procedure. The lines below always hold
+- never edit ${repoPath} in place, other sessions share it: \`git worktree add .claude/worktrees/<name> -b <branch> origin/main\`, docs and tests in the same PR, then a standalone reviewer agent (foreground, fresh context, never you) before you merge it yourself, then \`git -C ${repoPath} pull --no-rebase\` and, for a code change, \`${restartScript}\`, which only restarts you if typecheck and tests pass
+- after the restart helper, say what you changed and that I restart once idle (up to ${Math.round(RESTART_MAX_WAIT_MS / 60_000)} minutes). Expect to be a new process: anything you were part-way through is gone
+- PR descriptions and commits carry no attribution at all
+- while I am running, never \`git stash\`, \`checkout\`, \`reset\` or \`rebase\` over \`data/*.db\`: it swaps the live database out and I crash mid-turn
+- never restart to "see if that fixed it". Run the checks, read them, decide`;
 };

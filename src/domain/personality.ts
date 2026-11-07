@@ -383,7 +383,10 @@ export const buildSystemPrompt = (options: Partial<BuildSystemPromptOptions> = {
   const reaching = credentialGapRules(options.commandPrefix ?? "//bot");
   const slackReading = slackReadRules(options.slackReadScript);
   const desktop = macUiRules(options.macUiScript, options.agentDesktop, options.desktopScript);
-  const selfWork = selfUpdateRules(options.repoPath, options.restartScript);
+  // Self-fixing lives in a memory skill when this turn can see one.
+  const skillsVisible =
+    !!options.adapter && options.adapter.skills.length > 0 && options.adapterScope?.canReadFiles !== false;
+  const selfWork = selfUpdateRules(options.repoPath, options.restartScript, skillsVisible);
   const commands = commandRules(
     options.runScript ?? "",
     options.runUrl ?? "",

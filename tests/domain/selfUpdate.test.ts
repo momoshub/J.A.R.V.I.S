@@ -3,7 +3,53 @@ import { RESTART_DELAY_MS, RESTART_MAX_WAIT_MS, STANDALONE_REVIEW_RULE, restartW
 
 const rules = selfUpdateRules("/repo", "/bin/jarvis-restart.sh");
 
-describe("selfUpdateRules", () => {
+const short = selfUpdateRules("/repo", "/bin/jarvis-restart.sh", true);
+
+describe("selfUpdateRules with a memory skill", () => {
+  test("points at the memory skill for the full procedure", () => {
+    expect(short).toContain("read the skill in your memory about changing your own source");
+    // the procedure itself lives in the skill, not in every turn
+    expect(short.length).toBeLessThan(1200);
+  });
+
+  test("the restart helper is the gate, and testing a guess by restarting is out", () => {
+    expect(short).toContain("/bin/jarvis-restart.sh");
+    expect(short).toContain("only restarts you if typecheck and tests pass");
+    expect(short).toContain('never restart to "see if that fixed it"');
+  });
+
+  test("lands every change through a worktree, a reviewed PR and a pull", () => {
+    expect(short).toContain("never edit /repo in place");
+    expect(short).toContain("git worktree add");
+    expect(short).toContain("merge it yourself");
+    expect(short).toContain("pull --no-rebase");
+    expect(short).toContain("no attribution");
+    expect(short).not.toContain("Generated with Jarvis");
+  });
+
+  test("tells the turn what the restart does, and only for a code change", () => {
+    expect(short).toContain(`up to ${RESTART_MAX_WAIT_MS / 60_000} minutes`);
+    expect(short).toContain("anything you were part-way through is gone");
+    expect(short).toContain("for a code change, `/bin/jarvis-restart.sh`");
+    expect(short.indexOf("pull --no-rebase")).toBeLessThan(short.indexOf("/bin/jarvis-restart.sh"));
+    expect(short).not.toContain("Co-Authored");
+  });
+
+  test("a standalone reviewer comes before the merge", () => {
+    expect(short).toContain("standalone reviewer agent (foreground, fresh context, never you)");
+    expect(short.indexOf("standalone reviewer agent")).toBeLessThan(short.indexOf("merge it yourself"));
+    // the full rule still exists for the prompts that carry it whole
+    expect(STANDALONE_REVIEW_RULE).toContain("run_in_background: false");
+    expect(STANDALONE_REVIEW_RULE).toContain("At most 3 review rounds");
+  });
+
+  test("never rewrites the live database", () => {
+    expect(short).toContain("data/*.db");
+    expect(short).toContain("I crash mid-turn");
+  });
+});
+
+describe("selfUpdateRules with no skill to read (the full block)", () => {
   test("the checks are stated as a gate, with the reason they are not optional", () => {
     // restarting into code that does not compile is a crash-loop KeepAlive
     // cannot break out of, and Slack is no use for fixing it
@@ -51,6 +97,11 @@ describe("selfUpdateRules", () => {
     const flow = rules.split("\n").find((l) => l.includes("every change goes this way")) ?? "";
     expect(flow.indexOf("standalone reviewer agent")).toBeLessThan(flow.indexOf("merge it yourself"));
     expect(rules.indexOf(STANDALONE_REVIEW_RULE)).toBeLessThan(rules.indexOf("once it is pulled into the main folder"));
+  });
+
+  test("is the full block whenever no skill is visible", () => {
+    expect(selfUpdateRules("/repo", "/bin/jarvis-restart.sh", false)).toBe(rules);
+    expect(rules).not.toContain("read the skill in your memory");
   });
 
   test("with no repo or no helper, there is no block at all", () => {

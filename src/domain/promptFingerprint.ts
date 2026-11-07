@@ -24,6 +24,7 @@
  * reset every open thread the moment anybody said "remember this".
  */
 import { createHash } from "node:crypto";
+import { selfUpdateRules } from "./selfUpdate.ts";
 
 /** Fixed stand-ins, so every optional block renders and is therefore covered. */
 const SENTINELS = {
@@ -59,5 +60,9 @@ export const promptFingerprint = (
   createHash("sha256")
     .update(build({ ...SENTINELS, logSources: [...SENTINELS.logSources], learnings: [], base }))
     .update(adapterRules ?? "")
+    // the sentinels carry no adapter, so the build above renders the full
+    // self-update block; the short one a turn with a visible skill gets is
+    // hashed here, or a change to it would never reopen a live thread
+    .update(selfUpdateRules(SENTINELS.repoPath, SENTINELS.restartScript, true))
     .digest("hex")
     .slice(0, 16);
