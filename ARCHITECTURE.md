@@ -68,7 +68,8 @@ no classes.
 - **Self-update.** `bin/jarvis-restart.sh` runs typecheck and tests and only
   restarts when both pass. `restartWhenIdle` then drains: the inbox is no
   longer read and timers that start turns hold, so it waits only for the turns
-  already running. Past 15 minutes it exits anyway and the rows it cut are
+  already running, and anyone writing in meanwhile is told why, what it waits
+  on and the latest it is back. Past 15 minutes it exits anyway and the rows it cut are
   redelivered to the next process on the same session. Where this goes next is
   in [`docs/rolling-restart.md`](docs/rolling-restart.md).
 

@@ -14,7 +14,7 @@ import { isSilenceNote } from "./domain/silence.ts";
 import { openDatabase } from "./infrastructure/db/client.ts";
 import { createThreadSessionRepo } from "./infrastructure/db/threadSessionRepo.ts";
 import { createThreadQueue } from "./application/threadQueue.ts";
-import { restartWhenIdle } from "./domain/selfUpdate.ts";
+import { RESTART_DELAY_MS, RESTART_MAX_WAIT_MS, restartWhenIdle } from "./domain/selfUpdate.ts";
 import { isDbFileSwapped } from "./domain/dbHealth.ts";
 import { createRunRegistry } from "./application/runRegistry.ts";
 import { createSystemProbe, createSystemTracker } from "./infrastructure/system/systemProbe.ts";
@@ -460,11 +460,16 @@ const main = async () => {
   // inbox is not read, timers that start turns hold, and pending workflow
   // steps stay on their rows for the next process.
   let draining = false;
+  // Kept for the notice a waiting thread gets: why, and when it gives up waiting.
+  let drainReason = "";
+  let drainDeadlineMs = 0;
   deps.draining = () => draining;
   const requestRestart = (reason: string): void => {
     activity.line(`restart requested: ${reason}`);
     if (draining) return;
     draining = true;
+    drainReason = reason;
+    drainDeadlineMs = Date.now() + RESTART_DELAY_MS + RESTART_MAX_WAIT_MS;
     restartWhenIdle({
       onDrain: () => slackApp?.pauseIntake(),
       // The rows still running are redelivered by the next process, at once
@@ -596,7 +601,17 @@ const main = async () => {
             // Somebody wrote in while a restart holds the intake. Their
             // message is safe, but silence reads as death - so say so once.
             onDeferred: (channel, threadTs) =>
-              void slackAdmin.post(channel, drainNotice(), threadTs).catch(() => undefined),
+              void slackAdmin
+                .post(
+                  channel,
+                  drainNotice({
+                    reason: drainReason,
+                    running: runs.all().filter((r) => !r.background).length,
+                    deadlineMs: drainDeadlineMs,
+                  }),
+                  threadTs,
+                )
+                .catch(() => undefined),
           })
         : undefined,
       botToken: config.slackBotToken,

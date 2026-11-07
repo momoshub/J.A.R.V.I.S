@@ -64,4 +64,23 @@ describe("drainNotice", () => {
     expect(drainNotice()).toContain("saved");
     expect(drainNotice()).toContain("restarting");
   });
+
+  const deadlineMs = Date.UTC(2026, 10, 7, 14, 30);
+
+  test("names why, what it waits on, and the latest it comes back", () => {
+    const text = drainNotice({ reason: "picking up #50 feat: more detail", running: 2, deadlineMs });
+    expect(text).toContain("- why: picking up #50 feat: more detail");
+    expect(text).toContain("waiting for 2 running turns to finish");
+    expect(text).toContain(`<!date^${deadlineMs / 1000}^{time}|14:30 UTC>`);
+  });
+
+  test("one turn is a turn, and nothing running means seconds", () => {
+    expect(drainNotice({ running: 1, deadlineMs })).toContain("1 running turn to finish");
+    expect(drainNotice({ running: 0, deadlineMs })).toContain("nothing is running, back in a few seconds");
+  });
+
+  test("the API's filler reason is left out rather than shown", () => {
+    expect(drainNotice({ reason: "requested over the local API", running: 0, deadlineMs })).not.toContain("why:");
+    expect(drainNotice({ running: 0, deadlineMs })).not.toContain("why:");
+  });
 });

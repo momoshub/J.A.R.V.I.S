@@ -12,9 +12,40 @@
  * person who is already repeating themselves does not need three apologies.
  */
 
-/** Said once, in the thread that is waiting. */
-export const drainNotice = (): string =>
-  "⏸ I'm restarting, so I am not picking up new messages for a moment. Yours is saved and I will answer it as soon as I am back.";
+/** What the waiting thread is told about the restart itself. */
+export type DrainInfo = {
+  /** Why it restarts, e.g. the change it picks up. Omitted when unknown. */
+  readonly reason?: string;
+  /** Turns still running that the restart waits for. */
+  readonly running: number;
+  /** Epoch ms after which it exits anyway, running turns or not. */
+  readonly deadlineMs: number;
+};
+
+/** The default reason the local API fills in carries nothing worth saying. */
+const UNINFORMATIVE = new Set(["", "requested over the local API"]);
+
+/**
+ * Said once, in the thread that is waiting. A bare "I'm restarting" left the
+ * reader guessing why and for how long, so it names the reason, what it is
+ * still waiting on, and the latest it can take. The time is a Slack date
+ * token, so each reader sees it in their own timezone.
+ */
+export const drainNotice = (info?: DrainInfo): string => {
+  const lines = ["⏸ I'm restarting, so I am not picking up new messages for a moment. Yours is saved and I will answer it as soon as I am back."];
+  if (!info) return lines[0] ?? "";
+  const reason = (info.reason ?? "").trim();
+  if (!UNINFORMATIVE.has(reason)) lines.push(`- why: ${reason}`);
+  const epoch = Math.floor(info.deadlineMs / 1000);
+  const clock = new Date(info.deadlineMs).toISOString().slice(11, 16);
+  const latest = `<!date^${epoch}^{time}|${clock} UTC>`;
+  lines.push(
+    info.running > 0
+      ? `- waiting for ${info.running} running ${info.running === 1 ? "turn" : "turns"} to finish, back by ${latest} at the latest`
+      : `- nothing is running, back in a few seconds (${latest} at the latest)`,
+  );
+  return lines.join("\n");
+};
 
 /**
  * Where an inbox envelope was headed, so a waiting thread can be told.
