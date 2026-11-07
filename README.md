@@ -112,7 +112,7 @@ Every command has two interfaces - use whichever you like. Both triggers are con
 | `bomb [categories] [count] <message-link>` (alias `br`) | admins | reaction-bomb a message. Combine categories with commas and set a count: `bomb money,face,negative 9 <link>`. Up to 23; `bomb help` lists every category |
 | `reply <message-link>` (alias `jrp`) | admins | draft and post an AI reply to a message |
 | `rm-msg <message-link>` (aliases `rmmsg`, `unsend`) | admins | delete a message the bot posted (a bot token cannot delete anyone else's) |
-| `workflow <task>` / `workflow stop` / `workflow status` (alias `wf`) | executers+ | start a long task in this thread and keep talking to it (see [Workflows](#workflows)) |
+| `workflow <task>` / `workflow stop [<thread-link>]` / `workflow status` (alias `wf`) | executers+ | start a long task in this thread and keep talking to it (see [Workflows](#workflows)) |
 | `limit [@user] [n\|default]` (alias `quota`) | anyone (setting: admins) | show command allowance; admins set someone's |
 | `promote @user` / `demote @user` | owner | change role |
 
@@ -151,6 +151,7 @@ or done) starts a step for it right away. `workflow stop` ends both and the
 thread goes back to normal chat.
 
 - one live workflow per thread, `workflow status` shows it
+- `workflow stop <thread-link>` stops the workflow in another thread without posting anything there
 - `executer`, `admin` and `owner` may drive one; anyone lower still chats
   normally in the thread without steering the task
 - tools are whatever the driver's role allows - a sandboxed `executer` gets a

@@ -303,8 +303,9 @@ type CommandDef = {
    * result back to the caller instead of posting it, and the caller waits for
    * it. Typed by a person it still answers in the thread as usual - the
    * difference is only in who asked and what they do with the answer.
+   * A function decides per call, for a command quiet in only some forms.
    */
-  quiet?: boolean;
+  quiet?: boolean | ((args: string[]) => boolean);
   /**
    * Destroys something, so the menu will not make it a one-tap button and
    * confirms before running it. Typing it stays as direct as it ever was -
@@ -2599,11 +2600,30 @@ Up to ${BOMB_SIZE} reactions; no category means *${DEFAULT_CATEGORY}*.`;
     name: "workflow",
     aliases: ["wf"],
     minRole: WORKFLOW_MIN_ROLE,
-    usage: "<task> | stop | status",
+    usage: "<task> | stop [<thread-link>] | status",
     summary: "start a long task in this thread and keep talking to it",
+    // Stopping another thread's workflow is housekeeping: the result goes back
+    // to whoever asked, and nothing is posted in either thread.
+    quiet: (args) => /^stop$/i.test(args[0] ?? "") && args.length > 1,
     run: async (ctx) => {
       const { deps, actor, channelId, threadTs, rest, prefix, reply } = ctx;
       if (!deps.workflows) return "Workflows are not available.";
+      const remote = rest.trim().match(/^stop\s+(\S+)$/i)?.[1];
+      if (remote) {
+        // Sending `workflow stop` there with `tell` left an echo and a reply in
+        // every thread it cleaned up, so this stops it in place without a word.
+        const link = remote.replace(/^<|>$/g, "").replace(/&amp;/g, "&");
+        const ref = parseMessageLink(link);
+        if (!ref) return `Paste a Slack thread link: \`${prefix} workflow stop <thread-link>\``;
+        const root = link.match(/[?&]thread_ts=(\d+\.\d+)/)?.[1] ?? ref.ts;
+        const there = deps.workflows.activeFor(ref.channel, root);
+        if (!there) return "No workflow running in that thread.";
+        deps.workflows.stop(there.id, deps.clock());
+        const key = `${ref.channel}:${root}`;
+        deps.runs?.stopThread(key, actor.slackId);
+        deps.runs?.stopThread(frontKeyOf(key), actor.slackId);
+        return `🛑 stopped the workflow in that thread after ${there.turns} turn${there.turns === 1 ? "" : "s"}, nothing posted there.`;
+      }
       if (!threadTs) {
         return `Workflows live in a thread - use \`${prefix} workflow <task>\` in a channel or DM rather than the slash command.`;
       }
@@ -2731,6 +2751,9 @@ Up to ${BOMB_SIZE} reactions; no category means *${DEFAULT_CATEGORY}*.`;
     // It puts words into another conversation as the sender, which is a
     // decision about a room the sender may not be watching.
     minRole: "admin",
+    // The confirmation goes back to the caller: a batch of tells left one
+    // "sent" line per thread in the thread that sent them.
+    quiet: true,
     usage: "<thread-link> <message>",
     summary: "send a message into another thread's session, as if you typed it there",
     run: async ({ deps, actor, args, prefix, channelId, threadTs }) => {
@@ -2832,7 +2855,8 @@ export const isQuietCommand = (line: string): boolean => {
   // A help card is a guide for whoever asked. When the brain asks, it reads it
   // for itself: a menu dropped into a conversation is noise nobody wanted.
   if (command && asksForHelp(args)) return true;
-  return command?.quiet === true;
+  const quiet = command?.quiet;
+  return typeof quiet === "function" ? quiet(args) : quiet === true;
 };
 
 export const notifiesOwner = (line: string): boolean => {

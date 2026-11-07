@@ -1475,6 +1475,13 @@ describe("reviews run on the caller's own Claude token", () => {
     expect(isQuietCommand("rm-msg https://x.slack.com/archives/C1/p1700000000000100")).toBe(true);
   });
 
+  test("tell and a remote workflow stop are quiet, a plain workflow stop still answers in the thread", () => {
+    expect(isQuietCommand("tell https://x.slack.com/archives/C1/p1700000000000100 hi")).toBe(true);
+    expect(isQuietCommand("workflow stop https://x.slack.com/archives/C1/p1700000000000100")).toBe(true);
+    expect(isQuietCommand("workflow stop")).toBe(false);
+    expect(isQuietCommand("workflow fix the build")).toBe(false);
+  });
+
   test("users lists names and ids without tagging anyone", async () => {
     const { deps } = withTokens({});
     const out = await dispatchCommand(deps, actor(), "C1", "users");

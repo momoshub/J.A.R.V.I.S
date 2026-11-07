@@ -186,6 +186,32 @@ describe("workflow auto-continue", () => {
     expect(b.posts.some((p) => p.text.includes("paused"))).toBe(false);
   });
 
+  test("workflow stop <thread-link> stops another thread's workflow without posting in it", async () => {
+    const b = build(keepGoing);
+    await b.start();
+    const before = b.posts.length;
+    const out = await dispatchCommand(
+      b.deps,
+      owner,
+      "D9",
+      `workflow stop <https://x.slack.com/archives/${C}/p1700000000000100?thread_ts=${T}&amp;cid=${C}>`,
+      { threadTs: "900.1" },
+    );
+    expect(out).toContain("stopped the workflow in that thread");
+    expect(b.live()).toBeFalsy();
+    expect(b.posts.length).toBe(before);
+    expect(await b.tick()).toBe(true);
+    expect(b.calls).toHaveLength(1);
+  });
+
+  test("workflow stop <thread-link> says so when nothing runs there", async () => {
+    const b = build(keepGoing);
+    const out = await dispatchCommand(b.deps, owner, "D9", `workflow stop https://x.slack.com/archives/${C}/p1700000000000100`, {
+      threadTs: "900.1",
+    });
+    expect(out).toBe("No workflow running in that thread.");
+  });
+
   test("a workflow stopped while its turn ran does not continue", async () => {
     const b = build((p) => {
       // stopped by someone while this turn was running
