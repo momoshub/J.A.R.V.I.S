@@ -450,7 +450,7 @@ describe("a message with several questions", () => {
     expect(out).toContain("Fall back to the Agent tool");
     expect(out).toContain("orca orchestration run-create");
     expect(out).toContain("worker-start --run <runId>");
-    expect(out).toContain('all(. == "completed" or . == "failed")');
+    expect(out).toContain('length > 0 and all(. == "completed" or . == "failed")');
     expect(out).toContain("inbox --terminal run:<runId> --full");
   });
 
