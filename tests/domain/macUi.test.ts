@@ -42,6 +42,18 @@ describe("macUiRules", () => {
     expect(macUiRules(undefined, "/opt/homebrew/bin/agent-desktop")).toBe("");
   });
 
+  test("with the lock wrapper, both drivers run through it and a busy screen means wait", () => {
+    const r = macUiRules("/x/mac-ui.js", "/opt/homebrew/bin/agent-desktop", "/x/desktop.ts");
+    expect(r).toContain("/x/desktop.ts mac-ui tree");
+    expect(r).toContain("/x/desktop.ts agent-desktop snapshot --app <app> -i --compact");
+    expect(r).not.toContain("`/opt/homebrew/bin/agent-desktop snapshot");
+    expect(r).toContain("ONE session drives the screen at a time");
+    expect(r).toContain("Do NOT open another window");
+    expect(r).toContain("/x/desktop.ts free");
+    expect(r).toContain("/x/desktop.ts release");
+    expect(macUiRules("/x/mac-ui.js")).not.toContain("ONE session drives");
+  });
+
   test("a turn without the helper is not told about a door that is locked", () => {
     const p = buildSystemPrompt({ base: "p", botName: "Evie" });
     expect(p).not.toContain("Driving a desktop app");
