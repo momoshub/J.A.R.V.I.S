@@ -8,8 +8,10 @@
  *
  * The session id lives in the database, so a bot restart does not lose it.
  */
-import { workflowPrompt } from "../domain/workflowPrompt.ts";
+import { frontPrompt, workflowPrompt } from "../domain/workflowPrompt.ts";
 import { createMarkerFilter, parseContinue } from "../domain/workflowContinue.ts";
+import { createSteerFilter, FRONT_TIMEOUT_MS, frontMessage, parseSteers } from "../domain/workflowFront.ts";
+import { PAL_TOOLS } from "../domain/toolPolicy.ts";
 import { tokenFor, type ClaudeTokenPort } from "./claudeTokens.ts";
 import type { AllowedUser, UserRole, Workflow } from "../domain/types.ts";
 import type { ToolPolicy } from "../domain/toolPolicy.ts";
@@ -18,6 +20,9 @@ import type { WorkflowRepo } from "../infrastructure/db/workflowRepo.ts";
 
 /** A workflow turn can run long - it is a real task, not a chat reply. */
 export const WORKFLOW_TIMEOUT_MS = 900_000;
+
+/** Billing kind of a worker step - also how its tool calls are found in the trace. */
+export const WORKER_BILL_KIND = "workflow";
 
 /** Lowest role that may drive a workflow (executer, admin, owner). */
 export const WORKFLOW_MIN_ROLE: UserRole = "executer";
@@ -47,8 +52,10 @@ export type WorkflowTurn = {
  * the thread. A held-back fragment is released before anything that is not
  * text, so ordering is kept.
  */
-const filteredSink = (sink: LlmStreamSink): LlmStreamSink => {
-  const filter = createMarkerFilter();
+const filteredSink = (
+  sink: LlmStreamSink,
+  filter: { push: (delta: string) => string; flush: () => string } = createMarkerFilter(),
+): LlmStreamSink => {
   return (event) => {
     if (event.type === "text") {
       const delta = filter.push(event.delta);
@@ -87,7 +94,7 @@ export const runWorkflowTurn = async (
     session: { id: workflow.sessionId, resume: !first },
     oauthToken: tokenFor(deps, actor),
     signal,
-    bill: { actor: actor.slackId, kind: "workflow", channel: workflow.channelId, threadTs: workflow.threadTs },
+    bill: { actor: actor.slackId, kind: WORKER_BILL_KIND, channel: workflow.channelId, threadTs: workflow.threadTs },
   };
 
   const raw =
@@ -95,6 +102,56 @@ export const runWorkflowTurn = async (
   const { text, wantsContinue } = parseContinue(raw);
 
   deps.workflows?.recordTurn(workflow.id, deps.clock());
+  // The front reads these to say where the work is.
+  if (text) deps.workflows?.recordWorkerReply(workflow.id, text, deps.clock());
   // A step that only said "carry on" has nothing for the thread to read.
   return { text: text || (wantsContinue ? "" : "(nothing came back from that turn)"), wantsContinue };
+};
+
+/** Billing kind of a front turn - also what keeps it out of the worker's digest. */
+export const FRONT_BILL_KIND = "workflow-front";
+
+/** What one front turn said, and what it passed on to the worker. */
+export type FrontTurn = {
+  readonly text: string;
+  readonly steers: readonly string[];
+};
+
+/**
+ * Answer a person in a workflow thread from the front session, given a digest
+ * of where the worker is. Read-only tools and a short timeout: it is there to
+ * talk, the worker does the task. Its session id is claimed on the first turn
+ * that finishes, so a first turn that dies leaves nothing to resume.
+ */
+export const runFrontTurn = async (
+  deps: WorkflowDeps,
+  workflow: Workflow,
+  actor: AllowedUser,
+  message: string,
+  digest: string,
+  sink?: LlmStreamSink,
+  signal?: AbortSignal,
+): Promise<FrontTurn> => {
+  if (!deps.llm) return { text: "My brain is not wired up right now.", steers: [] };
+  const name = botNameOf(deps);
+  const base = deps.toolPolicy?.(actor.role, workflow.channelId) ?? { skipPermissions: true };
+  const sessionId = workflow.frontSessionId ?? (deps.newSessionId ?? (() => crypto.randomUUID()))();
+  const params = {
+    system: frontPrompt(name, workflow.task),
+    messages: [{ role: "user" as const, content: frontMessage(digest, message), speakerId: actor.slackId }],
+    assistantName: name,
+    // Read-only, whatever the role: the worker is the one with its hands on things.
+    policy: { ...base, skipPermissions: false, allowedTools: PAL_TOOLS, timeoutMs: FRONT_TIMEOUT_MS },
+    session: { id: sessionId, resume: workflow.frontSessionId !== undefined },
+    oauthToken: tokenFor(deps, actor),
+    signal,
+    bill: { actor: actor.slackId, kind: FRONT_BILL_KIND, channel: workflow.channelId, threadTs: workflow.threadTs },
+  };
+  const raw =
+    sink && deps.llm.stream
+      ? await deps.llm.stream(params, filteredSink(sink, createSteerFilter()))
+      : await deps.llm.complete(params);
+  if (workflow.frontSessionId === undefined) deps.workflows?.setFrontSession(workflow.id, sessionId);
+  const { text, steers } = parseSteers(raw);
+  return { text: text || (steers.length > 0 ? "Passed that on." : "(nothing came back)"), steers };
 };

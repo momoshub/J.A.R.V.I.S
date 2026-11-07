@@ -2,7 +2,12 @@ import { describe, expect, test } from "bun:test";
 import { mkdtempSync, readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { createToolTraceLog, TRACE_FIELD_CHARS, traceFileFor } from "../../src/infrastructure/llm/toolTraceLog.ts";
+import {
+  createToolTraceLog,
+  readTraceCalls,
+  TRACE_FIELD_CHARS,
+  traceFileFor,
+} from "../../src/infrastructure/llm/toolTraceLog.ts";
 
 const NOW = new Date("2026-11-05T10:00:00.000Z");
 const bill = { actor: "U1", kind: "chat", channel: "C1", threadTs: "111.1" };
@@ -39,5 +44,34 @@ describe("per-thread tool trace log", () => {
       "/d/__.._etc/__p.jsonl",
     );
     expect(traceFileFor("/d", { actor: "U1", kind: "x", channel: "..", threadTs: "." }, NOW)).toBe("/d/_/_.jsonl");
+  });
+});
+
+describe("reading a thread's trace back for the workflow digest", () => {
+  test("the newest calls of one run kind, oldest first, failures marked", () => {
+    const dir = mkdtempSync(join(tmpdir(), "trace-"));
+    const log = createToolTraceLog(dir, () => NOW);
+    const worker = { ...bill, kind: "workflow" };
+    const front = { ...bill, kind: "workflow-front" };
+    for (let i = 0; i < 20; i++) log({ kind: "call", id: `w${i}`, name: "Bash", input: `{"command":"step ${i}"}` }, worker);
+    log({ kind: "result", id: "w19", isError: true, output: "boom" }, worker);
+    log({ kind: "call", id: "f1", name: "Read", input: '{"file_path":"/x"}' }, front);
+
+    const calls = readTraceCalls(dir, "C1", "111.1", "workflow", 15);
+    expect(calls).toHaveLength(15);
+    expect(calls[0]?.input).toContain("step 5");
+    expect(calls.at(-1)).toEqual({ at: NOW.toISOString(), name: "Bash", input: '{"command":"step 19"}', isError: true });
+    expect(calls.some((c) => c.name === "Read")).toBe(false);
+  });
+
+  test("a missing file is no calls, and a cut-off first line is skipped", () => {
+    const dir = mkdtempSync(join(tmpdir(), "trace-"));
+    expect(readTraceCalls(dir, "C1", "nope", "workflow", 15)).toEqual([]);
+    const log = createToolTraceLog(dir, () => NOW);
+    const worker = { ...bill, kind: "workflow" };
+    log({ kind: "call", id: "a", name: "Bash", input: `{"command":"${"x".repeat(500)}"}` }, worker);
+    log({ kind: "call", id: "b", name: "Grep", input: '{"pattern":"todo"}' }, worker);
+    const calls = readTraceCalls(dir, "C1", "111.1", "workflow", 15, 200);
+    expect(calls.map((c) => c.name)).toEqual(["Grep"]);
   });
 });

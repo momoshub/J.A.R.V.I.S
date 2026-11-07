@@ -10,10 +10,11 @@
  * Credential-shaped strings are redacted, and a huge output is clipped - a
  * debug log that fills the disk with one `cat` of a binary is its own outage.
  */
-import { appendFileSync, mkdirSync } from "node:fs";
+import { appendFileSync, closeSync, fstatSync, mkdirSync, openSync, readSync } from "node:fs";
 import { join } from "node:path";
 import type { BillingContext, ToolTrace, ToolTraceSink } from "../../application/ports.ts";
 import { redactSecrets } from "../../domain/toolVisibility.ts";
+import type { DigestCall } from "../../domain/workflowFront.ts";
 
 /** Longest input or output kept per line. */
 export const TRACE_FIELD_CHARS = 100_000;
@@ -53,4 +54,65 @@ export const createToolTraceLog = (dir: string, clock: () => Date = () => new Da
     }
     appendFileSync(file, traceLine(trace, bill, now));
   };
+};
+
+/** How much of the end of a thread's trace is read for a digest. */
+export const TRACE_TAIL_BYTES = 512 * 1024;
+
+const isRecord = (v: unknown): v is Record<string, unknown> => typeof v === "object" && v !== null;
+
+/** The last `bytes` of a file, or "" when there is no file. */
+const readTail = (file: string, bytes: number): string => {
+  let fd: number | undefined;
+  try {
+    fd = openSync(file, "r");
+    const size = fstatSync(fd).size;
+    const length = Math.min(size, bytes);
+    const buf = Buffer.alloc(length);
+    readSync(fd, buf, 0, length, size - length);
+    const text = buf.toString("utf8");
+    // A cut-off first line is not a line; skip it unless the whole file fit.
+    return length < size ? text.slice(text.indexOf("\n") + 1) : text;
+  } catch {
+    return "";
+  } finally {
+    if (fd !== undefined) closeSync(fd);
+  }
+};
+
+/**
+ * The newest tool calls in a thread's trace, made by runs of `kind` (the
+ * worker's billing kind), oldest first, each marked if its result was an
+ * error. Reads only the end of the file, so a thread with a long history
+ * costs the same as a short one. Never throws.
+ */
+export const readTraceCalls = (
+  dir: string,
+  channel: string,
+  threadTs: string,
+  kind: string,
+  limit: number,
+  tailBytes = TRACE_TAIL_BYTES,
+): DigestCall[] => {
+  const file = traceFileFor(dir, { actor: "", kind, channel, threadTs }, new Date());
+  const calls: { id: string; call: DigestCall }[] = [];
+  const failed = new Set<string>();
+  for (const line of readTail(file, tailBytes).split("\n")) {
+    if (!line.trim()) continue;
+    let row: unknown;
+    try {
+      row = JSON.parse(line);
+    } catch {
+      continue;
+    }
+    if (!isRecord(row) || row.run !== kind || typeof row.id !== "string") continue;
+    if (row.kind === "result" && row.isError === true) failed.add(row.id);
+    if (row.kind === "call" && typeof row.name === "string") {
+      calls.push({
+        id: row.id,
+        call: { at: typeof row.at === "string" ? row.at : "", name: row.name, input: typeof row.input === "string" ? row.input : "" },
+      });
+    }
+  }
+  return calls.slice(-limit).map(({ id, call }) => (failed.has(id) ? { ...call, isError: true } : call));
 };

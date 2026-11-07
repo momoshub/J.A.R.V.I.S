@@ -98,6 +98,20 @@ export type Reviewer = {
   readonly name?: string;
 };
 
+/** An instruction for a workflow's worker, said to the front mid-task. */
+export type WorkflowSteer = {
+  /** Slack id of the person it came from. */
+  readonly by: string;
+  readonly text: string;
+  readonly at: number;
+};
+
+/** One thing a workflow's worker posted, kept for the front's digest. */
+export type WorkerReply = {
+  readonly text: string;
+  readonly at: number;
+};
+
 /** A long-running CLI session bound to one Slack thread. */
 export type Workflow = {
   readonly id: number;
@@ -109,7 +123,7 @@ export type Workflow = {
   readonly startedBy: string;
   readonly status: "active" | "stopped";
   readonly turns: number;
-  /** Steps it has taken on its own since a human last spoke in the thread. */
+  /** Steps it has taken on its own since it was last steered by a human. */
   readonly autoTurns: number;
   /**
    * Who the next step runs as, when one is pending. Set when a turn asked to
@@ -119,6 +133,15 @@ export type Workflow = {
   readonly continueAs?: string;
   /** Bumped on each request, so a stale timer cannot start a second chain. */
   readonly continueSeq: number;
+  /**
+   * The front's own CLI session: the one that answers people in the thread
+   * while the worker session above does the task. Unset until its first turn.
+   */
+  readonly frontSessionId?: string;
+  /** Instructions the front passed on that the worker has not seen yet. */
+  readonly steers: readonly WorkflowSteer[];
+  /** The worker's last few replies, newest last, for the front's digest. */
+  readonly workerReplies: readonly WorkerReply[];
   readonly createdAt: number;
   readonly updatedAt: number;
 };

@@ -14,6 +14,7 @@ import { decideAccessRequest } from "../../application/accessRequests.ts";
 import { actOnMessageReaction, messageActionFor } from "../../application/messageReactions.ts";
 import { APPROVE_ACTION, decideCommandApproval, REJECT_ACTION } from "../../application/commandLimits.ts";
 import { forHowLong } from "../../domain/runControl.ts";
+import { frontKeyOf } from "../../domain/workflowFront.ts";
 import {
   AGENT_SESSION_STOPPED,
   type AgentSessionStoppedEvent,
@@ -1206,7 +1207,11 @@ export const createSlackApp = (config: SlackAppConfig, deps: Deps) => {
       return;
     }
 
-    const stopped = deps.runs?.stopThread(plan.key, plan.by);
+    // In a workflow thread the button is drawn on the front's streamed reply,
+    // but the work is the worker's step on the thread's own key: stop both.
+    const worker = deps.runs?.stopThread(plan.key, plan.by);
+    const front = deps.runs?.stopThread(frontKeyOf(plan.key), plan.by);
+    const stopped = worker ?? front;
 
     const api = client as { apiCall: (method: string, args: Record<string, unknown>) => Promise<unknown> };
     let closed = 0;

@@ -6,7 +6,8 @@
  * message in the thread resumes the same session, with its context intact.
  */
 import type { DbClient } from "./client.ts";
-import type { Workflow } from "../../domain/types.ts";
+import type { WorkerReply, Workflow, WorkflowSteer } from "../../domain/types.ts";
+import { keepReplies } from "../../domain/workflowFront.ts";
 
 type Row = {
   id: number;
@@ -20,9 +21,29 @@ type Row = {
   auto_turns: number;
   continue_as: string | null;
   continue_seq: number;
+  front_session_id: string | null;
+  steers: string | null;
+  worker_replies: string | null;
   created_at: number;
   updated_at: number;
 };
+
+/** A JSON list column; anything unreadable is an empty list, never a crash. */
+const parseList = (raw: string | null): unknown[] => {
+  if (!raw) return [];
+  try {
+    const v: unknown = JSON.parse(raw);
+    return Array.isArray(v) ? v : [];
+  } catch {
+    return [];
+  }
+};
+
+const isRecord = (v: unknown): v is Record<string, unknown> => typeof v === "object" && v !== null;
+const isSteer = (v: unknown): v is WorkflowSteer =>
+  isRecord(v) && typeof v.by === "string" && typeof v.text === "string" && typeof v.at === "number";
+const isReply = (v: unknown): v is WorkerReply =>
+  isRecord(v) && typeof v.text === "string" && typeof v.at === "number";
 
 const toWorkflow = (row: Row): Workflow => ({
   id: row.id,
@@ -36,6 +57,9 @@ const toWorkflow = (row: Row): Workflow => ({
   autoTurns: row.auto_turns ?? 0,
   ...(row.continue_as ? { continueAs: row.continue_as } : {}),
   continueSeq: row.continue_seq ?? 0,
+  ...(row.front_session_id ? { frontSessionId: row.front_session_id } : {}),
+  steers: parseList(row.steers).filter(isSteer),
+  workerReplies: parseList(row.worker_replies).filter(isReply),
   createdAt: row.created_at,
   updatedAt: row.updated_at,
 });
@@ -73,8 +97,16 @@ export type WorkflowRepo = {
   takeContinue: (id: number, seq: number, at: number) => boolean;
   /** Drop any pending step - the turn ended without asking for one. */
   clearContinue: (id: number) => void;
-  /** A human spoke: drop any pending step and start the count again. */
-  humanTurn: (id: number) => void;
+  /** It was steered: the count of steps taken on its own starts again. */
+  resetAutoTurns: (id: number) => void;
+  /** Claim the front's session id on its first turn. False if one is already set. */
+  setFrontSession: (id: number, sessionId: string) => boolean;
+  /** Queue instructions for the worker's next step. */
+  addSteers: (id: number, steers: readonly WorkflowSteer[]) => void;
+  /** Drop the first `count` steers - the ones a worker step has just been given. */
+  dropSteers: (id: number, count: number) => void;
+  /** Keep a worker reply for the front's digest (only the last few are kept). */
+  recordWorkerReply: (id: number, text: string, at: number) => void;
 };
 
 export const createWorkflowRepo = (db: DbClient): WorkflowRepo => {
@@ -90,7 +122,7 @@ export const createWorkflowRepo = (db: DbClient): WorkflowRepo => {
     "UPDATE workflows SET turns = turns + 1, updated_at = $at WHERE id = $id AND status = 'active'",
   );
   const stopStmt = db.query(
-    "UPDATE workflows SET status = 'stopped', continue_as = NULL, updated_at = $at WHERE id = $id AND status = 'active'",
+    "UPDATE workflows SET status = 'stopped', continue_as = NULL, steers = '[]', updated_at = $at WHERE id = $id AND status = 'active'",
   );
   const getStmt = db.query<Row, [number]>("SELECT * FROM workflows WHERE id = ?");
   const requestStmt = db.query<{ continue_seq: number }, Record<string, string | number>>(
@@ -102,7 +134,16 @@ export const createWorkflowRepo = (db: DbClient): WorkflowRepo => {
      WHERE id = $id AND status = 'active' AND continue_as IS NOT NULL AND continue_seq = $seq`,
   );
   const clearStmt = db.query("UPDATE workflows SET continue_as = NULL WHERE id = $id");
-  const humanStmt = db.query("UPDATE workflows SET continue_as = NULL, auto_turns = 0 WHERE id = $id");
+  const resetAutoStmt = db.query("UPDATE workflows SET auto_turns = 0 WHERE id = $id");
+  const frontStmt = db.query(
+    "UPDATE workflows SET front_session_id = $sid WHERE id = $id AND front_session_id IS NULL",
+  );
+  const steersStmt = db.query("UPDATE workflows SET steers = $steers WHERE id = $id");
+  const repliesStmt = db.query("UPDATE workflows SET worker_replies = $replies WHERE id = $id");
+  const readRow = (id: number): Workflow | undefined => {
+    const row = getStmt.get(id);
+    return row ? toWorkflow(row) : undefined;
+  };
   const listStmt = db.query<Row, []>(
     "SELECT * FROM workflows WHERE status = 'active' ORDER BY updated_at DESC",
   );
@@ -128,18 +169,32 @@ export const createWorkflowRepo = (db: DbClient): WorkflowRepo => {
     },
     stop: (id, at) => Number(stopStmt.run({ $id: id, $at: at }).changes) > 0,
     listActive: () => listStmt.all().map(toWorkflow),
-    get: (id) => {
-      const row = getStmt.get(id);
-      return row ? toWorkflow(row) : undefined;
-    },
+    get: readRow,
     requestContinue: (id, slackId, at) =>
       requestStmt.get({ $id: id, $as: slackId, $at: at })?.continue_seq ?? undefined,
     takeContinue: (id, seq, at) => Number(takeStmt.run({ $id: id, $seq: seq, $at: at }).changes) > 0,
     clearContinue: (id) => {
       clearStmt.run({ $id: id });
     },
-    humanTurn: (id) => {
-      humanStmt.run({ $id: id });
+    resetAutoTurns: (id) => {
+      resetAutoStmt.run({ $id: id });
+    },
+    setFrontSession: (id, sessionId) => Number(frontStmt.run({ $id: id, $sid: sessionId }).changes) > 0,
+    // Read-modify-write is safe: bun:sqlite is synchronous, so nothing runs in between.
+    addSteers: (id, steers) => {
+      const w = readRow(id);
+      if (!w || steers.length === 0) return;
+      steersStmt.run({ $id: id, $steers: JSON.stringify([...w.steers, ...steers]) });
+    },
+    dropSteers: (id, count) => {
+      const w = readRow(id);
+      if (!w || count <= 0) return;
+      steersStmt.run({ $id: id, $steers: JSON.stringify(w.steers.slice(count)) });
+    },
+    recordWorkerReply: (id, text, at) => {
+      const w = readRow(id);
+      if (!w || !text.trim()) return;
+      repliesStmt.run({ $id: id, $replies: JSON.stringify(keepReplies(w.workerReplies, { text, at })) });
     },
   };
 };
