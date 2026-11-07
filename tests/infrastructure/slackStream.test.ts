@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { createSlackStream, type Streamer } from "../../src/infrastructure/slack/stream.ts";
+import { createSlackStream, rolloverCut, type Streamer } from "../../src/infrastructure/slack/stream.ts";
 
 type Call = { markdown_text?: string; chunks?: unknown[] };
 
@@ -330,6 +330,18 @@ describe("the 12,000 character wall", () => {
     expect(f.messages.every((m) => m.stopped)).toBe(true);
   });
 
+  test("a rollover never cuts a word in half", async () => {
+    const f = multi();
+    const s = createSlackStream(f.make);
+    const words = "restart once idle ".repeat(1200);
+    s.sink({ type: "text", delta: words });
+    await s.finish();
+
+    expect(f.messages.length).toBeGreaterThan(1);
+    expect(f.messages.map((m) => m.text).join("")).toBe(words);
+    expect(f.messages.slice(0, -1).every((m) => m.text.endsWith(" "))).toBe(true);
+  });
+
   test("a single delta bigger than the budget is split, not dropped", async () => {
     const f = multi();
     const s = createSlackStream(f.make);
@@ -593,5 +605,21 @@ describe("what the run cost", () => {
     stream.sink({ type: "usage", usage });
     expect(f.made()).toBe(0);
     expect(stream.started).toBe(false);
+  });
+});
+
+describe("rolloverCut", () => {
+  test("everything when it fits", () => {
+    expect(rolloverCut("hello world", 50, false)).toBe(11);
+  });
+
+  test("after a line break first, then a space", () => {
+    expect(rolloverCut("ab cd\nef gh", 10, false)).toBe(6);
+    expect(rolloverCut("I restart once idle", 12, false)).toBe(10);
+  });
+
+  test("no break in reach: roll over first, or hard cut a fresh message", () => {
+    expect(rolloverCut("xxxxxxxx", 4, false)).toBe(0);
+    expect(rolloverCut("xxxxxxxx", 4, true)).toBe(4);
   });
 });
