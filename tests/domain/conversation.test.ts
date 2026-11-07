@@ -70,10 +70,36 @@ describe("what survives a long thread", () => {
     for (const i of [1, 4, 9]) {
       history[i] = { ...history[i]!, content: `pic ${i}\n${ATTACHMENT_MARKER}\n- p${i}.png (image/png)` };
     }
-    const out = buildContextWindow(history, 6);
-    expect(out).toHaveLength(6);
-    expect(new Set(out.map((m) => m.content)).size).toBe(6);
+    const out = buildContextWindow(history, 8);
+    expect(out).toHaveLength(8);
+    expect(new Set(out.map((m) => m.content)).size).toBe(8);
     for (const i of [1, 4, 9]) expect(out.some((m) => m.content.includes(`p${i}.png`))).toBe(true);
+  });
+
+  test("a thread full of screenshots still keeps the message being answered", () => {
+    // the real case: 25 screenshot turns in a 100-turn thread, window 20 - the
+    // attachments filled the window and the newest ask fell out
+    const history = many(100);
+    for (let i = 1; i < 60; i += 2) {
+      history[i] = { ...history[i]!, content: `shot ${i}\n${ATTACHMENT_MARKER}\n- s${i}.png (image/png)` };
+    }
+    const out = buildContextWindow(history, 20);
+    const contents = out.map((m) => m.content);
+
+    expect(out).toHaveLength(20);
+    expect(contents[0]).toBe("turn 1");
+    expect(contents[contents.length - 1]).toBe("turn 100");
+    // attachments get at most half, and the newest of them win
+    const shots = contents.filter((c) => c.includes(ATTACHMENT_MARKER));
+    expect(shots.length).toBeLessThanOrEqual(10);
+    expect(contents.some((c) => c.includes("s59.png"))).toBe(true);
+    expect(contents.some((c) => c.includes("s1.png"))).toBe(false);
+    // and the rest is the recent conversation
+    for (let n = 91; n <= 100; n++) expect(contents).toContain(`turn ${n}`);
+  });
+
+  test("a window of one keeps the newest turn, not the root", () => {
+    expect(buildContextWindow(many(5), 1).map((m) => m.content)).toEqual(["turn 5"]);
   });
 
   test("a short thread is untouched", () => {
