@@ -27,7 +27,8 @@ describe("selfUpdateRules", () => {
     expect(rules).toContain("git worktree add");
     expect(rules).toContain("merge it yourself");
     expect(rules).toContain("pull --no-rebase");
-    expect(rules).toContain("Generated with Jarvis");
+    expect(rules).toContain("no attribution");
+    expect(rules).not.toContain("Generated with Jarvis");
     expect(rules).not.toContain("do not commit or push");
   });
 
