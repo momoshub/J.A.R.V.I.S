@@ -11,6 +11,7 @@ import { createTurnLogRepo } from "../../src/infrastructure/db/turnLogRepo.ts";
 import { createWatchRepo } from "../../src/infrastructure/db/watchRepo.ts";
 import { createFollowRepo } from "../../src/infrastructure/db/followRepo.ts";
 import { createReminderRepo } from "../../src/infrastructure/db/reminderRepo.ts";
+import { createWorkflowRepo } from "../../src/infrastructure/db/workflowRepo.ts";
 import { DEFAULT_SNUB_REPLY } from "../../src/domain/snub.ts";
 import { createRunRegistry } from "../../src/application/runRegistry.ts";
 import { createReviewGuard } from "../../src/application/reviewGuard.ts";
@@ -1112,6 +1113,38 @@ describe("dispatchCommand", () => {
     expect(slackCalls.posts[0]).toMatchObject({ channel: "C0TEST00001", threadTs: "1787122692.303399" });
     expect(slackCalls.posts[0]?.text).toContain("reset main and open a PR for phase 0");
     expect(slackCalls.posts[0]?.text).toContain(`<@${OWNER}>`);
+  });
+
+  test("tell into a workflow thread goes straight to the worker, posting nothing there", async () => {
+    const ran: { text: string }[] = [];
+    const timers: (() => void)[] = [];
+    const base = build();
+    const workflows = createWorkflowRepo(db);
+    const w = workflows.start(
+      { channelId: "C0TEST00001", threadTs: "1787122692.303399", sessionId: "s1", task: "blog", startedBy: OWNER },
+      1,
+    );
+    const deps: CommandDeps = {
+      ...base,
+      workflows,
+      runTurn: async (r) => void ran.push(r),
+      continueTimer: (fn) => void timers.push(fn),
+    };
+    const out = await dispatchCommand(deps, actor(), "C1", `tell ${LINK} fix the hero`, { threadTs: "1700000000.000001" });
+    // the worker was idle, so a step is started for it, carrying the note
+    expect(out).toContain("starts now");
+    expect(workflows.get(w.id)?.steers.map((x) => x.text)).toEqual(["fix the hero"]);
+    expect(workflows.get(w.id)?.continueAs).toBe(OWNER);
+    expect(timers).toHaveLength(1);
+    // no echo in the thread, and no front turn
+    expect(slackCalls.posts).toHaveLength(0);
+    expect(ran).toHaveLength(0);
+
+    // a second note while that step is pending just waits for it
+    const again = await dispatchCommand(deps, actor(), "C1", `tell ${LINK} and the footer`, { threadTs: "1700000000.000001" });
+    expect(again).toContain("next step");
+    expect(timers).toHaveLength(1);
+    expect(workflows.get(w.id)?.steers).toHaveLength(2);
   });
 
   test("tell needs a thread link and a message, and not this same thread", async () => {

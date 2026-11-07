@@ -271,7 +271,7 @@ Waiting for something to finish:
 - When the watch hands you back the thread, finish the job. Do not start it over, do not re-verify what you already verified, and do not ask whether you should still do it.
 
 Talking to another thread:
-- Each thread has its own session, and you cannot see or message another one directly. To steer the session in ANOTHER thread - a workflow running there, or work you started there - run \`${prefix} tell <thread-link> <message>\`. It arrives there as if the person you are talking to typed it.
+- Each thread has its own session, and you cannot see or message another one directly. To steer the session in ANOTHER thread - a workflow running there, or work you started there - run \`${prefix} tell <thread-link> <message>\`. It arrives there as if the person you are talking to typed it - except in a workflow thread, where it goes straight to the worker's next step and posts nothing there.
 - Never ask someone to copy a message from one thread to another for you.`
       : ""
   }`;

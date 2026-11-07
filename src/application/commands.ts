@@ -76,7 +76,7 @@ import { mentionedId } from "../domain/mentions.ts";
 import { parseMessageLink } from "../domain/slackLinks.ts";
 import { postedBody } from "../domain/ghCommand.ts";
 import { runWorkflowTurn, WORKFLOW_MIN_ROLE, type WorkflowDeps } from "./workflow.ts";
-import { afterWorkflowTurn } from "./workflowContinue.ts";
+import { afterWorkflowTurn, steerWorker } from "./workflowContinue.ts";
 import { allowanceFor, holdForApproval, limitFor, PAL_WINDOW_MS, setLimit, type CommandLimitDeps } from "./commandLimits.ts";
 import {
   encodeRequest,
@@ -2771,6 +2771,16 @@ Up to ${BOMB_SIZE} reactions; no category means *${DEFAULT_CATEGORY}*.`;
       const message = args.slice(1).join(" ").trim();
       if (!message) return `And what to tell it? \`${prefix} tell <thread-link> <message>\``;
       if (ref.channel === channelId && root === threadTs) return "That is this thread - just say it here.";
+      // A workflow thread takes it straight into the worker's queue: no echo,
+      // no front turn. Going through the front posted the message twice in a
+      // thread already full of its own progress (the echo, then the front's
+      // "passing it on"), for an instruction meant only for the work.
+      const workflow = deps.workflows?.activeFor(ref.channel, root);
+      if (workflow) {
+        const outcome = steerWorker(deps, workflow, actor.slackId, [message], `${ref.channel}:${root}`);
+        if (outcome === "kicked") return "sent straight to that workflow's worker - it was idle, so it starts now 📨";
+        if (outcome === "queued") return "sent straight to that workflow's worker - it gets it at its next step 📨";
+      }
       // Shown in the target thread first, so its answer has the question above
       // it and nobody there wonders who asked.
       await deps.slack?.post(ref.channel, `📨 <@${actor.slackId}>: ${message}`, root);
