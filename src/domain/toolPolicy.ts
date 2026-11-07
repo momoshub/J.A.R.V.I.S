@@ -110,22 +110,25 @@ export const DB_MCP_SERVERS: readonly string[] = [
   "mcp__pg-prod",
   "mcp__pg-prod-2",
   "mcp__pg-staging",
-  "mcp__clickhouse-us-prod",
-  "mcp__clickhouse-sg-prod",
-  "mcp__clickhouse-sg-stg",
+  "mcp__clickhouse-sql-us-prod-ro",
+  "mcp__clickhouse-sql-sg-prod-ro",
+  "mcp__clickhouse-sql-sg-stg-rw",
+  "mcp__clickhouse-cloud-mgmt",
 ];
 
 /**
  * The database servers an executer may query: only those whose credential is
  * read only on the server side (dbhub `readonly = true`, ClickHouse readonly
- * users). `clickhouse-sg-stg` logs in as a write user, so it stays denied.
+ * users). `clickhouse-sql-sg-stg-rw` logs in as a write user, and
+ * `clickhouse-cloud-mgmt` reaches every service in the org with the host
+ * login's key, so both stay denied.
  */
 export const EXECUTER_DB_SERVERS: readonly string[] = [
   "mcp__pg-prod",
   "mcp__pg-prod-2",
   "mcp__pg-staging",
-  "mcp__clickhouse-us-prod",
-  "mcp__clickhouse-sg-prod",
+  "mcp__clickhouse-sql-us-prod-ro",
+  "mcp__clickhouse-sql-sg-prod-ro",
 ];
 
 /**
