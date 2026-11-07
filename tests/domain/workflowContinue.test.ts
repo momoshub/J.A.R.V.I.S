@@ -2,6 +2,7 @@ import { describe, expect, test } from "bun:test";
 import {
   CONTINUE_MARKER,
   createMarkerFilter,
+  failedStepNotice,
   parseContinue,
   pausedNotice,
 } from "../../src/domain/workflowContinue.ts";
@@ -73,5 +74,17 @@ describe("prompt and notice", () => {
     expect(n).toContain("30");
     expect(n).toContain("carry on");
     expect(n).toContain("//jv workflow stop");
+  });
+});
+
+describe("failedStepNotice", () => {
+  test("names the error's first line and says what happens next", () => {
+    const retry = failedStepNotice("claude CLI exited with code 143\nstack...", true, "//jv");
+    expect(retry).toContain("code 143");
+    expect(retry).not.toContain("stack");
+    expect(retry).toContain("retrying once");
+    const stopped = failedStepNotice("", false, "//jv");
+    expect(stopped).toContain("unknown error");
+    expect(stopped).toContain("//jv workflow stop");
   });
 });

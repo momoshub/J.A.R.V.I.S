@@ -83,3 +83,22 @@ export const createMarkerFilter = (): { push: (delta: string) => string; flush: 
 /** Posted once when a workflow has carried on by itself as far as it may. */
 export const pausedNotice = (cap: number, prefix = "//bot"): string =>
   `⏸️ paused after ${cap} steps in a row on my own. Say anything here (\`carry on\` will do) to resume, or \`${prefix} workflow stop\` to end it.`;
+
+/**
+ * A worker step that failed (timed out, crashed) is retried this many times in
+ * a row before the workflow waits for a human. Once is enough to get past a
+ * step that simply ran too long; a second failure is a pattern, not bad luck.
+ */
+export const FAILED_STEP_RETRIES = 1;
+
+/** Posted when a worker step fails, so the thread never just goes quiet. */
+export const failedStepNotice = (error: string, retrying: boolean, prefix = "//bot"): string => {
+  const why = error.trim().split("\n")[0]?.slice(0, 200) || "unknown error";
+  return retrying
+    ? `⚠️ the last step failed (\`${why}\`), retrying once in smaller pieces. Queued notes are kept.`
+    : `⚠️ the last step failed again (\`${why}\`), so I stopped here. Queued notes are kept - say anything here to resume, or \`${prefix} workflow stop\` to end it.`;
+};
+
+/** What a retried step is told, on top of the usual carry-on. */
+export const RETRY_MESSAGE =
+  "the previous step failed before it finished (probably the time limit). check where it got to, then carry on in smaller steps";

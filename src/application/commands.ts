@@ -189,6 +189,8 @@ export type CommandDeps = {
   }) => Promise<void>;
   /** Timer for a workflow's next step; injected so tests need not wait. */
   continueTimer?: (fn: () => void, ms: number) => void;
+  /** Failed workflow steps in a row, per workflow id, so a failure is retried once. */
+  stepFailures?: Map<number, number>;
   /** Slack Web API operations, for the power tools (bomb, reply). */
   slack?: SlackAdminPort;
   /** GitHub actions the bot takes itself - the up-front approve in `review`. */

@@ -9,7 +9,7 @@ import { decideAccess } from "../domain/access.ts";
 import { cleanInboundText } from "../domain/conversation.ts";
 import { commandLineOf, dispatchCommand, notifiesOwner } from "./commands.ts";
 import { runFrontTurn, runWorkflowTurn, WORKFLOW_MIN_ROLE } from "./workflow.ts";
-import { afterWorkflowTurn, steerWorker } from "./workflowContinue.ts";
+import { afterFailedStep, afterWorkflowTurn, steerWorker } from "./workflowContinue.ts";
 import { frontDigest, type FrontDeps } from "./workflowFront.ts";
 import { frontKeyOf, steeredMessage } from "../domain/workflowFront.ts";
 import { requestAccess } from "./accessRequests.ts";
@@ -37,6 +37,8 @@ export type RespondDeps = HandleMessageDeps & Pick<FrontDeps, "workerCalls"> & {
   reviewGuard?: ReviewGuard;
   /** True while a restart waits for running turns; pending workflow steps hold. */
   draining?: () => boolean;
+  /** Failed workflow steps in a row, per workflow id, so a failure is retried once. */
+  stepFailures?: Map<number, number>;
 };
 
 const RANK: Record<UserRole, number> = { pal: 0, executer: 1, admin: 2, owner: 3 };
@@ -222,7 +224,18 @@ export const respond = async (
           record("stopped", "stopped before it finished");
           return { kind: "ignored" };
         }
-        record("failed", err instanceof Error ? err.message : String(err));
+        const message = err instanceof Error ? err.message : String(err);
+        record("failed", message);
+        // A worker step has nobody waiting on its error: say so in the thread
+        // and retry, or the notes queued for it are never delivered.
+        const failedWorkflow =
+          inbound.autoContinue && inbound.threadTs
+            ? deps.workflows?.activeFor(inbound.channelId, inbound.threadTs)
+            : undefined;
+        if (failedWorkflow) {
+          await afterFailedStep(deps, failedWorkflow, inbound.slackUserId, message, deps.commandPrefix);
+          return { kind: "ignored" };
+        }
         throw err;
       } finally {
         tracked?.done();
