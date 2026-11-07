@@ -447,7 +447,11 @@ describe("a message with several questions", () => {
     expect(out).toContain("Background agents always run as Orca workers, never the Agent tool");
     expect(out).toContain("orca orchestration worker-start");
     expect(out).toContain("Orca cannot wake you");
-    expect(out).toContain("fall back to the Agent tool");
+    expect(out).toContain("Fall back to the Agent tool");
+    expect(out).toContain("orca orchestration run-create");
+    expect(out).toContain("worker-start --run <runId>");
+    expect(out).toContain('all(. == "completed" or . == "failed")');
+    expect(out).toContain("inbox --terminal run:<runId> --full");
   });
 
   test("each part is handed over as it lands, folded into one message", () => {
