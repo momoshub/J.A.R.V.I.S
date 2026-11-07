@@ -1,34 +1,100 @@
 # Architecture
 
-the bot follows a clean, layered architecture. Dependencies point inward: outer
-layers know about inner ones, never the reverse. Every layer is functional -
-factories and pure functions, no classes.
+The bot runs as two processes on one host, a Slack gateway and the bot itself,
+joined by a SQLite inbox. Inside the bot the code follows a clean, layered
+architecture: dependencies point inward, outer layers know about inner ones,
+never the reverse. Every layer is functional - factories and pure functions,
+no classes.
+
+## Runtime
 
 ```
-                 index.ts  (composition root)
-                     |
-   +-----------------+------------------+
-   |                 |                  |
- slack            dashboard          (llm)          <- infrastructure
-   \                 |                  /
-    \                |                 /
-     +----- application (use cases) --+
-                     |
-                 domain (pure)
+      Slack (Socket Mode)                          GitHub
+            |   ^                                    ^
+  envelopes |   | replies (Web API, chat.startStream)| review requests (polled)
+            v   |                                    |
+  +-----------------+                                |
+  | src/gateway.ts  |  holds the socket, never       |
+  | (own supervisor)|  restarts                      |
+  +-----------------+                                |
+            |                                        |
+            v                                        |
+       data/inbox.db  (SQLite queue)                 |
+            |                                        |
+  +---------v--------------------------------------------------------------+
+  | src/index.ts - the bot (SLACK_TRANSPORT=inbox)                          |
+  |                                                                         |
+  |  inboxReceiver -> Bolt app.ts -> respond -+-> commands (role gate,      |
+  |                                           |     allowance, audit log)   |
+  |                                           +-> handleMessage (chat)      |
+  |                                                    |                    |
+  |                    threadQueue (1 turn per thread) + runRegistry (stop) |
+  |                                                    |                    |
+  |                    LlmPort: claude CLI, one --resume session per thread |
+  |                    tool policy per role, stream.ts -> live Slack reply  |
+  |                                                                         |
+  |  timers, outside every turn:                                            |
+  |    watcher | reminders | reviewInbox | workflow continues | innerChild  |
+  |                                                                         |
+  |  dashboard + JSON API (Bun.serve, loopback), /api/commands/run          |
+  +-------------------------------------------------------------------------+
+            |                                   |
+            v                                   v
+   data/<bot>.db, data/tokens.db,        bin/ helpers the brain calls
+   data/adapter/ (memory + skills)       (slack-read, slack-react, run, ...)
 ```
+
+- **Gateway / bot split.** `src/gateway.ts` only holds the Slack socket and
+  writes every envelope to `data/inbox.db`. The bot reads it through
+  `inboxReceiver`, a Bolt receiver, so every listener in `app.ts` runs exactly
+  as it would over Socket Mode. Restarting the bot never drops Slack. With
+  `SLACK_TRANSPORT=socket` (the default) the bot holds the socket itself and no
+  gateway is needed.
+- **One turn per thread, one session per thread.** `threadQueue` serialises
+  turns in a thread; `threadSession` keeps one CLI session id per thread and
+  resumes it, so the model keeps its context and files between turns.
+  `runRegistry` holds a handle on each running turn so it can be stopped.
+- **Commands from the brain.** The brain runs real commands through
+  `bin/jarvis-run.sh` -> `/api/commands/run`. `commandTickets` mints a one-turn
+  ticket bound to the person being answered, so the brain never names the actor
+  and cannot escalate. `brainRun` delivers the result per the command's output
+  mode (`quiet` comes back to the brain, the rest is posted to the thread).
+- **Timers.** `watcher` polls each due watch's predicate and hands the thread a
+  fresh turn when it is ready; `reminders` posts at the time with no model;
+  `reviewInbox` polls GitHub for review requests and runs `review` as the
+  requester; `workflowContinue` resumes long workflows after a restart;
+  `innerChild` watches the bot's own conversations and queues fixes to itself.
+  None of them hold a session or a queue slot while they wait.
+- **Self-update.** `bin/jarvis-restart.sh` runs typecheck and tests and only
+  restarts when both pass, and `restartWhenIdle` waits until no turn is running
+  in any thread.
 
 ## Layers
+
+```
+                 index.ts / gateway.ts  (composition roots)
+                          |
+   +---------+-----------+-----------+---------+--------+
+   |         |           |           |         |        |
+ slack   dashboard      llm         db      github   system   <- infrastructure
+   \         |           |           |         |        /
+    +--------+----- application (use cases) ---+-------+
+                          |
+                     domain (pure)
+```
 
 ### `src/domain` - pure business rules
 
 No I/O, no frameworks. Just data shapes and functions of their inputs.
 
 - `types.ts` - core data shapes (`AllowedUser`, `StoredMessage`, roles: pal/executer/admin/owner)
-- `access.ts` - who may talk to the bot and who may manage users
-- `conversation.ts` - context windowing; `mentions.ts` - annotate `<@ID>` -> `<@ID:Name>` before the model sees a message
-- `personality.ts` - builds the system prompt from generic defaults + injected identity (no hardcoded bot)
-- `toolPolicy.ts` - per-role CLI sandbox policy (skip-permissions vs `--allowedTools` allow-list + fixed cwd)
-- `reviewPrompt.ts`, `emoji.ts`, `slackLinks.ts` - helpers for the power-tool commands (review / bomb / reply)
+- `access.ts`, `toolPolicy.ts`, `toolVisibility.ts` - who may talk to the bot, and the per-role CLI sandbox (skip-permissions vs `--allowedTools` allow-list + fixed cwd)
+- `personality.ts`, `conversation.ts`, `mentions.ts` - the system prompt from generic defaults + injected identity, context windowing, `<@ID>` annotation
+- `threadSession.ts`, `agentSession.ts` - one CLI session per thread and when it may be resumed
+- `adapter.ts`, `adapterCheck.ts` - memory as a checked, versioned directory (facts + skills) instead of an ever-growing list
+- `watch.ts`, `reminder.ts`, `selfUpdate.ts`, `runControl.ts` - waits, reminders, idle restart, stopping a turn
+- `*Prompt.ts` - prompts for the preset tasks (review, ticket, investigate, read, note, workflow, ...)
+- `blockKit.ts`, `kitEvents.ts`, `slackFormat.ts`, `slackLinks.ts` - Slack formatting, Block Kit and links
 
 Fully unit tested, no mocks needed.
 
@@ -36,13 +102,16 @@ Fully unit tested, no mocks needed.
 
 Orchestrates the domain and depends on **ports**, not concrete adapters.
 
-- `botProfile.ts` - loads the instance identity (name, persona, labels) from settings, DB-first
-- `ports.ts` - `LlmPort` (optional streaming + per-call tool `policy`), `Clock` seams
-- `handleMessage.ts` - the chat flow (access -> remember -> ask model -> remember), applying the role's tool policy
-- `commands.ts` - the command registry: dual-interface (configurable prefix + slash), per-command role gates, help, and the power tools (review / bomb / reply)
-- `slackAdmin.ts` - port for the Console + power tools (list/history/thread/edit/delete/post/react)
-- `draftReply.ts` - AI reply drafting (Console + the reply command)
+- `ports.ts` - `LlmPort` (optional streaming + per-call tool `policy`), `Clock` and sink seams
 - `respond.ts` - routes an inbound message to command or chat
+- `handleMessage.ts` - the chat flow (access -> remember -> ask model -> remember), applying the role's tool policy
+- `commands.ts`, `commandTickets.ts`, `commandLimits.ts`, `brainRun.ts` - the command registry (configurable prefix + slash, role gates, help), the brain's tickets, allowances and result delivery
+- `threadQueue.ts`, `runRegistry.ts` - one turn per thread, and stopping one
+- `watcher.ts`, `reminders.ts`, `reviewInbox.ts`, `reviewGuard.ts`, `innerChild.ts` - the timers
+- `workflow.ts`, `workflowFront.ts`, `workflowContinue.ts` - long tasks driven from one thread on a durable session
+- `accessRequests.ts` - unknown people ask the owner and admins, who decide with a reaction
+- `adapterMemory.ts`, `botProfile.ts`, `claudeTokens.ts` - memory, instance identity and CLI tokens
+- `slackAdmin.ts`, `draftReply.ts` - Console + power tools port, AI reply drafting
 
 Tested with an in-memory SQLite database and a fake `LlmPort`.
 
@@ -50,23 +119,31 @@ Tested with an in-memory SQLite database and a fake `LlmPort`.
 
 Concrete implementations of the seams and the transports.
 
-- `db/` - `bun:sqlite` client, schema + role migration, repos (`userRepo`, `messageRepo`, `learningsRepo`, `settingsRepo`, `commandLogRepo`), owner seed
-- `llm/claudeCli.ts` - the default `LlmPort`, wraps the local `claude` CLI. `complete` uses `--output-format json`; `stream` uses `--output-format stream-json --include-partial-messages` and forwards text deltas + tool events to a sink. The per-call `policy` maps to `--allowedTools`/`--disallowedTools`/cwd/timeout
-- `llm/anthropic.ts` - alternative `LlmPort` backed by the Anthropic API (no streaming; callers fall back to `complete`)
-- `slack/app.ts` - Socket Mode listener + slash commands mapping Slack events to `respond`
-- `slack/adminClient.ts` - `SlackAdminPort` over the Slack Web API (Console + power tools)
-- `slack/stream.ts` - bridges the `LlmStreamSink` onto Slack's `chatStream` (text + `task_update` tool cards); Slack owns the message, appends are serialised, and a failed stream falls back to a single post
-- `dashboard/server.ts` - `Bun.serve` JSON API under `/api` plus static hosting of the React SPA built to `web/dist`
-- `web/` - the dashboard front end: React 19 + Vite + React Router 7 (data-router with loaders/actions), talking to the JSON API
+- `slack/gateway.ts` - the gateway's socket, writing envelopes to the inbox
+- `slack/inboxReceiver.ts` - the Bolt receiver that reads the inbox instead of a socket
+- `slack/app.ts` - Bolt listeners + slash commands mapping Slack events to `respond`
+- `slack/stream.ts`, `slack/fences.ts` - bridges the `LlmStreamSink` onto Slack's `chatStream` (text + `task_update` tool cards, Block Kit fences), falling back to a single post
+- `slack/adminClient.ts` - `SlackAdminPort` over the Slack Web API
+- `inbox/inboxRepo.ts` - the inbox queue shared by both processes
+- `llm/claudeCli.ts` - the default `LlmPort`, wraps the local `claude` CLI (`--resume`, `stream-json`, per-call policy -> `--allowedTools`/cwd/timeout); `killTree.ts`, `toolTraceLog.ts` support it
+- `llm/anthropic.ts` - alternative `LlmPort` backed by the Anthropic API
+- `db/` - `bun:sqlite` client, schema + migrations, one repo per table (users, messages, sessions, watches, reminders, workflows, usage, turn and command logs, ...), `secretBox.ts` for encrypted tokens
+- `adapter/adapterStore.ts` - reads and writes the memory directory under `data/adapter`
+- `github/` - `gh` CLI wrapper and review-request polling
+- `system/` - host probes (system load, Accessibility access, shell checks for watches)
+- `dashboard/server.ts` - `Bun.serve` JSON API under `/api` plus the React SPA built to `web/dist`
+- `web/` - the dashboard front end: React 19 + Vite + React Router 7
 
 ### `src/config`
 
 - `env.ts` - zod-validated environment config, fails fast at boot
 
-### `src/index.ts` - composition root
+### Composition roots
 
-The single place that imports every layer, builds the graph, and starts the
-Slack listener and dashboard.
+- `src/index.ts` - imports every layer, builds the graph, starts the Slack
+  listener (socket or inbox), the timers and the dashboard
+- `src/gateway.ts` - reads only `SLACK_APP_TOKEN` and the inbox path, on
+  purpose, so a new bot setting can never stop the gateway from starting
 
 ## Key decisions
 
@@ -74,16 +151,23 @@ Slack listener and dashboard.
   handle and returning a bag of functions. No classes anywhere.
 - **Ports and adapters.** Use cases depend on `LlmPort`/`Clock`, so tests inject
   fakes and never touch the network or the wall clock.
+- **Slack never drops on a restart.** The gateway runs under its own supervisor
+  and is not restarted with the bot.
+- **Sessions, not transcripts.** A thread resumes its CLI session instead of
+  replaying history into a cold process, and the session id lives in the DB so
+  a restart does not lose it.
+- **Waiting costs nothing.** Watches, reminders and polls run on timers in the
+  bot process, outside every turn: no model, no session, no queue slot.
 - **Owner can never be locked out.** `decideAccess` grants the owner access even
   if the database is empty or broken.
-- **Memory is per-channel** and windowed (`DEFAULT_CONTEXT_WINDOW`) so prompts
-  stay bounded no matter how long a channel has been chatting.
 - **Role-based tool policy.** owner/admin run the CLI full-access; pal/executer
   are sandboxed (allow-list + fixed cwd, no permission bypass). `review` is a
   preset that always runs full-access.
-- **The DB is committed** (`data/bot.db` by default; this instance uses
-  `data/ev.db`) so identity/allowlist ship with the repo. Conversation content is
-  cleared before commit; WAL sidecars are gitignored and flushed on clean shutdown.
+- **The brain never names the actor.** Commands it runs carry a ticket bound to
+  the person it is answering.
+- **The DB is committed** so identity/allowlist ship with the repo. Conversation
+  content is cleared before commit; WAL sidecars are gitignored and flushed on
+  clean shutdown.
 - **Nothing bot-specific is hardcoded.** Identity lives in the DB; command
   triggers, model, cwd, etc. come from env. The code ships neutral defaults.
 
