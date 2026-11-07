@@ -93,7 +93,7 @@ import {
   type KitThread,
 } from "../../domain/kitEvents.ts";
 import type { KitViewRepo } from "../db/kitViewRepo.ts";
-import { createSlackStream, type Streamer } from "./stream.ts";
+import { createSlackStream, STREAM_CHAR_BUDGET, type Streamer } from "./stream.ts";
 import type { InboxContext, InboxReceiver } from "./inboxReceiver.ts";
 import {
   CONNECTION_GRACE_MS,
@@ -482,7 +482,28 @@ export const createHandler =
         // its cards; the summary and footer go on the last one with content.
         // Rewriting the last with the whole answer posted the reply twice.
         // A message left holding nothing but cards is deleted.
-        if (parts.length === 1 && stream?.ts && (collapsed || footer)) {
+        // Most rollovers are cards, not text: a dozen steps fill the
+        // allowance and a short answer spills into a second message. With the
+        // cards gone the text fits in one again, so it is put back together on
+        // the first message and the continuations are deleted.
+        const joined = parts.map((p) => p.text).join("");
+        const [first, ...rest] = parts;
+        const merged =
+          parts.length > 1 &&
+          first !== undefined &&
+          joined.length <= STREAM_CHAR_BUDGET &&
+          (await msg.client.chat
+            .update({ channel: msg.channelId, ts: first.ts, ...tidy(joined, true) })
+            .then(() => true)
+            .catch((e: unknown) => {
+              fail(e);
+              return false;
+            }));
+        if (merged) {
+          for (const part of rest) {
+            await msg.client.chat.delete?.({ channel: msg.channelId, ts: part.ts }).catch(fail);
+          }
+        } else if (parts.length === 1 && stream?.ts && (collapsed || footer)) {
           await msg.client.chat
             .update({ channel: msg.channelId, ts: stream.ts, ...tidy(result.text, true) })
             // A tidy-up that fails must leave the answer exactly as it was.
