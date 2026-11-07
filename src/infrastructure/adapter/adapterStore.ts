@@ -1,15 +1,23 @@
 /**
- * The adapter directory on disk: read it, write it, list it.
+ * The memory adapter: read it, write it, list it.
  *
- * The directory is the source of truth and it is a real Hermit adapter, so the
- * framework's own tooling (`hermit check`, `hermit deploy`, a training run) can
- * be pointed straight at it. Revision history lives in SQLite beside it, which
- * is what makes a bad curation a one-line revert instead of an archaeology
- * exercise.
+ * The source of truth is the `adapter_files` table, one row per file. It used
+ * to be a directory under `data/adapter`, which the bot wrote and a human had
+ * to commit - so git held a copy that drifted from what the bot knew, and read
+ * like stale memory left behind after the move to the DB. Revision history
+ * sits in the same database (`adapter_revisions`), which is what makes a bad
+ * curation a one-line revert instead of an archaeology exercise.
+ *
+ * The files still have to exist on disk: a skill is read by path, and the
+ * browser skill ships scripts that are run by path. So every write re-renders
+ * a mirror directory from the rows. The mirror is output, never input -
+ * anything edited there is overwritten on the next write or start. It is
+ * still a real Hermit adapter, so `hermit check` can be pointed at it.
  */
 import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join, relative, resolve } from "node:path";
+import type { DbClient } from "../db/client.ts";
 import {
   type Adapter,
   AGENTS_DIR,
@@ -54,6 +62,7 @@ export type AdapterStore = {
   /** Read a staged directory back, same shape as `files()`. */
   readonly collect: (dir: string) => Map<string, string>;
   readonly discard: (dir: string) => void;
+  /** The mirror directory - where skills are read from, not where they live. */
   readonly root: string;
 };
 
@@ -66,22 +75,82 @@ const walk = (root: string, dir: string, out: string[]): void => {
   }
 };
 
-export const createAdapterStore = (rootPath: string): AdapterStore => {
-  const root = resolve(rootPath);
+const readTree = (dir: string): Map<string, string> => {
+  const out = new Map<string, string>();
+  if (!existsSync(dir)) return out;
+  const paths: string[] = [];
+  walk(dir, dir, paths);
+  for (const rel of paths.sort()) out.set(rel, readFileSync(join(dir, rel), "utf8"));
+  return out;
+};
+
+/** Make `dir` hold exactly `next`: write what changed, remove what is gone. */
+const syncTree = (dir: string, next: ReadonlyMap<string, string>): void => {
+  const root = resolve(dir);
+  const before = readTree(root);
+  for (const [rel, content] of next) {
+    const full = resolve(root, rel);
+    if (!full.startsWith(`${root}/`)) throw new Error(`Refusing to write outside the adapter: ${rel}`);
+    if (before.get(rel) === content) continue;
+    mkdirSync(dirname(full), { recursive: true });
+    writeFileSync(full, content);
+  }
+  for (const rel of before.keys()) {
+    if (next.has(rel)) continue;
+    rmSync(join(root, rel), { force: true });
+  }
+  // A curation that empties a skill should not leave its directory behind
+  // to be mistaken for one that exists but has lost its SKILL.md.
+  for (const sub of [SKILLS_DIR, AGENTS_DIR, PEOPLE_DIR, CHANNELS_DIR]) {
+    const full = join(root, sub);
+    if (!existsSync(full)) continue;
+    for (const entry of readdirSync(full)) {
+      const child = join(full, entry);
+      if (statSync(child).isDirectory() && readdirSync(child).length === 0) rmSync(child, { recursive: true });
+    }
+  }
+};
+
+/**
+ * The store over `db`, mirrored into `mirrorPath`.
+ *
+ * `importFrom` is the old on-disk adapter: read once, only while the table is
+ * still empty, so an instance upgrading from the directory keeps its memory.
+ */
+export const createAdapterStore = (db: DbClient, mirrorPath: string, importFrom?: string): AdapterStore => {
+  const root = resolve(mirrorPath);
 
   const files = (): Map<string, string> => {
-    const out = new Map<string, string>();
-    if (!existsSync(root)) return out;
-    const paths: string[] = [];
-    walk(root, root, paths);
-    for (const rel of paths.sort()) out.set(rel, readFileSync(join(root, rel), "utf8"));
-    return out;
+    const rows = db
+      .query<{ path: string; content: string }, []>("SELECT path, content FROM adapter_files ORDER BY path")
+      .all();
+    return new Map(rows.map((r) => [r.path, r.content]));
   };
+
+  const replaceRows = db.transaction((next: ReadonlyMap<string, string>) => {
+    db.exec("DELETE FROM adapter_files");
+    const insert = db.query("INSERT INTO adapter_files (path, content) VALUES (?, ?)");
+    for (const [rel, content] of next) insert.run(rel, content);
+  });
+
+  const write = (next: ReadonlyMap<string, string>): void => {
+    for (const rel of next.keys()) {
+      if (!resolve(root, rel).startsWith(`${root}/`)) throw new Error(`Refusing to write outside the adapter: ${rel}`);
+    }
+    replaceRows(next);
+    syncTree(root, next);
+  };
+
+  if (files().size === 0 && importFrom && existsSync(join(importFrom, MANIFEST_FILE))) {
+    write(readTree(resolve(importFrom)));
+  } else {
+    syncTree(root, files());
+  }
 
   const load = (): Adapter => {
     const all = files();
     const manifestText = all.get(MANIFEST_FILE);
-    if (manifestText === undefined) throw new Error(`No ${MANIFEST_FILE} in ${root}`);
+    if (manifestText === undefined) throw new Error(`No ${MANIFEST_FILE} in the adapter`);
     const manifest = parseManifest(parseYaml(manifestText));
 
     const people = new Map<string, string>();
@@ -115,18 +184,9 @@ export const createAdapterStore = (rootPath: string): AdapterStore => {
     };
   };
 
-  const readTree = (dir: string): Map<string, string> => {
-    const out = new Map<string, string>();
-    if (!existsSync(dir)) return out;
-    const paths: string[] = [];
-    walk(dir, dir, paths);
-    for (const rel of paths.sort()) out.set(rel, readFileSync(join(dir, rel), "utf8"));
-    return out;
-  };
-
   return {
     root,
-    exists: () => existsSync(join(root, MANIFEST_FILE)),
+    exists: () => files().has(MANIFEST_FILE),
     files,
     load,
     stage: () => {
@@ -143,28 +203,6 @@ export const createAdapterStore = (rootPath: string): AdapterStore => {
       // Only ever a directory this store made, never anything else.
       if (dir.includes("adapter-refine-")) rmSync(dir, { recursive: true, force: true });
     },
-    write: (next) => {
-      const before = files();
-      for (const [rel, content] of next) {
-        const full = join(root, rel);
-        if (!resolve(full).startsWith(`${root}/`)) throw new Error(`Refusing to write outside the adapter: ${rel}`);
-        mkdirSync(dirname(full), { recursive: true });
-        writeFileSync(full, content);
-      }
-      for (const rel of before.keys()) {
-        if (next.has(rel)) continue;
-        rmSync(join(root, rel), { force: true });
-      }
-      // A curation that empties a skill should not leave its directory behind
-      // to be mistaken for one that exists but has lost its SKILL.md.
-      for (const dir of [SKILLS_DIR, AGENTS_DIR, PEOPLE_DIR, CHANNELS_DIR]) {
-        const full = join(root, dir);
-        if (!existsSync(full)) continue;
-        for (const entry of readdirSync(full)) {
-          const child = join(full, entry);
-          if (statSync(child).isDirectory() && readdirSync(child).length === 0) rmSync(child, { recursive: true });
-        }
-      }
-    },
+    write,
   };
 };

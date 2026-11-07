@@ -93,6 +93,29 @@ export const migrate = (db: Database): void => {
   migrateKitViews(db);
   migrateWorkflowContinue(db);
   migrateWorkflowFront(db);
+  migrateAdapterFiles(db);
+};
+
+/**
+ * Migration v22: the memory adapter lives in the database.
+ *
+ * It used to be a directory under `data/adapter`, written by the bot and
+ * committed by hand - so the folder in git drifted from what the bot actually
+ * knew, and looked like a stale copy of memory that had moved to the DB. One
+ * row per adapter file now, keyed by its relative path. The directory the
+ * prompt points at is a mirror rendered from these rows, never edited.
+ */
+const migrateAdapterFiles = (db: Database): void => {
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS adapter_files (
+      path    TEXT PRIMARY KEY,
+      content TEXT NOT NULL
+    );
+  `);
+  const { user_version } = db.query<{ user_version: number }, []>("PRAGMA user_version").get() ?? {
+    user_version: 0,
+  };
+  if (user_version < 22) db.exec("PRAGMA user_version = 22;");
 };
 
 /**

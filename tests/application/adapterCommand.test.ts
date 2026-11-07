@@ -41,7 +41,8 @@ afterEach(() => {
 const deps = (withAdapter = true): CommandDeps => {
   const db = openDatabase(":memory:");
   const root = mkdtempSync(join(tmpdir(), "adapter-cmd-"));
-  dirs.push(root);
+  const mirror = mkdtempSync(join(tmpdir(), "adapter-cmd-mirror-"));
+  dirs.push(root, mirror);
   if (withAdapter) {
     for (const [rel, content] of Object.entries({
       "adapter.yaml": MANIFEST,
@@ -57,7 +58,7 @@ const deps = (withAdapter = true): CommandDeps => {
     users: createUserRepo(db),
     messages: createMessageRepo(db),
     learnings: createLearningsRepo(db),
-    adapterStore: createAdapterStore(root),
+    adapterStore: createAdapterStore(db, mirror, root),
     adapterRevisions: createAdapterRevisionRepo(db),
     adapterBudget: () => 8000,
     ownerSlackId: OWNER,
@@ -129,6 +130,30 @@ describe("the adapter command", () => {
 
   test("with no adapter configured it says so plainly", async () => {
     expect(await run(deps(false), "adapter")).toContain("No memory adapter is configured");
+  });
+});
+
+describe("adapter export and import", () => {
+  test("an exported copy, edited and imported, becomes the adapter with a revision", async () => {
+    const d = deps();
+    const out = await run(d, "adapter export");
+    const dir = /`([^`]+)`/.exec(out)?.[1] ?? "";
+    dirs.push(dir);
+    writeFileSync(join(dir, "memory/NOTES.md"), "# Notes\n- lunch is at noon\n");
+    expect(await run(d, `adapter import ${dir}`)).toContain("Imported (#1)");
+    expect(d.adapterStore?.load().notes).toContain("lunch is at noon");
+    expect(d.adapterRevisions?.list(5).length).toBe(1);
+  });
+
+  test("an import that breaks the manifest is refused and changes nothing", async () => {
+    const d = deps();
+    const out = await run(d, "adapter export");
+    const dir = /`([^`]+)`/.exec(out)?.[1] ?? "";
+    dirs.push(dir);
+    mkdirSync(join(dir, "memory/people"), { recursive: true });
+    writeFileSync(join(dir, "memory/people/not-an-id.md"), "# Someone\n- a note\n");
+    expect(await run(d, `adapter import ${dir}`)).toContain("Could not import");
+    expect(d.adapterStore?.files().has("memory/people/not-an-id.md")).toBe(false);
   });
 });
 

@@ -46,6 +46,12 @@ afterEach(() => {
   for (const d of dirs.splice(0)) rmSync(d, { recursive: true, force: true });
 });
 
+const mirrorDir = (): string => {
+  const dir = mkdtempSync(join(tmpdir(), "adapter-mirror-"));
+  dirs.push(dir);
+  return dir;
+};
+
 const setup = (files: Record<string, string> = {}, budget?: number): AdapterDeps => {
   const root = mkdtempSync(join(tmpdir(), "adapter-test-"));
   dirs.push(root);
@@ -57,7 +63,7 @@ const setup = (files: Record<string, string> = {}, budget?: number): AdapterDeps
   const db = new Database(":memory:");
   migrate(db);
   return {
-    store: createAdapterStore(root),
+    store: createAdapterStore(db, mirrorDir(), root),
     revisions: createAdapterRevisionRepo(db),
     clock: () => 1_700_000_000_000,
     budget,

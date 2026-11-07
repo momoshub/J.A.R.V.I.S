@@ -41,7 +41,7 @@ no classes.
             |                                   |
             v                                   v
    data/<bot>.db, data/tokens.db,        bin/ helpers the brain calls
-   data/adapter/ (memory + skills)       (slack-read, slack-react, run, ...)
+   data/adapter-mirror/ (from DB)       (slack-read, slack-react, run, ...)
 ```
 
 - **Gateway / bot split.** `src/gateway.ts` only holds the Slack socket and
@@ -128,7 +128,7 @@ Concrete implementations of the seams and the transports.
 - `llm/claudeCli.ts` - the default `LlmPort`, wraps the local `claude` CLI (`--resume`, `stream-json`, per-call policy -> `--allowedTools`/cwd/timeout); `killTree.ts`, `toolTraceLog.ts` support it
 - `llm/anthropic.ts` - alternative `LlmPort` backed by the Anthropic API
 - `db/` - `bun:sqlite` client, schema + migrations, one repo per table (users, messages, sessions, watches, reminders, workflows, usage, turn and command logs, ...), `secretBox.ts` for encrypted tokens
-- `adapter/adapterStore.ts` - reads and writes the memory directory under `data/adapter`
+- `adapter/adapterStore.ts` - the memory adapter in the `adapter_files` table, mirrored to `data/adapter-mirror` so skills can be read by path
 - `github/` - `gh` CLI wrapper and review-request polling
 - `system/` - host probes (system load, Accessibility access, shell checks for watches)
 - `dashboard/server.ts` - `Bun.serve` JSON API under `/api` plus the React SPA built to `web/dist`
