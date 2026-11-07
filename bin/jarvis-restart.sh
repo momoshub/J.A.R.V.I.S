@@ -35,9 +35,16 @@ if [ "${1:-}" = "--check-only" ]; then
   exit 0
 fi
 
-echo "== asking the bot to restart"
+# The reason is shown to anyone who writes in while it waits, so name the
+# change: the PR number off the last merge, plus the newest real commit subject.
+pr=$(git log -1 --merges --format=%s 2>/dev/null | sed -n 's/^Merge pull request \(#[0-9]*\).*/\1 /p')
+subject=$(git log -1 --no-merges --format=%s 2>/dev/null)
+reason="picking up ${pr}${subject:-a change}"
+payload=$(REASON="$reason" bun -e 'console.log(JSON.stringify({ reason: process.env.REASON }))')
+
+echo "== asking the bot to restart ($reason)"
 out=$(curl -s --max-time 10 -X POST "http://127.0.0.1:${PORT}/api/restart" \
-  -H 'content-type: application/json' -d '{}')
+  -H 'content-type: application/json' -d "$payload")
 if printf '%s' "$out" | grep -q '"ok":true'; then
   echo "checks passed; restarting once idle (reply lands first, new messages queue, running turns get up to 15 min, then are cut and picked up again)"
 else
