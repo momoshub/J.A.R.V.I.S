@@ -126,6 +126,8 @@ export type HandleMessageDeps = {
   macUiScript?: string;
   /** Absolute path of the agent-desktop binary, when it is installed. */
   agentDesktop?: string;
+  /** Absolute path of `bin/desktop.ts`, which runs either driver under a desktop-wide lock. */
+  desktopScript?: string;
   /** Absolute path of the claude.ai artifact reader. */
   artifactScript?: string;
   /** Absolute path of the verify-and-restart helper. Admin+ only; see below. */
@@ -297,6 +299,7 @@ export const handleMessage = async (
     // browser testing.
     macUiScript: canDrive(decision.user.role) ? deps.macUiScript : undefined,
     agentDesktop: canDrive(decision.user.role) ? deps.agentDesktop : undefined,
+    desktopScript: canDrive(decision.user.role) ? deps.desktopScript : undefined,
     // ... and keep a durable fact, but only when talking to someone who could
     // have taught it one by hand. Learnings apply to everyone, everywhere.
     learnUrl: canTeach(decision.user.role) ? deps.learnUrl : undefined,

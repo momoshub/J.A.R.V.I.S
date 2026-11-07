@@ -161,6 +161,15 @@ describe("toolPolicyFor", () => {
     expect(toolPolicyFor("pal", withBin).allowedTools).not.toContain("Bash(/opt/homebrew/bin/agent-desktop:*)");
   });
 
+  test("with the lock wrapper, an executer reaches the drivers only through it", () => {
+    const withLock = { ...opts, macUiScript: "/x/mac-ui.js", agentDesktop: "/opt/homebrew/bin/agent-desktop", desktopScript: "/x/desktop.ts" };
+    const tools = toolPolicyFor("executer", withLock).allowedTools;
+    expect(tools).toContain("Bash(/x/desktop.ts:*)");
+    expect(tools).not.toContain("Bash(/x/mac-ui.js:*)");
+    expect(tools).not.toContain("Bash(/opt/homebrew/bin/agent-desktop:*)");
+    expect(toolPolicyFor("pal", withLock).allowedTools).not.toContain("Bash(/x/desktop.ts:*)");
+  });
+
   test("an executer writes code and opens a PR, a pal does not", () => {
     const exe = toolPolicyFor("executer", { ...opts, protectedPaths: ["/opt/jarvis"] });
     for (const t of ["Write", "Edit", "Bash(git commit:*)", "Bash(git push:*)", "Bash(gh pr create:*)", "Bash(gh repo clone:*)"]) {

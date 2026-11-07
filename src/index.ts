@@ -236,6 +236,9 @@ const main = async () => {
   // so look there too; absent means it is simply not offered.
   const agentDesktop =
     Bun.which("agent-desktop", { PATH: `${process.env.PATH ?? ""}:/opt/homebrew/bin:/usr/local/bin` }) ?? undefined;
+  // Runs either driver under a desktop-wide lock, so two sessions never click
+  // into each other's windows.
+  const desktopScript = join(import.meta.dir, "..", "bin", "desktop.ts");
   // Real clicks and keystrokes for web content that ignores AXPress.
   const browserScriptsDir = join(adapterStore.root, "skills", "browser-ui-test", "scripts");
   const browserScripts = ["click.js", "keys.js", "press-exact.js"].map((f) => join(browserScriptsDir, f));
@@ -271,6 +274,7 @@ const main = async () => {
       slackReadScript,
       macUiScript,
       agentDesktop,
+      desktopScript,
       browserScripts,
       uploadScript,
       githubCommentScript,
@@ -367,6 +371,7 @@ const main = async () => {
     slackWaitScript,
     macUiScript,
     agentDesktop,
+    desktopScript,
     // Re-run a dead turn, or nudge a quiet thread, from `mindful`. It goes
     // through the ordinary respond path on purpose: same queue, same session,
     // same role checks - a retry that took a shortcut would not be a retry of

@@ -192,8 +192,14 @@ export const EXECUTER_CODE_TOOLS: readonly string[] = [
  * and the upload helper that can only post a file into a Slack thread.
  */
 const executerBrowserTools = (opts: ToolPolicyOptions): readonly string[] => [
-  ...(opts.macUiScript ? [`Bash(${opts.macUiScript}:*)`] : []),
-  ...(opts.agentDesktop ? [`Bash(${opts.agentDesktop}:*)`] : []),
+  // With the lock wrapper wired, the drivers are reachable only through it, so
+  // an executer cannot drive the screen while another session holds it.
+  ...(opts.desktopScript
+    ? [`Bash(${opts.desktopScript}:*)`]
+    : [
+        ...(opts.macUiScript ? [`Bash(${opts.macUiScript}:*)`] : []),
+        ...(opts.agentDesktop ? [`Bash(${opts.agentDesktop}:*)`] : []),
+      ]),
   ...(opts.browserScripts ?? []).map((s) => `Bash(osascript -l JavaScript ${s}:*)`),
   ...(opts.uploadScript ? [`Bash(${opts.uploadScript}:*)`] : []),
   "Bash(screencapture:*)", "Bash(sips:*)",
@@ -276,6 +282,8 @@ export type ToolPolicyOptions = {
   readonly macUiScript?: string;
   /** Absolute path of the agent-desktop binary, the second AX driver: executer only. */
   readonly agentDesktop?: string;
+  /** Absolute path of `bin/desktop.ts`, the one-driver-at-a-time lock: replaces the two above. */
+  readonly desktopScript?: string;
   /** Absolute paths of the JXA browser helpers (real click, keys): executer only. */
   readonly browserScripts?: readonly string[];
   /** Absolute path of the Slack thread upload helper: executer only. */
