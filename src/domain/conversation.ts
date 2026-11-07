@@ -26,9 +26,13 @@ const toPrompt = ({ role, content, slackUserId }: StoredMessage): PromptMessage 
  * Taking the last N turns is wrong for a thread that has run long: the first
  * message is the subject, and whatever was shared in it - the screenshot the
  * whole thread is about - falls off the front exactly when the conversation
- * gets interesting. So the root and any turn carrying an attachment are kept,
- * and the rest of the window is the most recent turns. Order is preserved, so
- * the newest turn is still last.
+ * gets interesting. So the root is kept, and so are turns carrying an
+ * attachment - but those get at most half the window, newest first, and the
+ * newest turn is always kept. Attachments used to be taken oldest-first with no
+ * cap: a long thread full of screenshots filled the whole window with them and
+ * the message actually being answered fell out, so a cold session replied to
+ * the thread's opening request instead. Order is preserved, so the newest turn
+ * is still last.
  */
 export const buildContextWindow = (
   history: readonly StoredMessage[],
@@ -38,11 +42,14 @@ export const buildContextWindow = (
   if (size === 0) return [];
   if (history.length <= size) return history.map(toPrompt);
 
-  const keep = new Set<number>([0]); // the root: what the thread is about
-  for (let i = 1; i < history.length && keep.size < size; i++) {
+  const last = history.length - 1;
+  const keep = new Set<number>([last]); // what is being answered, always
+  if (keep.size < size) keep.add(0); // the root: what the thread is about
+  const attachmentCap = keep.size + Math.floor((size - keep.size) / 2);
+  for (let i = last - 1; i > 0 && keep.size < attachmentCap; i--) {
     if (history[i]?.content.includes(ATTACHMENT_MARKER)) keep.add(i);
   }
-  for (let i = history.length - 1; i >= 0 && keep.size < size; i--) keep.add(i);
+  for (let i = last - 1; i > 0 && keep.size < size; i--) keep.add(i);
 
   return [...keep]
     .sort((a, b) => a - b)
