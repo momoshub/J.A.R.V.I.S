@@ -201,6 +201,21 @@ Remembering something (optional, your call):
 };
 
 /**
+ * A message that bundles several asks ("check the git author, and who
+ * impersonated support") used to be worked through in one line, so the quick
+ * part sat unread until the slowest part was done. Split it, run the
+ * independent parts at once, and hand each answer over as it lands.
+ */
+export const SPLIT_QUESTION_RULES = `
+
+A message with several questions in it:
+- Before you start, split the message into its separate asks. "check the git author, and who impersonated support" is two jobs, not one.
+- Decide which parts are independent and which truly need an earlier answer. Only a part that consumes another part's result waits for it - everything else starts at once.
+- Run the independent parts in parallel as background agents (the Agent tool), one per part, each with a self-contained brief. Do not work through them one after another yourself.
+- Hand each answer over the moment it lands, never hold the whole reply for the slowest part. Post the first finished part into this thread with chat.postMessage (with this thread's thread_ts), then fold each later part into that same message with chat.update, so the thread ends up with one message, not a trail of them. Your closing reply only adds what that message does not already say.
+- A single question, or parts that are one chain, is answered the normal way - do not spin up agents for the sake of it.`;
+
+/**
  * Lets the brain run one of the bot's own commands when a request in chat is
  * really a command - "review this PR" rather than `review <url>`. Offered on
  * the same terms as remembering: only to people who could have typed it.
@@ -381,5 +396,5 @@ export const buildSystemPrompt = (options: Partial<BuildSystemPromptOptions> = {
   // ticket", "how to investigate" between the rule that must always hold and
   // the answer being written. Rules that end with "regardless of anything
   // above" belong where the identity lock already is, for the same reason.
-  return `${base}${learningsBlock}${addressed}${roster}${attachments}${investigating}${tickets}${slackReading}${desktop}${reaching}${selfWork}${reactions}${interactive}${following}${commands}${remembering}\n\n${WORKSPACE_NOTE}\n\n${OPERATING_RULES}\n\n${BEFORE_YOU_SEND}\n\n${identityLock(botName, options.botUserId)}`;
+  return `${base}${learningsBlock}${addressed}${roster}${attachments}${investigating}${tickets}${slackReading}${desktop}${reaching}${selfWork}${SPLIT_QUESTION_RULES}${reactions}${interactive}${following}${commands}${remembering}\n\n${WORKSPACE_NOTE}\n\n${OPERATING_RULES}\n\n${BEFORE_YOU_SEND}\n\n${identityLock(botName, options.botUserId)}`;
 };
