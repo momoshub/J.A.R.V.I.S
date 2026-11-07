@@ -227,6 +227,31 @@ describe("createHandler streaming truth table", () => {
     expect(r.deletes).not.toContain("222.2");
   });
 
+  test("a short answer that rolled over behind its cards is put back on one message", async () => {
+    const big = (id: string): LlmStreamEvent => ({
+      type: "tool",
+      id,
+      title: `run: ${id}`,
+      status: "complete",
+      details: "d".repeat(250),
+    });
+    const cards = Array.from({ length: 40 }, (_, i) => big(`t${i}`));
+    const head = "first half of the answer ";
+    const tail = "and the rest of it";
+    const r = build({
+      llm: streamingLlm(head + tail, [{ type: "text", delta: head }, ...cards, { type: "text", delta: tail }]),
+      streamUpdates: true,
+    });
+    await r.handle(r.msg("hi", "000.9"));
+    expect(r.said).toHaveLength(0);
+    // one message carries the whole answer and the summary, the continuation is gone
+    expect(r.updates).toHaveLength(1);
+    expect(r.updates[0]).toMatchObject({ ts: "222.2", text: head + tail });
+    expect((r.updates[0]?.blocks as { type: string }[]).some((b) => b.type === "context")).toBe(true);
+    expect(r.deletes.length).toBeGreaterThan(0);
+    expect(r.deletes).not.toContain("222.2");
+  });
+
   test("posts once when streaming is disabled", async () => {
     const { handle, msg, said, rec } = build({
       llm: streamingLlm("plain post"),
