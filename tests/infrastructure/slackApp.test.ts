@@ -36,6 +36,9 @@ describe("shouldHandleDm", () => {
     expect(shouldHandleDm({ ...base, bot_id: "B1" })).toBe(false);
     expect(shouldHandleDm({ ...base, subtype: "message_changed" })).toBe(false);
   });
+  test("handles a DM that carries files (file_share is still a message)", () => {
+    expect(shouldHandleDm({ ...base, subtype: "file_share" })).toBe(true);
+  });
   test("rejects non-DM channels and empty messages", () => {
     expect(shouldHandleDm({ ...base, channel_type: "channel" })).toBe(false);
     expect(shouldHandleDm({ ...base, text: undefined })).toBe(false);
