@@ -61,4 +61,24 @@ describe("runForBrain", () => {
     await new Promise((r) => setTimeout(r, 0));
     expect(posts).toEqual(["review done"]);
   });
+
+  // A handed-off errand that then failed used to be logged and nothing else, so
+  // the thread sat on "investigating" forever and the next turn ran it again.
+  test("a handed-off errand that fails says so in the thread", async () => {
+    const { posts, post } = recorder();
+    const logged: unknown[] = [];
+    let fail: (e: Error) => void = () => {};
+    await runForBrain({
+      quiet: false,
+      start: () => new Promise<string>((_, reject) => (fail = reject)),
+      post,
+      handoffMs: 5,
+      onLateError: (e) => void logged.push(e),
+    });
+    fail(new Error("claude CLI exited with code 137: no output"));
+    await new Promise((r) => setTimeout(r, 0));
+    expect(logged).toHaveLength(1);
+    expect(posts).toHaveLength(1);
+    expect(posts[0]).toContain("claude CLI exited with code 137");
+  });
 });

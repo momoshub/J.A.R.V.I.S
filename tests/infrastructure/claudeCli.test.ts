@@ -708,3 +708,18 @@ describe("background work cut off when the run ends", () => {
     expect(backgroundCutOffNotice(["one"])).toContain("a background job was still going");
   });
 });
+
+describe("createClaudeCliLlm timeout", () => {
+  // A CLI stuck inside a tool call shrugs off SIGTERM, and Bun's own spawn
+  // timeout sends nothing else. So a run past its limit simply kept going: a
+  // background investigate never settled and never reported to its thread.
+  test("a run past its timeout is stopped, even when the CLI ignores SIGTERM", async () => {
+    const bin = fakeBin(`#!/usr/bin/env bash\ncat > /dev/null\nexec bash -c "trap '' TERM; while true; do sleep 1; done"\n`);
+    const llm = createClaudeCliLlm({ binPath: bin, timeoutMs: 2_000 });
+    const started = Date.now();
+    await expect(llm.stream!({ system: "s", messages: [{ role: "user", content: "hi" }] }, () => {})).rejects.toThrow(
+      /exited with code/,
+    );
+    expect(Date.now() - started).toBeLessThan(12_000);
+  }, 20_000);
+});

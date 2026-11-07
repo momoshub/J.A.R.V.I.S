@@ -62,7 +62,8 @@ no classes.
   `bin/jarvis-run.sh` -> `/api/commands/run`. `commandTickets` mints a one-turn
   ticket bound to the person being answered, so the brain never names the actor
   and cannot escalate. `brainRun` delivers the result per the command's output
-  mode (`quiet` comes back to the brain, the rest is posted to the thread).
+  mode (`quiet` comes back to the brain, the rest is posted to the thread). A
+  handed-off command that later fails says so in the thread, not only in the log.
 - **Timers.** `watcher` polls each due watch's predicate and hands the thread a
   fresh turn when it is ready; `reminders` posts at the time with no model;
   `reviewInbox` polls GitHub for review requests and runs `review` as the
@@ -143,7 +144,7 @@ Concrete implementations of the seams and the transports.
 - `slack/stream.ts`, `slack/fences.ts` - bridges the `LlmStreamSink` onto Slack's `chatStream` (text + `task_update` tool cards, Block Kit fences), falling back to a single post
 - `slack/adminClient.ts` - `SlackAdminPort` over the Slack Web API
 - `inbox/inboxRepo.ts` - the inbox queue shared by both processes
-- `llm/claudeCli.ts` - the default `LlmPort`, wraps the local `claude` CLI (`--resume`, `stream-json`, per-call policy -> `--allowedTools`/cwd/timeout); `killTree.ts`, `toolTraceLog.ts` support it
+- `llm/claudeCli.ts` - the default `LlmPort`, wraps the local `claude` CLI (`--resume`, `stream-json`, per-call policy -> `--allowedTools`/cwd/timeout, the timeout stopping the whole process tree); `killTree.ts`, `toolTraceLog.ts` support it
 - `llm/anthropic.ts` - alternative `LlmPort` backed by the Anthropic API
 - `db/` - `bun:sqlite` client, schema + migrations, one repo per table (users, messages, sessions, watches, reminders, workflows, usage, turn and command logs, ...), `secretBox.ts` for encrypted tokens
 - `adapter/adapterStore.ts` - the memory adapter in the `adapter_files` table, mirrored to `data/adapter-mirror` so skills can be read by path

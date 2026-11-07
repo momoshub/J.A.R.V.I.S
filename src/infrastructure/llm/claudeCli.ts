@@ -238,7 +238,6 @@ const spawnClaude = (
     stdout: "pipe",
     stderr: "pipe",
     cwd: policy?.cwd ?? config.cwd,
-    timeout: policy?.timeoutMs ?? config.timeoutMs ?? 120_000,
     // Non-interactive hint. process.env carries the bot's SLACK_BOT_TOKEN etc so the
     // CLI's Bash tool can call the Slack Web API with her own credentials.
     // A caller's own token replaces the bot's for this spawn only: the CLI honours
@@ -263,6 +262,13 @@ const spawnClaude = (
     if (signal.aborted) stop();
     else signal.addEventListener("abort", stop, { once: true });
   }
+  // The time limit goes the same way, not through Bun's own spawn timeout:
+  // that one sends a single SIGTERM to the CLI, and a CLI stuck inside a tool
+  // call shrugs it off. A background investigate ran on like that for over an
+  // hour, never settled, and never told its thread anything.
+  const limit = setTimeout(() => stopProcess(proc), policy?.timeoutMs ?? config.timeoutMs ?? 120_000);
+  limit.unref?.();
+  void proc.exited.then(() => clearTimeout(limit));
   return proc;
 };
 
@@ -570,12 +576,12 @@ export const createClaudeCliLlm = (config: ClaudeCliConfig = {}): LlmPort => {
     if (notice) emit({ type: "text", delta: `\n\n${notice}` });
     const finished = notice ? `${answer}\n\n${notice}` : answer;
     // Killed after it had already said something. What we hold is a fragment of
-    // a run, not its answer - 143 is the timeout reaping it. Say so rather than
+    // a run, not its answer - 143 (or 137 after the hard kill) is the timeout reaping it. Say so rather than
     // letting a caller hand the fragment over as the finished work.
     if (exitCode !== 0) {
       emit({
         type: "aborted",
-        reason: exitCode === 143 ? "it ran out of time" : `it exited with code ${exitCode}`,
+        reason: exitCode === 143 || exitCode === 137 ? "it ran out of time" : `it exited with code ${exitCode}`,
       });
     }
     return finished;

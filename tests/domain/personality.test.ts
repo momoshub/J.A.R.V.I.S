@@ -153,6 +153,13 @@ describe("buildSystemPrompt", () => {
     expect(p).toContain("It already carries who you are talking to");
   });
 
+  test("a command that has not reported yet is never re-run without asking", () => {
+    // an investigate that went quiet was started again unasked, and the person
+    // asked why it was investigating all over the place
+    const p = buildSystemPrompt(runOpts);
+    expect(p).toContain("Never start the same job again on your own because its result is not there yet");
+  });
+
   test("the ticket itself never appears in the prompt", () => {
     // a thread holds one long-lived session, so every prompt it was handed is
     // still in context. A ticket printed there is one the model will eventually
