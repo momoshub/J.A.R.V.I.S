@@ -201,6 +201,15 @@ Remembering something (optional, your call):
 };
 
 /**
+ * How a background agent is spawned: always an Orca worker (Kai), the Agent
+ * tool only as a fallback. Shared by chat turns and the workflow worker, so a
+ * long task fans out the same way a chat reply does.
+ */
+export const ORCA_AGENT_RULES = `- Background agents always run as Orca workers, never the Agent tool (Kai) - here and for any other job you spawn one for. A multi-agent workflow is the same: run its agents as Orca workers in one Run, never through the Workflow tool. Open a fresh Run for each batch with \`orca orchestration run-create --objective <short> --json\`, never reuse a bound one: the binding is shared by every thread. Then start each worker with \`orca orchestration worker-start --run <runId> --spec-file <brief> --task-title <short> --worktree path:<a folder or repo Orca knows> --agent claude --json\`. Orca tells the worker how to report back
+- Orca cannot wake you, you are not an Orca terminal. The batch is done when this exits 0: \`orca orchestration task-list --run <runId> --json | jq -e '[.result.tasks[].status] | length > 0 and all(. == "completed" or . == "failed")'\` - a running task shows as dispatched. For a quick batch loop on it in a background Bash with a deadline of a few minutes, for a long one set a watch with it as the shell check if you can set watches, otherwise the same loop. Then read the results whole with \`orca orchestration inbox --terminal run:<runId> --full\`
+- Fall back to the Agent tool only when \`orca status\` says the runtime is not reachable or your tools refuse \`orca\`, and say so in one line. A foreground helper you wait on in the same breath, like the reviewer on your own fix, is not a background agent and still uses the Agent tool`;
+
+/**
  * A message that bundles several asks ("check the git author, and who
  * impersonated support") used to be worked through in one line, so the quick
  * part sat unread until the slowest part was done. Split it, run the
@@ -212,9 +221,7 @@ A message with several questions in it:
 - Before you start, split the message into its separate asks. "check the git author, and who impersonated support" is two jobs, not one.
 - Decide which parts are independent and which truly need an earlier answer. Only a part that consumes another part's result waits for it - everything else starts at once.
 - Run the independent parts in parallel as background agents, one per part, each with a self-contained brief. Do not work through them one after another yourself.
-- Background agents always run as Orca workers, never the Agent tool (Kai) - here and for any other job you spawn one for. Open a fresh Run for each batch with \`orca orchestration run-create --objective <short> --json\`, never reuse a bound one: the binding is shared by every thread. Then start each worker with \`orca orchestration worker-start --run <runId> --spec-file <brief> --task-title <short> --worktree path:<a folder or repo Orca knows> --agent claude --json\`. Orca tells the worker how to report back
-- Orca cannot wake you, you are not an Orca terminal. The batch is done when this exits 0: \`orca orchestration task-list --run <runId> --json | jq -e '[.result.tasks[].status] | length > 0 and all(. == "completed" or . == "failed")'\` - a running task shows as dispatched. For a quick batch loop on it in a background Bash with a deadline of a few minutes, for a long one set a watch with it as the shell check if you can set watches, otherwise the same loop. Then read the results whole with \`orca orchestration inbox --terminal run:<runId> --full\`
-- Fall back to the Agent tool only when \`orca status\` says the runtime is not reachable or your tools refuse \`orca\`, and say so in one line. A foreground helper you wait on in the same breath, like the reviewer on your own fix, is not a background agent and still uses the Agent tool
+${ORCA_AGENT_RULES}
 - Hand each answer over the moment it lands, never hold the whole reply for the slowest part. Post the first finished part into this thread with chat.postMessage (with this thread's thread_ts), then fold each later part into that same message with chat.update, so the thread ends up with one message, not a trail of them. Your closing reply only adds what that message does not already say.
 - A single question, or parts that are one chain, is answered the normal way - do not spin up agents for the sake of it.`;
 

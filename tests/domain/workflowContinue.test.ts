@@ -69,6 +69,16 @@ describe("prompt and notice", () => {
     expect(p).toMatch(/Do NOT add that line when you have asked a question/);
   });
 
+  test("the workflow worker spawns agents as Orca workers and waits across steps", () => {
+    const p = workflowPrompt("Evie", "rebuild the blog");
+    expect(p).toContain("Background agents always run as Orca workers, never the Agent tool");
+    expect(p).toContain("never through the Workflow tool");
+    expect(p).toContain("orca orchestration run-create");
+    expect(p).toContain("run the done check at the start of the next step");
+    expect(p).toContain("never with a watch");
+    expect(p).toContain("foreground loop of up to 5 minutes");
+  });
+
   test("the paused notice says how to resume", () => {
     const n = pausedNotice(30, "//jv");
     expect(n).toContain("30");

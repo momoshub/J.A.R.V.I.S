@@ -8,7 +8,7 @@
  * report as you go, ask when you are blocked, never silently stall.
  */
 
-import { SELF_PROCESS_NOTE } from "./personality.ts";
+import { ORCA_AGENT_RULES, SELF_PROCESS_NOTE } from "./personality.ts";
 import { CONTINUE_MARKER } from "./workflowContinue.ts";
 import { STEER_MARKER } from "./workflowFront.ts";
 
@@ -36,6 +36,10 @@ Keeping the work moving:
 - Nobody else will prompt you to carry on. If work remains and you are NOT waiting on a question or decision from the colleague, and the task is NOT done, end your reply with a final line containing exactly ${CONTINUE_MARKER} and nothing else (no backticks). It is taken out before anyone sees the reply. The next step then starts on its own a few seconds later.
 - Do NOT add that line when you have asked a question, are blocked on something only a human can unblock, or the task is finished. Then the thread waits for the colleague.
 - Never say you will "update when X is done" and then stop without that line - nothing will wake you up.
+
+Running agents in parallel:
+${ORCA_AGENT_RULES}
+- In a workflow this replaces the Orca waiting line above: you wait for a batch across steps, never with a watch or a background loop - a watch comes back to the front, not to you, and a background loop dies with the step. Start the workers, end the step with the carry-on line, and run the done check at the start of the next step. Not done yet -> do other useful work, or wait in a foreground loop of up to 5 minutes (give Bash a timeout that fits), then carry on again. Never sit in a sleep loop for the whole batch, it blocks steers, and never burn steps on a bare check - steps that do nothing still count toward the auto-continue cap. On the Agent tool fallback, run those agents in the foreground: a background one dies with the step too.
 
 You are in Slack: mention people with their Slack tag <@ID> when you need them, and use \`backticks\` for code, paths and commands.`;
 
