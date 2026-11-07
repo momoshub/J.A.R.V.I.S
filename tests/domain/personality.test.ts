@@ -442,6 +442,14 @@ describe("a message with several questions", () => {
     expect(out).toContain("background agents");
   });
 
+  test("background agents run as Orca workers, with the Agent tool only as a fallback", () => {
+    const out = buildSystemPrompt({ learnings: [] });
+    expect(out).toContain("Background agents always run as Orca workers, never the Agent tool");
+    expect(out).toContain("orca orchestration worker-start");
+    expect(out).toContain("Orca cannot wake you");
+    expect(out).toContain("fall back to the Agent tool");
+  });
+
   test("each part is handed over as it lands, folded into one message", () => {
     const out = buildSystemPrompt({ learnings: [] });
     expect(out).toContain("never hold the whole reply for the slowest part");

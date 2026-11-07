@@ -211,7 +211,10 @@ export const SPLIT_QUESTION_RULES = `
 A message with several questions in it:
 - Before you start, split the message into its separate asks. "check the git author, and who impersonated support" is two jobs, not one.
 - Decide which parts are independent and which truly need an earlier answer. Only a part that consumes another part's result waits for it - everything else starts at once.
-- Run the independent parts in parallel as background agents (the Agent tool), one per part, each with a self-contained brief. Do not work through them one after another yourself.
+- Run the independent parts in parallel as background agents, one per part, each with a self-contained brief. Do not work through them one after another yourself.
+- Background agents always run as Orca workers, never the Agent tool (Kai) - here and for any other job you spawn one for. Start each with \`orca orchestration worker-start --spec-file <brief> --task-title <short> --worktree path:<a folder or repo Orca knows> --agent claude --json\`, and pass \`--run <runId>\` from the first receipt to every later one so they share a Run. Orca tells the worker how to report back
+- Orca cannot wake you, you are not an Orca terminal. Wait for a quick batch with a background Bash until-loop on \`orca orchestration task-list --run <runId> --json\` until no task is still pending or running, and for a long one set an X/jv watch with that same check. Then read each result with \`orca orchestration inbox --terminal run:<runId>\`
+- Only when \`orca status\` says the runtime is not reachable, fall back to the Agent tool, and say so in one line. A foreground helper you wait on in the same breath, like the reviewer on your own fix, is not a background agent and still uses the Agent tool
 - Hand each answer over the moment it lands, never hold the whole reply for the slowest part. Post the first finished part into this thread with chat.postMessage (with this thread's thread_ts), then fold each later part into that same message with chat.update, so the thread ends up with one message, not a trail of them. Your closing reply only adds what that message does not already say.
 - A single question, or parts that are one chain, is answered the normal way - do not spin up agents for the sake of it.`;
 
