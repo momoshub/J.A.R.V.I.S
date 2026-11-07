@@ -35,11 +35,11 @@ export type EventProcessor = {
 
 export type InboxReceiverOptions = {
   /**
-   * Told about a thread whose message is waiting on a restart, once per
-   * thread. Optional: an instance that wires nothing simply stays silent, as
-   * it did before.
+   * Told every thread whose message is waiting on a restart, the whole list
+   * each time a new one joins it. Optional: an instance that wires nothing
+   * simply stays silent, as it did before.
    */
-  onDeferred?: (channel: string, threadTs?: string) => void | Promise<void>;
+  onDeferred?: (waiting: readonly { channel: string; threadTs?: string }[]) => void | Promise<void>;
   readonly inbox: InboxRepo;
   readonly now?: () => number;
   /** How often to look for new rows. Cheap: an indexed read of an empty set. */
@@ -68,6 +68,7 @@ export const createInboxReceiver = (opts: InboxReceiverOptions) => {
   let paused = false;
   /** Threads already told that a restart is holding their message. */
   const told = new Set<string>();
+  let waiting: { channel: string; threadTs?: string }[] = [];
   const inFlight = new Set<number>();
 
   const asPayload = (response: unknown): Record<string, unknown> | undefined =>
@@ -101,7 +102,7 @@ export const createInboxReceiver = (opts: InboxReceiverOptions) => {
   };
 
   /**
-   * While paused, look at what is waiting and tell each thread once.
+   * While paused, look at what is waiting and list each thread once.
    *
    * Nothing is claimed: the rows have to stay pending for the next process.
    * This exists because silence and death look identical from a thread - a
@@ -114,13 +115,16 @@ export const createInboxReceiver = (opts: InboxReceiverOptions) => {
       .peek(opts.batch ?? 20, now())
       .map((row) => envelopeThread(row.body))
       .filter((t): t is { channel: string; threadTs?: string } => !!t);
-    for (const t of unnotified(targets, told)) {
+    const fresh = unnotified(targets, told);
+    if (fresh.length === 0) return;
+    for (const t of fresh) {
       told.add(t.key);
-      try {
-        void opts.onDeferred(t.channel, t.threadTs);
-      } catch {
-        // a courtesy that fails is still only a courtesy
-      }
+      waiting.push(t.threadTs ? { channel: t.channel, threadTs: t.threadTs } : { channel: t.channel });
+    }
+    try {
+      void opts.onDeferred([...waiting]);
+    } catch {
+      // a courtesy that fails is still only a courtesy
     }
   };
 
@@ -181,6 +185,7 @@ export const createInboxReceiver = (opts: InboxReceiverOptions) => {
     pause: (): void => {
       paused = true;
       told.clear();
+      waiting = [];
     },
     /** Mark the rows still running as cut by a planned restart. */
     markCut: (): number => opts.inbox.markCut(now()),

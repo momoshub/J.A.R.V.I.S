@@ -12,7 +12,7 @@ const msg = (over: Record<string, unknown> = {}) => ({
 describe("envelopeThread", () => {
   test("a message says where it was headed", () => {
     expect(envelopeThread(msg({ thread_ts: "9.9" }))).toEqual({ channel: "D1", threadTs: "9.9" });
-    expect(envelopeThread(msg())).toEqual({ channel: "D1" });
+    expect(envelopeThread(msg())).toEqual({ channel: "D1", threadTs: "1.1" });
   });
 
   test("the bot's own messages are nobody waiting", () => {
@@ -31,12 +31,9 @@ describe("envelopeThread", () => {
     expect(envelopeThread(msg({ subtype: "thread_broadcast", thread_ts: "9.9" }))).toEqual({ channel: "D1", threadTs: "9.9" });
   });
 
-  test("only a 1:1 DM is told, never a channel or a group DM", () => {
-    expect(envelopeThread(msg({ channel: "C1", channel_type: "channel" }))).toBeUndefined();
-    expect(envelopeThread(msg({ channel: "C2", channel_type: "group" }))).toBeUndefined();
-    expect(envelopeThread(msg({ channel: "C3", channel_type: "mpim", thread_ts: "9.9" }))).toBeUndefined();
-    expect(envelopeThread(msg({ channel: "C4" }))).toBeUndefined();
-    expect(envelopeThread(msg({ channel_type: "im" }))).toEqual({ channel: "D1" });
+  test("every channel counts, and a top-level message is its own thread", () => {
+    expect(envelopeThread(msg({ channel: "C1", channel_type: "channel" }))).toEqual({ channel: "C1", threadTs: "1.1" });
+    expect(envelopeThread(msg({ channel: "C3", channel_type: "mpim", thread_ts: "9.9" }))).toEqual({ channel: "C3", threadTs: "9.9" });
   });
 
   test("a press or a slash command has no thread to reassure", () => {
@@ -90,5 +87,12 @@ describe("drainNotice", () => {
   test("the API's filler reason is left out rather than shown", () => {
     expect(drainNotice({ reason: "requested over the local API", running: 0, deadlineMs })).not.toContain("why:");
     expect(drainNotice({ running: 0, deadlineMs })).not.toContain("why:");
+  });
+
+  test("lists every waiting thread, and none when nothing waits", () => {
+    const text = drainNotice({ running: 1, deadlineMs }, ["https://x/a", "https://x/b"]);
+    expect(text).toContain("- pending threads (2):");
+    expect(text).toContain("  - https://x/a\n  - https://x/b");
+    expect(drainNotice({ running: 1, deadlineMs })).not.toContain("pending threads");
   });
 });

@@ -8,8 +8,10 @@
  * then "??", "??", "<@bot>???" into total silence, the only sane conclusion is
  * that it has died.
  *
- * So the silence gets one line. Once per thread, not once per message: a
- * person who is already repeating themselves does not need three apologies.
+ * So the silence gets one message, in the log channel rather than in the
+ * threads themselves (posted into a channel or a group DM it was noise for
+ * everyone else in it). It lists every thread that is waiting and is edited
+ * as more queue up, once per thread, not once per message.
  */
 
 /** What the waiting thread is told about the restart itself. */
@@ -26,14 +28,17 @@ export type DrainInfo = {
 const UNINFORMATIVE = new Set(["", "requested over the local API"]);
 
 /**
- * Said once, in the thread that is waiting. A bare "I'm restarting" left the
- * reader guessing why and for how long, so it names the reason, what it is
- * still waiting on, and the latest it can take. The time is a Slack date
- * token, so each reader sees it in their own timezone.
+ * The one log-channel message. A bare "I'm restarting" left the reader
+ * guessing why and for how long, so it names the reason, what it is still
+ * waiting on, the latest it can take, and the threads whose messages are
+ * held. The time is a Slack date token, so each reader sees it in their own
+ * timezone.
  */
-export const drainNotice = (info?: DrainInfo): string => {
-  const lines = ["⏸ I'm restarting, so I am not picking up new messages for a moment. Yours is saved and I will answer it as soon as I am back."];
-  if (!info) return lines[0] ?? "";
+export const drainNotice = (info?: DrainInfo, waiting: readonly string[] = []): string => {
+  const lines = ["⏸ I'm restarting, so I am not picking up new messages for a moment. They are saved and I will answer them as soon as I am back."];
+  const threads = () =>
+    waiting.length > 0 ? [`- pending threads (${waiting.length}):`, ...waiting.map((w) => `  - ${w}`)] : [];
+  if (!info) return [...lines, ...threads()].join("\n");
   const reason = (info.reason ?? "").trim();
   if (!UNINFORMATIVE.has(reason)) lines.push(`- why: ${reason}`);
   const epoch = Math.floor(info.deadlineMs / 1000);
@@ -44,7 +49,7 @@ export const drainNotice = (info?: DrainInfo): string => {
       ? `- waiting for ${info.running} running ${info.running === 1 ? "turn" : "turns"} to finish, back by ${latest} at the latest`
       : `- nothing is running, back in a few seconds (${latest} at the latest)`,
   );
-  return lines.join("\n");
+  return [...lines, ...threads()].join("\n");
 };
 
 /**
@@ -60,12 +65,9 @@ export const drainNotice = (info?: DrainInfo): string => {
  * or a slash command is its own thing, and a notice about a restart posted
  * into one would land where nobody is looking.
  *
- * And only a 1:1 DM gets one. In a channel or a group DM the notice is noise
- * for everyone else in it, so the owner asked for it to stay out of them.
+ * `threadTs` is the thread a reply would land in: the parent for a reply, the
+ * message itself for a top-level one, so every waiting thread has a link.
  */
-const isDirectMessage = (event: Record<string, unknown>, channel: string): boolean =>
-  typeof event.channel_type === "string" ? event.channel_type === "im" : channel.startsWith("D");
-
 const ASKING_SUBTYPES: ReadonlySet<string> = new Set(["file_share", "thread_broadcast"]);
 
 export const envelopeThread = (
@@ -81,8 +83,8 @@ export const envelopeThread = (
   if (typeof event.subtype === "string" && !ASKING_SUBTYPES.has(event.subtype)) return undefined;
   const channel = typeof event.channel === "string" ? event.channel : "";
   if (!channel) return undefined;
-  if (!isDirectMessage(event, channel)) return undefined;
-  const threadTs = typeof event.thread_ts === "string" ? event.thread_ts : undefined;
+  const threadTs =
+    typeof event.thread_ts === "string" ? event.thread_ts : typeof event.ts === "string" ? event.ts : undefined;
   return { channel, ...(threadTs ? { threadTs } : {}) };
 };
 

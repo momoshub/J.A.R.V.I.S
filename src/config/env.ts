@@ -80,6 +80,9 @@ const schema = z
     TOKEN_KEY_PATH: z.string().default("data/tokens.key"),
     // Folder for the activity/error logs (one JSON line per event).
     LOG_DIR: z.string().default("logs"),
+    // Channel that gets the one restart notice listing the waiting threads.
+    // Unset: nobody is told.
+    DRAIN_NOTICE_CHANNEL: z.string().optional(),
   })
   .refine((env) => env.LLM_PROVIDER !== "anthropic" || !!env.ANTHROPIC_API_KEY, {
     message: "ANTHROPIC_API_KEY is required when LLM_PROVIDER=anthropic",
@@ -121,6 +124,8 @@ export type AppConfig = {
   tokenDatabasePath: string;
   tokenKeyPath: string;
   logDir: string;
+  /** Channel for the restart notice listing waiting threads; unset is silent. */
+  drainNoticeChannel?: string;
 };
 
 /** A short human label for the active model, shown on the dashboard. */
@@ -170,5 +175,6 @@ export const loadConfig = (source: Record<string, string | undefined> = process.
     tokenDatabasePath: env.TOKEN_DATABASE_PATH,
     tokenKeyPath: env.TOKEN_KEY_PATH,
     logDir: env.LOG_DIR,
+    ...(env.DRAIN_NOTICE_CHANNEL ? { drainNoticeChannel: env.DRAIN_NOTICE_CHANNEL } : {}),
   };
 };

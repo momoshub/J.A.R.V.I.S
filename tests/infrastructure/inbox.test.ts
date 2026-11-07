@@ -423,19 +423,19 @@ describe("a reply cut off by a restart", () => {
 });
 
 describe("a restart holding the intake", () => {
-  test("waiting threads are told once, and their rows stay pending", async () => {
+  test("waiting threads are listed once, and their rows stay pending", async () => {
     // the incident: four messages into total silence while a restart waited
     // on a long turn. Nothing was lost - but silence and death look identical
     const inbox = openInbox(":memory:");
     inbox.enqueue({ envelopeId: "e1", type: "events_api", body: message("Ev1", "bug là gì???") }, T0);
     inbox.enqueue({ envelopeId: "e2", type: "events_api", body: message("Ev2", "??") }, T0);
 
-    const told: { channel: string; threadTs?: string }[] = [];
+    const told: (readonly { channel: string; threadTs?: string }[])[] = [];
     const receiver = createInboxReceiver({
       inbox,
       now: () => T0,
       log: () => undefined,
-      onDeferred: (channel, threadTs) => void told.push({ channel, threadTs }),
+      onDeferred: (waiting) => void told.push(waiting),
     });
     receiver.init({ processEvent: async () => undefined });
     receiver.pause();
@@ -443,10 +443,30 @@ describe("a restart holding the intake", () => {
     receiver.tickNow();
     receiver.tickNow();
 
-    // one notice for the thread, however many messages are waiting
-    expect(told).toEqual([{ channel: "D1", threadTs: undefined }]);
+    // one call listing each thread once, however many messages are waiting
+    expect(told).toEqual([[{ channel: "D1", threadTs: "1.1" }]]);
     // and nothing was consumed: the next process still has both
     expect(inbox.counts()).toMatchObject({ pending: 2, running: 0, done: 0 });
+  });
+
+  test("a thread that joins later re-sends the whole list", () => {
+    const inbox = openInbox(":memory:");
+    inbox.enqueue({ envelopeId: "e1", type: "events_api", body: message("Ev1") }, T0);
+    const told: (readonly { channel: string; threadTs?: string }[])[] = [];
+    const receiver = createInboxReceiver({ inbox, now: () => T0, log: () => undefined, onDeferred: (w) => void told.push(w) });
+    receiver.init({ processEvent: async () => undefined });
+    receiver.pause();
+    receiver.tickNow();
+    const later = message("Ev2");
+    inbox.enqueue({ envelopeId: "e2", type: "events_api", body: { ...later, event: { ...later.event, channel: "C9", ts: "2.2" } } }, T0);
+    receiver.tickNow();
+    expect(told).toEqual([
+      [{ channel: "D1", threadTs: "1.1" }],
+      [
+        { channel: "D1", threadTs: "1.1" },
+        { channel: "C9", threadTs: "2.2" },
+      ],
+    ]);
   });
 
   test("a paused receiver still dispatches nothing", async () => {
