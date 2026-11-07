@@ -255,8 +255,9 @@ export const respond = async (
       // Not when following: nobody asked, so nobody is waiting on a place in
       // the queue, and "yours is next" in a channel is noise about the bot's
       // own scheduling rather than anything the thread needs.
-      // Nor for a workflow's own next step: nobody typed it.
-      if (inbound.autoContinue) busy = undefined;
+      // Nor for a workflow's own next step or a watch handing the thread back:
+      // nobody typed either, so "yours is next" would be addressed to no one.
+      if (inbound.autoContinue || inbound.unprompted) busy = undefined;
       else if (!inbound.following) busy = await announceBusy(deps, inbound, key);
     }
     return queue.run(key, chatTurn);

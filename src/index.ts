@@ -370,6 +370,7 @@ const main = async () => {
       text,
       keepSession,
       autoContinue,
+      unprompted,
     }: {
       channelId: string;
       threadTs: string;
@@ -377,6 +378,7 @@ const main = async () => {
       text: string;
       keepSession?: boolean;
       autoContinue?: boolean;
+      unprompted?: boolean;
     }) => {
       const result = await respond(deps, {
         channelId,
@@ -388,6 +390,7 @@ const main = async () => {
         following: false,
         keepSession,
         autoContinue,
+        unprompted,
       });
       // A turn nobody watched live can still answer with a note about not
       // answering; posted, it reads as the whole reply.

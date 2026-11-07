@@ -7,7 +7,7 @@ import { MAX_CONSECUTIVE_ERRORS } from "../../src/domain/watch.ts";
 let db: DbClient;
 let watches: WatchRepo;
 let now: number;
-let turns: { threadTs: string; text: string; slackUserId: string; keepSession?: boolean }[];
+let turns: { threadTs: string; text: string; slackUserId: string; keepSession?: boolean; unprompted?: boolean }[];
 let said: string[];
 
 const EVERY = 60_000;
@@ -20,7 +20,13 @@ const build = (check: (cmd: string) => Promise<CheckResult>) => {
     clock: () => now,
     check: async (cmd) => check(cmd),
     runTurn: async (r) =>
-      void turns.push({ threadTs: r.threadTs, text: r.text, slackUserId: r.slackUserId, keepSession: r.keepSession }),
+      void turns.push({
+        threadTs: r.threadTs,
+        text: r.text,
+        slackUserId: r.slackUserId,
+        keepSession: r.keepSession,
+        unprompted: r.unprompted,
+      }),
     say: async (_c, text) => void said.push(text),
   });
 };
@@ -174,6 +180,13 @@ describe("watcher", () => {
     const w = build(async () => ({ code: 0, output: "" }));
     await w.tick();
     expect(turns[0]?.keepSession).toBe(true);
+  });
+  test("a hand-back is marked as nobody's message, so it queues without a busy notice", async () => {
+    add({ check: "true" });
+    now += EVERY;
+    const w = build(async () => ({ code: 0, output: "" }));
+    await w.tick();
+    expect(turns[0]?.unprompted).toBe(true);
   });
 });
 

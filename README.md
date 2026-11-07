@@ -503,6 +503,10 @@ a person sending a follow-up actually wants:
   the timeout kills one, and the queued message then runs as normal.
 - **Never mind** takes the message you just sent back off the queue, before it
   has spawned anything.
+
+Only a message somebody typed gets the notice. A watch handing the thread back,
+a workflow's next step or a followed thread queue the same way but silently,
+since nobody is waiting on their place in line.
 - Clicking neither still queues it, which is the old behaviour and the right
   default.
 
