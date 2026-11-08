@@ -32,6 +32,7 @@ import { createAdapterStore } from "./infrastructure/adapter/adapterStore.ts";
 import {
   adapterStatus,
   createAdapterReader,
+  editAdapterFile,
   rememberFact,
   revertAdapter,
 } from "./application/adapterMemory.ts";
@@ -580,6 +581,11 @@ const main = async () => {
             revert: (id, by) => {
               const r = revertAdapter(adapterDeps(), id, by);
               return r.ok ? { ok: true } : { ok: false, violations: r.violations };
+            },
+            files: () => [...adapterStore.files()].map(([path, content]) => ({ path, content })),
+            edit: (path, content, by) => {
+              const r = editAdapterFile(adapterDeps(), path, content, by);
+              return r.ok ? { ok: true, warnings: r.warnings } : { ok: false, violations: r.violations };
             },
           }
         : undefined,

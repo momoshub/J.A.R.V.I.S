@@ -11,6 +11,7 @@ import {
   adapterStatus,
   commitAdapter,
   createAdapterReader,
+  editAdapterFile,
   INBOX_HEADING,
   migrateLearnings,
   rememberFact,
@@ -237,6 +238,65 @@ describe("revertAdapter", () => {
 
   test("reverting to a revision that does not exist says so", () => {
     expect(revertAdapter(setup(), 99, "U1").ok).toBe(false);
+  });
+});
+
+describe("editAdapterFile", () => {
+  test("a hand edit rewrites the file and is a revision of its own", () => {
+    const deps = setup({ "memory/NOTES.md": "- old wording\n" });
+    const result = editAdapterFile(deps, "memory/NOTES.md", "- new wording", "dashboard");
+    expect(result.ok).toBe(true);
+    expect(deps.store.load().notes).toContain("new wording");
+    expect(deps.store.load().notes).not.toContain("old wording");
+    expect(deps.revisions?.list()[0]?.reason).toBe("edit memory/NOTES.md by hand");
+  });
+
+  test("so a bad edit is one revert away", () => {
+    const deps = setup({ "memory/NOTES.md": "- keep me\n" });
+    rememberFact(deps, "anchor", { kind: "global" }, "U1");
+    const before = deps.revisions?.list()[0]?.id ?? 0;
+    editAdapterFile(deps, "memory/NOTES.md", "- oops", "dashboard");
+    revertAdapter(deps, before, "U1");
+    expect(deps.store.load().notes).toContain("keep me");
+  });
+
+  test("an unchanged save records nothing", () => {
+    const deps = setup({ "memory/NOTES.md": "- same\n" });
+    const count = deps.revisions?.list().length ?? 0;
+    expect(editAdapterFile(deps, "memory/NOTES.md", "- same\n", "dashboard").ok).toBe(true);
+    expect(deps.revisions?.list().length ?? 0).toBe(count);
+  });
+
+  test("a new scoped file can be created, and blanking it removes it", () => {
+    const deps = setup();
+    expect(editAdapterFile(deps, "memory/people/U7.md", "- likes tea", "dashboard").ok).toBe(true);
+    expect(deps.store.load().people.has("U7")).toBe(true);
+    expect(editAdapterFile(deps, "memory/people/U7.md", "  ", "dashboard").ok).toBe(true);
+    expect(deps.store.load().people.has("U7")).toBe(false);
+  });
+
+  test("it still goes through the gate", () => {
+    const deps = setup({ "memory/NOTES.md": "- fine\n" });
+    const result = editAdapterFile(deps, "memory/NOTES.md", "x".repeat(9000), "dashboard");
+    expect(result.ok).toBe(false);
+    expect(deps.store.load().notes).toContain("fine");
+  });
+
+  test("over the always-on budget it warns instead of refusing, like teaching", () => {
+    const deps = setup({}, 50);
+    const result = editAdapterFile(deps, "memory/NOTES.md", `- ${"a".repeat(200)}`, "dashboard");
+    expect(result.ok).toBe(true);
+    expect(result.ok && result.warnings.length).toBeGreaterThan(0);
+  });
+
+  test("paths outside the adapter, the manifest's removal and a missing file are refused", () => {
+    const deps = setup();
+    expect(editAdapterFile(deps, "../escape.md", "x", "dashboard").ok).toBe(false);
+    expect(editAdapterFile(deps, "/etc/passwd", "x", "dashboard").ok).toBe(false);
+    expect(editAdapterFile(deps, "memory//NOTES.md", "x", "dashboard").ok).toBe(false);
+    expect(editAdapterFile(deps, "adapter.yaml", "", "dashboard").ok).toBe(false);
+    expect(editAdapterFile(deps, "memory/people/nobody.md", "", "dashboard").ok).toBe(false);
+    expect(deps.store.files().has("adapter.yaml")).toBe(true);
   });
 });
 

@@ -809,7 +809,7 @@ A **React 19 + Vite + React Router 7** single-page app (in `web/`) served by the
 
 - **Overview** - counts for users, conversations, stored turns, learnings
 - **Users** - manage the allowlist and roles (the owner is protected)
-- **Learnings** - durable facts injected into every reply; edit one in place and save, or delete it
+- **Memory** - with a memory adapter: teach one fact, edit any adapter file by hand (one whole file per save, checked by the same gate as `adapter refine` and kept as a revision; blank a file to remove it), or revert to an earlier revision. Without an adapter it is the flat **Learnings** list: edit one in place and save, or delete it
 - **Identity** - edit the bot name, "thinking" label, and system prompt (persona), or reset the persona to default
 - **Conversations** - browse the bot's own stored memory (SQLite), read turns, clear a channel
 - **Console** - a live Slack message manager (the web port of a terminal TUI): pick a channel/DM, read messages and threads, edit or delete the bot's own messages, reply, and generate an AI draft to review before posting. Requires extra Slack scopes (below); missing scopes surface as an in-app error.

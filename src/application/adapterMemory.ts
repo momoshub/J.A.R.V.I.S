@@ -1,5 +1,5 @@
 /**
- * Use cases over the memory adapter: teach, commit, revert, migrate.
+ * Use cases over the memory adapter: teach, edit by hand, commit, revert, migrate.
  *
  * Every write goes through `commit`, and `commit` runs the gate. The one
  * deliberate asymmetry is the always-on budget: a refine pass must come in
@@ -12,6 +12,7 @@ import {
   type Adapter,
   CHANNELS_DIR,
   isBlank,
+  MANIFEST_FILE,
   matchesGlob,
   NOTES_FILE,
   PEOPLE_DIR,
@@ -184,6 +185,40 @@ export const migrateLearnings = (
   // Only once it is safely committed, and never on a refusal.
   if (result.ok) clear?.();
   return result;
+};
+
+/**
+ * The owner rewriting one file by hand, from the dashboard.
+ *
+ * Same gate as any other write, so a hand edit cannot break the manifest's
+ * limits or the format of a skill, and every save is a revision that one
+ * click puts back. Like teaching, it may run over the always-on budget and is
+ * told so: a person fixing a line should not be refused for the size of a
+ * file they did not grow. Blank content removes the file, except the manifest,
+ * which nothing loads without.
+ */
+export const editAdapterFile = (
+  deps: AdapterDeps,
+  path: string,
+  content: string,
+  actor: string,
+): CommitResult => {
+  const rel = path.trim();
+  if (!rel || rel.startsWith("/") || rel.split("/").some((part) => part === ".." || part === "")) {
+    return { ok: false, violations: [`Not a path inside the adapter: ${path}`] };
+  }
+  const files = new Map(deps.store.files());
+  const blank = content.trim() === "";
+  if (blank && rel === MANIFEST_FILE) return { ok: false, violations: [`${MANIFEST_FILE} cannot be removed`] };
+  if (blank && !files.has(rel)) return { ok: false, violations: [`There is no ${rel} to remove.`] };
+  if (blank) files.delete(rel);
+  else files.set(rel, content.endsWith("\n") ? content : `${content}\n`);
+  if (!blank && files.get(rel) === deps.store.files().get(rel)) return { ok: true, warnings: [] };
+  return commitAdapter(deps, files, {
+    reason: `${blank ? "remove" : "edit"} ${rel} by hand`,
+    actor,
+    enforceBudget: false,
+  });
 };
 
 /** Restore a previous revision, recording the restore as a revision of its own. */

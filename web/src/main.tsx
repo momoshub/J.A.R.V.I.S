@@ -20,6 +20,7 @@ import {
   fmtTime,
   get,
   post,
+  type AdapterFile,
   type AdapterView,
   type AllowedUser,
   type Bootstrap,
@@ -210,13 +211,23 @@ function UsersPage() {
 /**
  * Memory, when it is an adapter.
  *
- * Read-only on purpose. The old page was a grid of text boxes writing straight
- * into a list that nothing ever curated, which is how that list came to hold a
- * fact and its own retraction at the same time. The two safe actions are here -
- * teach one fact, or put a whole revision back - and reshaping memory is
- * `adapter refine`, which is gated and recorded.
+ * Teach one fact, edit a whole file by hand, or put a revision back. A hand
+ * edit is one file at a time through the same gate as `adapter refine`, and
+ * every save is a revision - not the old grid of text boxes writing straight
+ * into a list nothing checked, which is how that list came to hold a fact and
+ * its own retraction at the same time.
  */
-function AdapterMemory({ a, error }: { a: AdapterView; error?: string }) {
+function AdapterMemory({
+  a,
+  files,
+  error,
+  warnings,
+}: {
+  a: AdapterView;
+  files: AdapterFile[];
+  error?: string;
+  warnings?: string[];
+}) {
   return (
     <>
       <h1>Memory</h1>
@@ -236,6 +247,33 @@ function AdapterMemory({ a, error }: { a: AdapterView; error?: string }) {
         It lands under "Recently taught" and stays there until a refine pass files it. Run that with
         <code> adapter refine</code> in Slack.
       </p>
+
+      <h2>Edit by hand</h2>
+      <p className="muted">
+        One file per save, checked by the same gate as refine and kept as a revision. Blank a file to remove it.
+      </p>
+      {(warnings ?? []).length > 0 && <pre className="card">{(warnings ?? []).join("\n")}</pre>}
+      {files.map((f) => (
+        <details key={f.path} className="card">
+          <summary><code>{f.path}</code></summary>
+          <Form method="post">
+            <input type="hidden" name="intent" value="edit" />
+            <input type="hidden" name="path" value={f.path} />
+            {/* Keyed on the content so a save or revert shows what is now stored. */}
+            <textarea key={f.content} name="content" defaultValue={f.content} rows={Math.min(30, f.content.split("\n").length + 2)} spellCheck={false} style={{ width: "100%" }} />
+            <div className="row"><button type="submit">save {f.path}</button></div>
+          </Form>
+        </details>
+      ))}
+      <details className="card">
+        <summary>new file</summary>
+        <Form method="post">
+          <input type="hidden" name="intent" value="edit" />
+          <input name="path" placeholder="memory/people/U123.md" required style={{ width: "100%" }} />
+          <textarea name="content" rows={6} required spellCheck={false} style={{ width: "100%" }} />
+          <div className="row"><button type="submit">create</button></div>
+        </Form>
+      </details>
 
       <h2>Policy</h2>
       <p className="muted">Rules. Always loaded.</p>
@@ -346,10 +384,14 @@ function LegacyLearnings({ learnings, error }: { learnings: Learning[]; error?: 
 }
 
 function LearningsPage() {
-  const { learnings, adapter } = useLoaderData() as { learnings: Learning[]; adapter: AdapterView };
-  const action = useActionData() as { error?: string } | undefined;
+  const { learnings, adapter, files } = useLoaderData() as {
+    learnings: Learning[];
+    adapter: AdapterView;
+    files: AdapterFile[];
+  };
+  const action = useActionData() as { error?: string; warnings?: string[] } | undefined;
   return adapter.configured
-    ? <AdapterMemory a={adapter} error={action?.error} />
+    ? <AdapterMemory a={adapter} files={files} error={action?.error} warnings={action?.warnings} />
     : <LegacyLearnings learnings={learnings} error={action?.error} />;
 }
 
@@ -498,13 +540,19 @@ const router = createBrowserRouter([
       },
       {
         path: "learnings",
-        loader: async () => ({
-          learnings: await get<Learning[]>("learnings"),
-          adapter: await get<AdapterView>("adapter"),
-        }),
+        loader: async () => {
+          const [learnings, adapter] = await Promise.all([get<Learning[]>("learnings"), get<AdapterView>("adapter")]);
+          const files = adapter.configured ? await get<AdapterFile[]>("adapter/files") : [];
+          return { learnings, adapter, files };
+        },
         action: guard(async ({ request }) => {
           const fd = await request.formData();
           const intent = fd.get("intent");
+          if (intent === "edit")
+            return post<{ ok: true; warnings: string[] }>("adapter/file", {
+              path: fd.get("path"),
+              content: String(fd.get("content") ?? ""),
+            });
           if (intent === "revert") await post("adapter/revert", { id: Number(fd.get("id")) });
           else if (intent === "remove") await post("learnings/remove", { id: Number(fd.get("id")) });
           else if (intent === "update")

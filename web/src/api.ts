@@ -79,6 +79,7 @@ export type AdapterView = {
   revisions?: { id: number; createdAt: number; createdBy: string; reason: string }[];
   items?: number;
 };
+export type AdapterFile = { path: string; content: string };
 export type Identity = {
   name: string;
   thinkingLabel: string;
