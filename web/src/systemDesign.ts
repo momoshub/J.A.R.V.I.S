@@ -100,6 +100,8 @@ export const TABLES: Table[] = [
     cols: [{ name: "id", key: "pk" }, { name: "trigger" }, { name: "state" }, { name: "slack_channel" }, { name: "slack_ts" }] },
   { name: "orca_questions", db: "bot.db", note: "Orca worker questions put to their thread, once", col: 1, row: 4,
     cols: [{ name: "message_id", key: "pk" }, { name: "run_id" }, { name: "dispatch_id" }, { name: "channel_id", key: "ref" }, { name: "thread_ts", key: "ref" }, { name: "state" }] },
+  { name: "orca_worker_usage", db: "bot.db", note: "an Orca worker's Claude session, tokens and list-price cost", col: 2, row: 4,
+    cols: [{ name: "dispatch_id", key: "pk" }, { name: "run_id" }, { name: "session_id" }, { name: "models" }, { name: "tokens" }, { name: "cost_usd" }] },
 ];
 
 export const RELATIONS: Relation[] = [

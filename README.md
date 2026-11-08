@@ -110,6 +110,7 @@ Every command has two interfaces - use whichever you like. Both triggers are con
 | `logsource [grafana,datadog\|default]` | anyone (setting: admins) | where it looks for logs - see [Investigating](#investigating) |
 | `forget` | anyone | wipe the bot's memory of this channel |
 | `users` | admins | list the allowlist |
+| `worker-cost <ctx_...\|run_...>` (alias `wcost`) | admins | tokens and list-price cost of an Orca worker, or every worker in a Run - see [What an Orca worker cost](#what-an-orca-worker-cost) |
 | `add @user [pal\|executer\|admin]` | admins (admin role: owner only) | grant access |
 | `remove @user` | admins (admins: owner only) | revoke access |
 | `learn <fact>` | admins | teach a durable fact |
@@ -588,6 +589,22 @@ once, a delivery a restart cut is retried while the question is still open,
 and an answered question or a finished worker gets no turn. In a workflow
 thread the question goes to the workflow's worker session, not the front,
 since only the worker can run `orca`.
+
+## What an Orca worker cost
+
+Orca keeps no tokens, cost or session id for a worker, so the bot reads them
+from the worker's own Claude Code transcript: `worker-read --source
+transcript` gives one of its message ids, and that id is the `uuid` of a line
+in `~/.claude/projects/<worker folder>/<session>.jsonl` (`$CLAUDE_CONFIG_DIR`
+moves the root). The session and its subagents' transcripts are summed, each
+API message once, and priced per model at list price (input, output, 5-minute
+and 1-hour cache writes and cache reads apart; the one price table is
+`MODEL_PRICES` in `src/domain/workerUsage.ts`). When a `watch worker` fires on
+a worker that finished or died, the hand-back says what it used and the turn
+says it in the thread; the figure is stored in `orca_worker_usage`.
+`worker-cost <ctx_...>` answers later (from the stored figure once Orca has
+forgotten the dispatch), and `worker-cost <run_...>` totals a Run. Nobody is
+invoiced this on a subscription; it is what the work would cost at API prices.
 
 ## One turn at a time
 

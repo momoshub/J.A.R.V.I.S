@@ -1,6 +1,7 @@
 /** Shared types and helpers for the command registry and its groups. */
 
 import type { ReviewGuard } from "../reviewGuard.ts";
+import type { WorkerUsagePort } from "../workerCost.ts";
 import { DEFAULT_BOT_NAME } from "../../domain/personality.ts";
 import { ALWAYS_ON_BUDGET } from "../../domain/adapterCheck.ts";
 import { type AdapterDeps } from "../adapterMemory.ts";
@@ -57,6 +58,8 @@ export type CommandDeps = {
   slackWaitScript?: string;
   /** The command that runs `bin/orca-worker-wait.ts` (bun + script), for `watch worker`. */
   orcaWorkerWait?: readonly string[];
+  /** Measures what an Orca worker used, for `worker-cost`. */
+  workerUsage?: WorkerUsagePort;
   llm?: LlmPort;
   promptContext?: () => PromptContext;
   botInfo?: () => { botName: string; model: string };

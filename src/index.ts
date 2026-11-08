@@ -64,6 +64,12 @@ import { NO_TOOLS } from "./domain/toolPolicy.ts";
 import { createReminderSender } from "./application/reminders.ts";
 import { createShellCheck } from "./infrastructure/system/shellCheck.ts";
 import { createOrcaCli, createOrcaTerminal } from "./infrastructure/system/orcaTerminal.ts";
+import { measureWorker, runDispatches } from "./infrastructure/system/workerTranscript.ts";
+import { createWorkerUsageRepo } from "./infrastructure/db/workerUsageRepo.ts";
+import { keepWorkerUsage } from "./application/workerCost.ts";
+
+/** `worker-read` / `worker-show` can be slow on a big transcript; the 5s default is too tight. */
+const WORKER_USAGE_ORCA_TIMEOUT_MS = 15_000;
 
 import { createWorkflowRepo } from "./infrastructure/db/workflowRepo.ts";
 import { resumeContinues } from "./application/workflowContinue.ts";
@@ -181,6 +187,7 @@ const main = async () => {
   const usage = createUsageRepo(db);
   const turns = createTurnLogRepo(db);
   const watches = createWatchRepo(db);
+  const workerUsageRepo = createWorkerUsageRepo(db);
   const reminders = createReminderRepo(db);
   const follows = createFollowRepo(db);
   const kitViews = createKitViewRepo(db);
@@ -447,6 +454,12 @@ const main = async () => {
     reminders,
     slackWaitScript,
     orcaWorkerWait,
+    workerUsage: {
+      measure: (id) => measureWorker(id, { orca: createOrcaCli("orca", WORKER_USAGE_ORCA_TIMEOUT_MS) }),
+      dispatchesOf: async (runId) =>
+        runDispatches((await createOrcaCli()(["orchestration", "task-list", "--run", runId, "--json"])).stdout),
+      repo: workerUsageRepo,
+    },
     macUiScript,
     agentDesktop,
     desktopScript,
@@ -828,6 +841,8 @@ const main = async () => {
     // The enforced allowlist: a switched-off role's shell watches stop with it.
     mayRun: (id) => id === config.ownerSlackId || !!users.get(id),
     log: (msg) => console.error(`[watch] ${msg}`),
+    // A `watch worker` that fired printed the worker's usage; keep it.
+    onFired: keepWorkerUsage(workerUsageRepo, orcaWorkerWait[1] ?? "", clock),
     onError: onDbError,
   });
   // A worker's `orca orchestration ask` lands in the bot's own Orca terminal,

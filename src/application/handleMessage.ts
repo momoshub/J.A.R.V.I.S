@@ -6,6 +6,7 @@
  * covered by fast, deterministic tests.
  */
 import type { StuckWork } from "../domain/stuckWork.ts";
+import type { WorkerUsagePort } from "./workerCost.ts";
 import { decideAccess } from "../domain/access.ts";
 import { disabledRoleReason } from "../domain/rolePolicy.ts";
 import {
@@ -151,6 +152,8 @@ export type HandleMessageDeps = {
   slackWaitScript?: string;
   /** The command that runs `bin/orca-worker-wait.ts` (bun + script), for `watch worker`. */
   orcaWorkerWait?: readonly string[];
+  /** Measures what an Orca worker used, for `worker-cost`. */
+  workerUsage?: WorkerUsagePort;
   /** Absolute path of the desktop driver (`bin/mac-ui.js`). */
   macUiScript?: string;
   /** Absolute path of the agent-desktop binary, when it is installed. */
