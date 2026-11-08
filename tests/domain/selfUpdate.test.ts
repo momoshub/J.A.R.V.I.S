@@ -125,6 +125,7 @@ describe("selfUpdateRules with no skill to read (the full block)", () => {
     // the helper outlives the default tool timeout, and a slow CI is a retry, not a bypass
     expect(STANDALONE_REVIEW_RULE).toContain("Bash timeout of 600000");
     expect(STANDALONE_REVIEW_RULE).toContain("exit 3 means CI has not finished so run it again");
+    expect(STANDALONE_REVIEW_RULE).toContain("approves the PR as the merging account when that account did not open it (a failed approval is no merge)");
     expect(STANDALONE_REVIEW_RULE).toContain("Never fall back to a bare `gh pr merge`");
     // a fix made after review is checked again before it can merge
     expect(STANDALONE_REVIEW_RULE.indexOf("re-run `bun run typecheck` and `bun test`")).toBeGreaterThan(
@@ -263,6 +264,7 @@ describe("self PR accounts", () => {
     expect(line).toContain("`GH_TOKEN=$(gh auth token -u writer)` in front of `gh pr create`");
     expect(line).toContain("posts every `[review round N]` comment as `checker`");
     expect(line).toContain("merge as `checker`: `GH_TOKEN=$(gh auth token -u checker)` in front of `bin/merge-when-green.sh <pr>`");
+    expect(line).toContain("which approves the PR as `checker` right before it merges");
     // switching the active account would move it under every other session
     expect(line).toContain("Never `gh auth switch`");
     // a login gh does not hold must stop the step, not fall back to the active account
