@@ -30,6 +30,8 @@ describe("detectDrift", () => {
 
   test("an acronym is not a capitalised start", () => {
     expect(rules("PR #81 is merged\nAWS looks fine")).toEqual([]);
+    expect(rules("PRs are merged\nURLs work")).toEqual([]);
+    expect(rules("Prs are merged")).toEqual(["capital"]);
   });
 
   test("bullets, quotes, emoji and emphasis before the first word do not hide a capital", () => {
@@ -107,6 +109,7 @@ describe("the nudge", () => {
     expect(n).toContain('"The deploy failed"');
     expect(n).toContain("CONTENT");
     expect(n).toContain("never edit or delete the old message");
+    expect(n).toContain("not from the person in this thread");
   });
 
   test("its no-change answer is a phrase the post boundary drops", () => {

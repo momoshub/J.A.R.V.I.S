@@ -3,7 +3,13 @@ import { openDatabase, type DbClient } from "../../src/infrastructure/db/client.
 import { createSelfIssueRepo, type SelfIssueRepo } from "../../src/infrastructure/db/selfIssueRepo.ts";
 import { createTurnLogRepo, type TurnLogRepo } from "../../src/infrastructure/db/turnLogRepo.ts";
 import { createMessageRepo } from "../../src/infrastructure/db/messageRepo.ts";
-import { createInnerChild, type DriftDeps, type InnerChildDeps } from "../../src/application/innerChild.ts";
+import {
+  createInnerChild,
+  steerViaRespond,
+  type DriftDeps,
+  type InnerChildDeps,
+} from "../../src/application/innerChild.ts";
+import { EMPTY_REPLY_FALLBACK } from "../../src/application/handleMessage.ts";
 import { createDriftRepo, type DriftRepo } from "../../src/infrastructure/db/driftRepo.ts";
 import { driftNudge } from "../../src/domain/voiceDrift.ts";
 import type { LlmCompleteParams } from "../../src/application/ports.ts";
@@ -499,5 +505,82 @@ describe("inner child: voice drift", () => {
     expect(events.get(1)?.outcome).toBe("no_reply");
     expect(posts[0]).toMatchObject({ channel: "CLOG", thread: "4.0" });
     expect(posts[0]?.text).toContain("no reply");
+  });
+  test("a workflow thread is never steered", async () => {
+    cursor = now - 100;
+    drifted("The release is on monday");
+    await build({ drift: drift({ workflowActive: () => true }) }).tick();
+    await settle();
+    expect(steers).toHaveLength(0);
+    expect(events.steering()).toHaveLength(0);
+  });
+
+  test("a turn that answers after it was written off says nothing more", async () => {
+    cursor = now - 100;
+    drifted("The release is on monday");
+    let release: (v: { text: string; ts?: string }) => void = () => {};
+    steerReply = () => new Promise((r) => (release = r));
+    const child = build({ drift: drift() });
+    await child.tick();
+    now += 3 * 60 * 60 * 1000;
+    await child.tick();
+    expect(events.get(1)?.outcome).toBe("no_reply");
+    const before = posts.length;
+    release({ text: "late correction", ts: "8.8" });
+    await settle();
+    expect(events.get(1)?.outcome).toBe("no_reply");
+    expect(posts).toHaveLength(before);
+  });
+});
+
+describe("steerViaRespond", () => {
+  const req = { channelId: "C9", threadTs: "5.5", slackUserId: "U1", text: "inner child drift check: x" };
+  const make = (result: { kind: string; text?: string }, over: { workflow?: boolean; allowed?: boolean } = {}) => {
+    const runs: unknown[] = [];
+    const posted: { channel: string; text: string; thread: string }[] = [];
+    const steer = steerViaRespond({
+      run: async (r) => {
+        runs.push(r);
+        return result;
+      },
+      post: async (channel, text, thread) => {
+        posted.push({ channel, text, thread });
+        return { ts: "7.7" };
+      },
+      workflowActive: () => over.workflow ?? false,
+      allowed: () => over.allowed ?? true,
+    });
+    return { steer, runs, posted };
+  };
+
+  test("a real answer is posted in the thread and its ts returned", async () => {
+    const { steer, posted } = make({ kind: "reply", text: "the date was wrong" });
+    expect(await steer(req)).toEqual({ text: "the date was wrong", ts: "7.7" });
+    expect(posted).toEqual([{ channel: "C9", text: "the date was wrong", thread: "5.5" }]);
+  });
+
+  test("the empty-reply placeholder and a silence note post nothing and read as no change", async () => {
+    for (const text of [EMPTY_REPLY_FALLBACK, "nothing to add"]) {
+      const { steer, posted } = make({ kind: "reply", text });
+      expect(await steer(req)).toEqual({ text: "nothing to add" });
+      expect(posted).toHaveLength(0);
+    }
+  });
+
+  test("a refusal or an ignored turn posts nothing", async () => {
+    for (const r of [{ kind: "denied", text: "you need access" }, { kind: "ignored" }]) {
+      const { steer, posted } = make(r);
+      expect(await steer(req)).toEqual({ text: "" });
+      expect(posted).toHaveLength(0);
+    }
+  });
+
+  test("a workflow thread or a person no longer allowed is not run at all", async () => {
+    for (const over of [{ workflow: true }, { allowed: false }]) {
+      const { steer, runs, posted } = make({ kind: "reply", text: "x" }, over);
+      expect(await steer(req)).toEqual({ text: "" });
+      expect(runs).toHaveLength(0);
+      expect(posted).toHaveLength(0);
+    }
   });
 });

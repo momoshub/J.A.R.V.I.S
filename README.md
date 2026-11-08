@@ -468,7 +468,7 @@ Set `inner_child_channel` (a setting) to turn it on, `inner_child=off` to pause.
   the drift log channel with the nudge, followed by the session's answer in its
   thread. The channel is the `inner_child_drift_channel` setting, falling back
   to `DRAIN_NOTICE_CHANNEL`; `off` turns drift steering off. One nudge per
-  reply, at most 12 a day.
+  reply, at most 12 a day, never in a workflow thread.
 
 ## Staying online
 

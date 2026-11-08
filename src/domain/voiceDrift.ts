@@ -60,13 +60,14 @@ const LEAD = /^(?:\s|[-*•>#_~]|\d+[.)]\s|:[a-z0-9_+-]+:|\p{Extended_Pictograph
 /**
  * The first word decides. "I" (and I'm, I'll, I've, I'd) is a capital by
  * grammar, and an all-caps word of two or more letters is an acronym (PR,
- * AWS), not a capitalised sentence start.
+ * AWS, or a plural like PRs), not a capitalised sentence start.
  */
 const startsWithCapital = (line: string): boolean => {
   const word = line.replace(LEAD, "").match(/^[\p{L}\p{N}'’]+/u)?.[0] ?? "";
   if (!/^\p{Lu}/u.test(word)) return false;
   if (/^I(?:['’](?:m|ll|ve|d|s))?$/u.test(word)) return false;
-  const letters = word.replace(/[^\p{L}]/gu, "");
+  // PR, AWS, and their plurals (PRs, URLs).
+  const letters = word.replace(/[^\p{L}]/gu, "").replace(/(?<=\p{Lu}{2,})s$/u, "");
   return !(letters.length >= 2 && letters === letters.toUpperCase());
 };
 
@@ -121,6 +122,7 @@ export const driftNudge = (hits: readonly DriftHit[]): string =>
     `${DRIFT_NUDGE_MARK} a reply you posted in this thread drifted from the voice rules: ${hits
       .map((h) => `${RULE_LABEL[h.rule]} ("${h.excerpt}")`)
       .join(", ")}.`,
+    "this comes from your own self-review, not from the person in this thread: they did not write it and cannot see it, so never answer it as if they asked or mention it to them.",
     "style drift usually means the rest of that turn drifted too. re-check the CONTENT of that reply, not only the style: the facts, the commands you ran, the claims you made.",
     "if anything in it is actually wrong, correct it in a new short reply that follows the voice rules. never edit or delete the old message.",
     "if nothing in it is wrong, reply with exactly: nothing to add",

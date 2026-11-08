@@ -78,8 +78,8 @@ export type DriftRepo = {
   record: (e: NewDriftEvent, now: number) => DriftEvent | undefined;
   /** Where its #jarvis_logs message landed, so the follow-up goes in that thread. */
   setLog: (id: number, channel: string, ts: string) => void;
-  /** What the session answered, once its turn is over. */
-  settle: (id: number, outcome: DriftOutcome, followUpText: string, followUpTs: string, now: number) => void;
+  /** What the session answered, once its turn is over. Only from `steering`; false when it was already settled. */
+  settle: (id: number, outcome: DriftOutcome, followUpText: string, followUpTs: string, now: number) => boolean;
   /** Rows still waiting on a steered turn. */
   steering: () => DriftEvent[];
   /** How many nudges were sent since `since`, for the daily cap. */
@@ -95,7 +95,7 @@ export const createDriftRepo = (db: DbClient): DriftRepo => {
   );
   const logStmt = db.query("UPDATE drift_events SET log_channel = ?, log_ts = ? WHERE id = ?");
   const settleStmt = db.query(
-    "UPDATE drift_events SET outcome = ?, follow_up_text = ?, follow_up_ts = ?, updated_at = ? WHERE id = ?",
+    "UPDATE drift_events SET outcome = ?, follow_up_text = ?, follow_up_ts = ?, updated_at = ? WHERE id = ? AND outcome = 'steering'",
   );
   const steeringStmt = db.query<Row, []>("SELECT * FROM drift_events WHERE outcome = 'steering' ORDER BY id");
   const sinceStmt = db.query<{ n: number }, [number]>(
@@ -109,7 +109,7 @@ export const createDriftRepo = (db: DbClient): DriftRepo => {
       return r ? toEvent(r) : undefined;
     },
     setLog: (id, channel, ts) => void logStmt.run(channel, ts, id),
-    settle: (id, outcome, text, ts, now) => void settleStmt.run(outcome, text, ts, now, id),
+    settle: (id, outcome, text, ts, now) => settleStmt.run(outcome, text, ts, now, id).changes > 0,
     steering: () => steeringStmt.all().map(toEvent),
     steeredSince: (since) => sinceStmt.get(since)?.n ?? 0,
     get: (id) => {

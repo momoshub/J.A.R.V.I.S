@@ -222,6 +222,9 @@ export type InboundMessage = {
   unprompted?: boolean;
 };
 
+/** What a turn says when the model said nothing. A placeholder, not an answer. */
+export const EMPTY_REPLY_FALLBACK = "I do not have anything useful to add there.";
+
 export type HandleResult =
   | { kind: "reply"; text: string }
   | { kind: "denied"; text: string }
@@ -448,7 +451,7 @@ export const handleMessage = async (
   // session has now been shown.
   if (key) sessions?.touch(key.channelId, key.threadTs, tier, newestTs, deps.clock());
 
-  const safeReply = reply.length > 0 ? reply : "I do not have anything useful to add there.";
+  const safeReply = reply.length > 0 ? reply : EMPTY_REPLY_FALLBACK;
 
   deps.messages.append(
     {

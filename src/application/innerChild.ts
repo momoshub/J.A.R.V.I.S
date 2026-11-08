@@ -59,6 +59,7 @@ import type { MessageRepo } from "../infrastructure/db/messageRepo.ts";
 import type { SelfIssue, SelfIssueRepo } from "../infrastructure/db/selfIssueRepo.ts";
 import type { TurnLogRepo } from "../infrastructure/db/turnLogRepo.ts";
 import type { Clock, LlmPort } from "./ports.ts";
+import { EMPTY_REPLY_FALLBACK } from "./handleMessage.ts";
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 
@@ -108,10 +109,40 @@ export type DriftDeps = {
     text: string;
     ts?: string;
   }>;
+  /** A thread driving a workflow is never steered: a nudge there would reach the worker. */
+  workflowActive?: (channel: string, threadTs: string) => boolean;
   /** The activity log. */
   activity?: (event: string, data: Record<string, unknown>) => void;
   maxPerDay?: number;
 };
+
+type SteerRequest = { channelId: string; threadTs: string; slackUserId: string; text: string };
+
+/**
+ * The real `steer`: the nudge as an ordinary turn through `respond` (same
+ * queue, same session, the person's role), posting only a real answer. A
+ * refusal, an empty turn, a silence note or the empty-reply placeholder posts
+ * nothing - the drifted thread must never get a line nobody asked for. A
+ * workflow thread, or a person no longer allowed in, is not run at all: the
+ * first would hand the nudge to the worker, the second would raise an access
+ * request in their name.
+ */
+export const steerViaRespond =
+  (d: {
+    run: (req: SteerRequest) => Promise<{ kind: string; text?: string }>;
+    post: (channel: string, text: string, threadTs: string) => Promise<{ ts: string } | void | undefined>;
+    workflowActive: (channel: string, threadTs: string) => boolean;
+    allowed: (slackUserId: string) => boolean;
+  }) =>
+  async (req: SteerRequest): Promise<{ text: string; ts?: string }> => {
+    if (d.workflowActive(req.channelId, req.threadTs) || !d.allowed(req.slackUserId)) return { text: "" };
+    const result = await d.run(req);
+    const text = result.kind === "reply" ? (result.text ?? "").trim() : "";
+    if (!text) return { text: "" };
+    if (isSilenceNote(text) || text === EMPTY_REPLY_FALLBACK) return { text: "nothing to add" };
+    const posted = await d.post(req.channelId, text, req.threadTs);
+    return { text, ...(posted ? { ts: posted.ts } : {}) };
+  };
 
 export type InnerChild = {
   tick: () => Promise<void>;
@@ -181,7 +212,8 @@ export const createInnerChild = (deps: InnerChildDeps): InnerChild => {
   ): Promise<void> => {
     const drift = deps.drift;
     if (!drift) return;
-    drift.events.settle(e.id, outcome, text, ts, deps.clock());
+    // Settled once: a turn that answers after it was written off says nothing more.
+    if (!drift.events.settle(e.id, outcome, text, ts, deps.clock())) return;
     drift.activity?.("inner_child_drift_followup", {
       id: e.id,
       channel: e.channelId,
@@ -377,7 +409,8 @@ export const createInnerChild = (deps: InnerChildDeps): InnerChild => {
         !!t.threadTs &&
         !isDriftNudge(t.request) &&
         t.channelId !== deps.channelId &&
-        t.channelId !== logChannel
+        t.channelId !== logChannel &&
+        !deps.drift?.workflowActive?.(t.channelId, t.threadTs)
       );
     };
     ordered.forEach((_, i) => {

@@ -53,7 +53,8 @@ import { createGithubAppClient } from "./infrastructure/github/appClient.ts";
 import { loadGithubAppCredentials, webhookSecretOf } from "./infrastructure/github/appCredentials.ts";
 import { startWebhookServer } from "./infrastructure/github/webhookServer.ts";
 import { createGithubAppRepo } from "./infrastructure/db/githubAppRepo.ts";
-import { createInnerChild } from "./application/innerChild.ts";
+import { createInnerChild, steerViaRespond } from "./application/innerChild.ts";
+import { decideAccess } from "./domain/access.ts";
 import { createDriftRepo } from "./infrastructure/db/driftRepo.ts";
 import { createSelfIssueRepo } from "./infrastructure/db/selfIssueRepo.ts";
 import { NO_TOOLS } from "./domain/toolPolicy.ts";
@@ -888,24 +889,24 @@ const main = async () => {
         return v || config.drainNoticeChannel || "";
       },
       replies: (channel, threadTs) => slackAdmin.replies(channel, threadTs),
-      steer: async ({ channelId, threadTs, slackUserId, text }) => {
-        const result = await respond(deps, {
-          channelId,
-          slackUserId,
-          text,
-          threadTs,
-          messageTs: syntheticTs(clock()),
-          viaSlash: false,
-          following: false,
-          keepSession: true,
-          unprompted: true,
-        });
-        // A refusal (the person lost access since) is not posted: nobody asked.
-        if (result.kind !== "reply" || !result.text.trim()) return { text: "" };
-        if (isSilenceNote(result.text)) return { text: result.text };
-        const posted = await slackAdmin.post(channelId, result.text, threadTs);
-        return { text: result.text, ...(posted ? { ts: posted.ts } : {}) };
-      },
+      workflowActive: (channel, threadTs) => !!workflows.activeFor(channel, threadTs),
+      steer: steerViaRespond({
+        run: ({ channelId, threadTs, slackUserId, text }) =>
+          respond(deps, {
+            channelId,
+            slackUserId,
+            text,
+            threadTs,
+            messageTs: syntheticTs(clock()),
+            viaSlash: false,
+            following: false,
+            keepSession: true,
+            unprompted: true,
+          }),
+        post: (channel, text, threadTs) => slackAdmin.post(channel, text, threadTs),
+        workflowActive: (channel, threadTs) => !!workflows.activeFor(channel, threadTs),
+        allowed: (id) => decideAccess(id, config.ownerSlackId, users.get).allowed,
+      }),
       activity: (event, data) => activity.event(event, data),
     },
     log: (msg) => console.error(`[inner-child] ${msg}`),
