@@ -347,3 +347,43 @@ button.icon.primary { width: 42px; height: 42px; }
 @media (max-width: 1100px) {
   .arch-side { grid-template-columns: 1fr; }
 }
+
+/* system design sections */
+.sd-index { display: flex; flex-wrap: wrap; gap: 8px; margin: 8px 0 6px; }
+.sd-index a { display: inline-flex; align-items: center; gap: 8px; padding: 6px 12px 6px 6px; border-radius: 999px; border: 1px solid var(--border); background: var(--panel); color: var(--text); text-decoration: none; font-size: 13.5px; }
+.sd-index a:hover { border-color: var(--accent-line); }
+.sd-index a span { width: 22px; height: 22px; border-radius: 50%; display: grid; place-items: center; background: var(--accent-soft); color: var(--accent); font-size: 12px; font-weight: 600; }
+.sd-h { font-family: var(--serif); font-weight: 500; font-size: 18px; margin: 30px 0 8px; scroll-margin-top: 16px; }
+.sd-two { display: grid; grid-template-columns: repeat(auto-fit, minmax(320px, 1fr)); gap: 14px; }
+.sd-list { padding: 14px 18px; margin: 0; }
+.sd-list b { font-family: var(--serif); font-weight: 500; font-size: 16px; }
+.sd-list ul { margin: 8px 0 0; padding-left: 18px; font-size: 13.5px; }
+.sd-list li { margin: 4px 0; }
+.sd-num { white-space: nowrap; font-variant-numeric: tabular-nums; font-weight: 500; }
+.sd-stage { padding: 10px; overflow-x: auto; }
+.sd-svg { display: block; width: 100%; height: auto; min-width: 760px; font-family: var(--sans); }
+.sd-arrow { fill: var(--border-strong); }
+.sd-arrow.strong { fill: var(--muted); }
+.sd-rel path, .sd-rel line { fill: none; stroke: var(--border-strong); stroke-width: 1.4; }
+.sd-rel:hover path, .sd-rel:hover line { stroke: var(--accent); }
+.sd-link-label { fill: var(--muted); font-size: 11px; paint-order: stroke; stroke: var(--panel); stroke-width: 4px; }
+.sd-table rect, .sd-lane-head, .sd-dep rect { fill: var(--panel); stroke: var(--border-strong); stroke-width: 1.2; }
+.sd-table.other-db rect { fill: var(--info-soft); stroke: var(--info); }
+.sd-rule { stroke: var(--border); }
+.sd-table-name { fill: var(--text); font-size: 13px; font-weight: 600; font-family: var(--mono); }
+.sd-table-note { fill: var(--muted); font-size: 10.5px; }
+.sd-col { fill: var(--text); font-size: 12px; font-family: var(--mono); }
+.sd-col.pk { font-weight: 700; }
+.sd-col.ref { fill: var(--link); }
+.sd-key { fill: var(--muted); font-size: 10px; font-weight: 600; }
+.sd-lifeline { stroke: var(--border-strong); stroke-dasharray: 3 4; }
+.sd-msg line, .sd-msg path { fill: none; stroke: var(--muted); stroke-width: 1.4; }
+.sd-msg.reply line { stroke-dasharray: 5 4; }
+.sd-msg.async line { stroke: var(--accent); }
+.sd-msg-label { fill: var(--text); font-size: 12px; paint-order: stroke; stroke: var(--panel); stroke-width: 4px; }
+.sd-zone { fill: var(--panel-2); stroke: var(--border); stroke-dasharray: 5 5; }
+.sd-zone-label { fill: var(--muted); font-size: 12px; }
+.sd-dep.agent rect { stroke: var(--text); stroke-opacity: 0.45; }
+.sd-dep.port rect { fill: var(--accent-soft); stroke: var(--accent-line); }
+.sd-dep.file rect { fill: var(--info-soft); stroke: var(--info); }
+.sd-dep.external rect { fill: var(--panel-2); stroke-dasharray: 4 3; }
