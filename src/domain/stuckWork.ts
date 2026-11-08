@@ -125,19 +125,20 @@ const FINAL_STATES = new Set(["succeeded", "failed", "cancelled", "stopped"]);
  * Why a dispatched task's worker is not live, from `worker-show --json`, or
  * undefined when it is - or might be. Only proof counts: the dispatch is
  * unknown to Orca, its process exited, or it reached a final state without the
- * task moving on. A `settled` stage whose process is still live is NOT dead: a
- * worker parked on `orchestration ask` waits for an answer, and Orca calls a
- * waiting worker healthy. An unanswered or unreadable check is never dead.
+ * task moving on. A `settled` stage alone is NOT dead: a worker parked on
+ * `orchestration ask` waits for an answer, Orca calls a waiting worker healthy,
+ * and `liveness` may be `unverifiable` (identity unproven, a probe that did not
+ * answer - after an Orca restart, say) or missing. Only `exited` proves it, and
+ * that is caught first. An unanswered or unreadable check is never dead.
  */
 export const deadWorkerReason = (workerShowStdout: string): string | undefined => {
   const r = parseJson(workerShowStdout);
   if (!isRecord(r)) return undefined;
   if (r.ok !== true) return isRecord(r.error) && r.error.code === "dispatch_not_found" ? "dispatch not found" : undefined;
   if (!isRecord(r.result)) return undefined;
-  const { state, liveness, stage } = r.result;
+  const { state, liveness } = r.result;
   if (liveness === "exited") return "worker exited";
   if (typeof state === "string" && FINAL_STATES.has(state)) return `worker ${state}, never reported`;
-  if (stage === "settled" && liveness !== "live") return "worker settled, never reported";
   return undefined;
 };
 

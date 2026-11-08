@@ -59,11 +59,13 @@ describe("orca output", () => {
     expect(deadWorkerReason('{"ok":false,"error":{"code":"dispatch_not_found"}}')).toBe("dispatch not found");
     expect(deadWorkerReason('{"ok":true,"result":{"state":"ready","liveness":"exited"}}')).toBe("worker exited");
     expect(deadWorkerReason('{"ok":true,"result":{"state":"failed","liveness":"live"}}')).toBe("worker failed, never reported");
-    expect(deadWorkerReason('{"ok":true,"result":{"state":"ready","stage":"settled"}}')).toBe("worker settled, never reported");
   });
 
-  test("a settled worker whose process is live may be waiting on an answer, so it is not dead", () => {
+  test("settled is not proof: live, unverifiable or no liveness may be a worker waiting on an answer", () => {
     expect(deadWorkerReason('{"ok":true,"result":{"state":"ready","stage":"settled","liveness":"live"}}')).toBeUndefined();
+    expect(deadWorkerReason('{"ok":true,"result":{"state":"ready","stage":"settled","liveness":"unverifiable"}}')).toBeUndefined();
+    expect(deadWorkerReason('{"ok":true,"result":{"state":"ready","stage":"settled"}}')).toBeUndefined();
+    expect(deadWorkerReason('{"ok":true,"result":{"state":"ready","stage":"settled","liveness":"exited"}}')).toBe("worker exited");
   });
 
   test("a terminal is gone only on proof, never on some other error", () => {
