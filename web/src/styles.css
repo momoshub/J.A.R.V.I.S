@@ -30,6 +30,7 @@
   --radius: 12px;
   --radius-sm: 8px;
   --shadow: 0 1px 2px rgba(31, 30, 29, 0.04), 0 2px 8px rgba(31, 30, 29, 0.04);
+  --shadow-float: 0 6px 24px rgba(31, 30, 29, 0.12);
   --serif: "Copernicus", "Tiempos Headline", ui-serif, "Iowan Old Style", Georgia, Cambria, serif;
   --sans: "Styrene B", ui-sans-serif, -apple-system, BlinkMacSystemFont, "Segoe UI", Inter, sans-serif;
   --mono: ui-monospace, SFMono-Regular, Menlo, monospace;
@@ -60,6 +61,7 @@
     --info-soft: rgba(155, 180, 209, 0.13);
     --hover: rgba(240, 238, 230, 0.05);
     --shadow: 0 1px 2px rgba(0, 0, 0, 0.2);
+    --shadow-float: 0 8px 28px rgba(0, 0, 0, 0.45);
   }
 }
 
@@ -295,10 +297,22 @@ button.link.danger-link { color: var(--danger); }
 .arch-player { padding: 14px 16px; }
 .arch-player-head b { display: block; font-family: var(--serif); font-weight: 500; font-size: 17px; }
 .arch-player-head span { font-size: 13px; }
-.arch-controls { margin: 10px 0 6px; gap: 6px; }
-.arch-controls button { padding: 5px 12px; font-size: 13px; }
-.arch-count { margin-left: auto; font-size: 12.5px; }
-.arch-steps { margin: 0; padding: 0; list-style: none; counter-reset: s; max-height: 300px; overflow-y: auto; }
+.arch-count { font-size: 12.5px; white-space: nowrap; font-variant-numeric: tabular-nums; }
+.arch-dock {
+  position: sticky; bottom: 14px; z-index: 2; margin: 6px 4px 4px;
+  display: grid; grid-template-columns: auto auto auto minmax(0, 1fr) 120px auto; align-items: center; gap: 8px;
+  padding: 8px 12px 8px 8px; border-radius: 999px;
+  background: var(--panel); border: 1px solid var(--border-strong);
+  box-shadow: var(--shadow-float), var(--shadow);
+}
+button.icon { width: 36px; height: 36px; padding: 0; border-radius: 50%; display: grid; place-items: center; }
+button.icon.primary { width: 42px; height: 42px; }
+.arch-dock-now { display: flex; align-items: baseline; gap: 8px; min-width: 0; font-size: 13.5px; }
+.arch-dock-now code { flex: 0 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 11.5px; }
+.arch-dock-now span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.arch-dock-progress { height: 4px; border-radius: 2px; background: var(--hover); overflow: hidden; }
+.arch-dock-progress i { display: block; height: 100%; background: var(--accent); transition: width 0.3s ease; }
+.arch-steps { margin: 10px 0 0; padding: 0; list-style: none; counter-reset: s; }
 .arch-steps li { counter-increment: s; display: grid; grid-template-columns: 22px 1fr; column-gap: 6px; padding: 7px 6px; border-radius: var(--radius-sm); cursor: pointer; font-size: 13px; color: var(--muted); }
 .arch-steps li::before { content: counter(s); grid-row: span 2; width: 20px; height: 20px; border-radius: 50%; display: grid; place-items: center; font-size: 11px; background: var(--hover); color: var(--muted); }
 .arch-steps li code { font-size: 11.5px; justify-self: start; }
@@ -325,6 +339,11 @@ button.link.danger-link { color: var(--danger); }
 .decision p { margin: 6px 0 0; font-size: 13.5px; }
 
 /* Viewport width, so the 248px sidebar and the page padding are counted in. */
+@media (max-width: 760px) {
+  .arch-dock { grid-template-columns: auto auto auto minmax(0, 1fr) auto; border-radius: 18px; }
+  .arch-dock-progress { display: none; }
+  .arch-dock-now code + span { display: none; }
+}
 @media (max-width: 1100px) {
   .arch-side { grid-template-columns: 1fr; }
 }
