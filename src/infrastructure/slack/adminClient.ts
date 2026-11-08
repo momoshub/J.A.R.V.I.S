@@ -9,6 +9,7 @@ import { toBlockMessage } from "../../domain/blockKit.ts";
 import { type MessageBlock, visibleText } from "../../domain/slackMessageText.ts";
 import { footerBlock, footerLine, sectionChunks, signedText, SIGNATURES, withFooter } from "../../domain/messageFooter.ts";
 import type { SlackMember } from "../../domain/slackMembers.ts";
+import { type FooterUsage, usageFooter } from "../../domain/usageFooter.ts";
 import type {
   SlackAdminPort,
   SlackConversation,
@@ -72,7 +73,8 @@ const mapPool = async <T, R>(items: T[], n: number, fn: (item: T) => Promise<R>)
 export const createSlackAdmin = (client: WebClient, clock: () => number = Date.now): SlackAdminPort => {
   const nameCache = new Map<string, string>();
   /** The grey signature line, stamped now: every post and edit carries one. */
-  const footer = (by?: string): string => footerLine(by ?? SIGNATURES.jarvis, clock());
+  const footer = (by?: string, usage?: FooterUsage): string =>
+    footerLine(by ?? SIGNATURES.jarvis, clock(), usage ? usageFooter(usage) : undefined);
   let botUserId: string | undefined;
 
   const getBotUserId = async (): Promise<string> => {
@@ -265,9 +267,9 @@ export const createSlackAdmin = (client: WebClient, clock: () => number = Date.n
       await client.apiCall("chat.delete", { channel, ts, broadcast_delete: true });
     },
 
-    post: async (channel, text, threadTs, by) => {
+    post: async (channel, text, threadTs, by, usage) => {
       const thread = threadTs ? { thread_ts: threadTs } : {};
-      const line = footer(by);
+      const line = footer(by, usage);
       const body = toMrkdwn(text);
       // Signed as sections; a refusal of those still gets the words out bare.
       const bare = () => client.chat.postMessage({ channel, text: body, ...thread });

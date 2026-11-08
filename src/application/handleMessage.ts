@@ -19,7 +19,7 @@ import { buildSystemPrompt, buildSystemPromptParts } from "../domain/personality
 import type { PromptGuide } from "../domain/promptGuides.ts";
 import { adapterRules } from "../domain/adapter.ts";
 import { hasContent } from "../domain/mentions.ts";
-import type { Clock, LlmPort, LlmStreamSink } from "./ports.ts";
+import type { Clock, LlmPort, LlmStreamSink, LlmUsage } from "./ports.ts";
 import type { PromptContext, StoredMessage, UserRole } from "../domain/types.ts";
 import type { ToolPolicy } from "../domain/toolPolicy.ts";
 import type { MessageRepo } from "../infrastructure/db/messageRepo.ts";
@@ -146,6 +146,8 @@ export type HandleMessageDeps = {
   slackReadScript?: string;
   /** Absolute path of the "has anything new been said" helper, for `watch reply`. */
   slackWaitScript?: string;
+  /** The command that runs `bin/orca-worker-wait.ts` (bun + script), for `watch worker`. */
+  orcaWorkerWait?: readonly string[];
   /** Absolute path of the desktop driver (`bin/mac-ui.js`). */
   macUiScript?: string;
   /** Absolute path of the agent-desktop binary, when it is installed. */
@@ -248,8 +250,11 @@ export type HandleResult =
   /**
    * `by` names who wrote the reply when it is not plain Jarvis (a workflow
    * worker, a command), for the footer signature (domain/messageFooter.ts).
+   * `usage` is what the turn cost when the model reported it, so a reply
+   * posted after the fact (nobody watched it stream) carries the same usage
+   * line in its footer as a live one.
    */
-  | { kind: "reply"; text: string; by?: string }
+  | { kind: "reply"; text: string; by?: string; usage?: LlmUsage }
   | { kind: "denied"; text: string }
   | { kind: "ignored" };
 
@@ -422,6 +427,8 @@ export const handleMessage = async (
   const cold = () => buildContextWindow(history, window);
   const newestTs = history[history.length - 1]?.slackTs ?? inbound.messageTs ?? "";
 
+  // The last run's figures win, as they do under a live stream.
+  let usage: LlmUsage | undefined;
   const base = {
     system,
     assistantName: ctx.botName,
@@ -437,6 +444,9 @@ export const handleMessage = async (
       kind: "chat",
       channel: inbound.channelId,
       threadTs: inbound.threadTs ?? inbound.messageTs,
+    },
+    onUsage: (u: LlmUsage) => {
+      usage = u;
     },
   };
   const run = (p: Parameters<typeof deps.llm.complete>[0]) =>
@@ -495,7 +505,7 @@ export const handleMessage = async (
     deps.clock(),
   );
 
-  return { kind: "reply", text: safeReply };
+  return { kind: "reply", text: safeReply, ...(usage ? { usage } : {}) };
 };
 
 /**

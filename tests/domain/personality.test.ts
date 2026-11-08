@@ -465,6 +465,16 @@ describe("a message with several questions", () => {
     expect(out).not.toContain("so you can talk to it with SendMessage");
   });
 
+  test("every worker started is followed by a watch worker, when a watch can be set", () => {
+    const opts = { learnings: [], commandPrefix: "//bot", runScript: "/r.sh", runUrl: "http://x", runTicket: "t" };
+    const admin = buildSystemPrompt({ ...opts, canWatch: true });
+    expect(admin).toContain("Every `worker-start` is followed, in the same turn, by `//bot watch worker <dispatchId>");
+    expect(admin).toContain("finishes, dies or stands waiting for input");
+    expect(admin).toContain("`//bot watch worker <dispatchId> <what you will do next>`");
+    // no watch to set, no rule pointing at one
+    expect(buildSystemPrompt({ ...opts, canWatch: false })).not.toContain("watch worker");
+  });
+
   test("each part is handed over as it lands, folded into one message", () => {
     const out = buildSystemPrompt({ learnings: [] });
     expect(out).toContain("never hold the whole reply for the slowest part");

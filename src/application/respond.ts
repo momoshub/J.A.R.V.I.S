@@ -206,7 +206,7 @@ export const respond = async (
               if (!tracked?.signal.aborted) {
                 await afterWorkflowTurn(deps, workflow, who.user.slackId, turn.wantsContinue, deps.commandPrefix);
               }
-              return { kind: "reply", text: turn.text, by: SIGNATURES.workflowWorker };
+              return { kind: "reply", text: turn.text, by: SIGNATURES.workflowWorker, ...(turn.usage ? { usage: turn.usage } : {}) };
             }
             if (inbound.workerLane) {
               // Asked of the worker's own session (an Orca worker's question),
@@ -227,7 +227,7 @@ export const respond = async (
               if (turn.steers.length > 0 && !tracked?.signal.aborted) {
                 steerWorker(deps, workflow, who.user.slackId, turn.steers, threadKey);
               }
-              return { kind: "reply", text: turn.text, by: SIGNATURES.workflowFront };
+              return { kind: "reply", text: turn.text, by: SIGNATURES.workflowFront, ...(turn.usage ? { usage: turn.usage } : {}) };
             }
           }
         }
