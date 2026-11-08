@@ -69,8 +69,8 @@ no classes.
   handed-off command that later fails says so in the thread, not only in the log.
 - **Timers.** `watcher` polls each due watch's predicate and hands the thread a
   fresh turn when it is ready (`watch worker <dispatchId>` polls an Orca worker
-  through `bin/orca-worker-wait.ts` and says whether it finished, died or waits
-  for input); `reminders` posts at the time with no model;
+  through `bin/orca-worker-wait.ts` and says whether it finished, died - also
+  when it stopped without reporting - or waits for input); `reminders` posts at the time with no model;
   `reviewInbox` polls GitHub for review requests and runs `review` as the
   requester; `orcaQuestions` reads the Orca mailbox of every Run a thread
   started a worker in (linked from the turn's tool trace as `worker-start`

@@ -268,9 +268,10 @@ export const parseWatchArgs = (rest: string): WatchArgs => {
 
 /**
  * What an Orca worker is doing, as far as `watch worker` cares: it finished
- * (its outcome is set), it died (Orca sees no live process and no outcome),
- * it stands waiting for input (parked on a prompt only a human can answer),
- * or it is still running. `unknown` is an answer Orca could not give - never
+ * (it reported an outcome), it died (Orca sees no live process and no report,
+ * or it was stopped or abandoned - its task is left `blocked`), it stands
+ * waiting for input (parked on a prompt only a human can answer), or it is
+ * still running. `unknown` is an answer Orca could not give - never
  * read as dead, so a slow or restarting Orca does not fire a false alarm.
  */
 export type WorkerEvent =
@@ -282,8 +283,23 @@ const isObj = (v: unknown): v is Record<string, unknown> => typeof v === "object
 const str = (v: unknown): string | undefined => (typeof v === "string" && v ? v : undefined);
 const strings = (v: unknown): string[] => (Array.isArray(v) ? v.filter((x): x is string => typeof x === "string") : []);
 
-/** An outcome that says the worker has not ended yet. Anything else is "set". */
-const OPEN_OUTCOMES = new Set(["in_progress", "pending", "unknown", "none"]);
+/**
+ * An outcome that says the worker has not ended yet, or that Orca cannot see
+ * either way (`outcome_unknown`: liveness unverifiable). Anything else is "set".
+ */
+const OPEN_OUTCOMES = new Set(["in_progress", "pending", "unknown", "none", "outcome_unknown"]);
+/**
+ * Orca's outcome for a worker whose turn or process ended with no accepted
+ * `worker_done` ("execution finished without an accepted worker report"). Its
+ * task stays `blocked`: not finished, whatever it did before it stopped.
+ */
+const UNREPORTED_OUTCOMES = new Set(["finished_unverified"]);
+/**
+ * A worker state or dispatch failure that means it was stopped or abandoned
+ * rather than reporting. Orca projects that as outcome `failed`, the same as a
+ * worker that reported failure, and leaves the task `blocked`.
+ */
+const STOPPED = new Set(["stopped", "abandoned"]);
 /** Liveness Orca could not establish. Orca's own rule: it never proves exit. */
 const UNSURE_LIVENESS = new Set(["unverifiable", "unknown"]);
 /** The concise view has no outcome; a terminal `state` stands in for it. */
@@ -296,7 +312,8 @@ const SETTLED_STATES = new Set(["succeeded", "failed", "cancelled", "canceled"])
  * `projection.attention.categories` and `observation.agentWait`; the concise
  * one `state`, `liveness` and `attention` as plain values. Both are read, so a
  * change of view or an older Orca still answers. Order matters: a finished
- * worker has exited too, and that is "finished", not "died".
+ * worker has exited too, and that is "finished", not "died"; a worker parked
+ * on a question has often ended its turn, and that is "waiting", not "died".
  */
 export const orcaWorkerEvent = (stdout: string): WorkerEvent => {
   let parsed: unknown;
@@ -318,8 +335,12 @@ export const orcaWorkerEvent = (stdout: string): WorkerEvent => {
   const inRun = runId ? `, run ${runId}` : "";
 
   const state = str(r.state) ?? (isObj(r.worker) ? str(r.worker.state) : undefined);
+  const lastFailure = isObj(r.dispatch) ? str(r.dispatch.lastFailure) : undefined;
+  const stopped = [state, lastFailure].find((s) => s !== undefined && STOPPED.has(s));
   const outcome = str(projection.outcome) ?? (state && SETTLED_STATES.has(state) ? state : undefined);
-  if (outcome && !OPEN_OUTCOMES.has(outcome)) return { kind: "finished", detail: `outcome ${outcome}${inRun}` };
+  if (outcome && !stopped && !OPEN_OUTCOMES.has(outcome) && !UNREPORTED_OUTCOMES.has(outcome)) {
+    return { kind: "finished", detail: `outcome ${outcome}${inRun}` };
+  }
 
   const attention = [
     ...strings(isObj(projection.attention) ? projection.attention.categories : undefined),
@@ -331,6 +352,13 @@ export const orcaWorkerEvent = (stdout: string): WorkerEvent => {
   if (attention.some((a) => /input|approval|guidance/i.test(a)) || (wait !== undefined && wait !== null)) {
     const why = isObj(wait) ? (str(wait.prompt) ?? str(wait.evidence) ?? str(wait.kind)) : undefined;
     return { kind: "waiting", detail: `${why ? why.slice(0, 200) : `attention ${attention.join(", ") || "agent wait"}`}${inRun}` };
+  }
+
+  // After the wait check: a worker that ended its turn on an `ask` is
+  // `finished_unverified` too, and that one is waiting, not dead.
+  if (stopped) return { kind: "died", detail: `${stopped} without reporting, task left blocked${inRun}` };
+  if (outcome && UNREPORTED_OUTCOMES.has(outcome)) {
+    return { kind: "died", detail: `ended without reporting (${outcome}), task left blocked${inRun}` };
   }
 
   const liveness = (isObj(projection.liveness) ? str(projection.liveness.verdict) : undefined) ?? str(r.liveness);
@@ -357,10 +385,24 @@ const workerLead = (output: string, waited: number): { readonly lead: string; re
     return { waiting: false, lead: `Orca worker ${id} FINISHED after ${humanDuration(waited)} (${detail}). Read what it reported, then carry on with exactly this, and do not start it over:` };
   }
   if (kind === "died") {
-    return { waiting: false, lead: `Orca worker ${id} DIED after ${humanDuration(waited)} without finishing (${detail}). Its job is not done: see what it left with ${show}, then carry on with this, redoing or restarting the part it did not finish:` };
+    return { waiting: false, lead: `Orca worker ${id} DIED after ${humanDuration(waited)} without reporting (${detail}). Never assume its job is done, whatever it got to: see what it left with ${show} and its messages in \`orca orchestration inbox\`, check the work itself (commits, PR, files), then carry on with this, redoing or finishing the part it did not:` };
   }
   return { waiting: true, lead: `Orca worker ${id} is WAITING FOR INPUT after ${humanDuration(waited)} (${detail}) - it has not finished. See what it is asking with ${show} (or its \`ask\` in \`orca orchestration inbox\`). If you can answer or unblock it yourself, do, then set a new \`watch worker ${id}\` for the rest. If only a person can answer, ask them here once, set \`watch reply\` on this thread to unblock it when they answer, and set \`watch worker ${id} --past-wait\` so this same question does not hand the thread back again - it then fires only when the worker finishes or dies. What you planned for when it is done:` };
 };
+
+/** A task row the batch check prints: `task_<id> <status>`. */
+const BLOCKED_TASK = /^(task_[A-Za-z0-9_-]+) blocked$/gm;
+
+/**
+ * Tasks the batch check (`ORCA_BATCH_CHECK`) saw as `blocked`: Orca leaves a
+ * task there when its worker exits or is stopped without marking it completed,
+ * or while it waits on an `ask`. Either way it is not done, and the hand-back
+ * has to say so before "carry on".
+ */
+const blockedTasks = (output: string): string[] => [...output.matchAll(BLOCKED_TASK)].map((m) => m[1] ?? "");
+
+const blockedLead = (tasks: readonly string[]): string =>
+  `Orca shows ${tasks.join(", ")} as BLOCKED: that worker stopped without reporting (it exited, was stopped, or is parked on an \`ask\`). It is NOT done, never count it as a success. For each, read \`orca orchestration worker-show --dispatch <its dispatchId> --json --full\` and its messages in \`orca orchestration inbox\`, answer it if it is waiting, otherwise check the work itself (commits, PR, files) and redo or finish what is missing before the rest of this.`;
 
 /**
  * The line the thread gets when a watch comes good.
@@ -375,7 +417,9 @@ const workerLead = (output: string, waited: number): { readonly lead: string; re
 export const readyMessage = (note: string, waited: number, output?: string): string => {
   const tail = (output ?? "").trim().split("\n").slice(-3).join("\n").slice(0, 400);
   const worker = workerLead(output ?? "", waited);
+  const blocked = worker ? [] : blockedTasks(output ?? "");
   return [
+    blocked.length ? blockedLead(blocked) : "",
     worker?.lead ??
       `The thing you were waiting for is ready (after ${humanDuration(waited)}). Carry on with exactly this, and do not start it over:`,
     note,

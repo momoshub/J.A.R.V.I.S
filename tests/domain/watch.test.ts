@@ -293,6 +293,51 @@ describe("orcaWorkerEvent", () => {
 
   test("liveness Orca could not prove is not a death", () => {
     expect(orcaWorkerEvent(full({ outcome: "in_progress", liveness: { verdict: "unverifiable" } })).kind).toBe("running");
+    // nor is an outcome Orca could not derive: it is not a finish either
+    expect(orcaWorkerEvent(full({ outcome: "outcome_unknown", liveness: { verdict: "unverifiable" } })).kind).toBe("running");
+  });
+
+  test("a worker that ended without reporting died, it did not finish", () => {
+    // Orca: "execution finished without an accepted worker report"; its task is left blocked
+    const gone = orcaWorkerEvent(full({ outcome: "finished_unverified", liveness: { verdict: "exited" } }));
+    expect(gone).toEqual({ kind: "died", detail: "ended without reporting (finished_unverified), task left blocked, run run_1" });
+    // turn over but the pane still open: just as stuck, nothing will report
+    expect(orcaWorkerEvent(full({ outcome: "finished_unverified", liveness: { verdict: "live" } })).kind).toBe("died");
+    // but one that ended its turn on an `ask` is waiting for the answer
+    expect(
+      orcaWorkerEvent(full({ outcome: "finished_unverified", liveness: { verdict: "live" }, attention: { categories: ["guidance"] } })).kind,
+    ).toBe("waiting");
+  });
+
+  test("a stopped worker whose task is blocked and terminal is gone died, though Orca says outcome failed", () => {
+    // the shape of a real worker-show (ctx_6f407496bffb, its task left blocked)
+    const stopped = JSON.stringify({
+      ok: true,
+      result: {
+        dispatch: { runId: "run_0e4", status: "failed", lastFailure: "stopped" },
+        worker: { state: "stopped" },
+        projection: {
+          runId: "run_0e4",
+          stage: { worker: "stopped", dispatch: "failed", detail: "process_stopped" },
+          outcome: "failed",
+          liveness: { verdict: "exited", source: "resource_release" },
+          resource: { state: "released", terminalState: "released" },
+          attention: { categories: ["failure"], requiresAction: true },
+        },
+        observation: { status: "exited", exactWorker: true },
+      },
+    });
+    expect(orcaWorkerEvent(stopped)).toEqual({ kind: "died", detail: "stopped without reporting, task left blocked, run run_0e4" });
+    // abandoned the same way
+    expect(orcaWorkerEvent(full({ outcome: "failed", liveness: { verdict: "exited" } }, { dispatch: { lastFailure: "abandoned" } })).kind).toBe(
+      "died",
+    );
+    // a worker that REPORTED failure is still finished: lastFailure is its report
+    const reported = full(
+      { outcome: "failed", liveness: { verdict: "exited" } },
+      { worker: { state: "failed" }, dispatch: { runId: "run_1", lastFailure: '{"provenance":"worker_report","outcome":"failed"}' } },
+    );
+    expect(orcaWorkerEvent(reported)).toEqual({ kind: "finished", detail: "outcome failed, run run_1" });
   });
 
   test("reads the concise view too", () => {
@@ -324,9 +369,12 @@ describe("the worker hand-back says which of the three happened", () => {
   });
 
   test("died", () => {
-    const m = readyMessage("merge its PR", 600_000, line("died", "liveness exited, no outcome"));
-    expect(m).toStartWith("Orca worker ctx_abc DIED after 10m without finishing");
+    const m = readyMessage("merge its PR", 600_000, line("died", "stopped without reporting, task left blocked"));
+    expect(m).toStartWith("Orca worker ctx_abc DIED after 10m without reporting (stopped without reporting, task left blocked)");
+    expect(m).toContain("Never assume its job is done");
     expect(m).toContain("orca orchestration worker-show --dispatch ctx_abc --json --full");
+    expect(m).toContain("`orca orchestration inbox`");
+    expect(m).toContain("check the work itself");
   });
 
   test("waiting for input does not tell it to do the planned part yet", () => {
@@ -338,6 +386,23 @@ describe("the worker hand-back says which of the three happened", () => {
     expect(m).toContain("`watch worker ctx_abc --past-wait`");
     expect(m).toContain("Do not do the planned part above until the worker has finished");
     expect(m).not.toContain("Do it yourself, now");
+  });
+
+  test("a blocked task in the batch check is flagged as not done", () => {
+    const m = readyMessage("merge both PRs", 600_000, "task_aa1 blocked\ntask_bb2 failed\ntrue");
+    expect(m).toStartWith("Orca shows task_aa1 as BLOCKED: that worker stopped without reporting");
+    expect(m).toContain("never count it as a success");
+    expect(m).toContain("orca orchestration worker-show --dispatch <its dispatchId> --json --full");
+    expect(m).toContain("check the work itself");
+    expect(m).toContain("merge both PRs");
+    // every blocked task is named, even past the three lines the tail shows
+    const many = readyMessage("go", 60_000, "task_a blocked\ntask_b blocked\ntask_c failed\ntask_d failed\ntrue");
+    expect(many).toStartWith("Orca shows task_a, task_b as BLOCKED");
+  });
+
+  test("a batch with nothing blocked keeps the plain hand-back", () => {
+    expect(readyMessage("go", 60_000, "task_bb2 failed\ntrue")).toStartWith("The thing you were waiting for is ready");
+    expect(readyMessage("go", 60_000, "true")).not.toContain("BLOCKED");
   });
 
   test("any other check keeps the plain hand-back", () => {

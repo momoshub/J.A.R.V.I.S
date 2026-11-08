@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { buildSystemPrompt, DEFAULT_PERSONALITY } from "../../src/domain/personality.ts";
+import { buildSystemPrompt, DEFAULT_PERSONALITY, ORCA_BATCH_CHECK } from "../../src/domain/personality.ts";
 
 describe("buildSystemPrompt", () => {
   test("falls back to the default personality", () => {
@@ -457,7 +457,10 @@ describe("a message with several questions", () => {
     expect(out).toContain("Fall back to the Agent tool");
     expect(out).toContain("orca orchestration run-create");
     expect(out).toContain("worker-start --run <runId>");
-    expect(out).toContain('length > 0 and all(. == "completed" or . == "failed")');
+    expect(out).toContain(ORCA_BATCH_CHECK);
+    // a worker that stops without reporting leaves its task blocked: that settles the batch, never as a success
+    expect(out).toContain("A `blocked` task is NOT success: its worker stopped without reporting");
+    expect(out).toContain("check the work itself (commits, PR, files), and redo or finish what is missing - never count it done");
     expect(out).toContain("inbox --terminal run:<runId> --full");
     expect(out).toContain("never through the Workflow tool");
     // the self-fix reviewer is an Orca worker too, no Agent-tool exception left
@@ -469,7 +472,9 @@ describe("a message with several questions", () => {
     const opts = { learnings: [], commandPrefix: "//bot", runScript: "/r.sh", runUrl: "http://x", runTicket: "t" };
     const admin = buildSystemPrompt({ ...opts, canWatch: true });
     expect(admin).toContain("Every `worker-start` is followed, in the same turn, by `//bot watch worker <dispatchId>");
-    expect(admin).toContain("finishes, dies or stands waiting for input");
+    expect(admin).toContain("That is how you wait on a worker");
+    expect(admin).toContain("finishes, dies (stopped without reporting counts as died) or stands waiting for input");
+    expect(admin).toContain("The task-list check above is only for the batch as a whole, never instead of these");
     expect(admin).toContain("`//bot watch worker <dispatchId> <what you will do next>`");
     // no watch to set, no rule pointing at one
     expect(buildSystemPrompt({ ...opts, canWatch: false })).not.toContain("watch worker");
@@ -484,5 +489,32 @@ describe("a message with several questions", () => {
   test("sits before the always-apply rules", () => {
     const out = buildSystemPrompt({ learnings: [] });
     expect(out.indexOf("A message with several questions in it:")).toBeLessThan(out.indexOf("Operating rules"));
+  });
+});
+
+describe("ORCA_BATCH_CHECK", () => {
+  // run the real jq against task-list shapes; only the orca call is swapped for the fixture
+  const run = (json: string): { code: number; out: string } => {
+    const cmd = ORCA_BATCH_CHECK.replace("orca orchestration task-list --run <runId> --json", "cat");
+    const proc = Bun.spawnSync(["sh", "-c", cmd], { stdin: new TextEncoder().encode(json) });
+    return { code: proc.exitCode, out: proc.stdout.toString().trim() };
+  };
+  const tasks = (...statuses: string[]): string =>
+    JSON.stringify({ ok: true, result: { tasks: statuses.map((status, i) => ({ id: `task_${i}`, status, title: "t" })) } });
+
+  test("a blocked task settles the batch and is printed, so the watch fires", () => {
+    expect(run(tasks("completed", "blocked"))).toEqual({ code: 0, out: "task_1 blocked\ntrue" });
+    expect(run(tasks("failed", "completed")).code).toBe(0);
+  });
+
+  test("a running or queued task keeps it waiting", () => {
+    expect(run(tasks("completed", "dispatched")).code).not.toBe(0);
+    expect(run(tasks("blocked", "pending")).code).not.toBe(0);
+    expect(run(tasks("ready")).code).not.toBe(0);
+  });
+
+  test("no tasks, or an error answer, is never settled", () => {
+    expect(run(tasks()).code).not.toBe(0);
+    expect(run(JSON.stringify({ ok: false, error: { code: "run_required" } })).code).not.toBe(0);
   });
 });

@@ -113,7 +113,7 @@ describe("selfUpdateRules with no skill to read (the full block)", () => {
     expect(STANDALONE_REVIEW_RULE).toContain("when the PR is merged or closed");
     expect(STANDALONE_REVIEW_RULE).toContain("after 40 minutes with no new `[fix round N]` comment");
     // and the writer never waits forever on a reviewer that died
-    expect(STANDALONE_REVIEW_RULE).toContain("shows the reviewer task completed or failed with no new review comment");
+    expect(STANDALONE_REVIEW_RULE).toContain("shows the reviewer task completed, failed or blocked (blocked: it stopped without reporting) with no new review comment");
     expect(STANDALONE_REVIEW_RULE).toContain("gives up after 30 minutes");
     expect(STANDALONE_REVIEW_RULE).toContain("or the reviewer died or went silent, do not merge");
     // the reviewer never touches the shared checkout it is started in
