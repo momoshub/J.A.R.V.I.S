@@ -465,6 +465,28 @@ describe("review fan-out cap", () => {
     expect(lines.some((l) => l.startsWith(`📝 posted a follow-up on ${PR}`))).toBe(true);
   });
 
+  test("a follow-up issue is announced by title, since the comment never carries it", async () => {
+    const streamed: LlmPort = {
+      complete: async () => "unused",
+      stream: async (_p, sink) => {
+        const emit = (id: string, command: string) =>
+          sink({ type: "tool", id, title: command, command, status: "complete" });
+        emit("t1", `gh pr comment ${PR} --body "good to merge"`);
+        emit("t2", `gh issue create --repo o/r --title "retry drops webhooks" --body "${PR} src/a.ts:12: drops on 5xx"`);
+        return "done";
+      },
+    };
+    const deps = build();
+    deps.settings = createSettingsRepo(db);
+    const lines: string[] = [];
+    await dispatchCommand({ ...deps, llm: streamed }, actor(), "C1", `rv ${PR}`, {
+      reply: async (t: string) => {
+        lines.push(t);
+      },
+    });
+    expect(lines).toContain(`📌 opened a follow-up issue on ${PR}: retry drops webhooks`);
+  });
+
   test("a review cut off mid-run is reported as unfinished, not posted as the review", async () => {
     // the failure this exists for: the 10-minute timeout reaped a run whose
     // streamed narration then went out as if it were the finished review

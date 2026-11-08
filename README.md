@@ -119,7 +119,7 @@ Every command has two interfaces - use whichever you like. Both triggers are con
 | `token [remove\|who]` (alias `claude-token`) | anyone | add, replace or forget your own Claude Code token - see [Your own Claude token](#your-own-claude-token) |
 | `session [reset\|on\|off]` (alias `sess`) | anyone (on/off: admins) | the CLI session this thread is talking to - see [One session per thread](#one-session-per-thread) |
 | `ticket <what is wrong>` (aliases `bug`, `raise`) | anyone | raise a properly written, correctly routed ticket - see [Raising a ticket](#raising-a-ticket) |
-| `review <pr-url\|help\|prompt> [--policy first\|after] [what to look at]` (alias `rv`) | pal+ | review a PR: approve first (even if it is already merged or closed), then post the review as a GitHub comment *and* back in the thread; request changes on high risk (big PRs are cloned + reviewed by child agents). Runs full-access. |
+| `review <pr-url\|help\|prompt> [--policy first\|after] [what to look at]` (alias `rv`) | pal+ | review a PR: approve first (even if it is already merged or closed), then post a blockers-only comment on GitHub *and* back in the thread; request changes on a blocker, open a GitHub issue for a non-blocking finding worth fixing later (big PRs are cloned + reviewed by child agents). Runs full-access. |
 | `bomb [categories] [count] <message-link>` (alias `br`) | admins | reaction-bomb a message. Combine categories with commas and set a count: `bomb money,face,negative 9 <link>`. Up to 23; `bomb help` lists every category |
 | `reply <message-link>` (alias `jrp`) | admins | draft and post an AI reply to a message |
 | `rm-msg <message-link>` (aliases `rmmsg`, `unsend`) | admins | delete a message the bot posted (a bot token cannot delete anyone else's) |
@@ -702,31 +702,23 @@ anywhere but the host opens nothing.
 
 ## What a review comment looks like
 
-One line saying where it lands, then the findings as bullets - one issue per
-bullet, worst first, each saying what is wrong, where, and why it matters. No
-summary of the diff, no overview, no headings.
+Blockers only. One line saying where it lands - good to merge, or what blocks -
+then one short bullet per blocker, worst first: what is wrong, one pointer
+(`file.ts:120` or an identifier, never a code block or a quoted line), why it
+matters. A clean PR gets that one line and the sign-off.
 
-It points at code rather than reproducing it: one short pointer per bullet, a
-`file.ts:120` or an identifier, never both and never a code block, a diff hunk
-or a line quoted back at the person who wrote it. The author has the code open;
-what they need is the reasoning they cannot see.
+Blocking means a security hole, data loss, a breaking change, a correctness bug
+that would ship, missing or failing tests on a critical path, or failing CI.
+Everything else - design, cleanups, style, nits - is never posted. A
+non-blocking finding that is a real risk worth fixing later becomes one short
+GitHub issue on the PR's repo (PR link, `file:line`, why), after checking for a
+duplicate; nits and style never become issues, the rest is dropped. Each issue
+is announced in the thread by title and its url is in the wrap-up.
 
-It reads the description and the existing comments **before** reviewing, which
-decides two things:
-
-- **nothing already said gets said again** - not the diff summarised back, not a
-  point another reviewer raised, not something the description already
-  justifies. If the whole review would be known content, it says so in a line
-  and stops
-- **a declared gap is a warning, not a finding.** When the description or a
-  comment says something is deliberately not handled here, it is not reviewed as
-  a defect and never blocks. It gets one bullet at the end naming the risk left
-  standing: *out of scope per the description: the retry path is unchanged, so a
-  failed webhook still drops silently until the follow-up lands*
-
-Scope covers what a PR does **not fix**, never what it **breaks**: if the change
-itself introduces the problem, it is an ordinary finding however the description
-frames it.
+It reads the description and the existing comments **before** reviewing, so
+nothing already said is said again. A gap the description declares out of scope
+is never a blocker, but scope covers what a PR does **not fix**, never what it
+**breaks**.
 
 ## Explaining a review
 
