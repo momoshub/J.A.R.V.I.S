@@ -23,7 +23,8 @@
  * Bash call really ran that launcher, and its result carries the id - and it
  * is stopped through the tool's own CLI (`claude stop <id>`,
  * `orca orchestration worker-stop --dispatch <id>`), never by signalling a pid.
- * A turn that merely reads a log mentioning some id is not a launch.
+ * A turn that merely reads a log mentioning some id is not a launch, and a
+ * call that printed more ids than it ran launchers counts for none of them.
  */
 
 export type BackgroundKind = "claude-bg" | "orca-worker";
@@ -56,15 +57,43 @@ const bashCommand = (name: unknown, input: unknown): string => {
  */
 const COMMAND_START = String.raw`(?:^|[;&|(\n]|\$\()\s*(?:[A-Za-z_][A-Za-z0-9_]*=\S*\s+)*(?:(?:nohup|env|exec|command)\s+)*(?:\S*\/)?`;
 /** A `claude` invocation carrying `--bg`/`--background` on the same command. */
-const CLAUDE_BG_CALL = new RegExp(`${COMMAND_START}claude\\s[^\\n;&|]*?--(?:bg|background)(?![-\\w])`, "m");
+const CLAUDE_BG_CALL = new RegExp(`${COMMAND_START}claude\\s[^\\n;&|]*?--(?:bg|background)(?![-\\w])`, "gm");
 /** What `claude --bg` prints as its first line: `backgrounded · cfaf8d7a`. */
 const CLAUDE_BG_ID = /^\s*backgrounded\s*·\s*([0-9a-f]{8})\b/gm;
-const ORCA_WORKER_CALL = new RegExp(`${COMMAND_START}orca\\s+orchestration\\s+worker-start\\b`, "m");
+const ORCA_WORKER_CALL = new RegExp(`${COMMAND_START}orca\\s+orchestration\\s+worker-start\\b`, "gm");
 /** A dispatch id, as `worker-start` prints it (`"dispatchId":"ctx_..."`, or `dispatch ctx_...`). */
 const ORCA_DISPATCH_ID = /"dispatchId"\s*:\s*"(ctx_[0-9a-f]{6,})"|\bdispatch(?:Id)?[\s=:]+(ctx_[0-9a-f]{6,})\b/g;
+/**
+ * `worker-start` flags that put the worker somewhere `stop` must not close:
+ * `--terminal` adopts a terminal that already exists (a person's agent pane -
+ * `worker-stop` closes the worker's terminal), and `--on`/`--environment`/
+ * `--pairing-code` run it on another Orca server the local CLI cannot see.
+ * Matched anywhere in the command, so a quoted spec naming one only makes it
+ * skip more.
+ */
+const ORCA_NOT_OURS_TO_CLOSE = /(?:^|\s)--(?:terminal|on|environment|pairing-code)(?=[\s=]|$)/m;
 
-const idsIn = (text: string, pattern: RegExp): string[] =>
-  [...text.matchAll(pattern)].map((m) => m[1] ?? m[2] ?? "").filter(Boolean);
+const idsIn = (text: string, pattern: RegExp): string[] => [
+  ...new Set([...text.matchAll(pattern)].map((m) => m[1] ?? m[2] ?? "").filter(Boolean)),
+];
+
+const count = (text: string, pattern: RegExp): number => [...text.matchAll(pattern)].length;
+
+/**
+ * The ids one call's output shows its own launchers started. The output is the
+ * whole command's, so `worker-start && task-list` or `claude --bg x; cat old.out`
+ * carry other ids too - possibly other threads'. A call whose output holds MORE
+ * distinct ids than it ran launchers cannot say which are its own, and counts
+ * for none of them: a launch missed is a session left running, a launch
+ * misread is someone else's work stopped. (So a loop of launches in one call is
+ * not seen either.)
+ */
+const ownIds = (command: string, output: string, launcher: RegExp, id: RegExp): string[] => {
+  const launchers = count(command, launcher);
+  if (launchers === 0) return [];
+  const ids = idsIn(output, id);
+  return ids.length <= launchers ? ids : [];
+};
 
 /**
  * Every background agent a thread's trace shows being launched, oldest first,
@@ -92,9 +121,13 @@ export const backgroundLaunches = (traceText: string): BackgroundLaunch[] => {
     if (row.kind !== "result" || typeof row.output !== "string") continue;
     const call = calls.get(row.id);
     if (!call) continue;
-    const found: { kind: BackgroundKind; ids: string[] }[] = [];
-    if (CLAUDE_BG_CALL.test(call.command)) found.push({ kind: "claude-bg", ids: idsIn(row.output, CLAUDE_BG_ID) });
-    if (ORCA_WORKER_CALL.test(call.command)) found.push({ kind: "orca-worker", ids: idsIn(row.output, ORCA_DISPATCH_ID) });
+    const found: { kind: BackgroundKind; ids: string[] }[] = [
+      { kind: "claude-bg", ids: ownIds(call.command, row.output, CLAUDE_BG_CALL, CLAUDE_BG_ID) },
+      {
+        kind: "orca-worker",
+        ids: ORCA_NOT_OURS_TO_CLOSE.test(call.command) ? [] : ownIds(call.command, row.output, ORCA_WORKER_CALL, ORCA_DISPATCH_ID),
+      },
+    ];
     for (const { kind, ids } of found) {
       for (const id of ids) {
         const key = `${kind}:${id}`;
@@ -118,18 +151,18 @@ export const mayStopLaunch = (launch: BackgroundLaunch, requester: string, maySt
 /** One row of `claude agents --json`. */
 export type AgentEntry = { readonly id?: string; readonly kind?: string; readonly state?: string };
 
-/** `claude agents --json`, or [] when it is not that shape. */
-export const parseAgentsList = (stdout: string): AgentEntry[] => {
+/** `claude agents --json`, or undefined when it is not that shape (a failed check, not an empty list). */
+export const parseAgentsList = (stdout: string): AgentEntry[] | undefined => {
   try {
     const parsed: unknown = JSON.parse(stdout);
-    if (!Array.isArray(parsed)) return [];
+    if (!Array.isArray(parsed)) return undefined;
     return parsed.filter(isRecord).map((e) => ({
       id: typeof e.id === "string" ? e.id : undefined,
       kind: typeof e.kind === "string" ? e.kind : undefined,
       state: typeof e.state === "string" ? e.state : undefined,
     }));
   } catch {
-    return [];
+    return undefined;
   }
 };
 
@@ -149,19 +182,28 @@ export const liveClaudeSessions = (launched: readonly string[], agents: readonly
     .map((a) => a.id ?? "");
 };
 
+/** What a tool said about one launch: still going, gone, or it could not tell. */
+export type Liveness = "live" | "gone" | "unknown";
+
 /**
- * Whether `orca orchestration worker-show --json` describes a worker still
- * running. Anything unreadable, settled or exited is not.
+ * What `orca orchestration worker-show --json` says about a worker. Settled,
+ * exited, finished or `dispatch_not_found` is gone; output that is not a
+ * worker record at all is unknown - a failed check must never read as
+ * "nothing to stop".
  */
-export const orcaWorkerLive = (stdout: string): boolean => {
+export const orcaWorkerLiveness = (stdout: string): Liveness => {
   try {
     const parsed: unknown = JSON.parse(stdout);
-    if (!isRecord(parsed) || parsed.ok !== true || !isRecord(parsed.result)) return false;
+    if (!isRecord(parsed)) return "unknown";
+    if (parsed.ok !== true) {
+      return isRecord(parsed.error) && parsed.error.code === "dispatch_not_found" ? "gone" : "unknown";
+    }
+    if (!isRecord(parsed.result)) return "unknown";
     const { stage, liveness, state } = parsed.result;
-    if (stage === "settled" || liveness === "exited") return false;
-    return !(typeof state === "string" && ["succeeded", "failed", "cancelled", "stopped"].includes(state));
+    if (stage === "settled" || liveness === "exited") return "gone";
+    return typeof state === "string" && ["succeeded", "failed", "cancelled", "stopped"].includes(state) ? "gone" : "live";
   } catch {
-    return false;
+    return "unknown";
   }
 };
 
@@ -170,9 +212,11 @@ export type BackgroundStopResult = {
   readonly failed: readonly (BackgroundLaunch & { readonly reason: string })[];
   /** Live launches left alone because they were somebody else's. */
   readonly notYours: readonly BackgroundLaunch[];
+  /** Launches whose tool could not say whether they are still going. */
+  readonly unchecked: readonly (BackgroundLaunch & { readonly reason: string })[];
 };
 
-export const NOTHING_IN_BACKGROUND: BackgroundStopResult = { stopped: [], failed: [], notYours: [] };
+export const NOTHING_IN_BACKGROUND: BackgroundStopResult = { stopped: [], failed: [], notYours: [], unchecked: [] };
 
 const plural = (n: number, one: string, many: string): string => `${n} ${n === 1 ? one : many}`;
 
@@ -198,11 +242,22 @@ const ids = (launches: readonly BackgroundLaunch[]): string => launches.map((l) 
 export const stopReply = (turnLine: string | undefined, bg: BackgroundStopResult): string | undefined => {
   const lines: string[] = [];
   const stopped = describeBackground(bg.stopped);
-  if (turnLine) lines.push(stopped ? `${turnLine}, and ${stopped} it started (${ids(bg.stopped)})` : turnLine);
-  else if (stopped) lines.push(`⏹ stopped ${stopped} this thread started (${ids(bg.stopped)})`);
+  const started = `${stopped} this thread started (${ids(bg.stopped)})`;
+  if (!turnLine) {
+    if (stopped) lines.push(`⏹ stopped ${started}`);
+  } else if (!stopped) lines.push(turnLine);
+  // A turn notice that is a whole sentence ("finished on its own just now.")
+  // takes the background part on a line of its own.
+  else if (/[.!?]$/.test(turnLine)) lines.push(turnLine, `⏹ also stopped ${started}`);
+  else lines.push(`${turnLine}, and ${stopped} it started (${ids(bg.stopped)})`);
   if (bg.failed.length > 0) {
     lines.push(
       `could not stop ${describeBackground(bg.failed)}: ${bg.failed.map((f) => `\`${f.id}\` (${f.reason})`).join(", ")}`,
+    );
+  }
+  if (bg.unchecked.length > 0) {
+    lines.push(
+      `could not check whether ${describeBackground(bg.unchecked)} this thread started ${bg.unchecked.length === 1 ? "is" : "are"} still running, so I left ${bg.unchecked.length === 1 ? "it" : "them"}: ${bg.unchecked.map((f) => `\`${f.id}\` (${f.reason})`).join(", ")}`,
     );
   }
   if (bg.notYours.length > 0) {

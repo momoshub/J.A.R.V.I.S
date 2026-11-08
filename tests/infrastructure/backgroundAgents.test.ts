@@ -87,21 +87,51 @@ describe("createBackgroundAgents", () => {
     expect(out.failed).toEqual([{ kind: "claude-bg", id: "aaaaaaaa", actor: "U-me", reason: "No job matching 'aaaaaaaa'." }]);
   });
 
-  test("no trace, or a CLI that will not list, stops nothing and runs nothing it need not", async () => {
+  test("no trace runs nothing", async () => {
     const { run, calls } = fakeRun();
-    const agents = createBackgroundAgents({ traceDir: dir, run });
-    const none = await agents.stopForThread({ channelId: "C9", threadTs: "1.1", actor: "U-me", mayStopOthers: true });
-    expect(none.stopped).toEqual([]);
+    const none = await createBackgroundAgents({ traceDir: dir, run }).stopForThread({
+      channelId: "C9",
+      threadTs: "1.1",
+      actor: "U-me",
+      mayStopOthers: true,
+    });
+    expect(none).toEqual({ stopped: [], failed: [], notYours: [], unchecked: [] });
     expect(calls).toEqual([]);
+  });
 
-    const broken = fakeRun({ "claude agents --json": { code: -1, stdout: "", stderr: "not found" } });
+  test("a CLI that will not answer is reported as unchecked, never as nothing to stop", async () => {
+    const broken = fakeRun({
+      "claude agents --json": { code: -1, stdout: "", stderr: "not found" },
+      "orca orchestration worker-show --dispatch ctx_a1b2c3 --json": { code: 1, stdout: "", stderr: "runtime unavailable" },
+    });
     const out = await createBackgroundAgents({ traceDir: dir, run: broken.run }).stopForThread({
       channelId: "C1",
-      threadTs: "200.2",
+      threadTs: "100.1",
       actor: "U-me",
       mayStopOthers: false,
     });
     expect(out.stopped).toEqual([]);
-    expect(broken.calls.some((c) => c.startsWith("claude stop"))).toBe(false);
+    expect(broken.calls.some((c) => c.includes(" stop"))).toBe(false);
+    // Only the requester's own: someone else's unchecked launch is not theirs to hear about.
+    expect(out.unchecked.map((l) => l.id)).toEqual(["aaaaaaaa", "bbbbbbbb", "eeeeeeee", "ctx_a1b2c3"]);
+    expect(out.unchecked[0]?.reason).toBe("`claude agents` failed: not found");
+    expect(out.unchecked[3]?.reason).toBe("`worker-show` failed: runtime unavailable");
+  });
+
+  test("a dispatch Orca no longer knows is gone, not unchecked", async () => {
+    const { run } = fakeRun({
+      "orca orchestration worker-show --dispatch ctx_0d0d0d --json": {
+        code: 1,
+        stdout: '{"ok":false,"error":{"code":"dispatch_not_found","message":"Worker Dispatch ctx_0d0d0d was not found."}}',
+        stderr: "error: dispatch_not_found",
+      },
+    });
+    const out = await createBackgroundAgents({ traceDir: dir, run }).stopForThread({
+      channelId: "C1",
+      threadTs: "100.1",
+      actor: "U-me",
+      mayStopOthers: false,
+    });
+    expect(out.unchecked).toEqual([]);
   });
 });

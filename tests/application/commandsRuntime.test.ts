@@ -64,7 +64,7 @@ describe("stop command", () => {
 
   describe("background agents", () => {
     const bgAgent = { kind: "claude-bg" as const, id: "cfaf8d7a", actor: OWNER };
-    const port = (result: BackgroundStopResult = { stopped: [bgAgent], failed: [], notYours: [] }) => {
+    const port = (result: BackgroundStopResult = { stopped: [bgAgent], failed: [], notYours: [], unchecked: [] }) => {
       const asked: { actor: string; mayStopOthers: boolean; channelId: string; threadTs: string }[] = [];
       const backgroundAgents: BackgroundAgentsPort = {
         stopForThread: async (q) => {
@@ -102,8 +102,21 @@ describe("stop command", () => {
     test("nothing in the background keeps the plain answer", async () => {
       const deps = build();
       deps.runs = createRunRegistry();
-      deps.backgroundAgents = port({ stopped: [], failed: [], notYours: [] }).backgroundAgents;
+      deps.backgroundAgents = port({ stopped: [], failed: [], notYours: [], unchecked: [] }).backgroundAgents;
       expect(await dispatchCommand(deps, actor(), "C1", "stop", { threadTs: "900.1" })).toBe("Nothing is running in this thread.");
+    });
+
+    test("a turn that finished on its own keeps its sentence, the agents get their own line", async () => {
+      const deps = build();
+      const runs = createRunRegistry();
+      deps.runs = runs;
+      deps.backgroundAgents = port().backgroundAgents;
+      const t = tracked(runs);
+      t.running();
+      // It finishes between the lookup and the stop.
+      runs.stop = () => undefined;
+      const out = await dispatchCommand(deps, actor(), "C1", "stop", { threadTs: "900.1" });
+      expect(out).toBe("that one finished on its own just now.\n⏹ also stopped 1 background agent this thread started (`cfaf8d7a`)");
     });
 
     test("a pal refused the turn touches nothing, and only ever stops their own", async () => {
