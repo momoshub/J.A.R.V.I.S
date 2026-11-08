@@ -104,6 +104,26 @@ describe("handleMessage", () => {
     expect(deps.users.get(OWNER)?.role).toBe("owner");
   });
 
+  test("a reply carries what the turn cost when the model reported it", async () => {
+    const usage = {
+      model: "claude-opus-5-5",
+      inputTokens: 1,
+      outputTokens: 2,
+      cacheReadTokens: 3,
+      cacheWriteTokens: 4,
+      costUsd: 0.25,
+      durationMs: 5000,
+    };
+    const deps = build({
+      complete: async (p) => {
+        p.onUsage?.(usage);
+        return "Done.";
+      },
+    });
+    const res = await handleMessage(deps, { channelId: "C1", slackUserId: OWNER, text: "ping" });
+    expect(res).toEqual({ kind: "reply", text: "Done.", usage });
+  });
+
   test("persists both the user and assistant turns", async () => {
     const deps = build(fakeLlm("Working on it."));
     await handleMessage(deps, { channelId: "C1", slackUserId: OWNER, text: "ping" });

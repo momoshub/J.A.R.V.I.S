@@ -323,7 +323,17 @@ export const createClaudeCliLlm = (config: ClaudeCliConfig = {}): LlmPort => {
     }
   };
 
-  const completeOneShot = async ({ system, messages, assistantName, policy, session, oauthToken, useHostLogin, signal, runTicket, bill }: LlmCompleteParams) => {
+  /** Hand the caller its run's usage; like accounting, never at the turn's expense. */
+  const tell = (onUsage: LlmCompleteParams["onUsage"], usage: LlmUsage | undefined): void => {
+    if (!onUsage || !usage) return;
+    try {
+      onUsage(usage);
+    } catch {
+      // the caller's problem, not the run's
+    }
+  };
+
+  const completeOneShot = async ({ system, messages, assistantName, policy, session, oauthToken, useHostLogin, signal, runTicket, bill, onUsage }: LlmCompleteParams) => {
     const proc = spawnClaude(config, [...buildArgs(config, false, policy, session), "--append-system-prompt", system], renderPrompt(messages, assistantName), policy, oauthToken, useHostLogin, signal, runTicket, session, await turnEnv());
     const [stdout, stderr, exitCode] = await Promise.all([
       new Response(proc.stdout).text(),
@@ -340,6 +350,7 @@ export const createClaudeCliLlm = (config: ClaudeCliConfig = {}): LlmPort => {
       throw new Error(`claude CLI returned non-JSON output: ${stdout.slice(0, 500)}`);
     }
     report(parsed as Record<string, unknown>, oauthToken, useHostLogin, bill);
+    tell(onUsage, usageOf(parsed as Record<string, unknown>));
     if (parsed.is_error || parsed.subtype !== "success") {
       throw new Error(`claude CLI error (${parsed.subtype ?? "unknown"}): ${parsed.result ?? ""}`);
     }
@@ -352,7 +363,7 @@ export const createClaudeCliLlm = (config: ClaudeCliConfig = {}): LlmPort => {
    * output carries only the final answer, so a run made that way left no
    * record of what it ran.
    */
-  const runStreaming = async ({ system, messages, assistantName, policy, session, oauthToken, useHostLogin, signal, runTicket, bill }: LlmCompleteParams, sink: LlmStreamSink) => {
+  const runStreaming = async ({ system, messages, assistantName, policy, session, oauthToken, useHostLogin, signal, runTicket, bill, onUsage }: LlmCompleteParams, sink: LlmStreamSink) => {
     const proc = spawnClaude(config, [...buildArgs(config, true, policy, session), "--append-system-prompt", system], renderPrompt(messages, assistantName), policy, oauthToken, useHostLogin, signal, runTicket, session, await turnEnv());
     const stderrPromise = new Response(proc.stderr).text();
 
@@ -515,6 +526,7 @@ export const createClaudeCliLlm = (config: ClaudeCliConfig = {}): LlmPort => {
         // Also handed to the renderer, which puts it under the reply.
         const u = usageOf(e);
         if (u) emit({ type: "usage", usage: u });
+        tell(onUsage, u);
         // One run can end more than once. A background agent that reports after
         // the answer wakes the CLI for another round in the same process, and
         // that round ends with its own `result`. Keeping only the last one

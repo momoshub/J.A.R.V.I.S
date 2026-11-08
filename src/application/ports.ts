@@ -177,6 +177,12 @@ export type LlmCompleteParams = {
    * without an owner rather than not recorded at all.
    */
   readonly bill?: BillingContext;
+  /**
+   * Told what the run cost when the CLI reported it (CLI adapter only), for a
+   * caller that has no stream sink to hear the `usage` event on - a turn nobody
+   * watched live still signs its reply with what it cost.
+   */
+  readonly onUsage?: (usage: LlmUsage) => void;
 };
 
 /** Anything that can turn a system prompt + history into a reply. */

@@ -259,6 +259,9 @@ const main = async () => {
   const slackReadScript = join(import.meta.dir, "..", "bin", "slack-read.sh");
   // How `watch reply` asks whether anybody has answered yet.
   const slackWaitScript = join(import.meta.dir, "..", "bin", "slack-wait.sh");
+  // How `watch worker` asks whether an Orca worker finished, died or waits for
+  // input. Run with this process's own bun: launchd's PATH may not have one.
+  const orcaWorkerWait = [process.execPath, join(import.meta.dir, "..", "bin", "orca-worker-wait.ts")];
   // Drives any Mac app through the Accessibility API - no Automation needed.
   const macUiScript = join(import.meta.dir, "..", "bin", "mac-ui.js");
   // The second driver, for every app but Arc. launchd's PATH has no Homebrew,
@@ -423,6 +426,7 @@ const main = async () => {
     follows,
     reminders,
     slackWaitScript,
+    orcaWorkerWait,
     macUiScript,
     agentDesktop,
     desktopScript,
@@ -462,7 +466,14 @@ const main = async () => {
       // A turn nobody watched live can still answer with a note about not
       // answering; posted, it reads as the whole reply.
       if (result.kind !== "ignored" && result.text.trim() && !isSilenceNote(result.text)) {
-        await slackAdmin.post(channelId, result.text, threadTs, result.kind === "reply" ? result.by : undefined);
+        // Signed with what the turn cost, as a reply streamed live would be.
+        await slackAdmin.post(
+          channelId,
+          result.text,
+          threadTs,
+          result.kind === "reply" ? result.by : undefined,
+          result.kind === "reply" ? result.usage : undefined,
+        );
       }
     },
     disabledCommands,
