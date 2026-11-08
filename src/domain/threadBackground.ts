@@ -24,7 +24,8 @@
  * is stopped through the tool's own CLI (`claude stop <id>`,
  * `orca orchestration worker-stop --dispatch <id>`), never by signalling a pid.
  * A turn that merely reads a log mentioning some id is not a launch, and a
- * call that printed more ids than it ran launchers counts for none of them.
+ * call that runs anything besides launchers, or printed more ids than it ran
+ * launchers, counts for none of them.
  */
 
 export type BackgroundKind = "claude-bg" | "orca-worker";
@@ -79,6 +80,31 @@ const idsIn = (text: string, pattern: RegExp): string[] => [
 
 const count = (text: string, pattern: RegExp): number => [...text.matchAll(pattern)].length;
 
+/** Harmless setup as one whole simple command: `cd`, `export`, bare assignments. */
+const SETUP_SEGMENT = /^\s*(?:(?:cd|export)(?:\s.*)?|(?:[A-Za-z_][A-Za-z0-9_]*=\S*\s*)*)$/;
+const CLAUDE_BG_AT = new RegExp(CLAUDE_BG_CALL.source);
+const ORCA_WORKER_AT = new RegExp(ORCA_WORKER_CALL.source);
+/** A launcher that starts the segment, or harmless setup. */
+const isLaunchSegment = (segment: string): boolean =>
+  SETUP_SEGMENT.test(segment) || segment.search(CLAUDE_BG_AT) === 0 || segment.search(ORCA_WORKER_AT) === 0;
+
+/**
+ * Whether a command runs nothing but launchers (and `cd`/`export`/assignments).
+ * The output is the whole command's, so anything else chained on - a
+ * `task-list` on the shared Run, a `tail` of another launch's log - can print
+ * an id the launcher did not, and when the launcher itself failed a count of
+ * ids cannot tell the two apart. Quoted text is blanked first so a spec with a
+ * `;` in it stays one command, and redirections like `2>&1` are not chains.
+ */
+const onlyLaunches = (command: string): boolean => {
+  const bare = command
+    .replace(/'[^']*'|"(?:[^"\\]|\\.)*"/g, "''")
+    .replace(/\d*>&\d*-?|&>>?/g, " ");
+  return bare
+    .split(/&&|\|\||[;|&\n]/)
+    .every((segment) => !segment.trim() || isLaunchSegment(segment));
+};
+
 /**
  * The ids one call's output shows its own launchers started. The output is the
  * whole command's, so `worker-start && task-list` or `claude --bg x; cat old.out`
@@ -86,11 +112,13 @@ const count = (text: string, pattern: RegExp): number => [...text.matchAll(patte
  * distinct ids than it ran launchers cannot say which are its own, and counts
  * for none of them: a launch missed is a session left running, a launch
  * misread is someone else's work stopped. (So a loop of launches in one call is
- * not seen either.)
+ * not seen either.) And a call that chains anything but launchers onto them
+ * counts for none (`onlyLaunches`): a failed launch next to one foreign id
+ * would otherwise pass the count.
  */
 const ownIds = (command: string, output: string, launcher: RegExp, id: RegExp): string[] => {
   const launchers = count(command, launcher);
-  if (launchers === 0) return [];
+  if (launchers === 0 || !onlyLaunches(command)) return [];
   const ids = idsIn(output, id);
   return ids.length <= launchers ? ids : [];
 };

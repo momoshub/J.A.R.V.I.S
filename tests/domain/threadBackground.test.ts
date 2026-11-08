@@ -81,6 +81,35 @@ describe("backgroundLaunches", () => {
     expect(backgroundLaunches(trace)).toEqual([]);
   });
 
+  test("a failed launch next to one foreign id counts for nothing", () => {
+    // The launcher printed no id; something chained after it printed exactly
+    // one - another thread's - so a count of ids alone would pass it.
+    const trace = [
+      bash(
+        "orca orchestration worker-start --spec x --json; orca orchestration worker-show --dispatch ctx_bbbbbbbbbbbb --json",
+        '{"ok":false,"error":{"code":"runtime_unavailable"}}\n{"ok":true,"result":{"dispatchId":"ctx_bbbbbbbbbbbb"}}',
+      ),
+      bash("claude --bg x; tail -1 /tmp/other.out", "error: workspace not trusted\nbackgrounded · 22222222"),
+      bash(
+        "orca orchestration worker-start --spec x --json && orca orchestration task-list --run run_shared --json",
+        '{"ok":false}\n{"ok":true,"result":{"tasks":[{"dispatchId":"ctx_cccccccccccc"}]}}',
+      ),
+      bash("echo $(claude --bg x) && cat /tmp/x", "backgrounded · 33333333"),
+    ].join("\n");
+    expect(backgroundLaunches(trace)).toEqual([]);
+  });
+
+  test("setup, quoted specs and redirections around a launcher still count", () => {
+    const trace = [
+      bash('cd /repo && export X=1 && Y=2 claude --bg "fix it; then test | report" 2>&1', "backgrounded · 11111111"),
+      bash(
+        "orca orchestration worker-start --spec 'a && b' --agent claude --json 2>/dev/null",
+        '{"ok":true,"result":{"dispatchId":"ctx_a00000000001"}}',
+      ),
+    ].join("\n");
+    expect(backgroundLaunches(trace).map((l) => l.id)).toEqual(["11111111", "ctx_a00000000001"]);
+  });
+
   test("as many ids as launchers count, and one id printed twice is one", () => {
     const trace = [
       bash("claude --bg a && claude --bg b", "backgrounded · 11111111\nbackgrounded · 22222222"),
