@@ -23,8 +23,18 @@ describe("player keys", () => {
     for (const tagName of ["INPUT", "TEXTAREA", "SELECT", "BUTTON", "A"]) {
       expect(playerAction(ev(" ", { target: { tagName } }))).toBeNull();
     }
+    for (const tagName of ["INPUT", "TEXTAREA", "SELECT"]) {
+      expect(playerAction(ev("ArrowRight", { target: { tagName } }))).toBeNull();
+    }
     expect(playerAction(ev(" ", { target: { tagName: "DIV", isContentEditable: true } }))).toBeNull();
+    expect(playerAction(ev("ArrowLeft", { target: { tagName: "DIV", isContentEditable: true } }))).toBeNull();
     expect(playerAction(ev(" ", { target: { tagName: "g", getAttribute: () => "button" } }))).toBeNull();
+  });
+
+  test("arrows still step with a button, link or diagram box focused - none of them use arrows", () => {
+    expect(playerAction(ev("ArrowRight", { target: { tagName: "BUTTON" } }))).toBe("next");
+    expect(playerAction(ev("ArrowLeft", { target: { tagName: "A" } }))).toBe("prev");
+    expect(playerAction(ev("ArrowRight", { target: { tagName: "g", getAttribute: () => "button" } }))).toBe("next");
   });
 });
 

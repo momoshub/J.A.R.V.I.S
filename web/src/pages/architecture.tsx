@@ -195,6 +195,8 @@ export function ArchitecturePage() {
   }, [step]);
 
   const pick = (id: string) => {
+    // Re-pressing the current flow (a click, or Space with its tab focused) keeps your place.
+    if (id === flowId) return;
     setFlowId(id);
     setIndex(-1);
     setPlaying(false);
@@ -210,7 +212,19 @@ export function ArchitecturePage() {
   const atEnd = index >= flow.steps.length - 1;
   const toggle = () => (playing ? setPlaying(false) : play());
 
+  // Keys only drive the player while the diagram is on screen; below it Space scrolls as usual.
+  const stage = useRef<HTMLDivElement>(null);
+  const [stageVisible, setStageVisible] = useState(true);
   useEffect(() => {
+    const el = stage.current;
+    if (!el || typeof IntersectionObserver === "undefined") return;
+    const io = new IntersectionObserver(([e]) => setStageVisible(e?.isIntersecting ?? true), { threshold: 0.15 });
+    io.observe(el);
+    return () => io.disconnect();
+  }, []);
+
+  useEffect(() => {
+    if (!stageVisible) return;
     const onKey = (e: KeyboardEvent) => {
       const a = playerAction(e);
       if (!a) return;
@@ -240,7 +254,7 @@ export function ArchitecturePage() {
       </div>
 
       <div className="arch">
-        <div className="card arch-stage">
+        <div className="card arch-stage" ref={stage}>
           <Diagram step={step} index={index} visited={visited} selected={selected} onSelect={setSelected} />
           <div className="arch-legend">
             {(Object.keys(KIND_LABEL) as SysNode["kind"][]).map((k) => (
@@ -248,7 +262,7 @@ export function ArchitecturePage() {
             ))}
           </div>
           {/* Pinned to the bottom of the screen while the diagram is in view, so stepping never means scrolling away from what moves. */}
-          <div className="arch-dock" role="toolbar" aria-label="Flow player">
+          <div className="arch-dock" role="group" aria-label="Flow player">
             <button type="button" className="icon ghost" disabled={index < 0} onClick={() => step_("prev")} aria-label="Previous step" title="Previous step (left arrow)">
               <Icon d={ICONS.prev} />
             </button>
@@ -258,7 +272,7 @@ export function ArchitecturePage() {
             <button type="button" className="icon ghost" disabled={atEnd} onClick={() => step_("next")} aria-label="Next step" title="Next step (right arrow)">
               <Icon d={ICONS.next} />
             </button>
-            <div className="arch-dock-now" aria-live="polite">
+            <div className="arch-dock-now" aria-live={playing ? "off" : "polite"}>
               {step ? (
                 <>
                   <code>{"at" in step ? node(step.at).label : `${node(step.from).label} -> ${node(step.to).label}`}</code>
