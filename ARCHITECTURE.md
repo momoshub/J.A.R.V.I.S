@@ -70,8 +70,8 @@ no classes.
   handed-off command that later fails says so in the thread, not only in the log.
 - **Timers.** `watcher` polls each due watch's predicate and hands the thread a
   fresh turn when it is ready (`watch worker <dispatchId>` polls an Orca worker
-  through `bin/orca-worker-wait.ts` and says whether it finished, died or waits
-  for input - a finished or dead worker's hand-back also names the tokens
+  through `bin/orca-worker-wait.ts` and says whether it finished, died - also
+  when it stopped without reporting - or waits for input - a finished or dead worker's hand-back also names the tokens
   and list-price cost its Claude transcript used, stored in
   `orca_worker_usage`, read later with `worker-cost <ctx_...|run_...>`);
   `reminders` posts at the time with no model;

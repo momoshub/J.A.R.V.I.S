@@ -44,7 +44,7 @@ export const GUIDE_SUMMARIES: Readonly<Record<GuideSlug, string>> = {
   desktop:
     "driving a Mac app or Brave on the real screen - only through the desktop helper, never osascript, one session at a time. Read before touching the screen",
   parallel:
-    "a message with several independent asks is split and run in parallel as Orca workers, each answer posted as it lands, and every worker you start gets a `watch worker <dispatchId>` when you can set watches. Read before spawning any background agent",
+    "a message with several independent asks is split and run in parallel as Orca workers, each answer posted as it lands, and every worker you start gets a `watch worker <dispatchId>` when you can set watches, and a `blocked` task is a worker that stopped without reporting, never success. Read before spawning any background agent",
   "block-kit":
     "a question with a fixed set of answers is asked with `jv:` buttons, never lettered options in text. Read before posting buttons, selects or a modal, or when a turn starts with [block kit event]",
   waiting:
