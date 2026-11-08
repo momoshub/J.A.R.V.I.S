@@ -43,8 +43,13 @@ export type OfflineAlarmDeps = {
 };
 
 export type OfflineAlarm = {
-  /** Close, re-arm, cancel. Never throws, safe on a timer. */
+  /** Arm, cancel the rest, close. Never throws, safe on a timer. */
   tick: () => Promise<void>;
+  /**
+   * Cancel every armed notice: for a deliberate stop, which is not an outage.
+   * Never on a restart - the next process re-arms within seconds anyway.
+   */
+  disarm: () => Promise<void>;
 };
 
 const message = (e: unknown): string => (e instanceof Error ? e.message : String(e));
@@ -68,7 +73,14 @@ export const createOfflineAlarm = (deps: OfflineAlarmDeps): OfflineAlarm => {
   const rearm = async (): Promise<void> => {
     const now = deps.clock();
     const fresh = await deps.slack.schedule(deps.channel, Math.floor((now + leadMs) / 1000), offlineNotice(now));
-    for (const s of await deps.slack.scheduled(deps.channel)) {
+    const listed = await deps.slack.scheduled(deps.channel);
+    // If the list cannot see what we just armed, it cannot see the old ones
+    // either, and every tick would add a notice that fires while we are online.
+    if (!listed.some((s) => s.id === fresh)) {
+      await deps.slack.unschedule(deps.channel, fresh);
+      throw new Error(`the armed notice ${fresh} is not in the scheduled list - is the channel an id?`);
+    }
+    for (const s of listed) {
       if (s.id !== fresh && isArmedNotice(s.text)) await deps.slack.unschedule(deps.channel, s.id);
     }
   };
@@ -87,6 +99,15 @@ export const createOfflineAlarm = (deps: OfflineAlarmDeps): OfflineAlarm => {
         failing = true;
       } finally {
         running = false;
+      }
+    },
+    disarm: async () => {
+      try {
+        for (const s of await deps.slack.scheduled(deps.channel)) {
+          if (isArmedNotice(s.text)) await deps.slack.unschedule(deps.channel, s.id);
+        }
+      } catch (e) {
+        log(`could not disarm: ${message(e)}`);
       }
     },
   };

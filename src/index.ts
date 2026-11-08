@@ -80,7 +80,7 @@ import { describeUiAccess, needsAttention } from "./domain/uiAccess.ts";
 import { createSlackAdmin } from "./infrastructure/slack/adminClient.ts";
 import { createOfflineAlarmSlack } from "./infrastructure/slack/offlineAlarmClient.ts";
 import { createOfflineAlarm } from "./application/offlineAlarm.ts";
-import { OFFLINE_ALARM_TICK_MS } from "./domain/offlineAlarm.ts";
+import { OFFLINE_ALARM_REQUEST_TIMEOUT_MS, OFFLINE_ALARM_TICK_MS } from "./domain/offlineAlarm.ts";
 import { createGhCli } from "./infrastructure/github/ghCli.ts";
 import { createDraftReply } from "./application/draftReply.ts";
 import { syntheticTs } from "./domain/slackLinks.ts";
@@ -876,7 +876,9 @@ const main = async () => {
   const offlineAlarm = alarmChannel
     ? createOfflineAlarm({
         channel: alarmChannel,
-        slack: createOfflineAlarmSlack(slackWeb),
+        slack: createOfflineAlarmSlack(
+          new WebClient(config.slackBotToken, { retryConfig: { retries: 0 }, timeout: OFFLINE_ALARM_REQUEST_TIMEOUT_MS }),
+        ),
         clock: Date.now,
         log: (l) => console.error(`[offline-alarm] ${l}`),
       })
@@ -889,6 +891,9 @@ const main = async () => {
     console.log("\nShutting down ...");
     clearInterval(watchTimer);
     clearInterval(alarmTimer);
+    // A deliberate stop is not an outage. (A restart exits without this, and
+    // the next process re-arms within seconds.)
+    await offlineAlarm?.disarm();
     dashboard.stop();
     webhookServer?.stop();
     await slack.stop();

@@ -6,16 +6,27 @@ import type { KnownBlock, WebClient } from "@slack/web-api";
 import type { ChannelMessage, OfflineAlarmSlack, ScheduledMessage } from "../../application/offlineAlarm.ts";
 import type { AlarmMessage } from "../../domain/offlineAlarm.ts";
 
-/** How far back to look for a notice Slack posted while we were gone. */
+/**
+ * How far back to look for a notice Slack posted while we were gone. Enough
+ * for a channel of its own; in a busy one a notice can scroll past it.
+ */
 const RECENT_LIMIT = 50;
 
 const blocks = (msg: AlarmMessage): KnownBlock[] => msg.blocks.map((b) => ({ ...b, text: { ...b.text } }));
 
+/**
+ * Wants its own client with a timeout: the shared one has none, and a request
+ * stalled on a half-open socket would hold every later tick until the 3-minute
+ * lead ran out and the alarm fired while online.
+ */
 export const createOfflineAlarmSlack = (client: WebClient): OfflineAlarmSlack => {
   let botUserId: string | undefined;
   const me = async (): Promise<string> => {
-    botUserId ??= ((await client.auth.test()) as { user_id?: string }).user_id ?? "";
-    return botUserId;
+    if (botUserId) return botUserId;
+    const id = ((await client.auth.test()) as { user_id?: string }).user_id;
+    if (!id) throw new Error("auth.test returned no user id");
+    botUserId = id;
+    return id;
   };
 
   return {

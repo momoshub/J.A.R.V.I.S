@@ -22,6 +22,9 @@ export const OFFLINE_ALARM_LEAD_MS = 180_000;
 /** How often it is re-armed. Well under the lead, so one slow tick is not an alarm. */
 export const OFFLINE_ALARM_TICK_MS = 60_000;
 
+/** Per Slack call: far under the lead, so a stalled request cannot outlast it. */
+export const OFFLINE_ALARM_REQUEST_TIMEOUT_MS = 20_000;
+
 /**
  * First words of every armed notice: how our scheduled messages are told apart.
  * A shortcode, not the emoji: `chat.scheduledMessages.list` hands the text

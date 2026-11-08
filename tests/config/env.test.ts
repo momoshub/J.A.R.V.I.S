@@ -9,6 +9,13 @@ const base = {
 };
 
 describe("loadConfig", () => {
+  test("the offline alarm channel is an id, never a name", () => {
+    expect(loadConfig(base).offlineAlarmChannel).toBeUndefined();
+    expect(loadConfig({ ...base, OFFLINE_ALARM_CHANNEL: "" }).offlineAlarmChannel).toBeUndefined();
+    expect(loadConfig({ ...base, OFFLINE_ALARM_CHANNEL: "C0TEST00002" }).offlineAlarmChannel).toBe("C0TEST00002");
+    expect(() => loadConfig({ ...base, OFFLINE_ALARM_CHANNEL: "#jarvis_status" })).toThrow(/channel id/);
+  });
+
   test("applies defaults", () => {
     const c = loadConfig(base);
     expect(c.dashboardPort).toBe(2001);

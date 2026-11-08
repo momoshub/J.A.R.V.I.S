@@ -91,8 +91,14 @@ const schema = z
     DRAIN_NOTICE_CHANNEL: z.string().optional(),
     // Channel the offline alarm reports to: a notice armed on Slack's side
     // that posts by itself if the host loses its connection, and is edited to
-    // "back online" when it returns. Unset: no alarm.
-    OFFLINE_ALARM_CHANNEL: z.string().optional(),
+    // "back online" when it returns. Unset: no alarm. An id, not a name: the
+    // scheduled list and history only take ids, so with a name the old notices
+    // could never be found and cancelled.
+    OFFLINE_ALARM_CHANNEL: z
+      .string()
+      .regex(/^[CG][A-Z0-9]+$/, "OFFLINE_ALARM_CHANNEL must be a channel id like C0123ABC, not a name")
+      .optional()
+      .or(z.literal("").transform(() => undefined)),
 
     // GitHub App: people call the bot from an issue/PR (mention or label) and
     // the answer is posted back there as the app. Started only when the app id,
