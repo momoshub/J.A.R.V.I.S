@@ -267,6 +267,29 @@ describe("editAdapterFile", () => {
     expect(deps.revisions?.list().length ?? 0).toBe(count);
   });
 
+  test("an untouched file with no trailing newline is still an unchanged save", () => {
+    const deps = setup({ "memory/NOTES.md": "- no newline" });
+    const count = deps.revisions?.list().length ?? 0;
+    expect(editAdapterFile(deps, "memory/NOTES.md", "- no newline", "dashboard").ok).toBe(true);
+    expect(deps.revisions?.list().length ?? 0).toBe(count);
+  });
+
+  test("CRLF from a browser textarea is stored as LF", () => {
+    const deps = setup();
+    editAdapterFile(deps, "memory/NOTES.md", "- a\r\n- b", "dashboard");
+    expect(deps.store.files().get("memory/NOTES.md")).toBe("- a\n- b");
+  });
+
+  test("a manifest edit is checked against its own new limits, so teaching keeps working", () => {
+    const deps = setup({ "memory/NOTES.md": "- a note\n" });
+    const narrowed = MANIFEST.replace(/    - path: memory\/NOTES\.md\n      format: \{max_bytes: 8000\}\n/, "");
+    expect(narrowed).not.toBe(MANIFEST);
+    const result = editAdapterFile(deps, "adapter.yaml", narrowed, "dashboard");
+    expect(result.ok).toBe(false);
+    expect(deps.store.files().get("adapter.yaml")).toBe(MANIFEST);
+    expect(rememberFact(deps, "still teachable", { kind: "global" }, "U1").ok).toBe(true);
+  });
+
   test("a new scoped file can be created, and blanking it removes it", () => {
     const deps = setup();
     expect(editAdapterFile(deps, "memory/people/U7.md", "- likes tea", "dashboard").ok).toBe(true);
@@ -294,6 +317,8 @@ describe("editAdapterFile", () => {
     expect(editAdapterFile(deps, "../escape.md", "x", "dashboard").ok).toBe(false);
     expect(editAdapterFile(deps, "/etc/passwd", "x", "dashboard").ok).toBe(false);
     expect(editAdapterFile(deps, "memory//NOTES.md", "x", "dashboard").ok).toBe(false);
+    expect(editAdapterFile(deps, "memory/./NOTES.md", "x", "dashboard").ok).toBe(false);
+    expect(editAdapterFile(deps, "memory\\NOTES.md", "x", "dashboard").ok).toBe(false);
     expect(editAdapterFile(deps, "adapter.yaml", "", "dashboard").ok).toBe(false);
     expect(editAdapterFile(deps, "memory/people/nobody.md", "", "dashboard").ok).toBe(false);
     expect(deps.store.files().has("adapter.yaml")).toBe(true);

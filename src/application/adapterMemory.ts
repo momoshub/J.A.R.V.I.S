@@ -98,7 +98,10 @@ export const commitAdapter = (
     return { ok: false, violations: [e instanceof Error ? e.message : String(e)] };
   }
 
-  const check: AdapterCheck = checkAdapterFiles(manifest, files, alwaysOnOf(proposed), budget);
+  // Checked against the manifest the proposal carries: a commit that rewrites
+  // the manifest must satisfy its own new limits, or it could narrow them
+  // under files already there and leave every later write refused.
+  const check: AdapterCheck = checkAdapterFiles(proposed.manifest, files, alwaysOnOf(proposed), budget);
   const overBudget = check.violations.filter((v) => v.includes("always-on block"));
   const hard = check.violations.filter((v) => !v.includes("always-on block"));
 
@@ -204,16 +207,20 @@ export const editAdapterFile = (
   actor: string,
 ): CommitResult => {
   const rel = path.trim();
-  if (!rel || rel.startsWith("/") || rel.split("/").some((part) => part === ".." || part === "")) {
+  // Canonical paths only. `a/./b` lands on the same mirror file as `a/b` but
+  // is a second row in the store, so what runs and what is listed would part.
+  if (!rel || rel.includes("\\") || rel.split("/").some((part) => part === "" || part === "." || part === "..")) {
     return { ok: false, violations: [`Not a path inside the adapter: ${path}`] };
   }
   const files = new Map(deps.store.files());
-  const blank = content.trim() === "";
+  // A browser may hand a textarea back with CRLF line ends.
+  const text = content.replace(/\r\n/g, "\n");
+  const blank = text.trim() === "";
   if (blank && rel === MANIFEST_FILE) return { ok: false, violations: [`${MANIFEST_FILE} cannot be removed`] };
   if (blank && !files.has(rel)) return { ok: false, violations: [`There is no ${rel} to remove.`] };
+  if (!blank && files.get(rel) === text) return { ok: true, warnings: [] };
   if (blank) files.delete(rel);
-  else files.set(rel, content.endsWith("\n") ? content : `${content}\n`);
-  if (!blank && files.get(rel) === deps.store.files().get(rel)) return { ok: true, warnings: [] };
+  else files.set(rel, text);
   return commitAdapter(deps, files, {
     reason: `${blank ? "remove" : "edit"} ${rel} by hand`,
     actor,

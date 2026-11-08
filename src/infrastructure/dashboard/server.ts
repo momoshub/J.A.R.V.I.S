@@ -47,11 +47,12 @@ export type DashboardDeps = {
    *
    * `remember` is what the brain's own save endpoint writes through, so a fact
    * it decides to keep mid-conversation lands in the adapter rather than the
-   * old table. `status` backs a read-only view of what it currently holds.
+   * old table. `status`, `view` and `files` back the memory page, and `edit`
+   * is its hand editor.
    */
   adapter?: {
     readonly status: () => string;
-    /** Everything the memory page renders, read-only. */
+    /** Everything the memory page renders. */
     readonly view: () => {
       readonly policy: string;
       readonly notes: string;

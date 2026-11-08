@@ -67,7 +67,7 @@ export type AllowedUser = {
 };
 export type Learning = { id: number; content: string; createdBy: string; createdAt: number };
 
-/** The memory adapter as the dashboard renders it. Read-only: curating is `adapter refine`. */
+/** The memory adapter as the dashboard renders it. Hand edits go through `adapter/file`. */
 export type AdapterView = {
   configured: boolean;
   status?: string;
