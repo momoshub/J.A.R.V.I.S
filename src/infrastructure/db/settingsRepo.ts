@@ -54,6 +54,8 @@ export const SETTING_KEYS = {
   githubAppChannel: "github_app_channel",
   /** The bot's own Orca terminal handle, reused across restarts while Orca keeps it. */
   orcaTerminalHandle: "orca_terminal_handle",
+  /** JSON of stuck-work items already DMed to the owner, with when, so none repeats within hours. */
+  stuckSweepSeen: "stuck_sweep_seen",
 } as const;
 
 /** Model override for one role, e.g. `model:pal`. Empty means "use the default". */

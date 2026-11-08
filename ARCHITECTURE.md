@@ -39,6 +39,7 @@ no classes.
   |    watcher | reminders | reviewInbox | workflow continues | innerChild  |
   |    orcaQuestions (worker questions -> the thread that started it)      |
   |    offlineAlarm (keeps an "I'm offline" Slack scheduled msg armed)     |
+  |    stuckSweeper (dead Orca workers, quiet own PRs -> owner DM, 15 min)  |
   |                                                                         |
   |  dashboard + JSON API (Bun.serve, loopback), /api/commands/run,         |
   |    /api/github-app/comment                                              |
@@ -69,8 +70,11 @@ no classes.
   handed-off command that later fails says so in the thread, not only in the log.
 - **Timers.** `watcher` polls each due watch's predicate and hands the thread a
   fresh turn when it is ready (`watch worker <dispatchId>` polls an Orca worker
-  through `bin/orca-worker-wait.ts` and says whether it finished, died or waits
-  for input); `reminders` posts at the time with no model;
+  through `bin/orca-worker-wait.ts` and says whether it finished, died - also
+  when it stopped without reporting - or waits for input - a finished or dead worker's hand-back also names the tokens
+  and list-price cost its Claude transcript used, stored in
+  `orca_worker_usage`, read later with `worker-cost <ctx_...|run_...>`);
+  `reminders` posts at the time with no model;
   `reviewInbox` polls GitHub for review requests and runs `review` as the
   requester; `orcaQuestions` reads the Orca mailbox of every Run a thread
   started a worker in (linked from the turn's tool trace as `worker-start`
@@ -85,6 +89,11 @@ no classes.
   `offlineAlarm` keeps an "I'm offline" notice armed as a Slack scheduled
   message ten minutes out (Slack ignores a cancel within ~5 min of due), so Slack posts it by itself when the host loses
   its connection, and edits it to "back online" when it returns.
+  `stuckSweeper` asks Orca every 15 minutes for tasks still `dispatched`
+  whose worker is gone, and `gh` for open PRs on the bot's own repo with no
+  commit, comment or review for 30 minutes, and DMs the owner what is new with
+  the thread whose trace started each (an item is not repeated for 4 hours);
+  `mindful` shows the same two lists on demand.
   None of them hold a session or a queue slot while they wait.
 - **GitHub App.** A loopback listener (`GITHUB_APP_PORT`, reached through
   Tailscale Funnel) verifies each webhook, answers 202 and hands it to
@@ -94,9 +103,11 @@ no classes.
   a channel and run as a turn in that thread as the matched Slack person; the
   turn answers on GitHub through `bin/github-app-comment.sh` ->
   `/api/github-app/comment`, ticketed and bound to that one issue.
-- **Self-update.** A fix lands through a PR that a reviewer Orca worker
-  reads (rounds are PR comments, fixes are pushes) and CI (`.github/workflows/ci.yml`) passes, merged only by
-  `bin/merge-when-green.sh`. `bin/jarvis-restart.sh` runs typecheck and tests and only
+- **Self-update.** A fix lands through a PR that CI (`.github/workflows/ci.yml`)
+  passes, merged only by `bin/merge-when-green.sh`. When it touches runtime code
+  (logic, commands, adapters, `bin/` scripts, or a mixed PR) a reviewer Orca worker
+  reads it first, at most 2 rounds (rounds are PR comments, fixes are pushes); docs,
+  prompt text, skills and dashboard UI need no reviewer. `bin/jarvis-restart.sh` runs typecheck and tests and only
   restarts when both pass. With `SELF_PR_AUTHOR`/`SELF_PR_REVIEWER` set, the
   PR is opened as the author and reviewed, approved and merged as the reviewer
   (the approval is fired by `merge-when-green.sh` right before the merge). `restartWhenIdle` then drains: timers that start turns hold, and new
@@ -136,6 +147,7 @@ No I/O, no frameworks. Just data shapes and functions of their inputs.
 - `threadSession.ts`, `agentSession.ts` - one CLI session per thread and when it may be resumed
 - `adapter.ts`, `adapterCheck.ts` - memory as a checked, versioned directory (facts + skills) instead of an ever-growing list
 - `watch.ts`, `reminder.ts`, `selfUpdate.ts`, `runControl.ts`, `threadBackground.ts` - waits, reminders, draining restart, stopping a turn and the background agents its thread started
+- `workerUsage.ts` - an Orca worker's tokens summed from its Claude Code transcript (deduped per message) and priced per model (the one price table)
 - `offlineAlarm.ts` - the dead man's switch notice and its back-online edit
 - `systemStatus.ts`, `orcaStatus.ts`, `systemBlocks.ts` - `sys`: the host verdict and numbers, Orca's runtime/runs/tasks parsed from its CLI JSON and counted, and the Block Kit message (header, fields, trend, Orca table) with the plain report as its fallback
 - `innerChild.ts`, `voiceDrift.ts` - the self-review triage, and the cheap voice-drift check, nudge and log lines
@@ -155,7 +167,7 @@ Orchestrates the domain and depends on **ports**, not concrete adapters.
 - `handleMessage.ts` - the chat flow (access -> remember -> ask model -> remember), applying the role's tool policy
 - `commands.ts`, `commandTickets.ts`, `commandLimits.ts`, `brainRun.ts` - the command registry (configurable prefix + slash, role gates, help), the brain's tickets, allowances and result delivery. The command definitions live in `commands/`, one file per group (`chat`, `schedule`, `people`, `adapter`, `learnings`, `errands`, `review`, `runtime`, `slack`), with `commands/shared.ts` for the deps, the `CommandDef` type and the helpers more than one group uses
 - `threadQueue.ts`, `runRegistry.ts` - one turn per thread, and stopping one
-- `watcher.ts`, `reminders.ts`, `reviewInbox.ts`, `reviewGuard.ts`, `innerChild.ts`, `offlineAlarm.ts`, `orcaQuestions.ts` - the timers (`orcaQuestions` also sits on the tool-trace sink, linking each Orca worker to the thread that started it)
+- `watcher.ts`, `reminders.ts`, `reviewInbox.ts`, `reviewGuard.ts`, `innerChild.ts`, `offlineAlarm.ts`, `orcaQuestions.ts`, `stuckSweeper.ts` - the timers (`orcaQuestions` also sits on the tool-trace sink, linking each Orca worker to the thread that started it)
 - `githubApp.ts` - calls from the GitHub App: dedupe/queue, identity mapping, the turn, the answer back
 - `workflow.ts`, `workflowFront.ts`, `workflowContinue.ts` - long tasks driven from one thread on a durable session
 - `accessRequests.ts` - unknown people ask the owner and admins, who decide with a reaction
@@ -184,7 +196,7 @@ Concrete implementations of the seams and the transports.
 - `db/` - `bun:sqlite` client, schema + migrations, one repo per table (users, role policies, messages, sessions, watches, reminders, workflows, usage, turn and command logs, Orca worker threads and questions, ...), `secretBox.ts` for encrypted tokens
 - `adapter/adapterStore.ts` - the memory adapter in the `adapter_files` table, mirrored to `data/adapter-mirror` so skills can be read by path
 - `github/` - `gh` CLI wrapper and review-request polling; the GitHub App's fetch client (`appClient.ts`, RS256 JWT -> cached installation token), credentials from files (`appCredentials.ts`) and webhook listener (`webhookServer.ts`)
-- `system/` - host probes (system load, Accessibility access, shell checks for watches, `orcaProbe.ts` reading Orca's status, newest Runs and their tasks for `sys` under one deadline), `guideWriter.ts`, which writes the prompt's how-to guides to `data/prompt-guides`, and `orcaTerminal.ts`, the bot's own Orca terminal (created once, checked against Orca at most once a minute, re-created when gone) whose handle every spawned turn gets as `ORCA_TERMINAL_HANDLE` so it can open Orca Runs and start workers
+- `system/` - host probes (system load, Accessibility access, shell checks for watches, `orcaProbe.ts` reading Orca's status, newest Runs and their tasks for `sys` under one deadline), `guideWriter.ts`, which writes the prompt's how-to guides to `data/prompt-guides`, and `orcaTerminal.ts`, the bot's own Orca terminal (created once, checked against Orca at most once a minute, re-created when gone) whose handle every spawned turn gets as `ORCA_TERMINAL_HANDLE` so it can open Orca Runs and start workers, and `workerTranscript.ts`, which finds an Orca worker's Claude Code session (one message id from `worker-read --source transcript`, matched to the `uuid` in a `~/.claude/projects` jsonl) and sums what it used
 - `db/statsRepo.ts` - read-only day buckets and top-N sums over `messages`, `turn_log`, `llm_usage`, `command_log` and `thread_sessions` for the overview charts (`/api/stats`); `domain/dashboardStats.ts` lays them over the whole window, zeros included
 - `dashboard/server.ts` - `Bun.serve` JSON API under `/api` plus the React SPA built to `web/dist`. HTTP only: parse, call `application/dashboard.ts`, map the outcome. The brain hooks (`/api/commands/run`, `/api/github-app/comment`, `/api/restart`) and the Slack console call their deps directly
 - `web/` - the dashboard front end: React 19 + Vite + React Router 7 (`react-router` package). Its Architecture page draws this document as an interactive diagram from `web/src/systemModel.ts` - change that file with the runtime section above. Layout: `routes/router.tsx` (route table), `pages/` (one module per page with its loader and action), `ui/` (shell, error and banner), `api.ts` (every fetch)

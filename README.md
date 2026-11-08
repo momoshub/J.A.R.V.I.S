@@ -111,6 +111,7 @@ Every command has two interfaces - use whichever you like. Both triggers are con
 | `forget` | anyone | wipe the bot's memory of this channel |
 | `sys` (alias `vitals`) | admins | how the host, the bot and Orca are doing, as Block Kit: a verdict header, cpu/memory/swap/disk/host/bot/turns fields, the last hour's trend, then Orca's runtime, active runs, workers by status and a table of live workers (one "unreachable" line when Orca is down or slow). The message text keeps the plain report as the fallback |
 | `users` | admins | list the allowlist |
+| `worker-cost <ctx_...\|run_...>` (alias `wcost`) | admins | tokens and list-price cost of an Orca worker, or every worker in a Run - see [What an Orca worker cost](#what-an-orca-worker-cost) |
 | `add @user [pal\|executer\|admin]` | admins (admin role: owner only) | grant access |
 | `remove @user` | admins (admins: owner only) | revoke access |
 | `learn <fact>` | admins | teach a durable fact |
@@ -126,6 +127,7 @@ Every command has two interfaces - use whichever you like. Both triggers are con
 | `rm-msg <message-link>` (aliases `rmmsg`, `unsend`) | admins | delete a message the bot posted (a bot token cannot delete anyone else's) |
 | `workflow <task>` / `workflow stop [<thread-link>]` / `workflow status` (alias `wf`) | executers+ | start a long task in this thread and keep talking to it (see [Workflows](#workflows)) |
 | `limit [@user] [n\|default]` (alias `quota`) | anyone (setting: admins) | show command allowance; admins set someone's |
+| `mindful [hours]` / `mindful continue\|reply <thread-link>` (aliases `mind`, `whatsup`) | admins | everything it is doing: stuck turns, Orca tasks whose worker is gone and quiet PRs on its own repo (each with the thread that started it), what is running and waiting, and what it cost - see [Stuck work](#stuck-work) |
 | `promote @user` / `demote @user` | owner | change role |
 
 A slash command is invisible to everyone but its caller, so the **owner gets a copy in their DM** - one thread per run: a header saying who ran what, with the progress and result threaded under it. Trivial commands (`help`, `ping`, `whoami`, `model`) are not copied, and the owner is never copied on their own.
@@ -497,6 +499,18 @@ running:
 It answers `503` when deaf, so an uptime check sees an outage instead of a
 process that happens to be alive.
 
+## Stuck work
+
+Every 15 minutes, outside any turn, the bot looks for work that died without
+saying so: Orca tasks still `dispatched` whose worker is gone (its terminal
+exited, it settled without reporting, or Orca no longer knows the dispatch),
+and open PRs on its own repo with no commit, comment or review for 30 minutes.
+It DMs the owner (`OWNER_SLACK_ID`) one short message listing what is new, each
+with the Slack thread whose turn started it, and does not repeat an item for 4
+hours - a restart does not reset that. When Orca or `gh` cannot be asked it
+says nothing rather than claim all is well; `mindful` shows the same lists on
+demand, with a "could not check" line when that happens.
+
 ## How the brain runs a command
 
 The brain can run the bot's own commands for whoever it is talking to. It never
@@ -576,6 +590,22 @@ once, a delivery a restart cut is retried while the question is still open,
 and an answered question or a finished worker gets no turn. In a workflow
 thread the question goes to the workflow's worker session, not the front,
 since only the worker can run `orca`.
+
+## What an Orca worker cost
+
+Orca keeps no tokens, cost or session id for a worker, so the bot reads them
+from the worker's own Claude Code transcript: `worker-read --source
+transcript` gives one of its message ids, and that id is the `uuid` of a line
+in `~/.claude/projects/<worker folder>/<session>.jsonl` (`$CLAUDE_CONFIG_DIR`
+moves the root). The session and its subagents' transcripts are summed, each
+API message once, and priced per model at list price (input, output, 5-minute
+and 1-hour cache writes and cache reads apart; the one price table is
+`MODEL_PRICES` in `src/domain/workerUsage.ts`). When a `watch worker` fires on
+a worker that finished or died, the hand-back says what it used and the turn
+says it in the thread; the figure is stored in `orca_worker_usage`.
+`worker-cost <ctx_...>` answers later (from the stored figure once Orca has
+forgotten the dispatch), and `worker-cost <run_...>` totals a Run. Nobody is
+invoiced this on a subscription; it is what the work would cost at API prices.
 
 ## One turn at a time
 

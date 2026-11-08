@@ -202,12 +202,22 @@ Remembering something (optional, your call):
 };
 
 /**
+ * The shell check that says a batch of Orca workers has settled. `blocked`
+ * counts: Orca leaves a task there when its worker exits or is stopped without
+ * marking it completed (or opens an `ask`), and a check that waited for
+ * completed/failed only never fired then - a watch on it sat out its whole
+ * deadline. It prints every task that is not completed, so the hand-back can
+ * see which ones to verify (`readyMessage` flags the blocked ones).
+ */
+export const ORCA_BATCH_CHECK = `orca orchestration task-list --run <runId> --json | jq -re '.result.tasks as $t | ($t[] | select(.status != "completed") | "\\(.id) \\(.status)"), ($t | length > 0 and all(.status == "completed" or .status == "failed" or .status == "blocked"))'`;
+
+/**
  * How a background agent is spawned: always an Orca worker (Kai), the Agent
  * tool only as a fallback. Shared by chat turns and the workflow worker, so a
  * long task fans out the same way a chat reply does.
  */
 export const ORCA_AGENT_RULES = `- Background agents always run as Orca workers, never the Agent tool (Kai) - here and for any other job you spawn one for. A multi-agent workflow is the same: run its agents as Orca workers in one Run, never through the Workflow tool. Open a fresh Run for each batch with \`orca orchestration run-create --objective <short> --json\`, never reuse a bound one: the binding is shared by every thread. Then start each worker with \`orca orchestration worker-start --run <runId> --spec-file <brief> --task-title <short> --worktree path:<a folder or repo Orca knows> --agent claude --json\`. Orca tells the worker how to report back
-- \`ORCA_TERMINAL_HANDLE\` in your environment is the bot's own Orca terminal, so these commands need no \`--from\`; never pass another pane's handle. Orca still cannot wake you: that terminal is a bare shell, not this turn. A worker's \`orca orchestration ask\` still reaches you: the bot puts it to this thread as a turn opening with \`[orca question]\`, answered with the \`orca orchestration reply\` it names. The batch is done when this exits 0: \`orca orchestration task-list --run <runId> --json | jq -e '[.result.tasks[].status] | length > 0 and all(. == "completed" or . == "failed")'\` - a running task shows as dispatched. For a quick batch loop on it in a background Bash with a deadline of a few minutes, for a long one set a watch with it as the shell check if you can set watches, otherwise the same loop. Then read the results whole with \`orca orchestration inbox --terminal run:<runId> --full\`
+- \`ORCA_TERMINAL_HANDLE\` in your environment is the bot's own Orca terminal, so these commands need no \`--from\`; never pass another pane's handle. Orca still cannot wake you: that terminal is a bare shell, not this turn. A worker's \`orca orchestration ask\` still reaches you: the bot puts it to this thread as a turn opening with \`[orca question]\`, answered with the \`orca orchestration reply\` it names. The batch is settled when this exits 0: \`${ORCA_BATCH_CHECK}\` - a running task shows as dispatched, and it prints every task that is not completed. A \`blocked\` task is NOT success: its worker either stopped without reporting or is parked on an \`ask\`. For each one read \`orca orchestration worker-show --dispatch <dispatchId> --json --full\` (the dispatchId is in worker-start's JSON, or \`orca orchestration worker-list --run <runId> --json\`) and its messages in the inbox. Waiting on an answer (an input/approval attention or a pending question): answer it, or ask the person, then wait again on the batch check - and never redo its work, it resumes once answered. Stopped, exited or abandoned with nothing pending: check the work itself (commits, PR, files) and redo or finish what is missing - never count it done. For a quick batch loop on it in a background Bash with a deadline of a few minutes, for a long one set a watch with it as the shell check if you can set watches, otherwise the same loop. Then read the results whole with \`orca orchestration inbox --terminal run:<runId> --full\`
 - Fall back to the Agent tool only when \`orca status\` says the runtime is not reachable, \`ORCA_TERMINAL_HANDLE\` is unset, \`run-create\` refuses it as \`terminal_handle_stale\` (Orca restarted; the bot replaces it within a minute) or your tools refuse \`orca\`, and say so in one line. The reviewer on your own fix is one of these too: an Orca worker that talks to you only through PR comments`;
 
 /**
@@ -229,7 +239,7 @@ A message with several questions in it:
 ${ORCA_AGENT_RULES}${
   prefix
     ? `
-- Every \`worker-start\` is followed, in the same turn, by \`${prefix} watch worker <dispatchId> <what you will do with its result>\` - one per worker, the \`dispatchId\` from worker-start's JSON. It hands you this thread back when that worker finishes, dies or stands waiting for input, and says which. Never end a turn with a worker running and no watch on it`
+- Every \`worker-start\` is followed, in the same turn, by \`${prefix} watch worker <dispatchId> <what you will do with its result>\` - one per worker, the \`dispatchId\` from worker-start's JSON. That is how you wait on a worker: it hands you this thread back when that worker finishes, dies (stopped without reporting counts as died) or stands waiting for input, and says which. The task-list check above is only for the batch as a whole, never instead of these. Never end a turn with a worker running and no watch on it`
     : ""
 }
 - Hand each answer over the moment it lands, never hold the whole reply for the slowest part. Post the first finished part into this thread with chat.postMessage (with this thread's thread_ts), then fold each later part into that same message with chat.update, so the thread ends up with one message, not a trail of them. Your closing reply only adds what that message does not already say.
@@ -290,7 +300,7 @@ Waiting for something to finish:
   \`${prefix} watch checks <pr-url> <what you will do next>\` - until CI stops running, pass or fail
   \`${prefix} watch reply <thread-link> [from <@someone>] <what you will do next>\` - until somebody answers there
   \`${prefix} watch url <url> <what you will do next>\` - until it responds
-  \`${prefix} watch worker <dispatchId> <what you will do next>\` - until that Orca worker finishes, dies or stands waiting for input; the hand-back says which. Set one right after EVERY \`orca orchestration worker-start\`, with the \`dispatchId\` it printed - one per worker
+  \`${prefix} watch worker <dispatchId> <what you will do next>\` - until that Orca worker finishes, dies or stands waiting for input; the hand-back says which, and what the worker used in tokens and list-price dollars (say it with the result). Set one right after EVERY \`orca orchestration worker-start\`, with the \`dispatchId\` it printed - one per worker. Asked later what a worker or a Run cost: \`${prefix} worker-cost <dispatchId|runId>\`
   \`${prefix} watch <what you will do next> -- <shell command that exits 0 when ready>\` - anything else
 - Add \`--every <interval>\` and \`--until <give up after>\` when the defaults (every minute, 45 minutes; every 3 minutes, 3 hours for \`worker\`) are wrong for it. A deploy you expect to take an hour needs \`--until 90m\`, not hope.
 - One watch per thing. If you are waiting on two, set two - they are cheap, and a single watch on the slower one loses the other.
