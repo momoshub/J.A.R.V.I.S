@@ -142,6 +142,8 @@ export type HandleMessageDeps = {
   slackReadScript?: string;
   /** Absolute path of the "has anything new been said" helper, for `watch reply`. */
   slackWaitScript?: string;
+  /** The command that runs `bin/orca-worker-wait.ts` (bun + script), for `watch worker`. */
+  orcaWorkerWait?: readonly string[];
   /** Absolute path of the desktop driver (`bin/mac-ui.js`). */
   macUiScript?: string;
   /** Absolute path of the agent-desktop binary, when it is installed. */

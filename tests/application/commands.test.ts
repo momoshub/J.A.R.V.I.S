@@ -373,6 +373,24 @@ describe("dispatchCommand", () => {
     expect(w?.check).toContain("'U2'");
   });
 
+  test("watch worker waits on an Orca dispatch, every 3m for 3h", async () => {
+    const deps = build();
+    const watches = createWatchRepo(db);
+    const out = await dispatchCommand(
+      { ...deps, watches, orcaWorkerWait: ["/b/bun", "/x/orca-worker-wait.ts"] },
+      actor(),
+      "C1",
+      "watch worker ctx_b3290a07f606 merge its PR",
+      { threadTs: "9.9" },
+    );
+    expect(out).toContain("Orca worker `ctx_b3290a07f606` to finish, die or stop for input");
+    expect(out).toContain("checking every 3m and giving up after 3h00m");
+    const [w] = watches.waiting();
+    expect(w?.check).toBe("'/b/bun' '/x/orca-worker-wait.ts' 'ctx_b3290a07f606'");
+    expect(w?.everyMs).toBe(180_000);
+    expect(w?.note).toBe("merge its PR");
+  });
+
   test("a named wait with the wrong sort of target is refused", async () => {
     const out = await dispatchCommand(
       { ...build(), watches: createWatchRepo(db) },

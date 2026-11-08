@@ -10,6 +10,10 @@ import {
   readyMessage,
   builtinCheck,
   shellQuote,
+  orcaWorkerEvent,
+  workerEventLine,
+  WORKER_EVERY_MS,
+  WORKER_DEADLINE_MS,
 } from "../../src/domain/watch.ts";
 
 describe("parseDuration", () => {
@@ -197,5 +201,130 @@ describe("parsing a named wait", () => {
     const a = parseWatchArgs("--every 2m --until 1h checks https://github.com/o/r/pull/9 report CI");
     expect(a.ok && a.kind).toBe("checks");
     expect(a.ok && a.everyMs).toBe(120_000);
+  });
+});
+
+describe("watch worker", () => {
+  const WAIT = ["/usr/bin/bun", "/repo/bin/orca-worker-wait.ts"];
+
+  test("parses a dispatch id, with worker-sized defaults", () => {
+    const a = parseWatchArgs("worker ctx_b3290a07f606 merge its PR");
+    expect(a.ok && a.kind).toBe("worker");
+    expect(a.ok && a.target).toBe("ctx_b3290a07f606");
+    expect(a.ok && a.note).toBe("merge its PR");
+    expect(a.ok && a.everyMs).toBe(WORKER_EVERY_MS);
+    expect(a.ok && a.deadlineMs).toBe(WORKER_DEADLINE_MS);
+    expect(WORKER_EVERY_MS).toBe(3 * 60_000);
+    expect(WORKER_DEADLINE_MS).toBe(3 * 3_600_000);
+  });
+
+  test("flags still win over the worker defaults", () => {
+    const a = parseWatchArgs("--every 1m --until 5h worker ctx_1 go");
+    expect(a.ok && a.everyMs).toBe(60_000);
+    expect(a.ok && a.deadlineMs).toBe(5 * 3_600_000);
+  });
+
+  test("a short --until with no --every looks once at the end instead of refusing", () => {
+    const a = parseWatchArgs("worker ctx_1 --until 2m go");
+    expect(a.ok && a.everyMs).toBe(120_000);
+    // other kinds keep their minute default
+    const b = parseWatchArgs("pr https://github.com/o/r/pull/1 go");
+    expect(b.ok && b.everyMs).toBe(DEFAULT_EVERY_MS);
+  });
+
+  test("builds a quoted call to the helper", () => {
+    const r = builtinCheck("worker", "ctx_abc123", { orcaWorkerWait: WAIT });
+    expect("check" in r && r.check).toBe("'/usr/bin/bun' '/repo/bin/orca-worker-wait.ts' 'ctx_abc123'");
+  });
+
+  test("refuses anything that is not a dispatch id, or no helper", () => {
+    expect("error" in builtinCheck("worker", "ctx_1; rm -rf /", { orcaWorkerWait: WAIT })).toBe(true);
+    expect("error" in builtinCheck("worker", "task_123", { orcaWorkerWait: WAIT })).toBe(true);
+    expect("error" in builtinCheck("worker", "ctx_1", {})).toBe(true);
+  });
+});
+
+describe("orcaWorkerEvent", () => {
+  const full = (projection: Record<string, unknown>, extra: Record<string, unknown> = {}): string =>
+    JSON.stringify({ ok: true, result: { dispatch: { runId: "run_1" }, projection, observation: { agentWait: null }, ...extra } });
+
+  test("an outcome means finished, even though the process has exited", () => {
+    const ev = orcaWorkerEvent(full({ outcome: "succeeded", liveness: { verdict: "exited" }, attention: { categories: ["root_completion"] } }));
+    expect(ev).toEqual({ kind: "finished", detail: "outcome succeeded, run run_1" });
+    expect(orcaWorkerEvent(full({ outcome: "failed", liveness: { verdict: "exited" } })).kind).toBe("finished");
+  });
+
+  test("still in progress and live is running", () => {
+    expect(orcaWorkerEvent(full({ outcome: "in_progress", liveness: { verdict: "live" }, attention: { categories: [] } })).kind).toBe(
+      "running",
+    );
+  });
+
+  test("an input attention category or an agent wait is waiting", () => {
+    const a = orcaWorkerEvent(full({ outcome: "in_progress", liveness: { verdict: "live" }, attention: { categories: ["input_required"] } }));
+    expect(a.kind).toBe("waiting");
+    const b = orcaWorkerEvent(
+      JSON.stringify({
+        ok: true,
+        result: { projection: { outcome: "in_progress", liveness: { verdict: "live" } }, observation: { agentWait: { prompt: "Allow edit?" } } },
+      }),
+    );
+    expect(b).toEqual({ kind: "waiting", detail: "Allow edit?" });
+  });
+
+  test("no outcome and not live is died", () => {
+    const ev = orcaWorkerEvent(full({ outcome: "in_progress", liveness: { verdict: "exited" } }));
+    expect(ev.kind).toBe("died");
+    expect(orcaWorkerEvent(JSON.stringify({ ok: false, error: { code: "dispatch_not_found" } })).kind).toBe("died");
+  });
+
+  test("liveness Orca could not prove is not a death", () => {
+    expect(orcaWorkerEvent(full({ outcome: "in_progress", liveness: { verdict: "unverifiable" } })).kind).toBe("running");
+  });
+
+  test("reads the concise view too", () => {
+    const concise = (r: Record<string, unknown>): string => JSON.stringify({ ok: true, result: { runId: "run_2", ...r } });
+    expect(orcaWorkerEvent(concise({ state: "succeeded", stage: "settled", liveness: "exited" })).kind).toBe("finished");
+    expect(orcaWorkerEvent(concise({ state: "stopped", liveness: "exited", attention: ["failure"] })).kind).toBe("died");
+    expect(orcaWorkerEvent(concise({ state: "ready", liveness: "live", attention: ["input"] })).kind).toBe("waiting");
+    expect(orcaWorkerEvent(concise({ state: "ready", liveness: "live" })).kind).toBe("running");
+  });
+
+  test("an answer that is not a worker record is unknown, never a death", () => {
+    expect(orcaWorkerEvent("error: runtime unreachable").kind).toBe("unknown");
+    expect(orcaWorkerEvent(JSON.stringify({ ok: false, error: { code: "runtime_unavailable", message: "down" } }))).toEqual({
+      kind: "unknown",
+      detail: "down",
+    });
+  });
+});
+
+describe("the worker hand-back says which of the three happened", () => {
+  const line = (kind: "finished" | "died" | "waiting", detail: string): string =>
+    workerEventLine("ctx_abc", { kind, detail });
+
+  test("finished", () => {
+    const m = readyMessage("merge its PR", 600_000, line("finished", "outcome succeeded"));
+    expect(m).toStartWith("Orca worker ctx_abc FINISHED after 10m (outcome succeeded)");
+    expect(m).toContain("merge its PR");
+    expect(m).toContain("Do it yourself, now");
+  });
+
+  test("died", () => {
+    const m = readyMessage("merge its PR", 600_000, line("died", "liveness exited, no outcome"));
+    expect(m).toStartWith("Orca worker ctx_abc DIED after 10m without finishing");
+    expect(m).toContain("orca orchestration worker-show --dispatch ctx_abc --json");
+  });
+
+  test("waiting for input does not tell it to do the planned part yet", () => {
+    const m = readyMessage("merge its PR", 600_000, line("waiting", "Allow edit?"));
+    expect(m).toStartWith("Orca worker ctx_abc is WAITING FOR INPUT after 10m (Allow edit?)");
+    expect(m).toContain("set a new `watch worker ctx_abc`");
+    expect(m).toContain("Do not do the planned part above until the worker has finished");
+    expect(m).not.toContain("Do it yourself, now");
+  });
+
+  test("any other check keeps the plain hand-back", () => {
+    expect(readyMessage("go", 60_000, "orca worker ctx_abc still running")).toStartWith("The thing you were waiting for is ready");
   });
 });

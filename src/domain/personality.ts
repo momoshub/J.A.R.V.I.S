@@ -215,14 +215,23 @@ export const ORCA_AGENT_RULES = `- Background agents always run as Orca workers,
  * impersonated support") used to be worked through in one line, so the quick
  * part sat unread until the slowest part was done. Split it, run the
  * independent parts at once, and hand each answer over as it lands.
+ *
+ * With a watch available (`prefix` set), every worker it starts is followed
+ * by a `watch worker` on it: Orca cannot wake the turn, so without one a
+ * worker that dies or stops on a question is found only when somebody asks.
  */
-export const SPLIT_QUESTION_RULES = `
+export const splitQuestionRules = (prefix?: string): string => `
 
 A message with several questions in it:
 - Before you start, split the message into its separate asks. "check the git author, and who impersonated support" is two jobs, not one.
 - Decide which parts are independent and which truly need an earlier answer. Only a part that consumes another part's result waits for it - everything else starts at once.
 - Run the independent parts in parallel as background agents, one per part, each with a self-contained brief. Do not work through them one after another yourself.
-${ORCA_AGENT_RULES}
+${ORCA_AGENT_RULES}${
+  prefix
+    ? `
+- Every \`worker-start\` is followed, in the same turn, by \`${prefix} watch worker <dispatchId> <what you will do with its result>\` - one per worker, the \`dispatchId\` from worker-start's JSON. It hands you this thread back when that worker finishes, dies or stands waiting for input, and says which. Never end a turn with a worker running and no watch on it`
+    : ""
+}
 - Hand each answer over the moment it lands, never hold the whole reply for the slowest part. Post the first finished part into this thread with chat.postMessage (with this thread's thread_ts), then fold each later part into that same message with chat.update, so the thread ends up with one message, not a trail of them. Your closing reply only adds what that message does not already say.
 - A single question, or parts that are one chain, is answered the normal way - do not spin up agents for the sake of it.`;
 
@@ -281,8 +290,9 @@ Waiting for something to finish:
   \`${prefix} watch checks <pr-url> <what you will do next>\` - until CI stops running, pass or fail
   \`${prefix} watch reply <thread-link> [from <@someone>] <what you will do next>\` - until somebody answers there
   \`${prefix} watch url <url> <what you will do next>\` - until it responds
+  \`${prefix} watch worker <dispatchId> <what you will do next>\` - until that Orca worker finishes, dies or stands waiting for input; the hand-back says which. Set one right after EVERY \`orca orchestration worker-start\`, with the \`dispatchId\` it printed - one per worker
   \`${prefix} watch <what you will do next> -- <shell command that exits 0 when ready>\` - anything else
-- Add \`--every <interval>\` and \`--until <give up after>\` when the defaults (every minute, 45 minutes) are wrong for it. A deploy you expect to take an hour needs \`--until 90m\`, not hope.
+- Add \`--every <interval>\` and \`--until <give up after>\` when the defaults (every minute, 45 minutes; every 3 minutes, 3 hours for \`worker\`) are wrong for it. A deploy you expect to take an hour needs \`--until 90m\`, not hope.
 - One watch per thing. If you are waiting on two, set two - they are cheap, and a single watch on the slower one loses the other.
 - It is polled for you on a timer, OUTSIDE any turn: no session, no tokens, and the thread is not blocked. People can keep talking to you the whole time, and you answer them normally - the watch is not a mode you are in, it is a note that comes back.
 - Then say in ONE line what you are waiting for and roughly how long you will give it. Do not narrate the wait after that, and never sit in a loop sleeping - that burns your own time limit and blocks the thread behind you.
@@ -442,7 +452,7 @@ export const buildSystemPromptParts = (
   const tail = `${remembering}\n\n${WORKSPACE_NOTE}\n\n${OPERATING_RULES}\n\n${BEFORE_YOU_SEND}\n\n${identityLock(botName, options.botUserId)}`;
   if (!guided) {
     return {
-      prompt: `${base}${learningsBlock}${addressed}${roster}${attachments}${investigating}${tickets}${slackReading}${desktop}${reaching}${selfWork}${SPLIT_QUESTION_RULES}${reactions}${interactive}${following}${commands}${tail}`,
+      prompt: `${base}${learningsBlock}${addressed}${roster}${attachments}${investigating}${tickets}${slackReading}${desktop}${reaching}${selfWork}${splitQuestionRules(waiting ? (options.commandPrefix ?? "//bot") : undefined)}${reactions}${interactive}${following}${commands}${tail}`,
       guides: [],
     };
   }
@@ -451,7 +461,7 @@ export const buildSystemPromptParts = (
     asGuide("tickets", tickets),
     asGuide("credential-gap", reaching),
     asGuide("desktop", desktop),
-    asGuide("parallel", SPLIT_QUESTION_RULES),
+    asGuide("parallel", splitQuestionRules(waiting ? (options.commandPrefix ?? "//bot") : undefined)),
     asGuide("block-kit", interactive),
     asGuide("waiting", waiting),
   ].filter((g): g is PromptGuide => !!g);

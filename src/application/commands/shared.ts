@@ -54,6 +54,8 @@ export type CommandDeps = {
   artifactScript?: string;
   /** Absolute path of the "has anything new been said" helper, for `watch reply`. */
   slackWaitScript?: string;
+  /** The command that runs `bin/orca-worker-wait.ts` (bun + script), for `watch worker`. */
+  orcaWorkerWait?: readonly string[];
   llm?: LlmPort;
   promptContext?: () => PromptContext;
   botInfo?: () => { botName: string; model: string };
