@@ -62,7 +62,7 @@ Required / notable env (see `.env.example`):
 | `GITHUB_APP_SLUG` | app slug, `@<slug>` calls it (default `jarvis-at-acme`) |
 | `GITHUB_APP_ALLOWED_OWNERS` | repo owners the app acts for, comma list (default `acme`) |
 | `GITHUB_APP_LABEL` | label that calls it on an issue/PR (default `jarvis`) |
-| `SELF_PR_AUTHOR` / `SELF_PR_REVIEWER` | gh logins for the bot's own PRs: the author opens the PR and answers reviews, the reviewer posts review comments and merges. Both or neither (unset: one account) |
+| `SELF_PR_AUTHOR` / `SELF_PR_REVIEWER` | gh logins for the bot's own PRs: the author opens the PR and answers reviews, the reviewer posts review comments and merges. Both or neither, and not the same login (otherwise: one account) |
 | `DASHBOARD_PORT` | dashboard port (local, loopback-only, no auth) |
 | `DASHBOARD_ALLOWED_ORIGINS` | extra browser origins allowed to POST (proxy/tunnel access) |
 | `DATABASE_PATH` | sqlite file (default `data/bot.db`) |

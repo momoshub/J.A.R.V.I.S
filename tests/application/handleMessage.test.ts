@@ -617,6 +617,27 @@ describe("handleMessage", () => {
     expect(system).not.toContain("Working on your own source");
   });
 
+  test("the self PR account split reaches an admin's prompt and never a pal's", async () => {
+    let system = "";
+    const deps = build({
+      complete: async (p) => {
+        system = p.system;
+        return "ok";
+      },
+    });
+    deps.repoPath = "/repo";
+    deps.restartScript = "/bin/jarvis-restart.sh";
+    deps.selfPrAccounts = { author: "writer", reviewer: "checker" };
+
+    await handleMessage(deps, { channelId: "D1", slackUserId: OWNER, text: "hi" });
+    expect(system).toContain("GitHub accounts:");
+    expect(system).toContain("comment as `checker`");
+
+    deps.users.upsert({ slackId: "U0PAL01", role: "pal", displayName: "P", addedBy: OWNER, createdAt: 0 });
+    await handleMessage(deps, { channelId: "D1", slackUserId: "U0PAL01", text: "hi" });
+    expect(system).not.toContain("GitHub accounts:");
+  });
+
   test("a speaker's own Claude token runs their chat turn", async () => {
     let token: string | undefined;
     const deps = build({

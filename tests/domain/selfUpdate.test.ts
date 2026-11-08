@@ -263,6 +263,9 @@ describe("self PR accounts", () => {
     expect(line).toContain("merge as `checker`: `GH_TOKEN=$(gh auth token -u checker)` in front of `bin/merge-when-green.sh <pr>`");
     // switching the active account would move it under every other session
     expect(line).toContain("Never `gh auth switch`");
+    // a login gh does not hold must stop the step, not fall back to the active account
+    expect(line).toContain("if `gh auth token -u <login>` fails or prints nothing, stop and say so");
+    expect(line).toContain("say the same in the reviewer's brief");
   });
 
   test("both the short and the full block carry it", () => {

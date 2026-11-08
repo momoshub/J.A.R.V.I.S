@@ -117,11 +117,14 @@ export const STANDALONE_REVIEW_RULE =
 /** The two GitHub logins a self-fix PR is split across. */
 export type SelfPrAccounts = { readonly author: string; readonly reviewer: string };
 
-/** Both logins or nothing: half a split would leave one step on the wrong account. */
+/**
+ * Both logins or nothing: half a split would leave one step on the wrong
+ * account, and one login twice is no second pair of eyes.
+ */
 export const parseSelfPrAccounts = (author?: string, reviewer?: string): SelfPrAccounts | undefined => {
   const a = author?.trim();
   const r = reviewer?.trim();
-  return a && r ? { author: a, reviewer: r } : undefined;
+  return a && r && a.toLowerCase() !== r.toLowerCase() ? { author: a, reviewer: r } : undefined;
 };
 
 /**
@@ -129,11 +132,14 @@ export const parseSelfPrAccounts = (author?: string, reviewer?: string): SelfPrA
  * another, so GitHub shows a real second pair of eyes. Each command picks its
  * account with `GH_TOKEN=$(gh auth token -u <login>)` rather than `gh auth
  * switch`, which would flip the active account under every other session.
+ * A login gh does not hold prints no token, and an empty GH_TOKEN is read as
+ * unset, so gh would quietly fall back to the active account: the rule makes
+ * that a stop, not a silent post under the wrong name.
  */
 export const selfPrAccountsRule = (accounts?: SelfPrAccounts): string => {
   if (!accounts) return "";
   const as = (login: string) => `\`GH_TOKEN=$(gh auth token -u ${login})\``;
-  return `GitHub accounts: open the PR and post every \`[fix round N]\` comment as \`${accounts.author}\` (${as(accounts.author)} in front of \`gh pr create\` and \`gh pr comment\`); the reviewer posts every \`[review round N]\` comment as \`${accounts.reviewer}\` (say so in its brief, with ${as(accounts.reviewer)} in front of \`gh pr comment\`); merge as \`${accounts.reviewer}\`: ${as(accounts.reviewer)} in front of \`bin/merge-when-green.sh <pr>\`. Never \`gh auth switch\`: it flips the account under every other session`;
+  return `GitHub accounts: open the PR and post every \`[fix round N]\` comment as \`${accounts.author}\` (${as(accounts.author)} in front of \`gh pr create\` and \`gh pr comment\`); the reviewer posts every \`[review round N]\` comment as \`${accounts.reviewer}\` (say so in its brief, with ${as(accounts.reviewer)} in front of \`gh pr comment\`); merge as \`${accounts.reviewer}\`: ${as(accounts.reviewer)} in front of \`bin/merge-when-green.sh <pr>\`. Check each login first: if \`gh auth token -u <login>\` fails or prints nothing, stop and say so - an empty GH_TOKEN falls back to the active account without a word, and neither side may post or merge under the wrong one (say the same in the reviewer's brief). Never \`gh auth switch\`: it flips the account under every other session`;
 };
 
 const fullRules = (repoPath: string, restartScript: string, accounts?: SelfPrAccounts): string => `
