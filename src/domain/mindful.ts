@@ -19,6 +19,7 @@
  * may not be in.
  */
 import { money, tokens, type SpendTotals } from "./spendReport.ts";
+import type { OwnerThread, StuckWork } from "./stuckWork.ts";
 
 export type LiveRun = {
   readonly id: string;
@@ -63,6 +64,8 @@ export type MindfulView = {
   readonly watching?: readonly Watching[];
   readonly stuck: readonly StuckTurn[];
   readonly workflows: readonly OpenWorkflow[];
+  /** Orca tasks whose worker is gone, and quiet PRs on the bot's own repo. */
+  readonly stuckWork?: StuckWork;
   /** Turns that ended in the window, for the success/failure count. */
   readonly done: { readonly ok: number; readonly failed: number; readonly stopped: number };
   readonly spend: SpendTotals;
@@ -99,6 +102,36 @@ const clip = (text: string, max = 70): string => {
   return one.length <= max ? one : `${one.slice(0, max - 1)}…`;
 };
 
+const ownerRef = (owner: OwnerThread | undefined, team?: string): string =>
+  owner ? threadRef(owner.channelId, owner.threadTs, team) : "no thread";
+
+/**
+ * The stuck Orca tasks and quiet PRs, each with the thread that started it.
+ * Shared by `mindful` and the sweeper's DM. Empty when there is nothing, and
+ * nothing to say about what could not be checked.
+ */
+export const stuckWorkLines = (work: StuckWork, now: number, team?: string): string[] => {
+  const lines: string[] = [];
+  if (work.tasks.length > 0) {
+    lines.push(`*orca tasks with no live worker* - ${work.tasks.length}`);
+    for (const t of work.tasks) {
+      lines.push(`- \`${t.taskId}\` "${clip(t.title, 50)}" - ${t.why} - ${ownerRef(t.owner, team)}`);
+    }
+  }
+  if (work.prs.length > 0) {
+    if (lines.length > 0) lines.push("");
+    lines.push(`*quiet PRs* - ${work.prs.length} with no commit or comment for 30m+`);
+    for (const p of work.prs) {
+      lines.push(`- <${p.url}|#${p.number}> "${clip(p.title, 50)}" - quiet ${ago(now - p.lastActivityAt)} - ${ownerRef(p.owner, team)}`);
+    }
+  }
+  if (work.problems.length > 0) {
+    if (lines.length > 0) lines.push("");
+    lines.push(`_could not check: ${work.problems.join("; ")}_`);
+  }
+  return lines;
+};
+
 /**
  * The report. Order is deliberate: what is broken, what is open, what is
  * running, then the numbers. Anyone reading this is looking for a problem.
@@ -108,7 +141,14 @@ export const mindfulReport = (view: MindfulView, team?: string): string => {
   const { done } = view;
 
   const watching = view.watching ?? [];
-  if (view.stuck.length === 0 && view.live.length === 0 && view.workflows.length === 0 && watching.length === 0) {
+  const work = view.stuckWork ? stuckWorkLines(view.stuckWork, view.now, team) : [];
+  if (
+    view.stuck.length === 0 &&
+    view.live.length === 0 &&
+    view.workflows.length === 0 &&
+    watching.length === 0 &&
+    work.length === 0
+  ) {
     lines.push("nothing running, nothing stuck");
   }
 
@@ -122,6 +162,9 @@ export const mindfulReport = (view: MindfulView, team?: string): string => {
     }
     lines.push("");
   }
+
+  // Also broken, just outside a turn: a worker that died, a PR nobody is driving.
+  if (work.length > 0) lines.push(...work, "");
 
   if (view.live.length > 0) {
     lines.push(`*running now* - ${view.live.length}`);

@@ -104,7 +104,11 @@ import { createActivityLog } from "./infrastructure/logger.ts";
 import type { CommandLogRepo } from "./infrastructure/db/commandLogRepo.ts";
 import type { LlmPort, ToolTraceSink, UsageSink } from "./application/ports.ts";
 import { createToolTraceLog, readTraceCalls } from "./infrastructure/llm/toolTraceLog.ts";
-import { createBackgroundAgents } from "./infrastructure/llm/backgroundAgents.ts";
+import { createBackgroundAgents, defaultRunner } from "./infrastructure/llm/backgroundAgents.ts";
+import { createStuckWorkProbe } from "./infrastructure/system/stuckWorkProbe.ts";
+import { createStuckSweeper } from "./application/stuckSweeper.ts";
+import { SWEEP_TICK_MS } from "./domain/stuckWork.ts";
+import { teamFromPermalink } from "./domain/mindful.ts";
 import type { RespondDeps } from "./application/respond.ts";
 
 /**
@@ -280,6 +284,12 @@ const main = async () => {
   // Posts a turn's answer to the GitHub issue its thread was opened for, as the app.
   const githubCommentScript = join(import.meta.dir, "..", "bin", "github-app-comment.sh");
   const repoPath = join(import.meta.dir, "..");
+  const stuckWorkProbe = createStuckWorkProbe({
+    orca: createOrcaCli(),
+    gh: defaultRunner(repoPath),
+    traceDir: join(config.logDir, "threads"),
+    now: clock,
+  });
   // Model per role: a dashboard/command override wins, otherwise the env value,
   // otherwise the adapter default. Read per call so a change needs no restart.
   const modelsForRoles = () => {
@@ -490,6 +500,9 @@ const main = async () => {
     // `claude --bg` sessions and Orca workers a thread's turns started, so
     // `stop` ends those too - they live outside the turn's process tree.
     backgroundAgents: createBackgroundAgents({ traceDir: join(config.logDir, "threads"), claudeBin: config.claudeBin }),
+    // Orca tasks nobody is working and quiet PRs on this repo, for `mindful`
+    // and the sweeper's DM.
+    stuckWork: stuckWorkProbe.scan,
     reviewGuard: createReviewGuard(clock),
     system,
     threadSessionsOn: () => settings.get(SETTING_KEYS.threadSessions)?.trim().toLowerCase() !== "off",
@@ -991,6 +1004,32 @@ const main = async () => {
   }, WATCH_TICK_MS);
   (watchTimer as { unref?: () => void }).unref?.();
 
+  // Stuck work nobody is moving - a dispatched Orca task whose worker is gone,
+  // a PR on this repo with nothing new for 30 min - DMed to the owner every
+  // 15 min, each item at most once in a few hours. Starts no turn, so it keeps
+  // sweeping while a restart drains; the first sweep is a minute after boot,
+  // since restarts come more often than every 15 min.
+  const stuckSweeper = createStuckSweeper({
+    clock,
+    scan: stuckWorkProbe.scan,
+    settings,
+    seenKey: SETTING_KEYS.stuckSweepSeen,
+    ownerSlackId: config.ownerSlackId,
+    postDm: (user, text) => slackAdmin.postDm(user, text, SIGNATURES.stuckSweeper),
+    team: async (work) => {
+      const anchor = work.tasks.find((t) => t.owner)?.owner ?? work.prs.find((p) => p.owner)?.owner;
+      return anchor && slackAdmin.permalink
+        ? teamFromPermalink(await slackAdmin.permalink(anchor.channelId, anchor.threadTs))
+        : undefined;
+    },
+    prefix: config.commandPrefix,
+    log: (msg) => console.error(`[stuck-sweep] ${msg}`),
+  });
+  const firstSweep = setTimeout(() => void stuckSweeper.tick(), 60_000);
+  const sweepTimer = setInterval(() => void stuckSweeper.tick(), SWEEP_TICK_MS);
+  (firstSweep as { unref?: () => void }).unref?.();
+  (sweepTimer as { unref?: () => void }).unref?.();
+
   // Dead man's switch for the host's flaky connection: keeps an "I'm offline"
   // notice armed on Slack's side, so an outage gets reported even though the
   // host cannot reach Slack to say so. Runs while draining too - a restart is
@@ -1018,6 +1057,8 @@ const main = async () => {
   const shutdown = async () => {
     console.log("\nShutting down ...");
     clearInterval(watchTimer);
+    clearTimeout(firstSweep);
+    clearInterval(sweepTimer);
     clearInterval(alarmTimer);
     // A deliberate stop is not an outage. This covers `launchctl kickstart -k`
     // and a Mac shutting down or logging out too (all SIGTERM): a few unarmed

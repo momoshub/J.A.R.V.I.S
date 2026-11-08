@@ -303,6 +303,7 @@ export const SCHEDULE_COMMANDS: readonly CommandDef[] = [
           task: w.task,
           lastTurnAt: w.updatedAt,
         })),
+        stuckWork: await deps.stuckWork?.(),
         done,
         spend: deps.usage?.totals(since) ?? {
           runs: 0,
@@ -318,7 +319,11 @@ export const SCHEDULE_COMMANDS: readonly CommandDef[] = [
 
       // One permalink resolves the workspace domain; every other link is then
       // built from ids rather than costing an API call of its own.
-      const anchor = view.stuck[0] ?? view.workflows[0];
+      const anchor =
+        view.stuck[0] ??
+        view.workflows[0] ??
+        view.stuckWork?.tasks.find((t) => t.owner)?.owner ??
+        view.stuckWork?.prs.find((p) => p.owner)?.owner;
       const resolved =
         team ??
         (anchor && deps.slack?.permalink

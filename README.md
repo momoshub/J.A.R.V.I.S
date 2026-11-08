@@ -125,6 +125,7 @@ Every command has two interfaces - use whichever you like. Both triggers are con
 | `rm-msg <message-link>` (aliases `rmmsg`, `unsend`) | admins | delete a message the bot posted (a bot token cannot delete anyone else's) |
 | `workflow <task>` / `workflow stop [<thread-link>]` / `workflow status` (alias `wf`) | executers+ | start a long task in this thread and keep talking to it (see [Workflows](#workflows)) |
 | `limit [@user] [n\|default]` (alias `quota`) | anyone (setting: admins) | show command allowance; admins set someone's |
+| `mindful [hours]` / `mindful continue\|reply <thread-link>` (aliases `mind`, `whatsup`) | admins | everything it is doing: stuck turns, Orca tasks whose worker is gone and quiet PRs on its own repo (each with the thread that started it), what is running and waiting, and what it cost - see [Stuck work](#stuck-work) |
 | `promote @user` / `demote @user` | owner | change role |
 
 A slash command is invisible to everyone but its caller, so the **owner gets a copy in their DM** - one thread per run: a header saying who ran what, with the progress and result threaded under it. Trivial commands (`help`, `ping`, `whoami`, `model`) are not copied, and the owner is never copied on their own.
@@ -495,6 +496,18 @@ running:
 
 It answers `503` when deaf, so an uptime check sees an outage instead of a
 process that happens to be alive.
+
+## Stuck work
+
+Every 15 minutes, outside any turn, the bot looks for work that died without
+saying so: Orca tasks still `dispatched` whose worker is gone (its terminal
+exited, it settled without reporting, or Orca no longer knows the dispatch),
+and open PRs on its own repo with no commit, comment or review for 30 minutes.
+It DMs the owner (`OWNER_SLACK_ID`) one short message listing what is new, each
+with the Slack thread whose turn started it, and does not repeat an item for 4
+hours - a restart does not reset that. When Orca or `gh` cannot be asked it
+says nothing rather than claim all is well; `mindful` shows the same lists on
+demand, with a "could not check" line when that happens.
 
 ## How the brain runs a command
 

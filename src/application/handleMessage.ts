@@ -5,6 +5,7 @@
  * All I/O is injected, so this reads as a straight line of business logic and is
  * covered by fast, deterministic tests.
  */
+import type { StuckWork } from "../domain/stuckWork.ts";
 import { decideAccess } from "../domain/access.ts";
 import { disabledRoleReason } from "../domain/rolePolicy.ts";
 import {
@@ -84,6 +85,8 @@ export type HandleMessageDeps = {
   follows?: FollowRepo;
   /** Reminders people asked for, for the `remind` command. */
   reminders?: ReminderRepo;
+  /** Dispatched Orca tasks with no live worker and quiet PRs on the bot's own repo, for `mindful`. */
+  stuckWork?: () => Promise<StuckWork>;
   /** The workspace domain, so `mindful` can print clickable thread links. */
   slackTeam?: () => string | undefined;
   /** Run a chat turn in a thread from outside the Slack handler (`mindful`). */

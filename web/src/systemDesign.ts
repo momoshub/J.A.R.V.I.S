@@ -40,6 +40,7 @@ export const LIMITS: Limit[] = [
   { label: "interactive ack wait", value: 2_500, unit: "ms", source: "src/domain/inbox.ts:ACK_WAIT_MS", why: "under Slack's 3s, so a modal's validation errors still arrive" },
   { label: "socket away before self-exit", value: 180_000, unit: "ms", source: "src/domain/connectionHealth.ts:CONNECTION_GRACE_MS", why: "a deaf socket looks alive; exiting lets launchd revive it" },
   { label: "offline notice lead", value: 600_000, unit: "ms", source: "src/domain/offlineAlarm.ts:OFFLINE_ALARM_LEAD_MS", why: "kept armed on Slack's side; Slack ignores a cancel within ~5 min of due" },
+  { label: "stuck-work sweep", value: 15 * 60_000, unit: "ms", source: "src/domain/stuckWork.ts:SWEEP_TICK_MS", why: "dead Orca workers and quiet PRs DMed to the owner; one item at most every 4h" },
   { label: "fastest watch poll", value: 15_000, unit: "ms", source: "src/domain/watch.ts:MIN_EVERY_MS", why: "a watch is a shell command on a timer" },
   { label: "longest watch", value: 6 * 60 * 60_000, unit: "ms", source: "src/domain/watch.ts:MAX_DEADLINE_MS", why: "a watch nobody ends is a leak with a timer" },
   { label: "always-on memory budget", value: 8_000, unit: "bytes", source: "src/domain/adapterCheck.ts:ALWAYS_ON_BUDGET", why: "what loads into every prompt; refine must get under it" },

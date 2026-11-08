@@ -30,6 +30,7 @@ import type { UsageRepo } from "../../infrastructure/db/usageRepo.ts";
 import type { TurnLogRepo } from "../../infrastructure/db/turnLogRepo.ts";
 import type { WatchRepo } from "../../infrastructure/db/watchRepo.ts";
 import type { ReminderRepo } from "../../infrastructure/db/reminderRepo.ts";
+import type { StuckWork } from "../../domain/stuckWork.ts";
 import type { FollowRepo } from "../../infrastructure/db/followRepo.ts";
 import type { WorkflowRepo } from "../../infrastructure/db/workflowRepo.ts";
 import type { CommandApprovalRepo } from "../../infrastructure/db/commandApprovalRepo.ts";
@@ -84,6 +85,8 @@ export type CommandDeps = {
   reminders?: ReminderRepo;
   /** Minutes east of UTC that reminder times are read in. Defaults to the host's. */
   tzOffsetMinutes?: () => number;
+  /** Dispatched Orca tasks with no live worker and quiet PRs on the bot's own repo, for `mindful`. */
+  stuckWork?: () => Promise<StuckWork>;
   /** The workspace domain, so `mindful` can print clickable thread links. */
   slackTeam?: () => string | undefined;
   /**
