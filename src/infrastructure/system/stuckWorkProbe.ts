@@ -19,6 +19,7 @@ import {
   prRef,
   quietPrs,
   RUN_WINDOW_MS,
+  terminalGone,
   traceStarts,
   type OwnerThread,
   type StuckTask,
@@ -26,7 +27,7 @@ import {
 } from "../../domain/stuckWork.ts";
 import type { CommandRunner } from "../llm/backgroundAgents.ts";
 import { readThreadTrace } from "../llm/toolTraceLog.ts";
-import { handleState, type OrcaRun } from "./orcaTerminal.ts";
+import type { OrcaRun } from "./orcaTerminal.ts";
 
 export type StuckWorkProbe = { scan: () => Promise<StuckWork> };
 
@@ -57,14 +58,23 @@ export type StuckWorkProbeConfig = {
   quietMs?: number;
 };
 
-/** Which thread started each dispatch and each PR, newest trace winning. */
+/** What one trace started, remembered until the file changes. */
+export type TraceCache = Map<string, { mtime: number; size: number; started: { dispatches: string[]; prs: string[] } }>;
+
+/**
+ * Which thread started each dispatch and each PR, newest trace winning. The
+ * reads are synchronous on the bot's loop (~0.4s cold over 27MB of traces
+ * here), so with a `cache` a trace is parsed again only when its mtime or size
+ * moved - a later sweep reads just the threads that ran since.
+ */
 export const findOwners = (
   traceDir: string,
   since: number,
+  cache?: TraceCache,
 ): { dispatches: Map<string, OwnerThread>; prs: Map<string, OwnerThread> } => {
   const dispatches = new Map<string, OwnerThread>();
   const prs = new Map<string, OwnerThread>();
-  const files: { channelId: string; threadTs: string; mtime: number }[] = [];
+  const files: { channelId: string; threadTs: string; mtime: number; size: number }[] = [];
   let channels: string[] = [];
   try {
     channels = readdirSync(traceDir);
@@ -82,8 +92,8 @@ export const findOwners = (
     for (const name of names) {
       if (!name.endsWith(".jsonl")) continue;
       try {
-        const mtime = statSync(join(traceDir, channelId, name)).mtimeMs;
-        if (mtime >= since) files.push({ channelId, threadTs: name.slice(0, -".jsonl".length), mtime });
+        const { mtimeMs: mtime, size } = statSync(join(traceDir, channelId, name));
+        if (mtime >= since) files.push({ channelId, threadTs: name.slice(0, -".jsonl".length), mtime, size });
       } catch {
         // gone between the listing and the stat
       }
@@ -92,15 +102,25 @@ export const findOwners = (
   files.sort((a, b) => a.mtime - b.mtime);
   for (const f of files) {
     const owner = { channelId: f.channelId, threadTs: f.threadTs };
-    const started = traceStarts(readThreadTrace(traceDir, f.channelId, f.threadTs, OWNER_TRACE_BYTES));
+    const key = `${f.channelId}/${f.threadTs}`;
+    const hit = cache?.get(key);
+    const started =
+      hit && hit.mtime === f.mtime && hit.size === f.size
+        ? hit.started
+        : traceStarts(readThreadTrace(traceDir, f.channelId, f.threadTs, OWNER_TRACE_BYTES));
+    cache?.set(key, { mtime: f.mtime, size: f.size, started });
     for (const d of started.dispatches) dispatches.set(d, owner);
     for (const p of started.prs) prs.set(p, owner);
   }
+  // A trace gone or out of the window is not remembered either.
+  const live = new Set(files.map((f) => `${f.channelId}/${f.threadTs}`));
+  for (const key of cache?.keys() ?? []) if (!live.has(key)) cache?.delete(key);
   return { dispatches, prs };
 };
 
 export const createStuckWorkProbe = (config: StuckWorkProbeConfig): StuckWorkProbe => {
   const orcaJson = (args: readonly string[]) => config.orca(["orchestration", ...args, "--json"]);
+  const traces: TraceCache = new Map();
 
   const runIds = async (): Promise<string[] | undefined> => {
     const since = config.now() - RUN_WINDOW_MS;
@@ -141,7 +161,7 @@ export const createStuckWorkProbe = (config: StuckWorkProbeConfig): StuckWorkPro
       }
       if (!t.assignee) return undefined;
       const shown = await config.orca(["terminal", "show", "--terminal", t.assignee, "--json"]);
-      return handleState(shown.stdout, t.assignee) === "gone" ? { ...t, why: "its terminal is gone" } : undefined;
+      return terminalGone(shown.stdout, t.assignee) ? { ...t, why: "its terminal is gone" } : undefined;
     });
     return checked
       .filter((t): t is NonNullable<typeof t> => t !== undefined)
@@ -150,7 +170,8 @@ export const createStuckWorkProbe = (config: StuckWorkProbeConfig): StuckWorkPro
 
   const quiet = async (problems: string[]) => {
     const out = await config.gh([
-      "gh", "pr", "list", "--state", "open", "--limit", String(PR_LIMIT),
+      // Least recently updated first: past the limit it is the busy ones that drop.
+      "gh", "pr", "list", "--state", "open", "--search", "sort:updated-asc", "--limit", String(PR_LIMIT),
       "--json", "number,title,url,createdAt,commits,comments,reviews",
     ]);
     const prs = out.code === 0 ? parseOpenPrs(out.stdout) : undefined;
@@ -158,6 +179,7 @@ export const createStuckWorkProbe = (config: StuckWorkProbeConfig): StuckWorkPro
       problems.push(`open PRs (\`gh pr list\` failed: ${(out.stderr.trim() || `exit ${out.code}`).split("\n")[0]?.slice(0, 80)})`);
       return [];
     }
+    if (prs.length >= PR_LIMIT) problems.push(`open PRs past the ${PR_LIMIT} least recently updated`);
     return quietPrs(prs, config.now(), config.quietMs);
   };
 
@@ -167,7 +189,7 @@ export const createStuckWorkProbe = (config: StuckWorkProbeConfig): StuckWorkPro
         const problems: string[] = [];
         const [tasks, prs] = await Promise.all([stuckTasks(problems), quiet(problems)]);
         if (tasks.length === 0 && prs.length === 0) return { tasks: [], prs: [], problems };
-        const owners = findOwners(config.traceDir, config.now() - OWNER_TRACE_WINDOW_MS);
+        const owners = findOwners(config.traceDir, config.now() - OWNER_TRACE_WINDOW_MS, traces);
         const withOwner = <T>(item: T, owner: OwnerThread | undefined): T => (owner ? { ...item, owner } : item);
         return {
           tasks: tasks.map((t) => withOwner(t, t.dispatchId ? owners.dispatches.get(t.dispatchId) : undefined)),

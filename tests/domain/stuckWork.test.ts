@@ -6,6 +6,7 @@ import {
   parseOpenPrs,
   parseRunPage,
   parseSeen,
+  terminalGone,
   prRef,
   quietPrs,
   REPEAT_AFTER_MS,
@@ -59,6 +60,20 @@ describe("orca output", () => {
     expect(deadWorkerReason('{"ok":true,"result":{"state":"ready","liveness":"exited"}}')).toBe("worker exited");
     expect(deadWorkerReason('{"ok":true,"result":{"state":"failed","liveness":"live"}}')).toBe("worker failed, never reported");
     expect(deadWorkerReason('{"ok":true,"result":{"state":"ready","stage":"settled"}}')).toBe("worker settled, never reported");
+  });
+
+  test("a settled worker whose process is live may be waiting on an answer, so it is not dead", () => {
+    expect(deadWorkerReason('{"ok":true,"result":{"state":"ready","stage":"settled","liveness":"live"}}')).toBeUndefined();
+  });
+
+  test("a terminal is gone only on proof, never on some other error", () => {
+    expect(terminalGone('{"ok":false,"error":{"code":"terminal_handle_stale"}}', "term_x")).toBe(true);
+    expect(terminalGone('{"ok":false,"error":{"code":"terminal_not_found"}}', "term_x")).toBe(true);
+    expect(terminalGone('{"ok":true,"result":{"terminal":{"handle":"term_x","orphaned":true}}}', "term_x")).toBe(true);
+    expect(terminalGone('{"ok":true,"result":{"terminal":{"handle":"term_y"}}}', "term_x")).toBe(true);
+    expect(terminalGone('{"ok":true,"result":{"terminal":{"handle":"term_x"}}}', "term_x")).toBe(false);
+    expect(terminalGone('{"ok":false,"error":{"code":"runtime_not_ready"}}', "term_x")).toBe(false);
+    expect(terminalGone("", "term_x")).toBe(false);
   });
 });
 

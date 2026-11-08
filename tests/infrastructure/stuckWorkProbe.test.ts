@@ -2,7 +2,8 @@ import { describe, expect, test } from "bun:test";
 import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { createStuckWorkProbe } from "../../src/infrastructure/system/stuckWorkProbe.ts";
+import { appendFileSync } from "node:fs";
+import { createStuckWorkProbe, findOwners, type TraceCache } from "../../src/infrastructure/system/stuckWorkProbe.ts";
 import type { CommandRunner } from "../../src/infrastructure/llm/backgroundAgents.ts";
 
 const NOW = Date.parse("2026-11-08T12:00:00Z");
@@ -102,5 +103,49 @@ describe("stuck work probe", () => {
     });
     const probe = createStuckWorkProbe({ orca: orca.run, gh: ghFake("[]"), traceDir: "/nonexistent", now: () => NOW });
     expect((await probe.scan()).tasks).toEqual([]);
+  });
+
+  test("a task with no dispatch is not reported when Orca answers some other error", async () => {
+    const orca = orcaFake({
+      "orchestration run-list": '{"ok":true,"result":{"runs":[{"id":"run_1"}]}}',
+      "orchestration task-list --run run_1": '{"ok":true,"result":{"tasks":[{"id":"t","status":"dispatched","title":"x","assignee":"term_x"}]}}',
+      "terminal show --terminal term_x": '{"ok":false,"error":{"code":"runtime_not_ready"}}',
+    });
+    const probe = createStuckWorkProbe({ orca: orca.run, gh: ghFake("[]"), traceDir: "/nonexistent", now: () => NOW });
+    expect((await probe.scan()).tasks).toEqual([]);
+  });
+
+  test("PRs are read least recently updated first, and hitting the limit is said", async () => {
+    const seen: string[][] = [];
+    const many = JSON.stringify(
+      Array.from({ length: 25 }, (_, i) => ({
+        number: i + 1, title: "", url: `https://github.com/o/r/pull/${i + 1}`, createdAt: "2026-11-08T11:59:00Z", commits: [], comments: [], reviews: [],
+      })),
+    );
+    const gh: CommandRunner = async (cmd) => {
+      seen.push([...cmd]);
+      return { code: 0, stdout: many, stderr: "" };
+    };
+    const probe = createStuckWorkProbe({ orca: orcaFake({}).run, gh, traceDir: "/nonexistent", now: () => NOW });
+    const work = await probe.scan();
+    expect(seen[0]?.join(" ")).toContain("--search sort:updated-asc");
+    expect(work.problems.join(" ")).toContain("past the 25 least recently updated");
+  });
+
+  test("a trace is parsed again only once it changed", () => {
+    const dir = traceDir();
+    const cache: TraceCache = new Map();
+    expect(findOwners(dir, 0, cache).prs.get("o/r#7")).toEqual({ channelId: "C1", threadTs: "100.1" });
+    const before = cache.get("C1/100.1");
+    findOwners(dir, 0, cache);
+    expect(cache.get("C1/100.1")?.started).toBe(before?.started);
+    appendFileSync(
+      join(dir, "C1", "100.1.jsonl"),
+      "\n" + JSON.stringify({ kind: "call", id: "c", name: "Bash", input: JSON.stringify({ command: "gh pr create" }) }) +
+        "\n" + JSON.stringify({ kind: "result", id: "c", output: "https://github.com/o/r/pull/8" }),
+    );
+    expect(findOwners(dir, 0, cache).prs.has("o/r#8")).toBe(true);
+    expect(findOwners(dir, Date.now() + 60_000, cache).prs.size).toBe(0);
+    expect(cache.size).toBe(0);
   });
 });

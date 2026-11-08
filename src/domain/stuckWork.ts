@@ -17,7 +17,6 @@
  * was already said recently.
  */
 import { stuckWorkLines } from "./mindful.ts";
-import { orcaWorkerLiveness, type Liveness } from "./threadBackground.ts";
 
 /** The Slack thread whose turns started something. */
 export type OwnerThread = { readonly channelId: string; readonly threadTs: string };
@@ -120,19 +119,40 @@ export const parseDispatchedTasks = (stdout: string): DispatchedTask[] | undefin
   });
 };
 
+const FINAL_STATES = new Set(["succeeded", "failed", "cancelled", "stopped"]);
+
 /**
- * Why a dispatched task's worker is not live, or undefined when it is (or
- * Orca could not say - an unanswered check is never reported as dead).
+ * Why a dispatched task's worker is not live, from `worker-show --json`, or
+ * undefined when it is - or might be. Only proof counts: the dispatch is
+ * unknown to Orca, its process exited, or it reached a final state without the
+ * task moving on. A `settled` stage whose process is still live is NOT dead: a
+ * worker parked on `orchestration ask` waits for an answer, and Orca calls a
+ * waiting worker healthy. An unanswered or unreadable check is never dead.
  */
 export const deadWorkerReason = (workerShowStdout: string): string | undefined => {
-  const liveness: Liveness = orcaWorkerLiveness(workerShowStdout);
-  if (liveness !== "gone") return undefined;
   const r = parseJson(workerShowStdout);
-  if (!isRecord(r) || r.ok !== true || !isRecord(r.result)) return "dispatch not found";
-  const { state, liveness: l, stage } = r.result;
-  if (l === "exited") return "worker exited";
-  if (typeof state === "string" && state !== "ready") return `worker ${state}, never reported`;
-  return stage === "settled" ? "worker settled, never reported" : "worker gone";
+  if (!isRecord(r)) return undefined;
+  if (r.ok !== true) return isRecord(r.error) && r.error.code === "dispatch_not_found" ? "dispatch not found" : undefined;
+  if (!isRecord(r.result)) return undefined;
+  const { state, liveness, stage } = r.result;
+  if (liveness === "exited") return "worker exited";
+  if (typeof state === "string" && FINAL_STATES.has(state)) return `worker ${state}, never reported`;
+  if (stage === "settled" && liveness !== "live") return "worker settled, never reported";
+  return undefined;
+};
+
+/**
+ * Whether `orca terminal show --json` proves a terminal gone: Orca answered
+ * and does not know the handle (stale or not found), or it is orphaned or
+ * another terminal. Any other error - a runtime not ready, a timeout, a code
+ * added later - is no proof, so the task is not reported.
+ */
+export const terminalGone = (stdout: string, handle: string): boolean => {
+  const r = parseJson(stdout);
+  if (!isRecord(r) || typeof r.ok !== "boolean") return false;
+  if (!r.ok) return isRecord(r.error) && (r.error.code === "terminal_handle_stale" || r.error.code === "terminal_not_found");
+  const t = isRecord(r.result) && isRecord(r.result.terminal) ? r.result.terminal : undefined;
+  return !!t && (t.handle !== handle || t.orphaned === true);
 };
 
 const newest = (rows: unknown, field: string): number =>
