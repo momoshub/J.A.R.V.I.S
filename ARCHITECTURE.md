@@ -104,7 +104,8 @@ no classes.
   turn answers on GitHub through `bin/github-app-comment.sh` ->
   `/api/github-app/comment`, ticketed and bound to that one issue.
 - **Self-update.** A fix lands through a PR that CI (`.github/workflows/ci.yml`)
-  passes, merged only by `bin/merge-when-green.sh`. When it touches runtime code
+  passes, merged only by `bin/merge-when-green.sh` (exit 4 at once on a PR that
+  conflicts with its base, which GitHub never runs CI on). When it touches runtime code
   (logic, commands, adapters, `bin/` scripts, or a mixed PR) a reviewer Orca worker
   reads it first, at most 2 rounds (rounds are PR comments, fixes are pushes); docs,
   prompt text, skills and dashboard UI need no reviewer. `bin/jarvis-restart.sh` runs typecheck and tests and only
