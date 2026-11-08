@@ -63,6 +63,7 @@ import { createShellCheck } from "./infrastructure/system/shellCheck.ts";
 
 import { createWorkflowRepo } from "./infrastructure/db/workflowRepo.ts";
 import { resumeContinues } from "./application/workflowContinue.ts";
+import { SIGNATURES } from "./domain/messageFooter.ts";
 import { WORKER_BILL_KIND } from "./application/workflow.ts";
 import { createAccessRequestRepo } from "./infrastructure/db/accessRequestRepo.ts";
 import { createCommandApprovalRepo } from "./infrastructure/db/commandApprovalRepo.ts";
@@ -335,7 +336,7 @@ const main = async () => {
   // Slack Web API + AI drafting, shared by the console and the power-tool commands.
   // retries: 0 so a rate-limited call fails fast instead of hanging.
   const slackWeb = new WebClient(config.slackBotToken, { retryConfig: { retries: 0 } });
-  const slackAdmin = createSlackAdmin(slackWeb);
+  const slackAdmin = createSlackAdmin(slackWeb, clock);
   const promptContext = () => ({
     botName: profile().name,
     base: settings.get(SETTING_KEYS.systemPrompt),
@@ -428,7 +429,7 @@ const main = async () => {
       // A turn nobody watched live can still answer with a note about not
       // answering; posted, it reads as the whole reply.
       if (result.kind !== "ignored" && result.text.trim() && !isSilenceNote(result.text)) {
-        await slackAdmin.post(channelId, result.text, threadTs);
+        await slackAdmin.post(channelId, result.text, threadTs, result.kind === "reply" ? result.by : undefined);
       }
     },
     disabledCommands,
@@ -631,7 +632,7 @@ const main = async () => {
         return runForBrain({
           quiet: isQuietCommand(line),
           start: (reply) => dispatchCommand(deps, user, ctx.channel, line, reply ? { ...opts, reply } : opts),
-          post: async (text) => void (await slackAdmin.post(ctx.channel, text, ctx.threadTs)),
+          post: async (text) => void (await slackAdmin.post(ctx.channel, text, ctx.threadTs, SIGNATURES.command)),
           handoffMs: RUN_HANDOFF_MS,
           onLateError: (e) => activity.error("command_failed", { command: line, result: String(e) }),
         });
@@ -730,7 +731,7 @@ const main = async () => {
     clock,
     check: createShellCheck(fullCwd),
     runTurn: deps.runTurn!,
-    say: async (channel, text, thread) => void (await slackAdmin.post(channel, text, thread)),
+    say: async (channel, text, thread) => void (await slackAdmin.post(channel, text, thread, SIGNATURES.watch)),
     // The enforced allowlist: a switched-off role's shell watches stop with it.
     mayRun: (id) => id === config.ownerSlackId || !!users.get(id),
     log: (msg) => console.error(`[watch] ${msg}`),
@@ -740,7 +741,7 @@ const main = async () => {
   const reminderSender = createReminderSender({
     reminders,
     clock,
-    post: async (channel, text, thread) => void (await slackAdmin.post(channel, text, thread)),
+    post: async (channel, text, thread) => void (await slackAdmin.post(channel, text, thread, SIGNATURES.reminder)),
     log: (msg) => console.error(`[remind] ${msg}`),
     onError: onDbError,
   });
@@ -757,9 +758,9 @@ const main = async () => {
     githubName: ghRequests.githubName,
     users,
     hasToken: (id) => claudeTokens.has(id),
-    post: async (channel, text, thread) => (await slackAdmin.post(channel, text, thread))?.ts,
+    post: async (channel, text, thread) => (await slackAdmin.post(channel, text, thread, SIGNATURES.reviewInbox))?.ts,
     runReview: async ({ actor, channelId, threadTs, line }) => {
-      const reply = async (text: string) => void (await slackAdmin.post(channelId, text, threadTs));
+      const reply = async (text: string) => void (await slackAdmin.post(channelId, text, threadTs, SIGNATURES.reviewInbox));
       const out = await dispatchCommand(deps, actor, channelId, line, {
         prefix: config.commandPrefix,
         slash: config.slashCommand,
@@ -794,7 +795,7 @@ const main = async () => {
         settings.get(SETTING_KEYS.githubAppChannel)?.trim() || settings.get(SETTING_KEYS.reviewInboxChannel)?.trim() || "",
       settings,
       users,
-      post: async (channel, text, thread) => (await slackAdmin.post(channel, text, thread))?.ts,
+      post: async (channel, text, thread) => (await slackAdmin.post(channel, text, thread, SIGNATURES.githubApp))?.ts,
       // The ordinary respond path as the caller: same queue, session, role
       // and token. Its reply goes in the thread like any turn's, and back to
       // the caller so a turn that never used the helper is still answered.
@@ -809,7 +810,9 @@ const main = async () => {
           following: false,
         });
         if (result.kind === "ignored") return "";
-        if (result.text.trim() && !isSilenceNote(result.text)) await slackAdmin.post(channelId, result.text, threadTs);
+        if (result.text.trim() && !isSilenceNote(result.text)) {
+          await slackAdmin.post(channelId, result.text, threadTs, SIGNATURES.githubApp);
+        }
         return result.text;
       },
       helperPath: githubCommentScript,
@@ -863,7 +866,7 @@ const main = async () => {
       },
       set: (at) => settings.set(SETTING_KEYS.innerChildCursor, String(at)),
     },
-    post: async (channel, text, thread) => (await slackAdmin.post(channel, text, thread)) ?? undefined,
+    post: async (channel, text, thread) => (await slackAdmin.post(channel, text, thread, SIGNATURES.innerChild)) ?? undefined,
     // The ordinary respond path, as the owner: same queue, same session, same
     // full access a fix needs. Its reply is posted like any turn's.
     runFix: async ({ channelId, threadTs, slackUserId, text }) => {
@@ -877,7 +880,7 @@ const main = async () => {
         following: false,
       });
       if (result.kind === "ignored") return "";
-      if (result.text.trim()) await slackAdmin.post(channelId, result.text, threadTs);
+      if (result.text.trim()) await slackAdmin.post(channelId, result.text, threadTs, SIGNATURES.innerChild);
       return result.text;
     },
     // Voice drift: a nudge run in the drifted thread as whoever that turn
@@ -905,7 +908,7 @@ const main = async () => {
             keepSession: true,
             unprompted: true,
           }),
-        post: (channel, text, threadTs) => slackAdmin.post(channel, text, threadTs),
+        post: (channel, text, threadTs) => slackAdmin.post(channel, text, threadTs, SIGNATURES.innerChild),
         workflowActive: (channel, threadTs) => !!workflows.activeFor(channel, threadTs),
         allowed: (id) => decideAccess(id, config.ownerSlackId, users.get).allowed,
       }),

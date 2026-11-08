@@ -15,6 +15,7 @@ import { createUserRepo } from "../../src/infrastructure/db/userRepo.ts";
 import { createMessageRepo } from "../../src/infrastructure/db/messageRepo.ts";
 import type { LlmPort, LlmStreamEvent } from "../../src/application/ports.ts";
 import type { RespondDeps } from "../../src/application/respond.ts";
+import { FOOTER_BLOCK_ID } from "../../src/domain/messageFooter.ts";
 
 const OWNER = "U0OWNER0001";
 
@@ -268,7 +269,32 @@ describe("createHandler streaming truth table", () => {
       streamUpdates: true,
     });
     await handle(msg("hi"));
-    expect(updates).toHaveLength(0);
+    // the one rewrite that signs it, never a reply_broadcast
+    expect(updates).toHaveLength(1);
+    expect(updates[0]?.reply_broadcast).toBeUndefined();
+  });
+
+  test("a streamed reply is signed Jarvis with when it was last updated, even with nothing to collapse", async () => {
+    const { handle, msg, updates } = build({
+      llm: streamingLlm("hello there", [{ type: "text", delta: "hello there" }]),
+      streamUpdates: true,
+    });
+    await handle(msg("hi", "000.9"));
+    expect(updates).toHaveLength(1);
+    const blocks = updates[0]?.blocks as { type: string; block_id?: string; elements?: { text?: string }[] }[];
+    const footer = blocks.at(-1);
+    expect(footer).toMatchObject({ type: "context", block_id: FOOTER_BLOCK_ID });
+    expect(footer?.elements?.[0]?.text).toMatch(/^Jarvis · .*updated <!date\^\d+\^/);
+  });
+
+  test("a plain post is signed too", async () => {
+    const posts: { text: string; blocks?: unknown[] }[] = [];
+    const r = build({ llm: streamingLlm("plain post"), streamUpdates: false });
+    await r.handle({ ...r.msg("hi"), say: async (m) => void posts.push(m) });
+    expect(posts).toHaveLength(1);
+    const blocks = posts[0]?.blocks as { type: string; block_id?: string; text?: { text?: string } }[];
+    expect(blocks[0]).toMatchObject({ type: "section", text: { text: "plain post" } });
+    expect(blocks.at(-1)).toMatchObject({ type: "context", block_id: FOOTER_BLOCK_ID });
   });
 
   test("a reply inside an existing thread stays in the thread", async () => {
@@ -277,7 +303,8 @@ describe("createHandler streaming truth table", () => {
       streamUpdates: true,
     });
     await handle(msg("hi", "000.9"));
-    expect(updates).toHaveLength(0);
+    expect(updates).toHaveLength(1);
+    expect(updates[0]?.reply_broadcast).toBeUndefined();
     expect(said).toHaveLength(0);
   });
 
@@ -486,9 +513,12 @@ describe("Block Kit the brain built", () => {
     expect(order).toEqual(["update", "turn"]);
     expect(updates[0]).toMatchObject({ channel: "C1", ts: "200.2", text: "Which?" });
     const blocks = updates[0]?.blocks as { type: string; elements?: { text?: string }[] }[];
-    expect(blocks.map((b) => b.type)).toEqual(["section", "actions", "context"]);
+    // the settled note, then the signature footer restamped by the edit
+    expect(blocks.map((b) => b.type)).toEqual(["section", "actions", "context", "context"]);
     expect(JSON.stringify(blocks[1])).toContain("jv:settled:a");
     expect(blocks[2]?.elements?.[0]?.text).toContain("<@U2> chose *Option A*");
+    expect(blocks[3]).toMatchObject({ block_id: FOOTER_BLOCK_ID });
+    expect(blocks[3]?.elements?.[0]?.text).toContain("Jarvis · updated <!date^");
   });
 
   const team = [
@@ -560,7 +590,14 @@ describe("Block Kit the brain built", () => {
       action: { action_id: "jv:settled:team", type: "checkboxes", selected_options: [] },
     });
     // a new block id each time, or Slack keeps the box as the person left it
-    expect(updates).toEqual([{ channel: "C1", ts: "200.2", text: "Team", blocks: [{ type: "actions", block_id: "team~", elements: [boxes] }] }]);
+    expect(updates).toEqual([
+      {
+        channel: "C1",
+        ts: "200.2",
+        text: "Team",
+        blocks: [{ type: "actions", block_id: "team~", elements: [boxes] }, expect.objectContaining({ block_id: FOOTER_BLOCK_ID })],
+      },
+    ]);
     expect(r.turns).toHaveLength(0);
 
     await r.onKitAction({

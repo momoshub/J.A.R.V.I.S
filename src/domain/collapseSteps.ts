@@ -16,6 +16,7 @@
  * arrive is how anyone knows it is alive. This is strictly an after.
  */
 import type { Block } from "./blockKit.ts";
+import { FOOTER_BLOCK_ID } from "./messageFooter.ts";
 
 export type FinishedStep = {
   readonly title: string;
@@ -70,7 +71,11 @@ export const collapseSteps = (steps: readonly FinishedStep[]): Collapsed | undef
 export const collapsedBlocks = (
   body: string,
   collapsed?: Collapsed,
-  /** `model · in 95.9k · out 10.6k · $1.30 · 3m 16s`, when the run reported it. */
+  /**
+   * The signed footer line (`Jarvis · model · in 95.9k · ... · 3m 16s · updated
+   * <time>`, see messageFooter.ts). When given, the grey block carries the
+   * footer's block_id so a later edit can restamp it.
+   */
   footer?: string,
 ): Block[] => {
   const blocks: Block[] = [];
@@ -80,7 +85,11 @@ export const collapsedBlocks = (
     ...(footer?.trim() ? [footer.trim()] : []),
   ];
   if (lines.length > 0) {
-    blocks.push({ type: "context", elements: [{ type: "mrkdwn", text: lines.join("\n") }] });
+    blocks.push({
+      type: "context",
+      ...(footer?.trim() ? { block_id: FOOTER_BLOCK_ID } : {}),
+      elements: [{ type: "mrkdwn", text: lines.join("\n") }],
+    });
   }
   return blocks;
 };

@@ -229,7 +229,11 @@ export type InboundMessage = {
 export const EMPTY_REPLY_FALLBACK = "I do not have anything useful to add there.";
 
 export type HandleResult =
-  | { kind: "reply"; text: string }
+  /**
+   * `by` names who wrote the reply when it is not plain Jarvis (a workflow
+   * worker, a command), for the footer signature (domain/messageFooter.ts).
+   */
+  | { kind: "reply"; text: string; by?: string }
   | { kind: "denied"; text: string }
   | { kind: "ignored" };
 

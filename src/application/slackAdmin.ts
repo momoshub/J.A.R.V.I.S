@@ -107,8 +107,13 @@ export type SlackAdminPort = {
    * with `chat:write`, so it is how a thread link gets built at all.
    */
   permalink?: (channel: string, ts: string) => Promise<string | undefined>;
-  /** Edit one of the bot's own messages. */
-  update: (channel: string, ts: string, text: string) => Promise<void>;
+  /**
+   * Edit one of the bot's own messages. Every post and edit below carries the
+   * signature footer (domain/messageFooter.ts): `by` names who wrote it, plain
+   * Jarvis when left out, and the footer's "updated" time is the moment of the
+   * call.
+   */
+  update: (channel: string, ts: string, text: string, by?: string) => Promise<void>;
   /** Delete one of the bot's own messages. */
   remove: (channel: string, ts: string) => Promise<void>;
   /** One message by its ts, top-level or inside a thread. */
@@ -121,12 +126,12 @@ export type SlackAdminPort = {
    * Post a message, optionally into a thread. Returns where it landed when the
    * transport knows, so a temporary notice can be taken down again.
    */
-  post: (channel: string, text: string, threadTs?: string) => Promise<PostedRef | void>;
+  post: (channel: string, text: string, threadTs?: string, by?: string) => Promise<PostedRef | void>;
   /**
    * Open (or reuse) a DM with a user and post there. Returns where it landed,
    * so a message can later be found again - matching a reaction to it, say.
    */
-  postDm: (userId: string, text: string) => Promise<PostedRef | undefined>;
+  postDm: (userId: string, text: string, by?: string) => Promise<PostedRef | undefined>;
   /**
    * DM a message with buttons on it. The transport owns how they are rendered;
    * callers only say what the buttons are and what they carry.
@@ -135,6 +140,7 @@ export type SlackAdminPort = {
     userId: string,
     text: string,
     actions: readonly InteractiveAction[],
+    by?: string,
   ) => Promise<PostedRef | undefined>;
   /**
    * Post a message with buttons into a channel or thread, rather than a DM.
@@ -146,6 +152,7 @@ export type SlackAdminPort = {
     text: string,
     actions: readonly InteractiveAction[],
     threadTs?: string,
+    by?: string,
   ) => Promise<PostedRef | undefined>;
   /**
    * Post a message carrying a picker (and optionally buttons).
@@ -159,9 +166,10 @@ export type SlackAdminPort = {
     text: string,
     menu: InteractiveMenu,
     threadTs?: string,
+    by?: string,
   ) => Promise<PostedRef | undefined>;
   /** Replace an interactive message's buttons with settled text. */
-  settleInteractive: (channel: string, ts: string, text: string) => Promise<void>;
+  settleInteractive: (channel: string, ts: string, text: string, by?: string) => Promise<void>;
   /** Add reactions to a message (tolerant of already-reacted / invalid names). Returns how many landed. */
   addReactions: (channel: string, ts: string, names: readonly string[]) => Promise<number>;
   /** The bot's own Slack user id, so it can recognise itself being tagged. */

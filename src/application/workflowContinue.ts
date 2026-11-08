@@ -24,6 +24,7 @@ import {
   pausedNotice,
 } from "../domain/workflowContinue.ts";
 import type { Clock } from "./ports.ts";
+import { SIGNATURES } from "../domain/messageFooter.ts";
 import type { Workflow } from "../domain/types.ts";
 import type { ThreadQueue } from "./threadQueue.ts";
 import type { RunRegistry } from "./runRegistry.ts";
@@ -44,7 +45,7 @@ export type ContinueDeps = {
   clock: Clock;
   /** The ordinary turn path, wired at the composition root. */
   runTurn?: (req: ContinueTurnRequest) => Promise<void>;
-  slack?: { post: (channel: string, text: string, threadTs?: string) => Promise<unknown> };
+  slack?: { post: (channel: string, text: string, threadTs?: string, by?: string) => Promise<unknown> };
   /** Timer for the next step; injected so tests need not wait. */
   continueTimer?: (fn: () => void, ms: number) => void;
   /** To tell whether the worker is busy before a steer kicks a step. */
@@ -178,7 +179,7 @@ export const afterWorkflowTurn = async (
   if (live.autoTurns >= AUTO_CONTINUE_CAP) {
     repo.clearContinue(live.id);
     try {
-      await deps.slack?.post(live.channelId, pausedNotice(AUTO_CONTINUE_CAP, prefix), live.threadTs);
+      await deps.slack?.post(live.channelId, pausedNotice(AUTO_CONTINUE_CAP, prefix), live.threadTs, SIGNATURES.workflowWorker);
     } catch {
       // a notice that cannot be posted is not worth failing the turn over
     }
@@ -212,7 +213,7 @@ export const afterFailedStep = async (
   deps.stepFailures?.set(live.id, failures);
   const retrying = deps.runTurn !== undefined && deps.stepFailures !== undefined && failures <= FAILED_STEP_RETRIES;
   try {
-    await deps.slack?.post(live.channelId, failedStepNotice(error, retrying, prefix), live.threadTs);
+    await deps.slack?.post(live.channelId, failedStepNotice(error, retrying, prefix), live.threadTs, SIGNATURES.workflowWorker);
   } catch {
     // the retry matters more than the notice
   }

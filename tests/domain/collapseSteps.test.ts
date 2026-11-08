@@ -1,4 +1,5 @@
 import { describe, expect, test } from "bun:test";
+import { FOOTER_BLOCK_ID } from "../../src/domain/messageFooter.ts";
 import { collapsedBlocks, collapseSteps, type FinishedStep } from "../../src/domain/collapseSteps.ts";
 
 const step = (title: string, failed = false): FinishedStep => ({ title, failed });
@@ -77,6 +78,12 @@ describe("one grey line, not two", () => {
     const blocks = collapsedBlocks("the answer", undefined, "claude-opus-5-5 · $0.02 · 0m 4s");
     expect(blocks).toHaveLength(2);
     expect(JSON.stringify(blocks[1])).toContain("$0.02");
+  });
+
+  test("the grey line carries the footer's block id only when a footer is in it", () => {
+    // so an edit later can find it and move its "updated" time on
+    expect(collapsedBlocks("the answer", undefined, "Jarvis · $0.02")[1]).toMatchObject({ block_id: FOOTER_BLOCK_ID });
+    expect(collapsedBlocks("the answer", { summary: "🔧 2 steps", failures: [] })[1]?.block_id).toBeUndefined();
   });
 
   test("neither one means no block at all, rather than an empty grey bar", () => {

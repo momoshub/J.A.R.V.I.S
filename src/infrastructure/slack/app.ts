@@ -58,6 +58,7 @@ import { couldFollowThread, followVerdict, isOneOnOneThread, isSpeech, startsAut
 import { unfollowOnReaction } from "../../application/followReaction.ts";
 import { collapsedBlocks, collapseSteps } from "../../domain/collapseSteps.ts";
 import { usageFooter } from "../../domain/usageFooter.ts";
+import { footerLine, restamp, signedText, SIGNATURES, withFooter } from "../../domain/messageFooter.ts";
 import { isSilenceNote } from "../../domain/silence.ts";
 import {
   decodeKitMeta,
@@ -435,7 +436,13 @@ export const createHandler =
       const parts = stream?.parts ?? [];
       const fail = (e: unknown) => log(`collapse failed: ${e instanceof Error ? e.message : String(e)}`);
       const collapsed = collapseSteps(stream?.steps ?? []);
-      const footer = stream?.usage ? usageFooter(stream.usage) : undefined;
+      // Signed and stamped now: this is the moment the message is written
+      // for the last time, so "updated" is when the turn finished.
+      const footer = footerLine(
+        (result.kind === "reply" ? result.by : undefined) ?? SIGNATURES.jarvis,
+        deps.clock(),
+        stream?.usage ? usageFooter(stream.usage) : undefined,
+      );
       const tidy = (text: string, withTail: boolean) => {
         const tailCollapsed = withTail ? collapsed : undefined;
         const tailFooter = withTail ? footer : undefined;
@@ -503,7 +510,9 @@ export const createHandler =
           for (const part of rest) {
             await msg.client.chat.delete?.({ channel: msg.channelId, ts: part.ts }).catch(fail);
           }
-        } else if (parts.length === 1 && stream?.ts && (collapsed || footer)) {
+        } else if (parts.length === 1 && stream?.ts) {
+          // Always rewritten now, not only when there is something to
+          // collapse: every message carries its signature footer.
           await msg.client.chat
             .update({ channel: msg.channelId, ts: stream.ts, ...tidy(result.text, true) })
             // A tidy-up that fails must leave the answer exactly as it was.
@@ -534,10 +543,11 @@ export const createHandler =
         // A reply carrying a ```blockkit fence posts as blocks, its prose in
         // markdown blocks around them; anything else stays a plain text post.
         // Blocks Slack refuses (`invalid_blocks`) fall back to the plain post.
+        // Either way it carries the signature footer.
         const rich = toBlockMessage(result.text, toMrkdwn);
         const extra = { thread_ts: msg.threadTs };
-        const plain = () => msg.say({ text: toMrkdwn(result.text), ...extra });
-        if (rich) await msg.say({ ...rich, ...extra }).catch(plain);
+        const plain = () => msg.say({ ...signedText(toMrkdwn(result.text), footer), ...extra });
+        if (rich) await msg.say({ ...rich, blocks: withFooter(rich.blocks, footer), ...extra }).catch(plain);
         else await plain();
       }
     } catch (err) {
@@ -552,7 +562,7 @@ export const createHandler =
         ? "that one ran past my time limit for a single turn, so I lost it. it usually means I was digging through a lot - ask me again with a narrower scope, or run it as a `workflow` which has no such limit"
         : "Sorry, I hit an error handling that. Please try again in a moment.";
       await msg
-        .say({ text, thread_ts: msg.threadTs })
+        .say({ ...signedText(text, footerLine(SIGNATURES.jarvis, deps.clock())), thread_ts: msg.threadTs })
         .catch(() => undefined);
     }
   };
@@ -676,7 +686,12 @@ export const createKitListeners = (
       // or unticked on screen has to go back to what was settled.
       if (snapsBack(action.type) && pressed?.ts && pressed.blocks && channel) {
         try {
-          await (client as KitClient).chat.update?.({ channel, ts: pressed.ts, text: pressed.text ?? "", blocks: snapBackBlocks(pressed.blocks) });
+          await (client as KitClient).chat.update?.({
+            channel,
+            ts: pressed.ts,
+            text: pressed.text ?? "",
+            blocks: restamp(snapBackBlocks(pressed.blocks), SIGNATURES.jarvis, Date.now()),
+          });
           log(`kit snap back ${actionId} on ${pressed.ts}`);
         } catch (err) {
           log(`kit snap back ${actionId} on ${pressed.ts} failed: ${slackRefusal(err)}`);
@@ -703,7 +718,12 @@ export const createKitListeners = (
         if (submit) lines = voteLines(current);
         latestBlocks.set(ts, blocks);
         try {
-          await (client as KitClient).chat.update?.({ channel, ts, text: pressed.text ?? "", blocks });
+          await (client as KitClient).chat.update?.({
+            channel,
+            ts,
+            text: pressed.text ?? "",
+            blocks: restamp(blocks, SIGNATURES.jarvis, Date.now()),
+          });
         } catch (err) {
           log(`kit vote ${actionId} on ${ts} failed: ${slackRefusal(err)}`);
         }
@@ -727,7 +747,11 @@ export const createKitListeners = (
           channel,
           ts: pressed.ts,
           text: pressed.text ?? "",
-          blocks: retireKit(pressed.blocks, pressedNote(by, pickedLabel(action)), actionId, picksOf(body.state?.values)),
+          blocks: restamp(
+            retireKit(pressed.blocks, pressedNote(by, pickedLabel(action)), actionId, picksOf(body.state?.values)),
+            SIGNATURES.jarvis,
+            Date.now(),
+          ),
         });
       } catch (err) {
         log(`kit lock ${actionId} on ${pressed.ts} failed: ${slackRefusal(err)}`);
@@ -802,7 +826,7 @@ export const retireOpenKit = async (
         channel: m.channel,
         ts: x.ts,
         text: x.text ?? "",
-        blocks: retireKit(x.blocks ?? [], repliedNote(m.user)),
+        blocks: restamp(retireKit(x.blocks ?? [], repliedNote(m.user)), SIGNATURES.jarvis, Date.now()),
       });
     }
     if (open.length) log(`kit retired ${open.length} open question(s) in ${m.channel}/${m.thread_ts}: answered in text`);
