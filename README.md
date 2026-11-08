@@ -106,7 +106,7 @@ Every command has two interfaces - use whichever you like. Both triggers are con
 | `whoami` | anyone | show your role |
 | `model` | anyone | show the brain and current model |
 | `ask <question>` | anyone | one-shot question to the brain |
-| `model [role\|here\|#channel] [name\|default]` | anyone (setting: admins) | show the brain; admins pin a model per role or channel |
+| `model [role\|subagent\|worker\|plan\|here\|#channel] [name\|default]` | anyone (setting: admins) | show the brain; admins pin a model per role or channel, or for subagents, Orca workers and planning |
 | `logsource [grafana,datadog\|default]` | anyone (setting: admins) | where it looks for logs - see [Investigating](#investigating) |
 | `forget` | anyone | wipe the bot's memory of this channel |
 | `sys` (alias `vitals`) | admins | how the host, the bot and Orca are doing, as Block Kit: a verdict header, cpu/memory/swap/disk/host/bot/turns fields, the last hour's trend, then Orca's runtime, active runs, workers by status and a table of live workers (one "unreachable" line when Orca is down or slow). The message text keeps the plain report as the fallback |
@@ -239,6 +239,29 @@ changes what anyone is *allowed* to do - a cheaper model is sandboxed
 identically. Preset tasks that force a policy keep their own model: `review`
 runs full-access whoever asked and wherever it is asked, so a pal's review in a
 cheap channel is still done properly.
+
+### Handed-off work: subagents, Orca workers, planning
+
+What a turn hands off runs on its own model, whatever the turn itself is on - an
+owner turn talks on Opus, but its helpers do not:
+
+| setting | default | what it covers |
+|---|---|---|
+| `model:subagent` | `sonnet` | Agent tool subagents in any turn (general-purpose, Explore, review child agents) |
+| `model:worker` | `sonnet` | Orca workers a turn starts (`worker-start`, `fanout`, the self-fix reviewer) |
+| `model:plan` | `opus` | the Plan subagent |
+
+```
+//bot model                     also lists these three
+//bot model worker haiku        pin one
+//bot model plan default        back to its default
+```
+
+Read per turn, so no restart. Subagents get `CLAUDE_CODE_SUBAGENT_MODEL`, and the
+built-in Explore and Plan agents are replaced through `--agents` with the same
+job and a pinned model, because both inherit the turn's model and ignore that
+variable. Workers get it through `BOT_WORKER_MODEL`, which the prompts pass to
+`orca ... --model`.
 
 ## Investigating
 

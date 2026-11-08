@@ -273,7 +273,28 @@ describe("dispatchCommand", () => {
 
     expect(await dispatchCommand(deps, pal, "C1", "model here haiku")).toContain("Only admins");
     expect(deps.settings.get("model:channel:C1")).toBeUndefined();
-    expect(await dispatchCommand(deps, actor(), "C1", "model banana haiku")).toContain("A role or a channel");
+    expect(await dispatchCommand(deps, actor(), "C1", "model banana haiku")).toContain("A role, an agent kind or a channel");
+  });
+
+  test("subagent, worker and plan models show their defaults and are set like a role's", async () => {
+    const deps = build();
+    deps.settings = createSettingsRepo(db);
+    expect(await dispatchCommand(deps, actor(), "C1", "model")).toContain(
+      "Handed-off work: subagent `sonnet`, worker `sonnet`, plan `opus`.",
+    );
+    expect(await dispatchCommand(deps, actor(), "C1", "model plan")).toContain("*plan* uses the default, `opus`");
+
+    expect(await dispatchCommand(deps, actor(), "C1", "model worker haiku")).toContain("*worker* now runs on `haiku`");
+    expect(deps.settings.get("model:worker")).toBe("haiku");
+    expect(await dispatchCommand(deps, actor(), "C1", "model")).toContain("worker `haiku`");
+
+    const pal = actor({ slackId: "U0PAL0001", role: "pal" });
+    expect(await dispatchCommand(deps, pal, "C1", "model subagent opus")).toContain("Only admins");
+    expect(deps.settings.get("model:subagent")).toBeUndefined();
+
+    await dispatchCommand(deps, actor(), "C1", "model worker default");
+    expect(deps.settings.get("model:worker")).toBe("");
+    expect(await dispatchCommand(deps, actor(), "C1", "model worker")).toContain("uses the default, `sonnet`");
   });
 
   test("model default clears the override, and junk is refused", async () => {

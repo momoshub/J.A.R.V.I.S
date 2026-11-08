@@ -79,6 +79,7 @@ import { WORKER_BILL_KIND } from "./application/workflow.ts";
 import { createAccessRequestRepo } from "./infrastructure/db/accessRequestRepo.ts";
 import { createCommandApprovalRepo } from "./infrastructure/db/commandApprovalRepo.ts";
 import { createSettingsRepo, modelKey, SETTING_KEYS } from "./infrastructure/db/settingsRepo.ts";
+import { agentModelEnv, agentModelsOf, builtinAgentOverrides } from "./domain/agentModels.ts";
 import { loadBotProfile } from "./application/botProfile.ts";
 import { seedOwner } from "./infrastructure/db/seed.ts";
 import { createAnthropicLlm } from "./infrastructure/llm/anthropic.ts";
@@ -137,6 +138,7 @@ const buildLlm = (
   onUsage?: UsageSink,
   onToolTrace?: ToolTraceSink,
   turnEnv?: () => Promise<Record<string, string | undefined>>,
+  agents?: () => Record<string, Record<string, unknown>>,
 ): LlmPort =>
   config.llmProvider === "claude-cli"
     ? createClaudeCliLlm({
@@ -148,6 +150,7 @@ const buildLlm = (
         onUsage,
         onToolTrace,
         turnEnv,
+        agents,
       })
     : createAnthropicLlm({
         // guaranteed present for this provider by config validation
@@ -384,10 +387,15 @@ const main = async () => {
         log: (line) => console.log(line),
       })
     : undefined;
-  const turnEnv = async () => ({ ORCA_TERMINAL_HANDLE: await orcaTerminal?.handle() });
+  // Subagent, Orca worker and Plan models, read per turn like the role models.
+  const agentModels = () => agentModelsOf((kind) => settings.get(modelKey(kind)));
+  const turnEnv = async () => ({
+    ORCA_TERMINAL_HANDLE: await orcaTerminal?.handle(),
+    ...agentModelEnv(agentModels()),
+  });
   // Checked once at boot, so the first turn does not pay for it.
   void orcaTerminal?.handle();
-  const llm = buildLlm(config, fullCwd, recordUsage, toolTrace, turnEnv);
+  const llm = buildLlm(config, fullCwd, recordUsage, toolTrace, turnEnv, () => builtinAgentOverrides(agentModels()));
   console.log(`[llm] ${profile().name}'s brain: ${modelLabel(config)}`);
 
   // Slack Web API + AI drafting, shared by the console and the power-tool commands.

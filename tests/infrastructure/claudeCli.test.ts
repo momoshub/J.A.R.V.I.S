@@ -116,6 +116,24 @@ describe("createClaudeCliLlm", () => {
     expect(out).toBe("haiku");
   });
 
+  test("agent definitions go out as one --agents JSON argument, asked per turn", async () => {
+    // the fake echoes the argument after --agents
+    const bin = fakeBin(
+      `#!/usr/bin/env bash\ncat > /dev/null\nR=none\nwhile [ $# -gt 0 ]; do if [ "$1" = "--agents" ]; then R=$(printf %s "$2" | base64 | tr -d '\\n'); fi; shift; done\necho "{\\"type\\":\\"result\\",\\"subtype\\":\\"success\\",\\"is_error\\":false,\\"result\\":\\"$R\\"}"`,
+    );
+    let plan = "opus";
+    const llm = createClaudeCliLlm({ binPath: bin, agents: () => ({ Plan: { description: "d", prompt: "p", model: plan } }) });
+    const ask = async () =>
+      JSON.parse(Buffer.from(await llm.complete({ system: "s", messages: [{ role: "user", content: "hi" }] }), "base64").toString());
+    expect(await ask()).toEqual({ Plan: { description: "d", prompt: "p", model: "opus" } });
+    plan = "sonnet";
+    expect((await ask()).Plan.model).toBe("sonnet");
+
+    expect(await createClaudeCliLlm({ binPath: bin }).complete({ system: "s", messages: [{ role: "user", content: "hi" }] })).toBe(
+      "none",
+    );
+  });
+
   test("a named session passes its name to the CLI", async () => {
     // a thread's session is named after the thread, so another one can find it
     const bin = fakeBin(

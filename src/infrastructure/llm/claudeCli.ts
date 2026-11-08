@@ -53,6 +53,11 @@ export type ClaudeCliConfig = {
    * bot's own Orca terminal handle; an undefined value removes an inherited one.
    */
   turnEnv?: () => Promise<Record<string, string | undefined>>;
+  /**
+   * Agent definitions passed as `--agents`, asked fresh each turn. Replaces
+   * built-in agents of the same name, e.g. to pin Explore and Plan's models.
+   */
+  agents?: () => Record<string, Record<string, unknown>>;
 };
 
 /** A tool_result's content as text: a string, or the text parts of a block list. */
@@ -204,6 +209,8 @@ const buildArgs = (
   // not warrant the expensive default.
   const model = policy?.model ?? config.model;
   if (model) args.push("--model", model);
+  const agents = config.agents?.();
+  if (agents && Object.keys(agents).length > 0) args.push("--agents", JSON.stringify(agents));
   // A workflow keeps one CLI session alive across turns: claim the id on the
   // first call, resume it on every later one, and the model keeps its context.
   if (session) args.push(session.resume ? "--resume" : "--session-id", session.id);

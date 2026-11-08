@@ -457,6 +457,8 @@ describe("a message with several questions", () => {
     expect(out).toContain("Fall back to the Agent tool");
     expect(out).toContain("orca orchestration run-create");
     expect(out).toContain("worker-start --run <runId>");
+    // workers run on the worker model, even when the turn itself is on Opus
+    expect(out).toContain('--agent claude --model "$BOT_WORKER_MODEL" --json');
     expect(out).toContain(ORCA_BATCH_CHECK);
     // a worker that stops without reporting leaves its task blocked: that settles the batch, never as a success
     expect(out).toContain("A `blocked` task is NOT success: its worker either stopped without reporting or is parked on an `ask`");

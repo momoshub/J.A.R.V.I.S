@@ -50,6 +50,7 @@ describe("selfUpdateRules with a memory skill", () => {
     expect(short.indexOf("standalone reviewer agent")).toBeLessThan(short.indexOf("merge it yourself"));
     // the full rule still exists for the prompts that carry it whole
     expect(STANDALONE_REVIEW_RULE).toContain("orca orchestration worker-start");
+    expect(STANDALONE_REVIEW_RULE).toContain('--agent claude --model "$BOT_WORKER_MODEL" --json');
     expect(STANDALONE_REVIEW_RULE).toContain("At most 2 review rounds");
   });
 

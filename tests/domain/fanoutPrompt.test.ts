@@ -23,6 +23,12 @@ describe("fanoutPrompt", () => {
     expect(p).toContain("Never pad the count");
   });
 
+  test("workers start on the worker model, also through the bare-shell fallback", () => {
+    const p = fanoutPrompt("q", "Bot", ctx);
+    expect(p).toContain('--agent claude --model "$BOT_WORKER_MODEL" --prompt');
+    expect(p).toContain("claude --model $BOT_WORKER_MODEL --dangerously-skip-permissions");
+  });
+
   test("terminal commands take a handle, not a worktree", () => {
     // `orca terminal wait --worktree` is refused with invalid_argument
     expect(fanoutPrompt("q", "Bot", ctx)).toContain("take `--terminal <handle>`, not `--worktree`");
