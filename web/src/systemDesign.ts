@@ -132,9 +132,7 @@ export const erLayout = (tables: Table[] = TABLES) => {
  * loop out on the right edge, each relation a little further out so loops do
  * not sit on each other. Otherwise leave from the facing sides.
  */
-export const relationCurve = (a: Box, b: Box, lane = 0): [Pt, Pt, Pt, Pt] => {
-  const ay = a.y + 22;
-  const by = b.y + 22;
+export const relationCurve = (a: Box, b: Box, lane = 0, ay = a.y + 22, by = b.y + 22): [Pt, Pt, Pt, Pt] => {
   if (a.x === b.x) {
     const x = a.x + a.w;
     const out = 22 + lane * 9;
@@ -146,6 +144,12 @@ export const relationCurve = (a: Box, b: Box, lane = 0): [Pt, Pt, Pt, Pt] => {
   return [{ x: ax, y: ay }, { x: mid, y: ay }, { x: mid, y: by }, { x: bx, y: by }];
 };
 
+/** The y of a column's row inside a drawn table, or the header when the table has no such column. */
+const rowY = (t: Table | undefined, box: Box, col: string): number => {
+  const i = t?.cols.findIndex((c) => c.name === col) ?? -1;
+  return i < 0 ? box.y + 22 : box.y + ER.headH + 10 + i * ER.rowH;
+};
+
 export const cubicAt = ([p0, p1, p2, p3]: [Pt, Pt, Pt, Pt], t: number): Pt => {
   const u = 1 - t;
   return {
@@ -154,10 +158,16 @@ export const cubicAt = ([p0, p1, p2, p3]: [Pt, Pt, Pt, Pt], t: number): Pt => {
   };
 };
 
-/** Each relation's curve, with same-column loops given their own lane per column. */
+/**
+ * Each relation's curve. A line leaves from the row of the column it joins on,
+ * same-column loops get their own lane, and lines arriving at one table are
+ * fanned a few pixels apart so no arrowhead lands on another line's start.
+ */
 export const erRelations = () => {
   const { pos } = erLayout();
+  const byName = new Map(TABLES.map((t) => [t.name, t]));
   const lanes = new Map<number, number>();
+  const arrivals = new Map<string, number>();
   return RELATIONS.flatMap((r) => {
     const a = pos.get(r.from);
     const b = pos.get(r.to);
@@ -167,7 +177,12 @@ export const erRelations = () => {
       lane = lanes.get(a.x) ?? 0;
       lanes.set(a.x, lane + 1);
     }
-    return [{ rel: r, curve: relationCurve(a, b, lane) }];
+    const n = arrivals.get(r.to) ?? 0;
+    arrivals.set(r.to, n + 1);
+    const key = r.on.split(/[ ,]/)[0] ?? "";
+    const ay = rowY(byName.get(r.from), a, key);
+    const by = rowY(byName.get(r.to), b, key) + n * 6;
+    return [{ rel: r, curve: relationCurve(a, b, lane, ay, by) }];
   });
 };
 
