@@ -17,7 +17,7 @@ import { requestAccess } from "./accessRequests.ts";
 import { reviewRequestIn } from "../domain/reviewRequest.ts";
 import { busyNotice, nameOfRequest } from "../domain/runControl.ts";
 import { sessionThreadKey } from "../domain/agentSession.ts";
-import type { RunRegistry } from "./runRegistry.ts";
+import { isRestartCut, type RunRegistry } from "./runRegistry.ts";
 import type { ThreadQueue } from "./threadQueue.ts";
 import type { UserRole } from "../domain/types.ts";
 import type { PostedRef } from "./slackAdmin.ts";
@@ -137,6 +137,7 @@ export const respond = async (
       messageTs: inbound.messageTs,
       startedAt: deps.clock(),
       ...(workflowThread ? { background: true } : {}),
+      ...(inbound.inboxRowId !== undefined ? { inboxRowId: inbound.inboxRowId } : {}),
     });
     // The "still working on ..." notice this message got, if it had to wait.
     let busy: PostedRef | undefined;
@@ -166,6 +167,14 @@ export const respond = async (
           endedAt: deps.clock(),
         });
       };
+      // Cut at its budget while a restart waits. A streamed turn that had
+      // already said something returns its fragment rather than throwing, so
+      // this is checked after the call as well as in the catch: the fragment
+      // is not the answer, and the next process picks the message up again.
+      const restartCut = (): HandleResult => {
+        record("stopped", "cut for a restart, picked up again after it");
+        return { kind: "ignored" };
+      };
       try {
         // A thread driving a workflow keeps talking to that session, not to the
         // ordinary chat brain - the session is the one holding the task.
@@ -187,6 +196,7 @@ export const respond = async (
                 (id) => deps.users.get(id)?.displayName,
               );
               const turn = await runWorkflowTurn(deps, workflow, who.user, text, false, sink, tracked?.signal);
+              if (isRestartCut(tracked?.signal)) return restartCut();
               if (steers.length > 0) deps.workflows?.dropSteers(workflow.id, steers.length);
               record("ok");
               // Stopped part way: whatever it said, nobody wants the next step.
@@ -201,6 +211,7 @@ export const respond = async (
               const digest = frontDigest(deps, workflow, threadKey);
               const text = cleanInboundText(inbound.text);
               const turn = await runFrontTurn(deps, workflow, who.user, text, digest, sink, tracked?.signal);
+              if (isRestartCut(tracked?.signal)) return restartCut();
               record("ok");
               if (turn.steers.length > 0 && !tracked?.signal.aborted) {
                 steerWorker(deps, workflow, who.user.slackId, turn.steers, threadKey);
@@ -213,6 +224,7 @@ export const respond = async (
         // someone who may no longer steer it, is not a chat message.
         if (inbound.autoContinue) return { kind: "ignored" };
         const result = await handleMessage(deps, inbound, sink, tracked?.signal);
+        if (isRestartCut(tracked?.signal)) return restartCut();
         // "ignored" is not a turn that happened - it was not for us, or it was
         // dropped before it began - so there is nothing to record about it.
         if (result.kind !== "ignored") record("ok");

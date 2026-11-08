@@ -8,7 +8,7 @@ import { homedir } from "node:os";
 import { join } from "node:path";
 import { z } from "zod";
 import { parseAllowedOwners } from "../domain/githubApp.ts";
-import { parseSelfPrAccounts, type SelfPrAccounts } from "../domain/selfUpdate.ts";
+import { parseSelfPrAccounts, RESTART_TURN_BUDGET_MS, type SelfPrAccounts } from "../domain/selfUpdate.ts";
 
 /** Where the GitHub App's credentials live by default: outside the repo, never in `.env`. */
 export const GITHUB_APP_DIR = join(homedir(), ".config", "jarvis", "github-app");
@@ -95,6 +95,10 @@ const schema = z
     // Unset: nobody is told. Also the inner child's voice-drift log channel
     // unless the `inner_child_drift_channel` setting names another.
     DRAIN_NOTICE_CHANNEL: z.string().optional(),
+    // While a restart waits, new messages still run, but each turn on this
+    // budget (ms). Past it the thread is told to hold on and the turn is cut,
+    // then picked up again by the next process on the same session.
+    RESTART_TURN_BUDGET_MS: z.coerce.number().int().positive().default(RESTART_TURN_BUDGET_MS),
     // Channel the offline alarm reports to: a notice armed on Slack's side
     // that posts by itself if the host loses its connection, and is edited to
     // "back online" when it returns. Unset: no alarm. An id, not a name: the
@@ -177,6 +181,8 @@ export type AppConfig = {
   logDir: string;
   /** Channel for the restart notice listing waiting threads; unset is silent. */
   drainNoticeChannel?: string;
+  /** How long a turn started while a restart waits may run before it is cut. */
+  restartTurnBudgetMs: number;
   /** Channel the offline alarm posts to when the host drops off; unset is off. */
   offlineAlarmChannel?: string;
   githubApp: {
@@ -244,6 +250,7 @@ export const loadConfig = (source: Record<string, string | undefined> = process.
     tokenKeyPath: env.TOKEN_KEY_PATH,
     logDir: env.LOG_DIR,
     ...(env.DRAIN_NOTICE_CHANNEL ? { drainNoticeChannel: env.DRAIN_NOTICE_CHANNEL } : {}),
+    restartTurnBudgetMs: env.RESTART_TURN_BUDGET_MS,
     ...(env.OFFLINE_ALARM_CHANNEL ? { offlineAlarmChannel: env.OFFLINE_ALARM_CHANNEL } : {}),
     githubApp: {
       ...(env.GITHUB_APP_ID?.trim() ? { appId: env.GITHUB_APP_ID.trim() } : {}),

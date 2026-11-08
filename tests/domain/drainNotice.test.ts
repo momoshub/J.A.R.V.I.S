@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { drainNotice, envelopeThread, unnotified } from "../../src/domain/drainNotice.ts";
+import { drainNotice, envelopeThread, unnotified, waitsForRestart } from "../../src/domain/drainNotice.ts";
 
 // The real shape the gateway stores: Bolt's `body`, i.e. the event WRAPPER
 // with the event at the top level - not nested under `payload`.
@@ -94,5 +94,27 @@ describe("drainNotice", () => {
     expect(text).toContain("- pending threads (2):");
     expect(text).toContain("  - https://x/a\n  - https://x/b");
     expect(drainNotice({ running: 1, deadlineMs })).not.toContain("pending threads");
+  });
+});
+
+describe("what waits for the next process while a restart is pending", () => {
+  const msg = (text: string, type = "message") => ({ type: "event_callback", event: { type, channel: "C1", user: "U1", text, ts: "1.1" } });
+  const P = ["X/jv", "!"];
+  test("plain chat runs on its budget", () => {
+    expect(waitsForRestart("events_api", msg("how is the deploy going?"), P)).toBe(false);
+    expect(waitsForRestart("events_api", msg("<@UBOT> what changed today", "app_mention"), P)).toBe(false);
+  });
+  test("a command, typed or spoken, waits: it cannot be cut and picked up again", () => {
+    expect(waitsForRestart("events_api", msg("X/jv workflow start ship it"), P)).toBe(true);
+    expect(waitsForRestart("events_api", msg("<@UBOT> X/jv review 12"), P)).toBe(true);
+    expect(waitsForRestart("events_api", msg("!ping"), P)).toBe(true);
+    expect(waitsForRestart("events_api", msg("x/JV status"), P)).toBe(true);
+    expect(waitsForRestart("events_api", msg("<@UBOT> review https://github.com/o/r/pull/9 please", "app_mention"), P)).toBe(true);
+  });
+  test("slash commands and buttons wait; other events (reactions, stop) do not", () => {
+    expect(waitsForRestart("slash_commands", { command: "/jv" }, P)).toBe(true);
+    expect(waitsForRestart("interactive", { type: "block_actions" }, P)).toBe(true);
+    expect(waitsForRestart("events_api", { event: { type: "reaction_added" } }, P)).toBe(false);
+    expect(waitsForRestart("events_api", { event: { type: "agent_session_stopped" } }, P)).toBe(false);
   });
 });

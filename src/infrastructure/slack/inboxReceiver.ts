@@ -14,7 +14,7 @@
 import type { ConnectionHealth } from "../../domain/connectionHealth.ts";
 import { gatewayHealth } from "../../domain/inbox.ts";
 import { envelopeThread, unnotified } from "../../domain/drainNotice.ts";
-import type { InboxRepo, Interrupted } from "../inbox/inboxRepo.ts";
+import type { InboxRepo, InboxRow, Interrupted } from "../inbox/inboxRepo.ts";
 
 /**
  * What Bolt adds to a listener's `context` for a row from the inbox. Named so
@@ -52,9 +52,24 @@ export type InboxReceiverOptions = {
    * any row is handed out, so a retry's answer never lands above the notice.
    */
   readonly onInterrupted?: (row: Interrupted) => Promise<void>;
+  /**
+   * A row claimed while a restart waits has run past its budget. Cut what it
+   * started and tell the thread; return whether anything was cut. Only then
+   * is the row marked cut and left running for the next process to pick up.
+   * Something that cannot be cut (no turn to stop) is left to finish.
+   */
+  readonly onOverBudget?: (rowId: number) => boolean;
+  /**
+   * While a restart waits, rows this answers true for are not claimed: they
+   * stay pending for the next process (commands, slash commands, buttons -
+   * work that cannot be cut at a budget and picked up again).
+   */
+  readonly waitsForRestart?: (row: InboxRow) => boolean;
 };
 
 export const INBOX_POLL_MS = 100;
+/** How far past the batch to look for held-back rows behind chat that is about to be claimed. */
+const HELD_LOOKAHEAD = 200;
 /** Old finished rows are swept roughly hourly. */
 const PRUNE_EVERY_MS = 60 * 60_000;
 
@@ -66,10 +81,17 @@ export const createInboxReceiver = (opts: InboxReceiverOptions) => {
   let lastPrune = 0;
   // A pending restart stops taking rows; the gateway keeps queueing them.
   let paused = false;
+  // Set while a restart waits: rows claimed from then on run on this budget.
+  let budgetMs: number | undefined;
   /** Threads already told that a restart is holding their message. */
   const told = new Set<string>();
-  let waiting: { channel: string; threadTs?: string }[] = [];
-  const inFlight = new Set<number>();
+  const waiting: { channel: string; threadTs?: string }[] = [];
+  /**
+   * Rows handed to Bolt and not yet finished. `budgeted` rows were claimed
+   * while a restart waits; `checked` once their budget ran out and they were
+   * looked at; `held` once cut for the restart - those are left running.
+   */
+  const inFlight = new Map<number, { claimedAt: number; budgeted: boolean; checked: boolean; held: boolean }>();
 
   const asPayload = (response: unknown): Record<string, unknown> | undefined =>
     typeof response === "object" && response !== null ? (response as Record<string, unknown>) : undefined;
@@ -78,9 +100,12 @@ export const createInboxReceiver = (opts: InboxReceiverOptions) => {
   const drain = (): Promise<void>[] => {
     if (!app || paused) return [];
     const target = app;
-    const rows = opts.inbox.claim(opts.batch ?? 20, now());
+    const defer = budgetMs !== undefined ? opts.waitsForRestart : undefined;
+    const rows = opts.inbox.claim(opts.batch ?? 20, now(), defer ? (row) => !defer(row) : undefined);
+    const claimedAt = now();
     return rows.map((row) => {
-      inFlight.add(row.id);
+      const flight = { claimedAt, budgeted: budgetMs !== undefined, checked: false, held: false };
+      inFlight.set(row.id, flight);
       return target
         .processEvent({
           body: row.body,
@@ -90,8 +115,12 @@ export const createInboxReceiver = (opts: InboxReceiverOptions) => {
           customProperties: { inboxRowId: row.id, inboxAttempt: row.attempts } satisfies InboxContext,
         })
         .then(
-          () => opts.inbox.finish(row.id, now()),
+          // A row cut for the restart stays running: the next process picks it up.
+          () => {
+            if (!flight.held) opts.inbox.finish(row.id, now());
+          },
           (err: unknown) => {
+            if (flight.held) return;
             const msg = err instanceof Error ? err.message : String(err);
             log(`row ${row.id} (${row.type}) failed: ${msg}`);
             opts.inbox.fail(row.id, msg, now());
@@ -102,17 +131,20 @@ export const createInboxReceiver = (opts: InboxReceiverOptions) => {
   };
 
   /**
-   * While paused, look at what is waiting and list each thread once.
+   * While paused, look at what is waiting and list each thread once. While a
+   * restart waits but the intake is still open, list only the rows held back
+   * for the next process (`waitsForRestart`): chat is still being answered.
    *
    * Nothing is claimed: the rows have to stay pending for the next process.
    * This exists because silence and death look identical from a thread - a
    * question, then "??", then "??" into nothing is how a planned restart gets
    * reported as a bug.
    */
-  const reassure = (): void => {
+  const reassure = (only?: (row: InboxRow) => boolean): void => {
     if (!opts.onDeferred) return;
-    const targets = opts.inbox
-      .peek(opts.batch ?? 20, now())
+    const batch = opts.batch ?? 20;
+    const rows = only ? opts.inbox.peek(batch + HELD_LOOKAHEAD, now()).filter(only) : opts.inbox.peek(batch, now());
+    const targets = rows
       .map((row) => envelopeThread(row.body))
       .filter((t): t is { channel: string; threadTs?: string } => !!t);
     const fresh = unnotified(targets, told);
@@ -128,10 +160,30 @@ export const createInboxReceiver = (opts: InboxReceiverOptions) => {
     }
   };
 
+  /**
+   * Cut the rows that started while a restart waits and ran past the budget.
+   * Each is looked at once: one that cannot be cut is left to finish, and the
+   * restart's own cap still bounds it.
+   */
+  const enforceBudget = (): void => {
+    if (budgetMs === undefined || !opts.onOverBudget) return;
+    for (const [id, f] of inFlight) {
+      if (!f.budgeted || f.checked || now() - f.claimedAt < budgetMs) continue;
+      f.checked = true;
+      if (!opts.onOverBudget(id)) continue;
+      f.held = true;
+      opts.inbox.markCutRow(id, now());
+      log(`row ${id} ran past its ${Math.round(budgetMs / 1000)}s budget while a restart waits; cut, the next process picks it up`);
+    }
+  };
+
   const tick = (): void => {
     try {
+      enforceBudget();
       if (paused) reassure();
       drain();
+      // After the claim, so the only rows left to list are the held-back ones.
+      if (!paused && budgetMs !== undefined && opts.waitsForRestart) reassure(opts.waitsForRestart);
       if (now() - lastPrune > PRUNE_EVERY_MS) {
         lastPrune = now();
         const gone = opts.inbox.prune(now());
@@ -179,18 +231,28 @@ export const createInboxReceiver = (opts: InboxReceiverOptions) => {
       }
     },
     /**
-     * Take no more rows. For a restart: the bot finishes what it has, and
-     * everything that arrives meanwhile waits in the inbox for the next process.
+     * Take no more rows. For a restart, once the turns from before it have
+     * finished: the bot finishes what it has, and everything that arrives
+     * meanwhile waits in the inbox for the next process.
      */
     pause: (): void => {
+      // The list carries on: commands held back while the budget was on were
+      // already told, and the notice keeps naming them.
       paused = true;
-      told.clear();
-      waiting = [];
+    },
+    /**
+     * A restart is waiting: keep taking rows, but each one claimed from now on
+     * runs on `ms` and is cut past it (`onOverBudget`).
+     */
+    budget: (ms: number): void => {
+      budgetMs = ms;
     },
     /** Mark the rows still running as cut by a planned restart. */
     markCut: (): number => opts.inbox.markCut(now()),
     /** Rows handed to Bolt and not yet finished. */
     inFlight: () => inFlight.size,
+    /** Rows in flight that were claimed before a restart was asked for. */
+    unbudgetedInFlight: () => [...inFlight.values()].filter((f) => !f.budgeted).length,
     /** Whether the gateway is hearing Slack, for /health and `sys`. */
     health: (): ConnectionHealth => gatewayHealth(opts.inbox.gateway(), now()),
     /** Exposed for tests: one poll, returning the dispatches it started. */

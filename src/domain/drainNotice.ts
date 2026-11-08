@@ -13,6 +13,7 @@
  * everyone else in it). It lists every thread that is waiting and is edited
  * as more queue up, once per thread, not once per message.
  */
+import { reviewRequestIn } from "./reviewRequest.ts";
 
 /** What the waiting thread is told about the restart itself. */
 export type DrainInfo = {
@@ -102,4 +103,28 @@ export const unnotified = (
     out.push({ ...t, key });
   }
   return out;
+};
+
+/**
+ * Whether a row should wait for the next process while a restart is pending,
+ * even though plain chat is still answered on a budget.
+ *
+ * Only a chat turn can be cut at its budget and picked up again on the same
+ * session. A command (typed with a prefix, or a spoken review request), a
+ * slash command or a button starts work that cannot be stopped part way, so
+ * it would hold the restart open until the cap and then run a second time.
+ * Those wait in the inbox, as every row did before budgets existed.
+ */
+export const waitsForRestart = (
+  type: string,
+  body: Record<string, unknown>,
+  commandPrefixes: readonly string[],
+): boolean => {
+  if (type !== "events_api") return true;
+  const event = body.event as Record<string, unknown> | undefined;
+  if (!event || (event.type !== "message" && event.type !== "app_mention")) return false;
+  const text = typeof event.text === "string" ? event.text : "";
+  const bare = text.replace(/^(\s*<@[^>]+>)+\s*/, "").trimStart().toLowerCase();
+  if (commandPrefixes.some((p) => p.trim() && bare.startsWith(p.trim().toLowerCase()))) return true;
+  return reviewRequestIn(text) !== undefined;
 };

@@ -15,9 +15,9 @@ import { isSilenceNote } from "./domain/silence.ts";
 import { openDatabase } from "./infrastructure/db/client.ts";
 import { createThreadSessionRepo } from "./infrastructure/db/threadSessionRepo.ts";
 import { createThreadQueue } from "./application/threadQueue.ts";
-import { RESTART_DELAY_MS, RESTART_MAX_WAIT_MS, restartWhenIdle } from "./domain/selfUpdate.ts";
+import { RESTART_DELAY_MS, RESTART_HOLD_NOTICE, RESTART_MAX_WAIT_MS, restartWhenIdle } from "./domain/selfUpdate.ts";
 import { isDbFileSwapped } from "./domain/dbHealth.ts";
-import { createRunRegistry } from "./application/runRegistry.ts";
+import { createRestartCutter, createRunRegistry, drainSettled } from "./application/runRegistry.ts";
 import { createSystemProbe, createSystemTracker } from "./infrastructure/system/systemProbe.ts";
 import { createTotpRepo } from "./infrastructure/db/totpRepo.ts";
 import {
@@ -76,7 +76,7 @@ import { createClaudeCliLlm } from "./infrastructure/llm/claudeCli.ts";
 import { WebClient } from "@slack/web-api";
 import { createSlackApp } from "./infrastructure/slack/app.ts";
 import { createInboxReceiver, tidyInterrupted } from "./infrastructure/slack/inboxReceiver.ts";
-import { drainNotice } from "./domain/drainNotice.ts";
+import { drainNotice, waitsForRestart } from "./domain/drainNotice.ts";
 import { interruptedNotice } from "./domain/inbox.ts";
 import { openInbox } from "./infrastructure/inbox/inboxRepo.ts";
 import { respond } from "./application/respond.ts";
@@ -373,7 +373,14 @@ const main = async () => {
   // socket from the moment it does and never trip over the order things are
   // built in.
   let slackApp:
-    | { health: () => ConnectionHealth; inFlight: () => number; pauseIntake: () => void; markCut: () => number }
+    | {
+        health: () => ConnectionHealth;
+        inFlight: () => number;
+        unbudgetedInFlight: () => number;
+        pauseIntake: () => void;
+        budgetIntake: (ms: number) => void;
+        markCut: () => number;
+      }
     | undefined;
   const runs = createRunRegistry();
   // Vitals, sampled on a timer: a snapshot answers "is it bad now", a short
@@ -526,10 +533,12 @@ const main = async () => {
   const uiAccess = createUiAccessProbe();
   // Exit, and let launchd bring us back. Deferred so the reply that asked
   // for it has landed, and held until no turn is running anywhere.
-  // Set once a restart is asked for. From then on no new work starts: the
-  // inbox is not read, timers that start turns hold, and pending workflow
-  // steps stay on their rows for the next process.
+  // Set once a restart is asked for. From then on timers that start turns
+  // hold and pending workflow steps stay on their rows for the next process.
+  // New messages are still read, each on a short budget, until the turns from
+  // before the request have finished; then the inbox is not read either.
   let draining = false;
+  let drainStartedAt = 0;
   // Kept for the notice a waiting thread gets: why, and when it gives up waiting.
   let drainReason = "";
   let drainDeadlineMs = 0;
@@ -539,9 +548,16 @@ const main = async () => {
     if (draining) return;
     draining = true;
     drainReason = reason;
-    drainDeadlineMs = Date.now() + RESTART_DELAY_MS + RESTART_MAX_WAIT_MS;
+    drainStartedAt = Date.now();
+    drainDeadlineMs = drainStartedAt + RESTART_DELAY_MS + RESTART_MAX_WAIT_MS;
     restartWhenIdle({
-      onDrain: () => slackApp?.pauseIntake(),
+      // New messages still run, but each on a budget: past it the thread is
+      // told to hold on and the turn is cut, to be picked up after.
+      onDrain: () => slackApp?.budgetIntake(config.restartTurnBudgetMs),
+      // Once nothing from before the request runs, take no new work, so the
+      // budgeted turns left are the last and the wait ends within a budget.
+      settled: () => drainSettled(runs, slackApp?.unbudgetedInFlight() ?? 0, drainStartedAt),
+      onSettled: () => slackApp?.pauseIntake(),
       // The rows still running are redelivered by the next process, at once
       // and on the same session, instead of being judged too old to pick up.
       onForce: () => {
@@ -693,6 +709,16 @@ const main = async () => {
         ? createInboxReceiver({
             inbox,
             log: (l) => activity.line(`inbox: ${l}`),
+            // A turn that started while a restart waits ran past its budget:
+            // cut it and tell its thread once; the next process picks it up.
+            onOverBudget: createRestartCutter(
+              runs,
+              (channelId, text, threadTs) => void slackAdmin.post(channelId, text, threadTs).catch(() => undefined),
+              RESTART_HOLD_NOTICE,
+            ),
+            // Commands, slash commands and buttons cannot be cut at a budget,
+            // so while a restart waits they stay in the inbox for the next process.
+            waitsForRestart: (row) => waitsForRestart(row.type, row.body, [config.commandPrefix, "!"]),
             onInterrupted: (row) =>
               tidyInterrupted(slackWeb, row, interruptedNotice(row.outcome, row.retried), (l) => activity.line(`inbox: ${l}`)),
             // Somebody wrote in while a restart holds the intake. Their

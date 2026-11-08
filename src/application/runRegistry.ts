@@ -43,6 +43,12 @@ export type TrackedRun = {
    * waiting for it only buys deafness.
    */
   readonly background?: boolean;
+  /**
+   * The gateway inbox row that started it, if any. A turn started while a
+   * restart waits runs on a budget, and past it the row is cut: this is how
+   * the row finds the turn to stop.
+   */
+  readonly inboxRowId?: number;
   /** Mutable: a stop flips it to `stopping`, which the next press must see. */
   state: RunState;
   /** Set once someone stops it; the Slack id of whoever did. */
@@ -91,7 +97,9 @@ export const createRunRegistry = (clock: () => number = () => Date.now()): RunRe
     entry.run.stoppedBy = by;
     entry.run.stoppedAt = clock();
     entry.run.state = "stopping";
-    entry.abort.abort();
+    // The reason is who stopped it, so a restart's cut can be told apart
+    // from a person pressing stop (`isRestartCut`).
+    entry.abort.abort(by);
     return entry.run;
   };
 
@@ -140,3 +148,68 @@ export type RunPressOutcome =
   | { kind: "refused" }
   | { kind: "ignored" };
 
+/** Who a restart's cut is recorded as, in place of a Slack id. */
+export const RESTART_STOPPER = "restart";
+
+/**
+ * Cut the turns an inbox row started, because it ran past its budget while a
+ * restart waits. Returns what was cut, one per run; empty when nothing of it
+ * is still running (it finished, or it was never a tracked turn), in which
+ * case the row is left alone.
+ */
+export const cutForRestart = (runs: RunRegistry, rowId: number): TrackedRun[] =>
+  runs
+    .all()
+    .filter((r) => r.inboxRowId === rowId)
+    .map((r) => runs.stop(r.id, RESTART_STOPPER))
+    .filter((r): r is TrackedRun => r !== undefined);
+
+/** Whether this turn was stopped by a restart's budget rather than by a person. */
+export const isRestartCut = (signal: AbortSignal | undefined): boolean =>
+  signal?.aborted === true && signal.reason === RESTART_STOPPER;
+
+/**
+ * Where to tell the cut turns to hold on: once per thread, and in the thread
+ * even for a top-level message, whose reply opens one under it.
+ */
+export const holdThreads = (cut: readonly TrackedRun[]): { channelId: string; threadTs?: string }[] => {
+  const seen = new Map<string, { channelId: string; threadTs?: string }>();
+  for (const r of cut) {
+    const threadTs = r.threadTs ?? r.messageTs;
+    const key = `${r.channelId}/${threadTs ?? ""}`;
+    if (!seen.has(key)) seen.set(key, threadTs ? { channelId: r.channelId, threadTs } : { channelId: r.channelId });
+  }
+  return [...seen.values()];
+};
+
+/**
+ * What the receiver calls when a row runs past its restart budget: cut the
+ * turns it started and tell each thread to hold on - once per thread for the
+ * whole drain, since two messages in one thread both run over within a tick
+ * of each other. True when something was cut.
+ */
+export const createRestartCutter = (
+  runs: RunRegistry,
+  post: (channelId: string, text: string, threadTs?: string) => void,
+  notice: string,
+): ((rowId: number) => boolean) => {
+  const told = new Set<string>();
+  return (rowId) => {
+    const cut = cutForRestart(runs, rowId);
+    for (const t of holdThreads(cut)) {
+      const key = `${t.channelId}/${t.threadTs ?? ""}`;
+      if (told.has(key)) continue;
+      told.add(key);
+      post(t.channelId, notice, t.threadTs);
+    }
+    return cut.length > 0;
+  };
+};
+
+/**
+ * Whether the work from before a restart was asked for is done: no inbox row
+ * claimed before it is still in flight, and no foreground turn that started
+ * before it is running or queued. Background (workflow) turns never count.
+ */
+export const drainSettled = (runs: RunRegistry, unbudgetedInFlight: number, drainStartedAt: number): boolean =>
+  unbudgetedInFlight === 0 && !runs.all().some((r) => !r.background && r.startedAt < drainStartedAt);
