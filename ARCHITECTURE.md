@@ -123,7 +123,7 @@ No I/O, no frameworks. Just data shapes and functions of their inputs.
 - `personality.ts`, `promptGuides.ts`, `conversation.ts`, `mentions.ts` - the system prompt from generic defaults + injected identity (procedure blocks as on-demand guide files for turns that can read them), context windowing, `<@ID>` annotation
 - `threadSession.ts`, `agentSession.ts` - one CLI session per thread and when it may be resumed
 - `adapter.ts`, `adapterCheck.ts` - memory as a checked, versioned directory (facts + skills) instead of an ever-growing list
-- `watch.ts`, `reminder.ts`, `selfUpdate.ts`, `runControl.ts` - waits, reminders, draining restart, stopping a turn
+- `watch.ts`, `reminder.ts`, `selfUpdate.ts`, `runControl.ts`, `threadBackground.ts` - waits, reminders, draining restart, stopping a turn and the background agents its thread started
 - `offlineAlarm.ts` - the dead man's switch notice and its back-online edit
 - `innerChild.ts`, `voiceDrift.ts` - the self-review triage, and the cheap voice-drift check, nudge and log lines
 - `githubApp.ts` - webhook signature, owner allowlist, trigger detection and what the GitHub App says
@@ -165,7 +165,7 @@ Concrete implementations of the seams and the transports.
 - `slack/adminClient.ts` - `SlackAdminPort` over the Slack Web API
 - `slack/offlineAlarmClient.ts` - the offline alarm's scheduled-message calls
 - `inbox/inboxRepo.ts` - the inbox queue shared by both processes
-- `llm/claudeCli.ts` - the default `LlmPort`, wraps the local `claude` CLI (`--resume`, `stream-json`, per-call policy -> `--allowedTools`/cwd/timeout, the timeout stopping the whole process tree); `killTree.ts`, `toolTraceLog.ts` support it
+- `llm/claudeCli.ts` - the default `LlmPort`, wraps the local `claude` CLI (`--resume`, `stream-json`, per-call policy -> `--allowedTools`/cwd/timeout, the timeout stopping the whole process tree); `killTree.ts`, `toolTraceLog.ts` support it; `backgroundAgents.ts` finds a thread's `claude --bg` sessions and Orca workers in its trace and stops them through their own CLIs for `stop`
 - `llm/anthropic.ts` - alternative `LlmPort` backed by the Anthropic API
 - `db/` - `bun:sqlite` client, schema + migrations, one repo per table (users, role policies, messages, sessions, watches, reminders, workflows, usage, turn and command logs, ...), `secretBox.ts` for encrypted tokens
 - `adapter/adapterStore.ts` - the memory adapter in the `adapter_files` table, mirrored to `data/adapter-mirror` so skills can be read by path

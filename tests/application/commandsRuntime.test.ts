@@ -6,6 +6,8 @@ import { dispatchCommand, type CommandDeps } from "../../src/application/command
 import type { TotpPort } from "../../src/application/totp.ts";
 import { parseTotpInput, totpCode } from "../../src/domain/totp.ts";
 import { OWNER, db, actor, build } from "./commandsFixture.ts";
+import type { BackgroundAgentsPort } from "../../src/application/ports.ts";
+import type { BackgroundStopResult } from "../../src/domain/threadBackground.ts";
 
 describe("stop command", () => {
   const tracked = (runs: ReturnType<typeof createRunRegistry>, over: Record<string, unknown> = {}) =>
@@ -58,6 +60,82 @@ describe("stop command", () => {
 
     await dispatchCommand(deps, actor(), "C1", "stop", { threadTs: "900.1" });
     expect(t.signal.aborted).toBe(true);
+  });
+
+  describe("background agents", () => {
+    const bgAgent = { kind: "claude-bg" as const, id: "cfaf8d7a", actor: OWNER };
+    const port = (result: BackgroundStopResult = { stopped: [bgAgent], failed: [], notYours: [] }) => {
+      const asked: { actor: string; mayStopOthers: boolean; channelId: string; threadTs: string }[] = [];
+      const backgroundAgents: BackgroundAgentsPort = {
+        stopForThread: async (q) => {
+          asked.push(q);
+          return result;
+        },
+      };
+      return { backgroundAgents, asked };
+    };
+
+    test("stopping the turn also stops what it started, and says so", async () => {
+      const deps = build();
+      const runs = createRunRegistry();
+      deps.runs = runs;
+      const { backgroundAgents, asked } = port();
+      deps.backgroundAgents = backgroundAgents;
+      const t = tracked(runs);
+      t.running();
+
+      const out = await dispatchCommand(deps, actor(), "C1", "stop", { threadTs: "900.1" });
+      expect(t.signal.aborted).toBe(true);
+      expect(out).toContain("stopped *the long one*");
+      expect(out).toContain("and 1 background agent it started (`cfaf8d7a`)");
+      expect(asked).toEqual([{ channelId: "C1", threadTs: "900.1", actor: OWNER, mayStopOthers: true }]);
+    });
+
+    test("with no turn running it still ends the earlier turns' agents", async () => {
+      const deps = build();
+      deps.runs = createRunRegistry();
+      deps.backgroundAgents = port().backgroundAgents;
+      const out = await dispatchCommand(deps, actor(), "C1", "stop", { threadTs: "900.1" });
+      expect(out).toBe("⏹ stopped 1 background agent this thread started (`cfaf8d7a`)");
+    });
+
+    test("nothing in the background keeps the plain answer", async () => {
+      const deps = build();
+      deps.runs = createRunRegistry();
+      deps.backgroundAgents = port({ stopped: [], failed: [], notYours: [] }).backgroundAgents;
+      expect(await dispatchCommand(deps, actor(), "C1", "stop", { threadTs: "900.1" })).toBe("Nothing is running in this thread.");
+    });
+
+    test("a pal refused the turn touches nothing, and only ever stops their own", async () => {
+      const deps = build();
+      const runs = createRunRegistry();
+      deps.runs = runs;
+      const { backgroundAgents, asked } = port();
+      deps.backgroundAgents = backgroundAgents;
+      const pal = actor({ slackId: "U0PAL0008", role: "pal" });
+      deps.users.upsert(pal);
+
+      const t = tracked(runs, { actor: "U-other" });
+      t.running();
+      expect(await dispatchCommand(deps, pal, "C1", "stop", { threadTs: "900.1" })).toContain("Only they or an admin");
+      expect(asked).toEqual([]);
+
+      t.done();
+      await dispatchCommand(deps, pal, "C1", "stop", { threadTs: "900.1" });
+      expect(asked).toEqual([{ channelId: "C1", threadTs: "900.1", actor: "U0PAL0008", mayStopOthers: false }]);
+    });
+
+    test("a port that throws never takes the turn's stop down with it", async () => {
+      const deps = build();
+      const runs = createRunRegistry();
+      deps.runs = runs;
+      deps.backgroundAgents = { stopForThread: async () => Promise.reject(new Error("boom")) };
+      const t = tracked(runs);
+      t.running();
+      const out = await dispatchCommand(deps, actor(), "C1", "stop", { threadTs: "900.1" });
+      expect(out).toContain("stopped *the long one*");
+      expect(t.signal.aborted).toBe(true);
+    });
   });
 
   test("outside a thread there is nothing it could mean", async () => {

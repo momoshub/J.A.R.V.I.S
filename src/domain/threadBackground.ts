@@ -1,0 +1,213 @@
+/**
+ * Which background agents a thread's turns started, and which of them may be
+ * stopped from that thread.
+ *
+ * `stop` used to end only the thread's `claude -p` process. That kills what
+ * runs INSIDE it - the Agent tool's background agents are in-process in a
+ * `-p` turn, and the model's shells are its children - but two kinds of
+ * background agent live outside that tree and kept working after a stop:
+ *
+ * - a `claude --bg` session, hosted by the Claude Code daemon. It does not
+ *   inherit the turn's environment and the daemon records no parent for it
+ *   (verified: a marker variable set on the `claude --bg` call was absent from
+ *   the session's process and its shells, and the daemon's `--spawned-by` is
+ *   only whoever started the daemon first - the daemon is shared, so that pid
+ *   names someone else's session as often as ours).
+ * - an Orca worker, started with `orca orchestration worker-start`, which runs
+ *   in a terminal Orca owns.
+ *
+ * Neither can be found from a pid or a cwd without catching other people's
+ * sessions. What does link them to the thread is the thread's own tool trace
+ * (`<LOG_DIR>/threads/<channel>/<threadTs>.jsonl`): the call that launched each
+ * one and the id it printed back. So a launch counts only when BOTH hold - the
+ * Bash call really ran that launcher, and its result carries the id - and it
+ * is stopped through the tool's own CLI (`claude stop <id>`,
+ * `orca orchestration worker-stop --dispatch <id>`), never by signalling a pid.
+ * A turn that merely reads a log mentioning some id is not a launch.
+ */
+
+export type BackgroundKind = "claude-bg" | "orca-worker";
+
+export type BackgroundLaunch = {
+  readonly kind: BackgroundKind;
+  readonly id: string;
+  /** Slack id of whoever the launching run belonged to, when the trace says. */
+  readonly actor?: string;
+};
+
+const isRecord = (v: unknown): v is Record<string, unknown> => typeof v === "object" && v !== null;
+
+/** The shell command of a Bash call's input JSON, or "" for anything else. */
+const bashCommand = (name: unknown, input: unknown): string => {
+  if (name !== "Bash" || typeof input !== "string") return "";
+  try {
+    const parsed: unknown = JSON.parse(input);
+    return isRecord(parsed) && typeof parsed.command === "string" ? parsed.command : "";
+  } catch {
+    return "";
+  }
+};
+
+/**
+ * Where a command starts: the line start, after `;` `&` `|` `(` or `$(`, past
+ * any `VAR=value` assignments and a `nohup`/`env`/`exec`/`command` prefix. A
+ * launcher has to be IN command position - `grep "claude --bg" logs/` names
+ * the launcher in a quoted pattern and must not count as running it.
+ */
+const COMMAND_START = String.raw`(?:^|[;&|(\n]|\$\()\s*(?:[A-Za-z_][A-Za-z0-9_]*=\S*\s+)*(?:(?:nohup|env|exec|command)\s+)*(?:\S*\/)?`;
+/** A `claude` invocation carrying `--bg`/`--background` on the same command. */
+const CLAUDE_BG_CALL = new RegExp(`${COMMAND_START}claude\\s[^\\n;&|]*?--(?:bg|background)(?![-\\w])`, "m");
+/** What `claude --bg` prints as its first line: `backgrounded · cfaf8d7a`. */
+const CLAUDE_BG_ID = /^\s*backgrounded\s*·\s*([0-9a-f]{8})\b/gm;
+const ORCA_WORKER_CALL = new RegExp(`${COMMAND_START}orca\\s+orchestration\\s+worker-start\\b`, "m");
+/** A dispatch id, as `worker-start` prints it (`"dispatchId":"ctx_..."`, or `dispatch ctx_...`). */
+const ORCA_DISPATCH_ID = /"dispatchId"\s*:\s*"(ctx_[0-9a-f]{6,})"|\bdispatch(?:Id)?[\s=:]+(ctx_[0-9a-f]{6,})\b/g;
+
+const idsIn = (text: string, pattern: RegExp): string[] =>
+  [...text.matchAll(pattern)].map((m) => m[1] ?? m[2] ?? "").filter(Boolean);
+
+/**
+ * Every background agent a thread's trace shows being launched, oldest first,
+ * each once. `traceText` is the raw JSONL. Never throws: a line that does not
+ * parse is skipped.
+ */
+export const backgroundLaunches = (traceText: string): BackgroundLaunch[] => {
+  const calls = new Map<string, { command: string; actor?: string }>();
+  const seen = new Set<string>();
+  const out: BackgroundLaunch[] = [];
+  for (const line of traceText.split("\n")) {
+    if (!line.trim()) continue;
+    let row: unknown;
+    try {
+      row = JSON.parse(line);
+    } catch {
+      continue;
+    }
+    if (!isRecord(row) || typeof row.id !== "string") continue;
+    if (row.kind === "call") {
+      const command = bashCommand(row.name, row.input);
+      if (command) calls.set(row.id, { command, actor: typeof row.actor === "string" ? row.actor : undefined });
+      continue;
+    }
+    if (row.kind !== "result" || typeof row.output !== "string") continue;
+    const call = calls.get(row.id);
+    if (!call) continue;
+    const found: { kind: BackgroundKind; ids: string[] }[] = [];
+    if (CLAUDE_BG_CALL.test(call.command)) found.push({ kind: "claude-bg", ids: idsIn(row.output, CLAUDE_BG_ID) });
+    if (ORCA_WORKER_CALL.test(call.command)) found.push({ kind: "orca-worker", ids: idsIn(row.output, ORCA_DISPATCH_ID) });
+    for (const { kind, ids } of found) {
+      for (const id of ids) {
+        const key = `${kind}:${id}`;
+        if (seen.has(key)) continue;
+        seen.add(key);
+        out.push({ kind, id, ...(call.actor ? { actor: call.actor } : {}) });
+      }
+    }
+  }
+  return out;
+};
+
+/**
+ * Whose launches a requester may stop: their own, or anyone's for an admin -
+ * the same rule as stopping a turn. A launch with no recorded actor is treated
+ * as somebody else's.
+ */
+export const mayStopLaunch = (launch: BackgroundLaunch, requester: string, mayStopOthers: boolean): boolean =>
+  mayStopOthers || launch.actor === requester;
+
+/** One row of `claude agents --json`. */
+export type AgentEntry = { readonly id?: string; readonly kind?: string; readonly state?: string };
+
+/** `claude agents --json`, or [] when it is not that shape. */
+export const parseAgentsList = (stdout: string): AgentEntry[] => {
+  try {
+    const parsed: unknown = JSON.parse(stdout);
+    if (!Array.isArray(parsed)) return [];
+    return parsed.filter(isRecord).map((e) => ({
+      id: typeof e.id === "string" ? e.id : undefined,
+      kind: typeof e.kind === "string" ? e.kind : undefined,
+      state: typeof e.state === "string" ? e.state : undefined,
+    }));
+  } catch {
+    return [];
+  }
+};
+
+/** States a background session reports once it has nothing left to do. */
+const FINISHED_STATES = new Set(["done", "failed", "error", "stopped", "exited", "killed"]);
+
+/**
+ * The thread's `claude --bg` sessions that are still going. Only a `background`
+ * entry whose id the thread itself launched counts: an interactive session (a
+ * person's own Claude, or another thread's `claude -p`) is never on this list,
+ * whatever its id, and neither is a session that already finished.
+ */
+export const liveClaudeSessions = (launched: readonly string[], agents: readonly AgentEntry[]): string[] => {
+  const ours = new Set(launched);
+  return agents
+    .filter((a) => a.id && ours.has(a.id) && a.kind === "background" && !FINISHED_STATES.has(a.state ?? ""))
+    .map((a) => a.id ?? "");
+};
+
+/**
+ * Whether `orca orchestration worker-show --json` describes a worker still
+ * running. Anything unreadable, settled or exited is not.
+ */
+export const orcaWorkerLive = (stdout: string): boolean => {
+  try {
+    const parsed: unknown = JSON.parse(stdout);
+    if (!isRecord(parsed) || parsed.ok !== true || !isRecord(parsed.result)) return false;
+    const { stage, liveness, state } = parsed.result;
+    if (stage === "settled" || liveness === "exited") return false;
+    return !(typeof state === "string" && ["succeeded", "failed", "cancelled", "stopped"].includes(state));
+  } catch {
+    return false;
+  }
+};
+
+export type BackgroundStopResult = {
+  readonly stopped: readonly BackgroundLaunch[];
+  readonly failed: readonly (BackgroundLaunch & { readonly reason: string })[];
+  /** Live launches left alone because they were somebody else's. */
+  readonly notYours: readonly BackgroundLaunch[];
+};
+
+export const NOTHING_IN_BACKGROUND: BackgroundStopResult = { stopped: [], failed: [], notYours: [] };
+
+const plural = (n: number, one: string, many: string): string => `${n} ${n === 1 ? one : many}`;
+
+/** "1 background agent and 2 Orca workers", or "" for none. */
+export const describeBackground = (launches: readonly BackgroundLaunch[]): string => {
+  const bg = launches.filter((l) => l.kind === "claude-bg").length;
+  const orca = launches.filter((l) => l.kind === "orca-worker").length;
+  const parts = [
+    bg > 0 ? plural(bg, "background agent", "background agents") : "",
+    orca > 0 ? plural(orca, "Orca worker", "Orca workers") : "",
+  ].filter(Boolean);
+  return parts.join(" and ");
+};
+
+const ids = (launches: readonly BackgroundLaunch[]): string => launches.map((l) => `\`${l.id}\``).join(", ");
+
+/**
+ * The `stop` reply: what happened to the turn, then what happened in the
+ * background. `turnLine` is the turn's own sentence, or undefined when no
+ * turn was running. Returns undefined when there is nothing to say at all, so
+ * the caller can keep its own "nothing is running" wording.
+ */
+export const stopReply = (turnLine: string | undefined, bg: BackgroundStopResult): string | undefined => {
+  const lines: string[] = [];
+  const stopped = describeBackground(bg.stopped);
+  if (turnLine) lines.push(stopped ? `${turnLine}, and ${stopped} it started (${ids(bg.stopped)})` : turnLine);
+  else if (stopped) lines.push(`⏹ stopped ${stopped} this thread started (${ids(bg.stopped)})`);
+  if (bg.failed.length > 0) {
+    lines.push(
+      `could not stop ${describeBackground(bg.failed)}: ${bg.failed.map((f) => `\`${f.id}\` (${f.reason})`).join(", ")}`,
+    );
+  }
+  if (bg.notYours.length > 0) {
+    const owners = [...new Set(bg.notYours.map((l) => (l.actor ? `<@${l.actor}>` : "someone else")))].join(", ");
+    lines.push(`left ${describeBackground(bg.notYours)} running that belong to ${owners} - only they or an admin can stop them`);
+  }
+  return lines.length > 0 ? lines.join("\n") : undefined;
+};

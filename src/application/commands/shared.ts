@@ -17,7 +17,7 @@ import type { ThreadQueue } from "../threadQueue.ts";
 import type { ThreadSessionRepo } from "../../infrastructure/db/threadSessionRepo.ts";
 import type { AllowedUser, PromptContext, UserRole } from "../../domain/types.ts";
 import { type ToolPolicy } from "../../domain/toolPolicy.ts";
-import type { Clock, LlmPort } from "../ports.ts";
+import type { BackgroundAgentsPort, Clock, LlmPort } from "../ports.ts";
 import type { SlackAdminPort } from "../slackAdmin.ts";
 import type { GitHubPort } from "../github.ts";
 import type { DraftReply } from "../draftReply.ts";
@@ -127,6 +127,8 @@ export type CommandDeps = {
   totp?: TotpPort;
   /** In-flight turns, so `stop` can end one without waiting it out. */
   runs?: RunRegistry;
+  /** What a thread's turns left running outside their own process, for `stop`. */
+  backgroundAgents?: BackgroundAgentsPort;
   /** Per-thread turn queue; a workflow's first step takes its place in it. */
   threadQueue?: ThreadQueue;
   /** One review per PR at a time, across the review inbox and `review`. */

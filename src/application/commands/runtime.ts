@@ -6,6 +6,7 @@ import { encodeTotpRequest, TOTP_ACTION } from "../totp.ts";
 import { normaliseLabel, secondsLeft, totpCode } from "../../domain/totp.ts";
 import { tierOf } from "../../domain/threadSession.ts";
 import { forHowLong, stillStoppingNotice, stoppedNotice } from "../../domain/runControl.ts";
+import { NOTHING_IN_BACKGROUND, stopReply } from "../../domain/threadBackground.ts";
 import { SETTING_KEYS } from "../../infrastructure/db/settingsRepo.ts";
 import { type Context, type CommandDef, RANK, askForToken, since, reviewAgentsOf } from "./shared.ts";
 
@@ -53,33 +54,47 @@ export const RUNTIME_COMMANDS: readonly CommandDef[] = [
     aliases: ["cancel", "abort"],
     minRole: "pal",
     usage: "",
-    summary: "stop the turn running in this thread",
-    run: ({ deps, actor, channelId, threadTs }) => {
+    summary: "stop the turn running in this thread, and the background agents its turns started",
+    run: async ({ deps, actor, channelId, threadTs }) => {
       if (!deps.runs) return "I cannot stop anything right now.";
       if (!threadTs) return "That only means something inside a thread.";
       const key = `${channelId}:${threadTs}`;
       const running = deps.runs.current(key);
-      if (!running) {
-        // Said plainly: "nothing is running" and "I could not stop it" are very
-        // different things to read when you are watching something misbehave.
-        const waiting = deps.runs.inThread(key).length;
-        return waiting > 0
-          ? `Nothing is running yet - ${waiting} ${waiting === 1 ? "turn is" : "turns are"} waiting behind it.`
-          : "Nothing is running in this thread.";
-      }
+      const isAdmin = RANK[actor.role] >= RANK.admin;
       // Your own turn is yours to stop; someone else's takes an admin, since a
-      // turn is their work and often their money.
-      if (running.actor !== actor.slackId && RANK[actor.role] < RANK.admin) {
+      // turn is their work and often their money. Refused, nothing is touched -
+      // the background agents included.
+      if (running && running.actor !== actor.slackId && !isAdmin) {
         return `That one is <@${running.actor}>'s, and it has been going ${forHowLong(deps.clock() - running.startedAt)}. Only they or an admin can stop it.`;
       }
       // A stop is a REQUEST. Asking twice must not read as two successful
       // stops - that is the lie the `stopping` state exists to prevent, and
       // this path had it too: the result of `stop` was thrown away and the
       // notice written regardless.
-      if (running.state === "stopping") return stillStoppingNotice(running, deps.clock());
-      const stopped = deps.runs.stop(running.id, actor.slackId);
-      if (!stopped) return "that one finished on its own just now.";
-      return stoppedNotice(stopped, actor.slackId, deps.clock());
+      let turnLine: string | undefined;
+      if (running?.state === "stopping") turnLine = stillStoppingNotice(running, deps.clock());
+      else if (running) {
+        const stopped = deps.runs.stop(running.id, actor.slackId);
+        turnLine = stopped ? stoppedNotice(stopped, actor.slackId, deps.clock()) : "that one finished on its own just now.";
+      }
+      // Killing the turn ends what runs inside its process (the Agent tool's
+      // background agents, its shells). A `claude --bg` session or an Orca
+      // worker it started lives outside that tree and kept working after a
+      // stop, so those are looked up from the thread's trace and stopped too -
+      // this turn's and every earlier turn's.
+      const background = deps.backgroundAgents
+        ? await deps.backgroundAgents
+            .stopForThread({ channelId, threadTs, actor: actor.slackId, mayStopOthers: isAdmin })
+            .catch(() => NOTHING_IN_BACKGROUND)
+        : NOTHING_IN_BACKGROUND;
+      const reply = stopReply(turnLine, background);
+      if (reply) return reply;
+      // Said plainly: "nothing is running" and "I could not stop it" are very
+      // different things to read when you are watching something misbehave.
+      const waiting = deps.runs.inThread(key).length;
+      return waiting > 0
+        ? `Nothing is running yet - ${waiting} ${waiting === 1 ? "turn is" : "turns are"} waiting behind it.`
+        : "Nothing is running in this thread.";
     },
   },
   {

@@ -102,6 +102,7 @@ import { createActivityLog } from "./infrastructure/logger.ts";
 import type { CommandLogRepo } from "./infrastructure/db/commandLogRepo.ts";
 import type { LlmPort, ToolTraceSink, UsageSink } from "./application/ports.ts";
 import { createToolTraceLog, readTraceCalls } from "./infrastructure/llm/toolTraceLog.ts";
+import { createBackgroundAgents } from "./infrastructure/llm/backgroundAgents.ts";
 import type { RespondDeps } from "./application/respond.ts";
 
 /**
@@ -454,6 +455,9 @@ const main = async () => {
     // Handles on the turns in flight, so one can be stopped from a button or
     // `stop` instead of being waited out.
     runs,
+    // `claude --bg` sessions and Orca workers a thread's turns started, so
+    // `stop` ends those too - they live outside the turn's process tree.
+    backgroundAgents: createBackgroundAgents({ traceDir: join(config.logDir, "threads"), claudeBin: config.claudeBin }),
     reviewGuard: createReviewGuard(clock),
     system,
     threadSessionsOn: () => settings.get(SETTING_KEYS.threadSessions)?.trim().toLowerCase() !== "off",
