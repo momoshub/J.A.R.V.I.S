@@ -1,28 +1,29 @@
 import { useEffect, useState } from "react";
 import { NavLink, Outlet, useNavigation, useRouteLoaderData } from "react-router";
 import type { Bootstrap } from "../api.ts";
+import { NavIcon, type NavIconName } from "./navIcons.tsx";
 import { isToggleShortcut, readCollapsed, writeCollapsed } from "./sidebarState.ts";
 
-const NAV = [
+const NAV: { group: string; items: { to: string; label: string; icon: NavIconName; end?: boolean }[] }[] = [
   {
     group: "Workspace",
     items: [
-      { to: "/", label: "Overview", short: "Ov", end: true },
-      { to: "/conversations", label: "Conversations", short: "Cv" },
-      { to: "/console", label: "Console", short: "Cn" },
+      { to: "/", label: "Overview", icon: "overview", end: true },
+      { to: "/conversations", label: "Conversations", icon: "conversations" },
+      { to: "/console", label: "Console", icon: "console" },
     ],
   },
   {
     group: "Configure",
     items: [
-      { to: "/users", label: "Users", short: "Us" },
-      { to: "/learnings", label: "Memory", short: "Me" },
-      { to: "/identity", label: "Identity", short: "Id" },
-      { to: "/commands", label: "Commands", short: "Cm" },
+      { to: "/users", label: "Users", icon: "users" },
+      { to: "/learnings", label: "Memory", icon: "memory" },
+      { to: "/identity", label: "Identity", icon: "identity" },
+      { to: "/commands", label: "Commands", icon: "commands" },
     ],
   },
-  { group: "Usage", items: [{ to: "/spend", label: "Spend", short: "Sp" }] },
-  { group: "Docs", items: [{ to: "/architecture", label: "Architecture", short: "Ar" }] },
+  { group: "Usage", items: [{ to: "/spend", label: "Spend", icon: "spend" }] },
+  { group: "Docs", items: [{ to: "/architecture", label: "Architecture", icon: "architecture" }] },
 ];
 
 const storage = (): Storage | undefined => (typeof window === "undefined" ? undefined : window.localStorage);
@@ -52,9 +53,8 @@ function Mark() {
 
 /**
  * The shell: a sidebar that collapses to a slim rail (button or Ctrl/Cmd+B,
- * remembered per browser) and the page. Collapsed, each link shows its two-letter
- * `short` (distinct, since three links start with C) with the full name as its
- * tooltip and accessible name.
+ * remembered per browser) and the page. Every link carries an icon; collapsed, the
+ * icon is all that shows, with the full name as its tooltip and accessible name.
  */
 export function Layout() {
   const boot = useRouteLoaderData("root") as Bootstrap;
@@ -104,7 +104,7 @@ export function Layout() {
                 title={collapsed ? n.label : undefined}
                 aria-label={collapsed ? n.label : undefined}
               >
-                <span className="nav-initial" aria-hidden="true">{n.short}</span>
+                <NavIcon name={n.icon} />
                 <span className="nav-label">{n.label}</span>
               </NavLink>
             ))}
