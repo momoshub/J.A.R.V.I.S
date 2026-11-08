@@ -16,6 +16,7 @@ import { SLACK_BREVITY, SLACK_FORMAT } from "./slackFormat.ts";
 import { BLOCK_KIT_RULES } from "./blockKit.ts";
 import { kitRules } from "./kitEvents.ts";
 import { type Adapter, type AdapterScope, renderAdapter } from "./adapter.ts";
+import { asGuide, investigateSummary, type PromptGuide, renderGuideIndex } from "./promptGuides.ts";
 import type { Participant, PromptContext, Reactable } from "./types.ts";
 
 /** Neutral fallback persona used when no custom one is configured. */
@@ -263,8 +264,15 @@ Running my own commands (when a request is really one):
   }
 - "remind me", "nhắc anh", "ping <@someone> at 3pm" is the \`remind\` command - it posts the reminder by itself at that time, with no turn and no tokens. Turn the time into its words, read in the host's clock: \`${prefix} remind [me|<@someone>] in 2h <what>\`, \`at 15:00 [today|tomorrow] <what>\`, \`tomorrow 9am <what>\`, \`on 2026-12-01 [at 10:00] <what>\`. \`remind list\` and \`remind cancel <id>\` manage them. Never promise to remember it yourself - you will not be running then.
 - For an ordinary question, answer it yourself. This is only for requests that map onto a real command.${
-    waiting
-      ? `
+    waiting ? waitingRules(prefix) : ""
+  }`;
+};
+
+/**
+ * How to stop waiting: set a watch, and how to steer another thread. Offered
+ * only when a watch can actually be set (see `canWatch`).
+ */
+export const waitingRules = (prefix: string): string => `
 
 Waiting for something to finish:
 - You cannot wait. Your turn ENDS when you stop writing, so "I'll promote once the build is done" is a promise nobody is around to keep - the thread stops there until a person comes back and prods you. That stall is the single most annoying thing you do.
@@ -283,10 +291,7 @@ Waiting for something to finish:
 
 Talking to another thread:
 - Each thread has its own session, and you cannot see or message another one directly. To steer the session in ANOTHER thread - a workflow running there, or work you started there - run \`${prefix} tell <thread-link> <message>\`. It arrives there as if the person you are talking to typed it - except in a workflow thread, where it goes straight to the worker's next step and posts nothing there.
-- Never ask someone to copy a message from one thread to another for you.`
-      : ""
-  }`;
-};
+- Never ask someone to copy a message from one thread to another for you.`;
 
 export type BuildSystemPromptOptions = PromptContext & {
   /** best-effort display name of the person being replied to */
@@ -351,6 +356,12 @@ export type BuildSystemPromptOptions = PromptContext & {
   readonly adapter?: Adapter;
   /** Who is here and where, so scoped memory can be resolved. */
   readonly adapterScope?: AdapterScope;
+  /**
+   * Directory the how-to guides are written to. When set, and this turn can
+   * read files, the procedure blocks leave the prompt for a one-line index
+   * (see `promptGuides.ts`); without it every block is inlined as before.
+   */
+  readonly guideDir?: string;
 };
 
 const renderParticipants = (participants: readonly Participant[]): string => {
@@ -362,7 +373,16 @@ const renderParticipants = (participants: readonly Participant[]): string => {
 };
 
 /** Build the full system prompt for a conversation from its editable pieces. */
-export const buildSystemPrompt = (options: Partial<BuildSystemPromptOptions> = {}): string => {
+export const buildSystemPrompt = (options: Partial<BuildSystemPromptOptions> = {}): string =>
+  buildSystemPromptParts(options).prompt;
+
+/**
+ * The prompt, plus the guides it points at. The caller writes `guides` into
+ * `guideDir` before the turn runs - this stays pure, so it only names them.
+ */
+export const buildSystemPromptParts = (
+  options: Partial<BuildSystemPromptOptions> = {},
+): { readonly prompt: string; readonly guides: readonly PromptGuide[] } => {
   const botName = options.botName?.trim() || DEFAULT_BOT_NAME;
   const base = options.base?.trim() ? options.base.trim() : DEFAULT_PERSONALITY;
 
@@ -397,14 +417,19 @@ export const buildSystemPrompt = (options: Partial<BuildSystemPromptOptions> = {
   const skillsVisible =
     !!options.adapter && options.adapter.skills.length > 0 && options.adapterScope?.canReadFiles !== false;
   const selfWork = selfUpdateRules(options.repoPath, options.restartScript, skillsVisible);
+  // A turn that can read files carries the procedures as guides; one that
+  // cannot (a sandboxed tier) could never open them, so it keeps them inline.
+  const guided = !!options.guideDir && options.adapterScope?.canReadFiles !== false;
   const commands = commandRules(
     options.runScript ?? "",
     options.runUrl ?? "",
     !!options.runTicket,
     options.commandPrefix ?? "//bot",
     options.commandBudget,
-    options.canWatch === true,
+    options.canWatch === true && !guided,
   );
+  const waiting =
+    options.canWatch === true && commands ? waitingRules(options.commandPrefix ?? "//bot") : "";
 
   // The always-apply rules go LAST, not second. They used to sit directly under
   // the persona with every situational block appended after them - thirteen
@@ -412,5 +437,25 @@ export const buildSystemPrompt = (options: Partial<BuildSystemPromptOptions> = {
   // ticket", "how to investigate" between the rule that must always hold and
   // the answer being written. Rules that end with "regardless of anything
   // above" belong where the identity lock already is, for the same reason.
-  return `${base}${learningsBlock}${addressed}${roster}${attachments}${investigating}${tickets}${slackReading}${desktop}${reaching}${selfWork}${SPLIT_QUESTION_RULES}${reactions}${interactive}${following}${commands}${remembering}\n\n${WORKSPACE_NOTE}\n\n${OPERATING_RULES}\n\n${BEFORE_YOU_SEND}\n\n${identityLock(botName, options.botUserId)}`;
+  const tail = `${remembering}\n\n${WORKSPACE_NOTE}\n\n${OPERATING_RULES}\n\n${BEFORE_YOU_SEND}\n\n${identityLock(botName, options.botUserId)}`;
+  if (!guided) {
+    return {
+      prompt: `${base}${learningsBlock}${addressed}${roster}${attachments}${investigating}${tickets}${slackReading}${desktop}${reaching}${selfWork}${SPLIT_QUESTION_RULES}${reactions}${interactive}${following}${commands}${tail}`,
+      guides: [],
+    };
+  }
+  const guides = [
+    asGuide("investigate", investigating, investigateSummary(options.logSources ?? [])),
+    asGuide("tickets", tickets),
+    asGuide("credential-gap", reaching),
+    asGuide("desktop", desktop),
+    asGuide("parallel", SPLIT_QUESTION_RULES),
+    asGuide("block-kit", interactive),
+    asGuide("waiting", waiting),
+  ].filter((g): g is PromptGuide => !!g);
+  const index = renderGuideIndex(guides, options.guideDir ?? "");
+  return {
+    prompt: `${base}${learningsBlock}${addressed}${roster}${attachments}${slackReading}${selfWork}${reactions}${following}${commands}${index}${tail}`,
+    guides,
+  };
 };

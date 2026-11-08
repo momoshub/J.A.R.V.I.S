@@ -43,3 +43,6 @@ data/inbox.db-wal
 # the memory adapter lives in the database (adapter_files); this is the copy
 # rendered from it on every write, so skills can be read by path
 data/adapter-mirror/
+
+# the how-to guides written for the prompt to point at, rebuilt from code
+data/prompt-guides/

@@ -46,7 +46,8 @@ no classes.
             |                                   |
             v                                   v
    data/<bot>.db, data/tokens.db,        bin/ helpers the brain calls
-   data/adapter-mirror/ (from DB)       (slack-read, slack-react, run, ...)
+   data/adapter-mirror/ (from DB),      (slack-read, slack-react, run, ...)
+   data/prompt-guides/ (from code)
 ```
 
 - **Gateway / bot split.** `src/gateway.ts` only holds the Slack socket and
@@ -110,7 +111,7 @@ No I/O, no frameworks. Just data shapes and functions of their inputs.
 
 - `types.ts` - core data shapes (`AllowedUser`, `StoredMessage`, roles: pal/executer/admin/owner)
 - `access.ts`, `toolPolicy.ts`, `toolVisibility.ts` - who may talk to the bot, and the per-role CLI sandbox (skip-permissions vs `--allowedTools` allow-list + fixed cwd)
-- `personality.ts`, `conversation.ts`, `mentions.ts` - the system prompt from generic defaults + injected identity, context windowing, `<@ID>` annotation
+- `personality.ts`, `promptGuides.ts`, `conversation.ts`, `mentions.ts` - the system prompt from generic defaults + injected identity (procedure blocks as on-demand guide files for turns that can read them), context windowing, `<@ID>` annotation
 - `threadSession.ts`, `agentSession.ts` - one CLI session per thread and when it may be resumed
 - `adapter.ts`, `adapterCheck.ts` - memory as a checked, versioned directory (facts + skills) instead of an ever-growing list
 - `watch.ts`, `reminder.ts`, `selfUpdate.ts`, `runControl.ts` - waits, reminders, draining restart, stopping a turn
@@ -155,7 +156,7 @@ Concrete implementations of the seams and the transports.
 - `db/` - `bun:sqlite` client, schema + migrations, one repo per table (users, messages, sessions, watches, reminders, workflows, usage, turn and command logs, ...), `secretBox.ts` for encrypted tokens
 - `adapter/adapterStore.ts` - the memory adapter in the `adapter_files` table, mirrored to `data/adapter-mirror` so skills can be read by path
 - `github/` - `gh` CLI wrapper and review-request polling; the GitHub App's fetch client (`appClient.ts`, RS256 JWT -> cached installation token), credentials from files (`appCredentials.ts`) and webhook listener (`webhookServer.ts`)
-- `system/` - host probes (system load, Accessibility access, shell checks for watches)
+- `system/` - host probes (system load, Accessibility access, shell checks for watches), and `guideWriter.ts`, which writes the prompt's how-to guides to `data/prompt-guides`
 - `dashboard/server.ts` - `Bun.serve` JSON API under `/api` plus the React SPA built to `web/dist`
 - `web/` - the dashboard front end: React 19 + Vite + React Router 7
 
