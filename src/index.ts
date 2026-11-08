@@ -78,6 +78,9 @@ import type { ConnectionHealth } from "./domain/connectionHealth.ts";
 import { createUiAccessProbe } from "./infrastructure/system/uiAccessProbe.ts";
 import { describeUiAccess, needsAttention } from "./domain/uiAccess.ts";
 import { createSlackAdmin } from "./infrastructure/slack/adminClient.ts";
+import { createOfflineAlarmSlack } from "./infrastructure/slack/offlineAlarmClient.ts";
+import { createOfflineAlarm } from "./application/offlineAlarm.ts";
+import { OFFLINE_ALARM_REQUEST_TIMEOUT_MS, OFFLINE_ALARM_TICK_MS } from "./domain/offlineAlarm.ts";
 import { createGhCli } from "./infrastructure/github/ghCli.ts";
 import { createDraftReply } from "./application/draftReply.ts";
 import { syntheticTs } from "./domain/slackLinks.ts";
@@ -865,9 +868,39 @@ const main = async () => {
   }, WATCH_TICK_MS);
   (watchTimer as { unref?: () => void }).unref?.();
 
+  // Dead man's switch for the host's flaky connection: keeps an "I'm offline"
+  // notice armed on Slack's side, so an outage gets reported even though the
+  // host cannot reach Slack to say so. Runs while draining too - a restart is
+  // not an outage, and letting it lapse would make it look like one.
+  const alarmChannel = config.offlineAlarmChannel;
+  const offlineAlarm = alarmChannel
+    ? createOfflineAlarm({
+        channel: alarmChannel,
+        slack: createOfflineAlarmSlack(
+          new WebClient(config.slackBotToken, {
+            retryConfig: { retries: 0 },
+            timeout: OFFLINE_ALARM_REQUEST_TIMEOUT_MS,
+            // A 429 would otherwise sleep out retry-after, which the timeout does not cover.
+            rejectRateLimitedCalls: true,
+          }),
+        ),
+        clock: Date.now,
+        log: (l) => console.error(`[offline-alarm] ${l}`),
+      })
+    : undefined;
+  void offlineAlarm?.tick();
+  const alarmTimer = offlineAlarm ? setInterval(() => void offlineAlarm.tick(), OFFLINE_ALARM_TICK_MS) : undefined;
+  (alarmTimer as { unref?: () => void } | undefined)?.unref?.();
+
   const shutdown = async () => {
     console.log("\nShutting down ...");
     clearInterval(watchTimer);
+    clearInterval(alarmTimer);
+    // A deliberate stop is not an outage. This covers `launchctl kickstart -k`
+    // and a Mac shutting down or logging out too (all SIGTERM): a few unarmed
+    // seconds before the next process re-arms, and no notice for a shutdown.
+    // `jarvis-restart.sh` exits without it, and the next process cancels the leftover.
+    await offlineAlarm?.disarm();
     dashboard.stop();
     webhookServer?.stop();
     await slack.stop();

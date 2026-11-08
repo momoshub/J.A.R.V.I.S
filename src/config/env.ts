@@ -89,6 +89,17 @@ const schema = z
     // Channel that gets the one restart notice listing the waiting threads.
     // Unset: nobody is told.
     DRAIN_NOTICE_CHANNEL: z.string().optional(),
+    // Channel the offline alarm reports to: a notice armed on Slack's side
+    // that posts by itself if the host loses its connection, and is edited to
+    // "back online" when it returns. Unset: no alarm. An id, not a name: the
+    // scheduled list and history only take ids, so with a name the old notices
+    // could never be found and cancelled.
+    OFFLINE_ALARM_CHANNEL: z
+      .string()
+      .trim()
+      .regex(/^[CG][A-Z0-9]+$/, "OFFLINE_ALARM_CHANNEL must be a channel id like C0123ABC, not a name")
+      .optional()
+      .or(z.string().trim().length(0).transform(() => undefined)),
 
     // GitHub App: people call the bot from an issue/PR (mention or label) and
     // the answer is posted back there as the app. Started only when the app id,
@@ -152,6 +163,8 @@ export type AppConfig = {
   logDir: string;
   /** Channel for the restart notice listing waiting threads; unset is silent. */
   drainNoticeChannel?: string;
+  /** Channel the offline alarm posts to when the host drops off; unset is off. */
+  offlineAlarmChannel?: string;
   githubApp: {
     appId?: string;
     privateKeyPath: string;
@@ -212,6 +225,7 @@ export const loadConfig = (source: Record<string, string | undefined> = process.
     tokenKeyPath: env.TOKEN_KEY_PATH,
     logDir: env.LOG_DIR,
     ...(env.DRAIN_NOTICE_CHANNEL ? { drainNoticeChannel: env.DRAIN_NOTICE_CHANNEL } : {}),
+    ...(env.OFFLINE_ALARM_CHANNEL ? { offlineAlarmChannel: env.OFFLINE_ALARM_CHANNEL } : {}),
     githubApp: {
       ...(env.GITHUB_APP_ID?.trim() ? { appId: env.GITHUB_APP_ID.trim() } : {}),
       privateKeyPath: env.GITHUB_APP_PRIVATE_KEY_PATH,
