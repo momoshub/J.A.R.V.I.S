@@ -14,6 +14,7 @@ import {
   type SysEdge,
   type SysNode,
 } from "../systemModel.ts";
+import { playerAction, stepIndex } from "../ui/playerKeys.ts";
 
 const byId = new Map(NODES.map((n) => [n.id, n]));
 /** `checkModel` (tested) guarantees every id a flow or wire names is here. */
@@ -48,6 +49,23 @@ function Packet({ path }: { path: string }) {
     <circle r={6} className="arch-packet">
       <animateMotion ref={motion} begin="indefinite" dur={`${STEP_MS * 0.7}ms`} fill="freeze" path={path} />
     </circle>
+  );
+}
+
+/** Player icons, drawn in currentColor. */
+const ICONS = {
+  play: "M7 4.5v11l9-5.5z",
+  pause: "M6 4.5h3v11H6zM11 4.5h3v11h-3z",
+  prev: "M5 4.5h2v11H5zM16 4.5v11L8 10z",
+  next: "M13 4.5h2v11h-2zM4 4.5v11l8-5.5z",
+  replay: "M10 4a6 6 0 1 1-5.6 3.9l1.8.7A4 4 0 1 0 10 6v2.5L6.5 5.2 10 2z",
+} as const;
+
+function Icon({ d }: { d: string }) {
+  return (
+    <svg viewBox="0 0 20 20" width="18" height="18" aria-hidden="true">
+      <path d={d} fill="currentColor" />
+    </svg>
   );
 }
 
@@ -185,6 +203,24 @@ export function ArchitecturePage() {
     if (index >= flow.steps.length - 1) setIndex(-1);
     setPlaying(true);
   };
+  const step_ = (action: "prev" | "next") => {
+    setPlaying(false);
+    setIndex((i) => stepIndex(i, action, flow.steps.length));
+  };
+  const atEnd = index >= flow.steps.length - 1;
+  const toggle = () => (playing ? setPlaying(false) : play());
+
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      const a = playerAction(e);
+      if (!a) return;
+      e.preventDefault();
+      if (a === "toggle") toggle();
+      else step_(a);
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  });
   const inspected = node(selected);
 
   return (
@@ -211,6 +247,32 @@ export function ArchitecturePage() {
               <span key={k}><i className={`swatch ${k}`} />{KIND_LABEL[k]}</span>
             ))}
           </div>
+          {/* Pinned to the bottom of the screen while the diagram is in view, so stepping never means scrolling away from what moves. */}
+          <div className="arch-dock" role="toolbar" aria-label="Flow player">
+            <button type="button" className="icon ghost" disabled={index < 0} onClick={() => step_("prev")} aria-label="Previous step" title="Previous step (left arrow)">
+              <Icon d={ICONS.prev} />
+            </button>
+            <button type="button" className="icon primary" onClick={toggle} aria-label={playing ? "Pause" : atEnd ? "Replay" : "Play"} title={`${playing ? "Pause" : atEnd ? "Replay" : "Play"} (space)`}>
+              <Icon d={playing ? ICONS.pause : atEnd ? ICONS.replay : ICONS.play} />
+            </button>
+            <button type="button" className="icon ghost" disabled={atEnd} onClick={() => step_("next")} aria-label="Next step" title="Next step (right arrow)">
+              <Icon d={ICONS.next} />
+            </button>
+            <div className="arch-dock-now" aria-live="polite">
+              {step ? (
+                <>
+                  <code>{"at" in step ? node(step.at).label : `${node(step.from).label} -> ${node(step.to).label}`}</code>
+                  <span>{step.note}</span>
+                </>
+              ) : (
+                <span className="muted">{flow.title} - press play, or use space and the arrow keys</span>
+              )}
+            </div>
+            <div className="arch-dock-progress" aria-hidden="true">
+              <i style={{ width: `${((index + 1) / Math.max(1, flow.steps.length)) * 100}%` }} />
+            </div>
+            <span className="muted arch-count">{Math.max(0, index + 1)} / {flow.steps.length}</span>
+          </div>
         </div>
 
         <aside className="arch-side">
@@ -219,22 +281,13 @@ export function ArchitecturePage() {
               <b>{flow.title}</b>
               <span className="muted">{flow.blurb}</span>
             </div>
-            <div className="row arch-controls">
-              {playing ? (
-                <button type="button" onClick={() => setPlaying(false)}>pause</button>
-              ) : (
-                <button type="button" onClick={play}>{index < 0 ? "play" : index >= flow.steps.length - 1 ? "replay" : "resume"}</button>
-              )}
-              <button type="button" className="ghost" disabled={index < 0} onClick={() => { setPlaying(false); setIndex((i) => Math.max(-1, i - 1)); }}>back</button>
-              <button type="button" className="ghost" disabled={index >= flow.steps.length - 1} onClick={() => { setPlaying(false); setIndex((i) => i + 1); }}>next</button>
-              <span className="muted arch-count">{Math.max(0, index + 1)} / {flow.steps.length}</span>
-            </div>
             <ol className="arch-steps">
               {flow.steps.map((s, i) => (
                 <li
                   key={i}
                   className={i === index ? "on" : i < index ? "done" : ""}
                   onClick={() => { setPlaying(false); setIndex(i); }}
+                  aria-current={i === index ? "step" : undefined}
                 >
                   <code>{"at" in s ? node(s.at).label : `${node(s.from).label} -> ${node(s.to).label}`}</code>
                   <span>{s.note}</span>
