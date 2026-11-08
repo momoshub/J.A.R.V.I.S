@@ -17,7 +17,10 @@
 
 export type Block = { type: string } & Record<string, unknown>;
 
-export type Segment = { kind: "text"; text: string } | { kind: "blocks"; blocks: Block[] };
+export type Segment =
+  | { kind: "text"; text: string }
+  /** `fallback`: the fence's own mrkdwn stand-in (`{"text": ..., "blocks": [...]}`). */
+  | { kind: "blocks"; blocks: Block[]; fallback?: string };
 
 /** Slack refuses more than 50 blocks in one message or chunk. */
 export const MAX_BLOCKS = 50;
@@ -28,19 +31,39 @@ const KIT_TAGS = new Set(["blockkit", "block-kit", "blocks"]);
 const isBlock = (v: unknown): v is Block =>
   typeof v === "object" && v !== null && !Array.isArray(v) && typeof (v as { type?: unknown }).type === "string";
 
-/** Parse a fence body into blocks, or undefined when it is not usable Block Kit. */
-export const parseBlocks = (raw: string): Block[] | undefined => {
+/**
+ * Parse a fence body into blocks - and, for `{"text": ..., "blocks": [...]}`,
+ * the mrkdwn that stands in for them in a notification - or undefined when it
+ * is not usable Block Kit.
+ */
+export const parseKit = (raw: string): { blocks: Block[]; fallback?: string } | undefined => {
   let value: unknown;
   try {
     value = JSON.parse(raw);
   } catch {
     return undefined;
   }
+  let fallback: string | undefined;
   if (isBlock(value) && value.type !== "blocks") value = [value];
-  else if (typeof value === "object" && value !== null && "blocks" in value) value = (value as { blocks: unknown }).blocks;
+  else if (typeof value === "object" && value !== null && "blocks" in value) {
+    const text = (value as { text?: unknown }).text;
+    if (typeof text === "string" && text.trim()) fallback = text;
+    value = (value as { blocks: unknown }).blocks;
+  }
   if (!Array.isArray(value) || value.length === 0 || !value.every(isBlock)) return undefined;
-  return value.slice(0, MAX_BLOCKS);
+  return { blocks: value.slice(0, MAX_BLOCKS), ...(fallback ? { fallback } : {}) };
 };
+
+/** Parse a fence body into blocks, or undefined when it is not usable Block Kit. */
+export const parseBlocks = (raw: string): Block[] | undefined => parseKit(raw)?.blocks;
+
+/**
+ * A reply that is a Block Kit message with its own mrkdwn fallback, for code
+ * (a command) rather than the model. Backticks are escaped so a title holding
+ * a fence cannot close this one early; JSON.parse reads them back.
+ */
+export const blockKitReply = (text: string, blocks: readonly Block[]): string =>
+  `\`\`\`blockkit\n${JSON.stringify({ text, blocks: blocks.slice(0, MAX_BLOCKS) }).replace(/`/g, "\\u0060")}\n\`\`\`\n`;
 
 export type BlockKitExtractor = {
   /** Feed a delta, get back the segments that are safe to send now. */
@@ -88,8 +111,8 @@ export const createBlockKitExtractor = (): BlockKitExtractor => {
         buf = buf.slice(end + 3);
         eatNewline = true;
         mode = "text";
-        const blocks = parseBlocks(body);
-        if (blocks) out.push({ kind: "blocks", blocks });
+        const kit = parseKit(body);
+        if (kit) out.push({ kind: "blocks", ...kit });
         else text(`\`\`\`json\n${body}${body.endsWith("\n") ? "" : "\n"}\`\`\`\n`);
         continue;
       }
@@ -158,21 +181,25 @@ export const splitBlockKit = (text: string): Segment[] => {
 
 /**
  * A plain (non-streamed) post of a reply that may hold Block Kit: prose goes in
- * `markdown` blocks around the fences, and `text` keeps the prose as the
- * notification and screen-reader fallback. Undefined when there are no blocks,
- * so the ordinary text post stays exactly as it was.
+ * `markdown` blocks around the fences, and `text` keeps the prose - plus each
+ * fence's own `text`, in place - as the notification and screen-reader
+ * fallback. `plain` is set when every fence carried its own text: the whole
+ * reply as mrkdwn, for when Slack refuses the blocks. Undefined when there are
+ * no blocks, so the ordinary text post stays exactly as it was.
  */
 export const toBlockMessage = (
   text: string,
   fallback: (prose: string) => string = (p) => p,
-): { text: string; blocks: Block[] } | undefined => {
+): { text: string; blocks: Block[]; plain?: string } | undefined => {
   const segs = splitBlockKit(text);
   if (!segs.some((s) => s.kind === "blocks")) return undefined;
+  const covered = segs.every((s) => s.kind === "text" || !!s.fallback);
   const blocks: Block[] = [];
   const prose: string[] = [];
   for (const s of segs) {
     if (s.kind === "blocks") {
       blocks.push(...s.blocks);
+      if (s.fallback) prose.push(s.fallback.trim());
       continue;
     }
     const t = s.text.trim();
@@ -180,8 +207,18 @@ export const toBlockMessage = (
     prose.push(t);
     blocks.push({ type: "markdown", text: t });
   }
-  return { text: fallback(prose.join("\n\n")) || " ", blocks: blocks.slice(0, MAX_BLOCKS) };
+  const plainText = fallback(prose.join("\n\n")) || " ";
+  // Every fence brought its own words, so a post whose blocks Slack refuses
+  // can go out as those words rather than as the raw JSON.
+  return { text: plainText, blocks: blocks.slice(0, MAX_BLOCKS), ...(covered ? { plain: plainText } : {}) };
 };
+
+/**
+ * A reply as words for a reader that sees text, not blocks (the brain reading
+ * a command's result): a code-made Block Kit reply becomes its own text,
+ * anything else is returned unchanged.
+ */
+export const readableText = (text: string): string => toBlockMessage(text)?.plain ?? text;
 
 /** The prompt half: what the model may use, and when not to. */
 export const BLOCK_KIT_RULES = `Block Kit (rich layouts, use sparingly):

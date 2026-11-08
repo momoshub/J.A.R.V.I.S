@@ -1,8 +1,10 @@
 import { describe, expect, test } from "bun:test";
 import {
   BLOCK_KIT_RULES,
+  blockKitReply,
   createBlockKitExtractor,
   parseBlocks,
+  parseKit,
   splitBlockKit,
   toBlockMessage,
   type Segment,
@@ -99,6 +101,37 @@ describe("toBlockMessage", () => {
 
   test("a blocks-only reply still has a non-empty fallback", () => {
     expect(toBlockMessage(`\`\`\`blockkit\n${ALERT}\n\`\`\``)?.text).toBe(" ");
+  });
+
+  test("a model fence brings no words of its own, so there is no plain stand-in", () => {
+    expect(toBlockMessage(`hi\n\`\`\`blockkit\n${ALERT}\n\`\`\``)?.plain).toBeUndefined();
+  });
+
+  test("a fence with its own text: that text is the fallback, in place, and the plain stand-in", () => {
+    const m = toBlockMessage(`before\n${blockKitReply("*cpu* fine", [{ type: "divider" }])}after`, (p) => `<${p}>`);
+    expect(m?.blocks.map((b) => b.type)).toEqual(["markdown", "divider", "markdown"]);
+    expect(m?.text).toBe("<before\n\n*cpu* fine\n\nafter>");
+    expect(m?.plain).toBe(m?.text);
+  });
+});
+
+describe("parseKit / blockKitReply", () => {
+  test("{text, blocks} carries its fallback; an array has none", () => {
+    expect(parseKit('{"text":"words","blocks":[{"type":"divider"}]}')).toEqual({ blocks: [{ type: "divider" }], fallback: "words" });
+    expect(parseKit('[{"type":"divider"}]')).toEqual({ blocks: [{ type: "divider" }] });
+    expect(parseKit('{"text":"  ","blocks":[{"type":"divider"}]}')).toEqual({ blocks: [{ type: "divider" }] });
+  });
+
+  test("round-trips, even when the content holds a fence of its own", () => {
+    const blocks = [{ type: "section", text: { type: "mrkdwn", text: "task ```rm -rf``` title" } }];
+    const reply = blockKitReply("a ```fence``` in the text", blocks);
+    const segs = splitBlockKit(reply);
+    expect(segs).toEqual([{ kind: "blocks", blocks, fallback: "a ```fence``` in the text" }]);
+  });
+
+  test("caps at 50 blocks", () => {
+    const reply = blockKitReply("x", Array.from({ length: 60 }, () => ({ type: "divider" })));
+    expect(toBlockMessage(reply)?.blocks).toHaveLength(50);
   });
 });
 

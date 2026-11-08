@@ -6,6 +6,7 @@ import { DEFAULT_BOT_NAME } from "../../domain/personality.ts";
 import { ALWAYS_ON_BUDGET } from "../../domain/adapterCheck.ts";
 import { type AdapterDeps } from "../adapterMemory.ts";
 import type { SystemTracker } from "../../infrastructure/system/systemProbe.ts";
+import type { OrcaProbe } from "../../infrastructure/system/orcaProbe.ts";
 import type { AdapterStore } from "../../infrastructure/adapter/adapterStore.ts";
 import type { AdapterRevisionRepo } from "../../infrastructure/db/adapterRevisionRepo.ts";
 import { asAgentCap, DEFAULT_REVIEW_AGENTS } from "../../domain/reviewPrompt.ts";
@@ -52,6 +53,8 @@ export type CommandDeps = {
   adapterBudget?: () => number;
   /** Host and process vitals, sampled over time. */
   system?: SystemTracker;
+  /** Orca's runtime, Runs and workers for `sys`; absent leaves the section out. */
+  orca?: OrcaProbe;
   /** Absolute path of the claude.ai artifact reader, for `read`. */
   artifactScript?: string;
   /** Absolute path of the "has anything new been said" helper, for `watch reply`. */

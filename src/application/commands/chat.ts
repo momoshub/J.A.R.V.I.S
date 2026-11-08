@@ -1,7 +1,10 @@
 /** Everyday chat commands: vitals, ping, whoami, model, ask, btw, forget, snub. */
 
 import { buildSystemPrompt } from "../../domain/personality.ts";
-import { describeSystem, trendOf } from "../../domain/systemStatus.ts";
+import { trendOf } from "../../domain/systemStatus.ts";
+import { systemReport } from "../../domain/systemBlocks.ts";
+import { summarizeOrca } from "../../domain/orcaStatus.ts";
+import { blockKitReply } from "../../domain/blockKit.ts";
 import { tokenFor } from "../claudeTokens.ts";
 import type { UserRole } from "../../domain/types.ts";
 import { NO_TOOLS, type ToolPolicy } from "../../domain/toolPolicy.ts";
@@ -38,14 +41,18 @@ export const CHAT_COMMANDS: readonly CommandDef[] = [
     // actual computer. `ping` is the one anybody can ask.
     minRole: "admin",
     usage: "",
-    summary: "how the host and I are doing, and whether anything is abnormal",
+    summary: "how the host, I and Orca are doing, and whether anything is abnormal",
     run: async ({ deps }) => {
       if (!deps.system) return "I cannot read the system from here.";
-      const reading = await deps.system.read();
-      return describeSystem(reading, {
+      // Read together: the Orca read is bounded by its own deadline and never
+      // throws, so a slow or missing Orca costs its section, not the reply.
+      const [reading, orca] = await Promise.all([deps.system.read(), deps.orca?.read()]);
+      const report = systemReport(reading, {
         botName: botNameOf(deps),
         trend: trendOf(deps.system.history()),
+        ...(orca ? { orca: summarizeOrca(orca, deps.clock()) } : {}),
       });
+      return blockKitReply(report.text, report.blocks);
     },
   },
   {
