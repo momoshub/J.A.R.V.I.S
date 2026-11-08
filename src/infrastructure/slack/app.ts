@@ -402,14 +402,12 @@ export const createHandler =
     // is the thing worth reassuring about, and message length never predicted it.
     // Not when following: nobody asked, so nobody is waiting, and a "thinking"
     // card in a channel announces a turn that is quite likely to say nothing.
-    if (
-      stream &&
-      deps.llm.stream &&
-      !msg.following &&
-      commandLineOf(text, config.commandPrefix) === undefined
-    ) {
-      stream.showThinkingAfter(config.thinkingLabel(), config.thinkingAfterMs);
-    }
+    // Armed when the turn starts, not on arrival: a message queued behind a
+    // running turn would otherwise open its reply above that turn's answer.
+    const armThinking =
+      stream && deps.llm.stream && !msg.following && commandLineOf(text, config.commandPrefix) === undefined
+        ? () => stream.showThinkingAfter(config.thinkingLabel(), config.thinkingAfterMs)
+        : undefined;
 
     try {
       const result = await respond(
@@ -427,6 +425,7 @@ export const createHandler =
           ...(msg.inbox ? { inboxRowId: msg.inbox.rowId } : {}),
         },
         stream?.sink,
+        armThinking,
       );
       log(`handled user=${msg.userId} channel=${msg.channelId} kind=${result.kind}`);
       if (result.kind === "ignored") {
