@@ -172,11 +172,6 @@ export type RawMessage = {
 };
 
 /**
- * The thread a message belongs to: its parent when it is a reply, otherwise
- * itself. This is the key the bot's memory is scoped by, so getting it wrong
- * either splits one conversation apart or merges two that are unrelated.
- */
-/**
  * A slash command's ephemeral answer. A reply carrying Block Kit (`sys`) goes
  * out as its blocks with its own words as `text`; anything else as it was.
  */
@@ -187,6 +182,11 @@ export const slashReply = (
   return rich ? { response_type: "ephemeral", text: rich.plain ?? rich.text, blocks: rich.blocks } : { response_type: "ephemeral", text };
 };
 
+/**
+ * The thread a message belongs to: its parent when it is a reply, otherwise
+ * itself. This is the key the bot's memory is scoped by, so getting it wrong
+ * either splits one conversation apart or merges two that are unrelated.
+ */
 export const threadKeyOf = (m: { ts: string; thread_ts?: string }): string => m.thread_ts ?? m.ts;
 
 /** Only plain human DMs: reject bot echoes, edits/joins (subtypes) and non-DM channels. */
