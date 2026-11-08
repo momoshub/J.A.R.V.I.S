@@ -31,10 +31,10 @@ const USERS: Record<string, unknown> = {
  * fixtures, and logging every users.info call so the one-lookup-per-id cache
  * can be asserted.
  */
-const fakeCurl = () => {
+const fakeCurl = (thread: unknown = THREAD) => {
   const dir = mkdtempSync(join(tmpdir(), "slack-read-test-"));
   dirs.push(dir);
-  writeFileSync(join(dir, "thread.json"), JSON.stringify(THREAD));
+  writeFileSync(join(dir, "thread.json"), JSON.stringify(thread));
   for (const [id, body] of Object.entries(USERS)) writeFileSync(join(dir, `${id}.json`), JSON.stringify(body));
   writeFileSync(
     join(dir, "curl"),
@@ -91,5 +91,17 @@ describe("slack-read.sh names every user id", () => {
     await replies(dir);
     const lookups = readFileSync(join(dir, "lookups.txt"), "utf8").trim().split("\n");
     expect(lookups.sort()).toEqual(["U0ALEX00001", "U0OWNER0001", "U0BOT000001", "U0GONE00000"]);
+  });
+
+  test("a read past ARG_MAX still comes back whole and named", async () => {
+    // round-1 review: with the payload in the env, a ~1.2MB read failed at exec
+    // with "Argument list too long" and printed nothing
+    const big = {
+      ok: true,
+      messages: Array.from({ length: 400 }, (_, i) => ({ user: "U0ALEX00001", ts: `1.${i}`, text: "x".repeat(3000) })),
+    };
+    const { messages } = await replies(fakeCurl(big));
+    expect(messages).toHaveLength(400);
+    expect(messages[399]!.user_name).toBe("Alex Example");
   });
 });

@@ -133,15 +133,18 @@ print("\n".join(seen[:100]))
 # users.info will not answer for, passes through untouched.
 name_users() {
   local raw; raw=$(cat)
-  local lookups="" id
+  # lookups go through a file and the payload through stdin, never the env: a
+  # big read would pass ARG_MAX and exec would fail before the fallback runs
+  local lookups; lookups=$(mktemp "${TMPDIR:-/tmp}/slack-read.XXXXXX") || { printf '%s' "$raw"; return; }
+  local id
   for id in $(printf '%s' "$raw" | user_ids); do
-    lookups+="$id"$'\t'"$(api users.info -d "user=$id" | tr -d '\n')"$'\n'
+    printf '%s\t%s\n' "$id" "$(api users.info -d "user=$id" | tr -d '\n')" >> "$lookups"
   done
-  RAW="$raw" LOOKUPS="$lookups" python3 -c '
+  printf '%s' "$raw" | LOOKUPS="$lookups" python3 -c '
 import json, os, re, sys
-raw = os.environ["RAW"]
+raw = sys.stdin.read()
 names = {}
-for line in os.environ["LOOKUPS"].splitlines():
+for line in open(os.environ["LOOKUPS"], encoding="utf-8").read().splitlines():
     uid, _, body = line.partition("\t")
     try:
         u = json.loads(body).get("user") or {}
@@ -164,7 +167,8 @@ try:
     json.dump(d, sys.stdout, ensure_ascii=False)
 except Exception:
     sys.stdout.write(raw)
-'
+' || printf '%s' "$raw"
+  rm -f "$lookups"
 }
 
 case "${1:-}" in
