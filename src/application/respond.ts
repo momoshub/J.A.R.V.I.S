@@ -96,6 +96,14 @@ export const respond = async (
   deps: RespondDeps,
   inbound: InboundMessage,
   sink?: LlmStreamSink,
+  /**
+   * Called when a chat turn actually starts, after any wait in the thread's
+   * queue. The Slack layer arms its "thinking" card here: armed on arrival, a
+   * queued turn opened its reply message while the turn ahead was still
+   * running, so its answer sat above the earlier turn's and the thread read
+   * out of order.
+   */
+  onTurnStart?: () => void,
 ): Promise<HandleResult> => {
   const line = commandLineOf(inbound.text, deps.commandPrefix);
   if (line === undefined) {
@@ -152,6 +160,7 @@ export const respond = async (
       // Called off while it waited its turn, so it never spawns anything.
       if (tracked?.signal.aborted) return { kind: "ignored" };
       tracked?.running();
+      onTurnStart?.();
       const startedAt = deps.clock();
       // How this ended, recorded whichever way it ends. Nothing used to write
       // this down: a failed chat turn left a line on stderr and an apology in

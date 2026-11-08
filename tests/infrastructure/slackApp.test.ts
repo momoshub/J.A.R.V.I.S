@@ -16,6 +16,7 @@ import { createUserRepo } from "../../src/infrastructure/db/userRepo.ts";
 import { createMessageRepo } from "../../src/infrastructure/db/messageRepo.ts";
 import type { LlmPort, LlmStreamEvent } from "../../src/application/ports.ts";
 import type { RespondDeps } from "../../src/application/respond.ts";
+import { createThreadQueue, type ThreadQueue } from "../../src/application/threadQueue.ts";
 import { FOOTER_BLOCK_ID } from "../../src/domain/messageFooter.ts";
 import { blockKitReply } from "../../src/domain/blockKit.ts";
 
@@ -70,6 +71,7 @@ const build = (opts: {
   thinkingAfterMs?: number;
   /** `say` throws on any post carrying blocks, as Slack does on `invalid_blocks`. */
   refuseBlocks?: boolean;
+  threadQueue?: ThreadQueue;
 }) => {
   const db = openDatabase(":memory:");
   const users = createUserRepo(db);
@@ -82,6 +84,7 @@ const build = (opts: {
     llm: opts.llm,
     clock: () => t++,
     ownerSlackId: OWNER,
+    ...(opts.threadQueue ? { threadQueue: opts.threadQueue } : {}),
   };
   const config: SlackAppConfig = {
     botToken: "x",
@@ -127,7 +130,7 @@ const build = (opts: {
       said.push({ text: m.text, ...(m.reply_broadcast ? { reply_broadcast: true } : {}) });
     },
   });
-  return { handle, msg, said, updates, deletes, rec, messages };
+  return { handle, msg, said, updates, deletes, rec, messages, opened: () => streams };
 };
 
 const streamingLlm = (final: string, events: LlmStreamEvent[] = []): LlmPort => ({
@@ -401,6 +404,32 @@ describe("createHandler streaming truth table", () => {
     const b = build({ llm: slow, streamUpdates: true, thinkingAfterMs: 1 });
     await b.handle(b.msg("hi"));
     expect(thinkingCard(b.rec.appends)).toBe(true);
+  });
+
+  test("a message queued behind a running turn opens no reply until its own turn starts", async () => {
+    // Opened on arrival, the queued turn's reply sat above the running turn's
+    // answer, and the thread read out of order.
+    let release = () => {};
+    const gate = new Promise<void>((r) => (release = r));
+    let calls = 0;
+    const llm: LlmPort = {
+      complete: async () => "ok",
+      stream: async (_p, sink) => {
+        if (calls++ === 0) await gate;
+        sink({ type: "text", delta: "ok" });
+        return "ok";
+      },
+    };
+    const b = build({ llm, streamUpdates: true, thinkingAfterMs: 1, threadQueue: createThreadQueue() });
+    const first = b.handle(b.msg("set it up"));
+    await new Promise((r) => setTimeout(r, 10));
+    expect(b.opened()).toBe(1); // the first turn's thinking card
+    const second = b.handle(b.msg("and a table please"));
+    await new Promise((r) => setTimeout(r, 25));
+    expect(b.opened()).toBe(1);
+    release();
+    await Promise.all([first, second]);
+    expect(b.opened()).toBe(2);
   });
 
   test("posts an error message when respond throws", async () => {
