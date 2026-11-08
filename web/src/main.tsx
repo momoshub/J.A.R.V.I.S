@@ -259,6 +259,8 @@ function AdapterMemory({
           <Form method="post">
             <input type="hidden" name="intent" value="edit" />
             <input type="hidden" name="path" value={f.path} />
+            {/* What this editor was opened on: the save is refused if the file moved since. */}
+            <input type="hidden" name="base" value={f.content} />
             {/* Keyed on the content so a save or revert shows what is now stored. */}
             <textarea key={f.content} name="content" defaultValue={f.content} rows={Math.min(30, f.content.split("\n").length + 2)} spellCheck={false} style={{ width: "100%" }} />
             <div className="row"><button type="submit">save {f.path}</button></div>
@@ -270,6 +272,8 @@ function AdapterMemory({
         <Form method="post">
           <input type="hidden" name="intent" value="edit" />
           <input name="path" placeholder="memory/people/U123.md" required style={{ width: "100%" }} />
+          {/* A new file must not exist yet. */}
+          <input type="hidden" name="base" value="" />
           <textarea name="content" rows={6} required spellCheck={false} style={{ width: "100%" }} />
           <div className="row"><button type="submit">create</button></div>
         </Form>
@@ -552,6 +556,7 @@ const router = createBrowserRouter([
             return post<{ ok: true; warnings: string[] }>("adapter/file", {
               path: fd.get("path"),
               content: String(fd.get("content") ?? ""),
+              base: String(fd.get("base") ?? ""),
             });
           if (intent === "revert") await post("adapter/revert", { id: Number(fd.get("id")) });
           else if (intent === "remove") await post("learnings/remove", { id: Number(fd.get("id")) });

@@ -290,6 +290,49 @@ describe("editAdapterFile", () => {
     expect(rememberFact(deps, "still teachable", { kind: "global" }, "U1").ok).toBe(true);
   });
 
+  test("a save opened on stale text is refused, so a fact taught meanwhile survives", () => {
+    const deps = setup({ "memory/NOTES.md": "- old\n" });
+    rememberFact(deps, "taught while the page was open", { kind: "global" }, "U1");
+    const result = editAdapterFile(deps, "memory/NOTES.md", "- old edited\n", "dashboard", "- old\n");
+    expect(result.ok).toBe(false);
+    expect(deps.store.load().notes).toContain("taught while the page was open");
+    const fresh = deps.store.files().get("memory/NOTES.md") ?? "";
+    expect(editAdapterFile(deps, "memory/NOTES.md", `${fresh}- more\n`, "dashboard", fresh).ok).toBe(true);
+  });
+
+  test("a new file with an empty base is refused when the path already exists", () => {
+    const deps = setup({ "memory/people/U7.md": "- here\n" });
+    expect(editAdapterFile(deps, "memory/people/U7.md", "- clobber", "dashboard", "").ok).toBe(false);
+    expect(deps.store.files().get("memory/people/U7.md")).toBe("- here\n");
+  });
+
+  test("a path differing from an existing one only in case is refused", () => {
+    const deps = setup({ "memory/people/U7.md": "- here\n" });
+    expect(editAdapterFile(deps, "memory/people/u7.md", "- other", "dashboard").ok).toBe(false);
+  });
+
+  test("a manifest edit that widens its limits is taken, and the new path can then be written", () => {
+    const deps = setup();
+    const widened = MANIFEST.replace("  fixed:", "    - path: extra/*.md\n      format: {max_bytes: 8000}\n  fixed:");
+    expect(editAdapterFile(deps, "adapter.yaml", widened, "dashboard").ok).toBe(true);
+    expect(editAdapterFile(deps, "extra/a.md", "- hi", "dashboard").ok).toBe(true);
+  });
+
+  test("a revert across a manifest change is checked against the revision's own manifest", () => {
+    const deps = setup();
+    rememberFact(deps, "anchor", { kind: "global" }, "U1");
+    const before = deps.revisions?.list()[0]?.id ?? 0;
+    const widened = MANIFEST.replace("  fixed:", "    - path: extra/*.md\n      format: {max_bytes: 8000}\n  fixed:");
+    editAdapterFile(deps, "adapter.yaml", widened, "dashboard");
+    editAdapterFile(deps, "extra/a.md", "- hi", "dashboard");
+    const after = deps.revisions?.list()[0]?.id ?? 0;
+
+    expect(revertAdapter(deps, before, "U1").ok).toBe(true);
+    expect(deps.store.files().has("extra/a.md")).toBe(false);
+    expect(revertAdapter(deps, after, "U1").ok).toBe(true);
+    expect(deps.store.files().get("extra/a.md")).toBe("- hi");
+  });
+
   test("a new scoped file can be created, and blanking it removes it", () => {
     const deps = setup();
     expect(editAdapterFile(deps, "memory/people/U7.md", "- likes tea", "dashboard").ok).toBe(true);

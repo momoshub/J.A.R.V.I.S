@@ -583,8 +583,8 @@ const main = async () => {
               return r.ok ? { ok: true } : { ok: false, violations: r.violations };
             },
             files: () => [...adapterStore.files()].map(([path, content]) => ({ path, content })),
-            edit: (path, content, by) => {
-              const r = editAdapterFile(adapterDeps(), path, content, by);
+            edit: (path, content, by, base) => {
+              const r = editAdapterFile(adapterDeps(), path, content, by, base);
               return r.ok ? { ok: true, warnings: r.warnings } : { ok: false, violations: r.violations };
             },
           }

@@ -82,6 +82,7 @@ export type DashboardDeps = {
       path: string,
       content: string,
       by: string,
+      base?: string,
     ) => { readonly ok: boolean; readonly violations?: readonly string[]; readonly warnings?: readonly string[] };
   };
   settings: SettingsRepo;
@@ -417,7 +418,10 @@ export const createDashboard = (config: DashboardConfig, deps: DashboardDeps) =>
           const path = String(body.path ?? "").trim();
           if (!path) return jsonError("A file path is required");
           if (typeof body.content !== "string") return jsonError("content is required (blank removes the file)");
-          const result = deps.adapter.edit(path, body.content, "dashboard");
+          // `base` is what the editor was opened on, so a save cannot undo a
+          // change that landed while the page sat open.
+          const base = typeof body.base === "string" ? body.base : undefined;
+          const result = deps.adapter.edit(path, body.content, "dashboard", base);
           if (!result.ok) return jsonError((result.violations ?? ["Could not save that"]).join("; "));
           return Response.json({ ok: true, warnings: result.warnings ?? [] });
         }

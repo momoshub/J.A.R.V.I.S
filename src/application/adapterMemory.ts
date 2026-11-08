@@ -56,14 +56,14 @@ const alwaysOnOf = (adapter: Adapter): string =>
 /**
  * Check a proposed tree and, if it passes, write it and record a revision.
  *
- * `enforceBudget` is false only for teaching - see the note at the top.
+ * `enforceBudget` is false for everything but a refine pass - teaching, hand
+ * edits, revert and migrate - see the note at the top.
  */
 export const commitAdapter = (
   deps: AdapterDeps,
   files: ReadonlyMap<string, string>,
   opts: { reason: string; actor: string; enforceBudget?: boolean; enforceFixed?: boolean },
 ): CommitResult => {
-  const manifest = deps.store.load().manifest;
   const budget = deps.budget ?? ALWAYS_ON_BUDGET;
 
   // Render the PROPOSAL, not what is live: the budget has to be measured on
@@ -74,6 +74,9 @@ export const commitAdapter = (
   // can lift them. A refine pass is told not to touch these; this is what
   // makes that a rule rather than a request.
   if (opts.enforceFixed) {
+    // Loaded only here: a live manifest that stopped parsing must not stop a
+    // revert or a hand edit from repairing it.
+    const manifest = deps.store.load().manifest;
     const protectedPaths = [...before.keys()].filter(
       (p) => p === "adapter.yaml" || p === "CARD.md" || manifest.fixed.some((f) => matchesGlob(p, f)),
     );
@@ -198,13 +201,16 @@ export const migrateLearnings = (
  * click puts back. Like teaching, it may run over the always-on budget and is
  * told so: a person fixing a line should not be refused for the size of a
  * file they did not grow. Blank content removes the file, except the manifest,
- * which nothing loads without.
+ * which nothing loads without. `base` is the text the editor was opened on:
+ * when given and the stored file no longer matches it (the bot learned
+ * something meanwhile), the save is refused rather than silently undoing that.
  */
 export const editAdapterFile = (
   deps: AdapterDeps,
   path: string,
   content: string,
   actor: string,
+  base?: string,
 ): CommitResult => {
   const rel = path.trim();
   // Canonical paths only. `a/./b` lands on the same mirror file as `a/b` but
@@ -213,8 +219,15 @@ export const editAdapterFile = (
     return { ok: false, violations: [`Not a path inside the adapter: ${path}`] };
   }
   const files = new Map(deps.store.files());
+  // Same reason on a case-insensitive disk (the default on macOS): `Run.sh`
+  // beside `run.sh` is two rows and one mirror file.
+  const clash = [...files.keys()].find((p) => p !== rel && p.toLowerCase() === rel.toLowerCase());
+  if (clash) return { ok: false, violations: [`${rel} clashes with ${clash}, which differs only in case`] };
   // A browser may hand a textarea back with CRLF line ends.
   const text = content.replace(/\r\n/g, "\n");
+  if (base !== undefined && (files.get(rel) ?? "") !== base.replace(/\r\n/g, "\n")) {
+    return { ok: false, violations: [`${rel} changed since it was opened - reload and redo the edit`] };
+  }
   const blank = text.trim() === "";
   if (blank && rel === MANIFEST_FILE) return { ok: false, violations: [`${MANIFEST_FILE} cannot be removed`] };
   if (blank && !files.has(rel)) return { ok: false, violations: [`There is no ${rel} to remove.`] };

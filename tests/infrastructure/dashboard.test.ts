@@ -397,16 +397,16 @@ describe("storing a modal for a button to open", () => {
 describe("editing memory files by hand", () => {
   const fakeAdapter = () => {
     const files = new Map([["memory/NOTES.md", "- old\n"]]);
-    const edits: { path: string; content: string; by: string }[] = [];
+    const edits: { path: string; content: string; by: string; base?: string }[] = [];
     const adapter: NonNullable<DashboardDeps["adapter"]> = {
       status: () => "",
       view: () => ({ policy: "", notes: "", skills: [], people: [], channels: [], revisions: [], items: 0 }),
       remember: () => ({ ok: true }),
       revert: () => ({ ok: true }),
       files: () => [...files].map(([path, content]) => ({ path, content })),
-      edit: (path, content, by) => {
+      edit: (path, content, by, base) => {
         if (path.includes("..")) return { ok: false, violations: ["Not a path inside the adapter"] };
-        edits.push({ path, content, by });
+        edits.push({ path, content, by, ...(base === undefined ? {} : { base }) });
         files.set(path, content);
         return { ok: true, warnings: ["over budget"] };
       },
@@ -424,6 +424,9 @@ describe("editing memory files by hand", () => {
     expect(res.status).toBe(200);
     expect(await res.json()).toEqual({ ok: true, warnings: ["over budget"] });
     expect(edits).toEqual([{ path: "memory/NOTES.md", content: "- new", by: "dashboard" }]);
+
+    await dash.handle(postJson("/api/adapter/file", { path: "memory/NOTES.md", content: "- newer", base: "- new" }));
+    expect(edits[1]).toEqual({ path: "memory/NOTES.md", content: "- newer", by: "dashboard", base: "- new" });
   });
 
   test("a refusal from the gate comes back as an error, and a missing path or content is refused", async () => {
