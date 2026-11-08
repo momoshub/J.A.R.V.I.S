@@ -1,5 +1,5 @@
-import { useLoaderData, useSearchParams } from "react-router";
-import type { UsageView } from "./api.ts";
+import { useLoaderData, useSearchParams, type LoaderFunctionArgs } from "react-router";
+import { get, type UsageView } from "../api.ts";
 
 /** 1_234_567 -> "1.2M". The same shapes the Slack report uses. */
 const tokens = (n: number): string => {
@@ -32,6 +32,11 @@ const WINDOWS = [
  * consumption rather than an invoice. The page says so under the headline
  * number rather than leaving somebody to read it as a bill.
  */
+export const loader = async ({ request }: LoaderFunctionArgs) => {
+  const hours = new URL(request.url).searchParams.get("hours") ?? "24";
+  return get<UsageView>(`usage?hours=${encodeURIComponent(hours)}`);
+};
+
 export function SpendPage() {
   const data = useLoaderData() as UsageView;
   const [params, setParams] = useSearchParams();

@@ -13,7 +13,7 @@ import {
   type FlowStep,
   type SysEdge,
   type SysNode,
-} from "./systemModel.ts";
+} from "../systemModel.ts";
 
 const byId = new Map(NODES.map((n) => [n.id, n]));
 /** `checkModel` (tested) guarantees every id a flow or wire names is here. */
