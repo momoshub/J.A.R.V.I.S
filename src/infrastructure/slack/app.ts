@@ -53,7 +53,7 @@ import {
 import { annotateMentions, extractMentionIds } from "../../domain/mentions.ts";
 import { isTimeout } from "../../domain/threadSession.ts";
 import { toMrkdwn } from "../../domain/slackFormat.ts";
-import { toBlockMessage, type Block } from "../../domain/blockKit.ts";
+import { MAX_BLOCKS, toBlockMessage, type Block } from "../../domain/blockKit.ts";
 import { couldFollowThread, followVerdict, isOneOnOneThread, isSpeech, startsAutoFollow } from "../../domain/threadFollow.ts";
 import { unfollowOnReaction } from "../../application/followReaction.ts";
 import { collapsedBlocks, collapseSteps } from "../../domain/collapseSteps.ts";
@@ -448,8 +448,10 @@ export const createHandler =
         const tailFooter = withTail ? footer : undefined;
         const body = toMrkdwn(text);
         const rich = toBlockMessage(text, toMrkdwn);
+        const tail = collapsedBlocks("", tailCollapsed, tailFooter);
+        // The fence may already hold Slack's 50; the tail must still fit.
         const blocks = rich?.blocks
-          ? [...rich.blocks, ...collapsedBlocks("", tailCollapsed, tailFooter)]
+          ? [...rich.blocks.slice(0, MAX_BLOCKS - tail.length), ...tail]
           : collapsedBlocks(body, tailCollapsed, tailFooter);
         return { text: body, blocks };
       };
@@ -546,7 +548,9 @@ export const createHandler =
         // Either way it carries the signature footer.
         const rich = toBlockMessage(result.text, toMrkdwn);
         const extra = { thread_ts: msg.threadTs };
-        const plain = () => msg.say({ ...signedText(toMrkdwn(result.text), footer), ...extra });
+        // A refused signed post still gets the words out, bare.
+        const bare = () => msg.say({ text: toMrkdwn(result.text), ...extra });
+        const plain = () => msg.say({ ...signedText(toMrkdwn(result.text), footer), ...extra }).catch(bare);
         if (rich) await msg.say({ ...rich, blocks: withFooter(rich.blocks, footer), ...extra }).catch(plain);
         else await plain();
       }
@@ -563,6 +567,7 @@ export const createHandler =
         : "Sorry, I hit an error handling that. Please try again in a moment.";
       await msg
         .say({ ...signedText(text, footerLine(SIGNATURES.jarvis, deps.clock())), thread_ts: msg.threadTs })
+        .catch(() => msg.say({ text, thread_ts: msg.threadTs }))
         .catch(() => undefined);
     }
   };
@@ -927,7 +932,9 @@ export const createSlackApp = (config: SlackAppConfig, deps: Deps) => {
             slash: config.slashCommand,
             threadTs,
             preApproved: true,
-            reply: deps.slack ? async (text: string) => void (await deps.slack!.post(channelId, text, threadTs)) : undefined,
+            reply: deps.slack
+              ? async (text: string) => void (await deps.slack!.post(channelId, text, threadTs, SIGNATURES.command))
+              : undefined,
           }),
       );
       log(`command approval ${outcome.kind}`);
@@ -1009,8 +1016,8 @@ export const createSlackApp = (config: SlackAppConfig, deps: Deps) => {
     const channel = req?.channelId;
     const saved = `🔐 got it, token ${tokenHint(token)} saved for <@${userId}>`;
     try {
-      if (channel) await deps.slack?.post(channel, saved, req?.threadTs);
-      else await deps.slack?.postDm(userId, saved);
+      if (channel) await deps.slack?.post(channel, saved, req?.threadTs, SIGNATURES.command);
+      else await deps.slack?.postDm(userId, saved, SIGNATURES.command);
       log(`claude token saved for ${userId}`);
       // Resume whatever was blocked on it, so nobody has to type it twice.
       const actor = deps.users.get(userId);
@@ -1019,7 +1026,9 @@ export const createSlackApp = (config: SlackAppConfig, deps: Deps) => {
           prefix: config.commandPrefix,
           slash: config.slashCommand,
           threadTs: req.threadTs,
-          reply: deps.slack ? async (text: string) => void (await deps.slack!.post(channel, text, req.threadTs)) : undefined,
+          reply: deps.slack
+            ? async (text: string) => void (await deps.slack!.post(channel, text, req.threadTs, SIGNATURES.command))
+            : undefined,
         });
       }
     } catch (err) {
@@ -1099,8 +1108,8 @@ export const createSlackApp = (config: SlackAppConfig, deps: Deps) => {
     // The key itself is never echoed - only what it is called and who it is for.
     const saved = `🔐 setup key saved as \`${outcome.label}\`${outcome.account ? ` (${outcome.account})` : ""}. \`${config.slashCommand} 2fa ${outcome.label}\` for a code.`;
     try {
-      if (channel) await deps.slack?.post(channel, saved, req?.threadTs);
-      else await deps.slack?.postDm(userId, saved);
+      if (channel) await deps.slack?.post(channel, saved, req?.threadTs, SIGNATURES.command);
+      else await deps.slack?.postDm(userId, saved, SIGNATURES.command);
       log(`totp secret saved as ${outcome.label} by ${userId}`);
     } catch (err) {
       log(`2fa follow-up failed: ${err instanceof Error ? err.message : String(err)}`);
@@ -1143,7 +1152,7 @@ export const createSlackApp = (config: SlackAppConfig, deps: Deps) => {
     const user = deps.users.get(by);
     if (!user) return;
     const reply = async (text: string) => {
-      await deps.slack?.post(channelId, text, threadTs);
+      await deps.slack?.post(channelId, text, threadTs, SIGNATURES.command);
     };
     try {
       const text = await dispatchCommand(deps, user, channelId, line, {

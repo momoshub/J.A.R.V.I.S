@@ -7,7 +7,7 @@ import { WebClient } from "@slack/web-api";
 import { splitForBlocks, toMrkdwn } from "../../domain/slackFormat.ts";
 import { toBlockMessage } from "../../domain/blockKit.ts";
 import { type MessageBlock, visibleText } from "../../domain/slackMessageText.ts";
-import { footerBlock, footerLine, signedText, SIGNATURES, withFooter } from "../../domain/messageFooter.ts";
+import { footerBlock, footerLine, sectionChunks, signedText, SIGNATURES, withFooter } from "../../domain/messageFooter.ts";
 import type {
   SlackAdminPort,
   SlackConversation,
@@ -195,7 +195,11 @@ export const createSlackAdmin = (client: WebClient, clock: () => number = Date.n
     update: async (channel, ts, text, by) => {
       // Blocks every time: an edit that sent only text would keep the old
       // blocks on screen, footer and all, and change nothing anyone sees.
-      await client.chat.update({ channel, ts, ...signedText(text, footer(by)) });
+      // A refused rewrite (a stopped stream's block_mismatch, say) still edits
+      // the words, text-only, as before.
+      await client.chat
+        .update({ channel, ts, ...signedText(text, footer(by)) })
+        .catch(() => client.chat.update({ channel, ts, text }));
     },
 
     remove: async (channel, ts) => {
@@ -362,7 +366,19 @@ export const createSlackAdmin = (client: WebClient, clock: () => number = Date.n
 
     settleInteractive: async (channel, ts, text, by) => {
       // Drop the buttons so a decided request cannot be clicked again.
-      await client.chat.update({ channel, ts, ...signedText(text, footer(by)) });
+      await client.chat
+        .update({ channel, ts, ...signedText(text, footer(by)) })
+        // Refused: the same sections unsigned (still no buttons), and failing
+        // that a text-only edit, so at least the words change.
+        .catch(() =>
+          client.chat.update({
+            channel,
+            ts,
+            text: text || " ",
+            blocks: sectionChunks(text).map((chunk) => ({ type: "section", text: { type: "mrkdwn", text: chunk } })),
+          }),
+        )
+        .catch(() => client.chat.update({ channel, ts, text }));
     },
 
     addReactions: async (channel, ts, names) => {

@@ -6,12 +6,14 @@ import {
   footerLine,
   offsetLabel,
   restamp,
+  sectionChunks,
   signedText,
   SIGNATURES,
   updatedStamp,
   withFooter,
 } from "../../src/domain/messageFooter.ts";
 import { MAX_BLOCKS } from "../../src/domain/blockKit.ts";
+import { SECTION_LIMIT } from "../../src/domain/slackFormat.ts";
 
 // 2026-11-08 07:32:00 UTC = 14:32 at +07
 const AT = Date.UTC(2026, 10, 8, 7, 32, 0);
@@ -87,10 +89,62 @@ describe("blocks", () => {
     expect(msg.blocks).toEqual([{ type: "section", text: { type: "mrkdwn", text: "hello *there*" } }, footerBlock(line)]);
   });
 
-  test("a long plain post is split, since Slack refuses a section over 3000 chars", () => {
+  test("a long plain post is split so every section stays under Slack's 3000", () => {
     const msg = signedText(`${"a ".repeat(2000)}\n${"b ".repeat(2000)}`, line);
-    expect(msg.blocks.length).toBeGreaterThan(2);
-    expect(msg.blocks.at(-1)?.block_id).toBe(FOOTER_BLOCK_ID);
+    const sections = msg.blocks.slice(0, -1) as unknown as { text: { text: string } }[];
+    expect(sections.length).toBeGreaterThan(2);
+    for (const s of sections) expect(s.text.text.length).toBeLessThanOrEqual(SECTION_LIMIT);
+    expect(sections.map((s) => s.text.text).join("")).toBe(`${"a ".repeat(2000)}${"b ".repeat(2000)}`);
+    expect(msg.blocks.at(-1)).toMatchObject({ block_id: FOOTER_BLOCK_ID });
+  });
+});
+
+describe("sectionChunks", () => {
+  test("short text is one chunk, blank text none", () => {
+    expect(sectionChunks("hello")).toEqual(["hello"]);
+    expect(sectionChunks("  \n ")).toEqual([]);
+  });
+
+  test("a single line over the limit is hard-cut, nothing lost", () => {
+    const giant = "x".repeat(7000);
+    const chunks = sectionChunks(giant);
+    expect(chunks.length).toBe(3);
+    for (const c of chunks) expect(c.length).toBeLessThanOrEqual(SECTION_LIMIT);
+    expect(chunks.join("")).toBe(giant);
+  });
+
+  test("one huge line inside a fence is cut into fenced chunks, none empty", () => {
+    const chunks = sectionChunks(`\`\`\`\n${"q".repeat(10_000)}\n\`\`\``);
+    expect(chunks.length).toBe(4);
+    for (const c of chunks) {
+      expect(c.length).toBeLessThanOrEqual(SECTION_LIMIT);
+      expect(c).toStartWith("```\n");
+      expect(c).toEndWith("\n```");
+      expect(c.replace(/[`\s]/g, "")).not.toBe("");
+    }
+  });
+
+  test("a fence closing exactly at the limit adds no empty code block", () => {
+    for (let n = SECTION_LIMIT - 20; n < SECTION_LIMIT + 10; n++) {
+      const chunks = sectionChunks(`\`\`\`\n${"a".repeat(n - 8)}\n\`\`\`\nafter`);
+      for (const c of chunks) {
+        expect(c.length).toBeLessThanOrEqual(SECTION_LIMIT);
+        expect(c.replace(/[`\s]/g, "")).not.toBe("");
+      }
+    }
+  });
+
+  test("a code fence crossing a cut is closed and reopened, so both halves render as code", () => {
+    const code = Array.from({ length: 200 }, (_, i) => `line ${i} ${"y".repeat(20)}`).join("\n");
+    const chunks = sectionChunks(`before\n\`\`\`\n${code}\n\`\`\`\nafter`);
+    expect(chunks.length).toBeGreaterThan(1);
+    for (const c of chunks) {
+      expect(c.length).toBeLessThanOrEqual(SECTION_LIMIT);
+      // every chunk holds an even number of fences: opened and closed inside it
+      expect((c.match(/^```/gm) ?? []).length % 2).toBe(0);
+    }
+    expect(chunks[1]?.startsWith("```")).toBe(true);
+    expect(chunks.at(-1)?.endsWith("after")).toBe(true);
   });
 });
 
@@ -116,6 +170,11 @@ describe("restamp", () => {
     const before = [{ type: "context", block_id: FOOTER_BLOCK_ID, elements: [{ type: "mrkdwn", text: "Jarvis" }] }];
     const line = (restamp(before, "Jarvis", later, ICT)[0] as { elements: { text: string }[] }).elements[0]!.text;
     expect(line).toBe(`Jarvis · ${updatedStamp(later, ICT)}`);
+  });
+
+  test("a message already at 50 blocks keeps them all rather than gaining a footer", () => {
+    const full = Array.from({ length: MAX_BLOCKS }, (_, i) => ({ type: "section", text: { type: "mrkdwn", text: `${i}` } }));
+    expect(restamp(full, "Jarvis", later, ICT)).toEqual(full);
   });
 
   test("it does not touch the blocks it was given", () => {

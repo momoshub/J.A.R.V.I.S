@@ -19,7 +19,7 @@
  * the usage and any step summary sitting in the same block.
  */
 import { type Block, MAX_BLOCKS } from "./blockKit.ts";
-import { splitForBlocks } from "./slackFormat.ts";
+import { SECTION_LIMIT } from "./slackFormat.ts";
 
 /** Who signs what. Anything not listed here is plain Jarvis. */
 export const SIGNATURES = {
@@ -92,14 +92,53 @@ export const withFooter = <T extends AnyBlock>(blocks: readonly T[], line: strin
   footerBlock(line),
 ];
 
+const FENCE = /^\s*```/;
+const FENCE_ROOM = 8; // "```\n" reopened at the top of a chunk + "\n```" closing it
+
+/**
+ * Text cut into section-sized chunks that Slack will take. Unlike
+ * `splitForBlocks` (which passes a long line through whole), nothing here may
+ * exceed the limit, since one refused section loses the whole message: a line
+ * longer than that is hard-cut. A code fence crossing a cut is closed at the
+ * end of one chunk and reopened at the top of the next, so it still renders
+ * as code rather than stray backticks.
+ */
+export const sectionChunks = (text: string, limit: number = SECTION_LIMIT): string[] => {
+  const width = Math.max(1, limit - FENCE_ROOM);
+  const lines = text
+    .split("\n")
+    .flatMap((l) => (l.length <= width ? [l] : Array.from({ length: Math.ceil(l.length / width) }, (_, i) => l.slice(i * width, (i + 1) * width))));
+  const chunks: string[] = [];
+  let current: string[] = [];
+  let size = 0;
+  let inFence = false;
+  const flush = () => {
+    chunks.push(inFence ? `${current.join("\n")}\n\`\`\`` : current.join("\n"));
+    current = inFence ? ["```"] : [];
+    size = inFence ? 3 : 0;
+  };
+  for (const line of lines) {
+    // Inside a fence, leave room for the "\n```" a cut adds - except on the
+    // line that closes the fence itself, which needs none.
+    const closes = inFence && FENCE.test(line);
+    const grown = size + (current.length ? 1 : 0) + line.length + (inFence && !closes ? 4 : 0);
+    if (grown > limit && current.length > (inFence ? 1 : 0)) flush();
+    size += (current.length ? 1 : 0) + line.length;
+    current.push(line);
+    if (FENCE.test(line)) inFence = !inFence;
+  }
+  if (current.join("\n").trim() && !(current.length === 1 && current[0] === "```" && chunks.length)) chunks.push(current.join("\n"));
+  return chunks.filter((c) => c.trim());
+};
+
 /**
  * A plain mrkdwn post as blocks, so it can carry the footer: one section per
- * chunk (Slack refuses a section over 3000 chars), then the footer.
+ * chunk (`sectionChunks`, every one under Slack's 3000), then the footer.
  */
 export const signedText = (mrkdwn: string, line: string): { text: string; blocks: Block[] } => ({
   text: mrkdwn || " ",
   blocks: withFooter(
-    splitForBlocks(mrkdwn).filter((c) => c.trim()).map((chunk) => ({ type: "section", text: { type: "mrkdwn", text: chunk } })),
+    sectionChunks(mrkdwn).map((chunk) => ({ type: "section", text: { type: "mrkdwn", text: chunk } })),
     line,
   ),
 });
@@ -116,6 +155,9 @@ export const restamp = <T extends AnyBlock>(
   offsetMin?: number,
 ): (T | Block)[] => {
   const at = blocks.findIndex(isFooter);
+  // A message already at Slack's 50 keeps every block it has: losing the
+  // settled note or the buttons is worse than a missing footer.
+  if (at < 0 && blocks.length >= MAX_BLOCKS) return [...blocks];
   if (at < 0) return withFooter(blocks, footerLine(by, ms, undefined, offsetMin));
   const footer = blocks[at]!;
   const elements = Array.isArray(footer.elements) ? (footer.elements as Record<string, unknown>[]) : [];

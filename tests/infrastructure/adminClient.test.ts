@@ -74,6 +74,46 @@ describe("every message the admin client writes is signed", () => {
     expect(signedBy(calls[1]?.[1])).toStartWith("command · ");
   });
 
+  test("a refused rewrite still edits the words, text-only", async () => {
+    const calls: Record<string, unknown>[] = [];
+    const client = {
+      chat: {
+        update: async (a: Record<string, unknown>) => {
+          calls.push(a);
+          if (a.blocks) throw new Error("block_mismatch");
+        },
+      },
+    } as unknown as WebClient;
+    await createSlackAdmin(client, () => NOW).update("C1", "5.5", "edited");
+    expect(calls).toHaveLength(2);
+    expect(calls[1]).toEqual({ channel: "C1", ts: "5.5", text: "edited" });
+  });
+
+  test("a refused settle still drops the buttons, unsigned, then falls back to text-only", async () => {
+    const calls: Record<string, unknown>[] = [];
+    let refusals = 2;
+    const client = {
+      chat: {
+        update: async (a: Record<string, unknown>) => {
+          calls.push(a);
+          if (refusals-- > 0) throw new Error("invalid_blocks");
+        },
+      },
+    } as unknown as WebClient;
+    await createSlackAdmin(client, () => NOW).settleInteractive("C1", "6.6", "approved");
+    expect(calls).toHaveLength(3);
+    expect(calls[1]).toEqual({ channel: "C1", ts: "6.6", text: "approved", blocks: [{ type: "section", text: { type: "mrkdwn", text: "approved" } }] });
+    expect(calls[2]).toEqual({ channel: "C1", ts: "6.6", text: "approved" });
+  });
+
+  test("a signed edit of one very long line keeps every section under Slack's 3000", async () => {
+    const { calls, admin } = fake();
+    await admin.update("C1", "5.5", "z".repeat(9000));
+    const sections = (calls[0]?.[1].blocks as { type: string; text?: { text: string } }[]).filter((b) => b.type === "section");
+    expect(sections.length).toBeGreaterThan(3);
+    for (const s of sections) expect(s.text!.text.length).toBeLessThanOrEqual(3000);
+  });
+
   test("buttons and menus carry the footer under their actions", async () => {
     const { calls, admin } = fake();
     const actions = [{ actionId: "a", label: "Yes", value: "y" }];

@@ -5,7 +5,7 @@ import { createRunRegistry } from "../../src/application/runRegistry.ts";
 import { dispatchCommand, type CommandDeps } from "../../src/application/commands.ts";
 import type { TotpPort } from "../../src/application/totp.ts";
 import { parseTotpInput, totpCode } from "../../src/domain/totp.ts";
-import { OWNER, db, actor, build } from "./commandsFixture.ts";
+import { OWNER, db, actor, build, slackCalls } from "./commandsFixture.ts";
 
 describe("stop command", () => {
   const tracked = (runs: ReturnType<typeof createRunRegistry>, over: Record<string, unknown> = {}) =>
@@ -175,6 +175,15 @@ describe("2fa", () => {
     expect(out).toContain("setup key");
     expect(out).not.toContain("GEZDGNBV");
     expect(deps.totp.list()).toHaveLength(0);
+  });
+
+  test("in a thread the box is posted with a button, signed as command output", async () => {
+    const deps = withTotp(0);
+    const out = await dispatchCommand(deps, actor(), "C1", "2fa add demo", { reply: async () => {}, threadTs: "222.2" });
+    expect(out).toBe("");
+    const ask = slackCalls.posts.at(-1);
+    expect(ask?.text).toContain("setup key");
+    expect(ask?.by).toBe("command");
   });
 
   test("a code, with the account and the time left", async () => {

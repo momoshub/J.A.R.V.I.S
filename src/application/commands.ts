@@ -16,6 +16,7 @@ import {
   menuPrompt,
   menuRunActionId,
 } from "../domain/commandMenu.ts";
+import { SIGNATURES } from "../domain/messageFooter.ts";
 import { allowanceFor, holdForApproval, type CommandLimitDeps } from "./commandLimits.ts";
 import { isTimeout } from "../domain/threadSession.ts";
 import { asksForHelp, commandHelp } from "../domain/commandHelp.ts";
@@ -92,6 +93,7 @@ export const COMMANDS: readonly CommandDef[] = [
               })),
             },
             threadTs,
+            SIGNATURES.command,
           )
           .catch(() => undefined);
         if (posted) return "";

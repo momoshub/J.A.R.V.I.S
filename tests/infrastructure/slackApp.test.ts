@@ -287,6 +287,28 @@ describe("createHandler streaming truth table", () => {
     expect(footer?.elements?.[0]?.text).toMatch(/^Jarvis · .*updated <!date\^\d+\^/);
   });
 
+  test("a signed plain post Slack refuses still goes out, bare", async () => {
+    const posts: { text: string; blocks?: unknown[] }[] = [];
+    const r = build({ llm: streamingLlm("plain post"), streamUpdates: false });
+    const say = async (m: { text: string; blocks?: unknown[] }) => {
+      posts.push(m);
+      if (m.blocks) throw new Error("invalid_blocks");
+    };
+    await r.handle({ ...r.msg("hi"), say });
+    expect(posts.map((p) => p.blocks === undefined)).toEqual([false, true]);
+    expect(posts[1]?.text).toBe("plain post");
+  });
+
+  test("a streamed Block Kit reply already at 50 blocks still fits its footer", async () => {
+    const fifty = JSON.stringify(Array.from({ length: 50 }, () => ({ type: "divider" })));
+    const text = `here\n\`\`\`blockkit\n${fifty}\n\`\`\``;
+    const { handle, msg, updates } = build({ llm: streamingLlm(text, [{ type: "text", delta: text }]), streamUpdates: true });
+    await handle(msg("hi", "000.9"));
+    const blocks = updates.at(-1)?.blocks as { block_id?: string }[];
+    expect(blocks.length).toBeLessThanOrEqual(50);
+    expect(blocks.at(-1)).toMatchObject({ block_id: FOOTER_BLOCK_ID });
+  });
+
   test("a plain post is signed too", async () => {
     const posts: { text: string; blocks?: unknown[] }[] = [];
     const r = build({ llm: streamingLlm("plain post"), streamUpdates: false });
