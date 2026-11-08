@@ -2,6 +2,9 @@ import { describe, expect, test } from "bun:test";
 import { createDashboardService, usageWindowMs, type DashboardPorts, type MemoryAdapterPort } from "../../src/application/dashboard.ts";
 import type { AllowedUser } from "../../src/domain/types.ts";
 import { SETTING_KEYS } from "../../src/infrastructure/db/settingsRepo.ts";
+import { createNameResolver } from "../../src/application/nameResolver.ts";
+import { ROLES, defaultRolePolicy, type RolePolicy } from "../../src/domain/rolePolicy.ts";
+import type { UserRole } from "../../src/domain/types.ts";
 
 const OWNER = "UOWNER1";
 
@@ -19,12 +22,23 @@ const ports = (over: Partial<DashboardPorts> = {}) => {
       get: (id) => users.get(id),
       list: () => [...users.values()],
       upsert: (u) => users.set(u.slackId, u),
+      setDisplayName: (id, displayName) => {
+        const u = users.get(id);
+        if (u) users.set(id, { ...u, displayName });
+      },
+      rename: (from, to) => {
+        const u = users.get(from);
+        if (!u || users.has(to)) return false;
+        users.delete(from);
+        users.set(to, { ...u, slackId: to });
+        return true;
+      },
       remove: (id) => void users.delete(id),
     },
     messages: {
       channels: () => [{ channelId: "C1" }],
       count: () => 3,
-      recentForChannel: (c, limit) => [{ c, limit }],
+      recentForChannel: (c, limit) => [{ slackUserId: `U-${c}-${limit}`, content: "hi" }],
       clearChannel: (c) => cleared.push(c),
     },
     learnings: {
@@ -40,6 +54,7 @@ const ports = (over: Partial<DashboardPorts> = {}) => {
       get: (k) => settings.get(k),
       set: (k, v) => void settings.set(k, v),
       remove: (k) => void settings.delete(k),
+      list: () => [...settings].map(([key, value]) => ({ key, value })),
     },
     ...over,
   };
@@ -153,17 +168,19 @@ describe("dashboard use cases", () => {
     expect(app.commands().disabled).toEqual(["review"]);
   });
 
-  test("conversations clamp to a limit and ignore a blank channel on clear", () => {
+  test("conversations clamp to a limit and ignore a blank channel on clear", async () => {
     const { app, cleared } = ports();
-    expect(app.conversation("")).toEqual([]);
-    expect(app.conversation("C1")).toEqual([{ c: "C1", limit: 200 }]);
+    expect((await app.conversation("")).messages).toEqual([]);
+    expect((await app.conversation("C1")).messages).toEqual([
+      { slackUserId: "U-C1-200", content: "hi", userLabel: "unknown (U-C1-200)" },
+    ]);
     app.clearConversation("  ");
     app.clearConversation(" C1 ");
     expect(cleared).toEqual(["C1"]);
   });
 
-  test("usage reports not recording without a store, and clamps its window", () => {
-    expect(ports().app.usage("24")).toEqual({ recording: false });
+  test("usage reports not recording without a store, and clamps its window", async () => {
+    expect(await ports().app.usage("24")).toEqual({ recording: false });
     expect(usageWindowMs(null)).toBe(24 * 3_600_000);
     expect(usageWindowMs("-1")).toBe(24 * 3_600_000);
     expect(usageWindowMs("abc")).toBe(24 * 3_600_000);
@@ -174,5 +191,159 @@ describe("dashboard use cases", () => {
     expect(ports().app.saveKitView({}).ok).toBe(false);
     const app = ports({ kitViews: { save: () => "abc" } }).app;
     expect(app.saveKitView({ nope: true }).ok).toBe(false);
+  });
+
+  test("saveUser hands out executer too, never owner", () => {
+    const { app, users } = ports();
+    app.saveUser("U3", "executer");
+    expect(users.get("U3")?.role).toBe("executer");
+  });
+});
+
+const policyStore = () => {
+  const rows = new Map<UserRole, RolePolicy>();
+  return {
+    rows,
+    port: {
+      list: () => ROLES.map((r) => rows.get(r) ?? defaultRolePolicy(r)),
+      save: (p: RolePolicy) => void rows.set(p.role, p),
+    },
+  };
+};
+
+describe("dashboard roles", () => {
+  test("roles lists every role with members, and offers only commands within its rank", () => {
+    const store = policyStore();
+    const { app, users } = ports({ rolePolicies: store.port });
+    users.set(OWNER, { slackId: OWNER, role: "owner", displayName: "Kai", addedBy: "system", createdAt: 1 });
+    users.set("U1", { slackId: "U1", role: "pal", displayName: "Ann", addedBy: "x", createdAt: 1 });
+    const view = app.roles();
+    expect(view.roles.map((r) => r.role)).toEqual(["owner", "admin", "executer", "pal"]);
+    const owner = view.roles.find((r) => r.role === "owner")!;
+    const pal = view.roles.find((r) => r.role === "pal")!;
+    expect(owner.locked).toBe(true);
+    expect(owner.members).toEqual([{ slackId: OWNER, name: "Kai" }]);
+    expect(pal.members).toEqual([{ slackId: "U1", name: "Ann" }]);
+    // `tell` is admin+: nothing to tick for a pal. `help` can never be denied.
+    expect(pal.commands).not.toContain("tell");
+    expect(pal.commands).not.toContain("help");
+    expect(owner.commands).toContain("tell");
+    expect(view.tools).toContain("Bash");
+    expect(view.mcpServers).toContain("pg-prod");
+    expect(view.editable).toBe(true);
+  });
+
+  test("saveRolePolicy persists through the port and refuses the owner and unknown names", () => {
+    const store = policyStore();
+    const { app } = ports({ rolePolicies: store.port });
+    const save = (over: Record<string, unknown>) =>
+      app.saveRolePolicy({ role: "pal", enabled: true, deniedCommands: [], deniedTools: [], deniedMcpServers: [], ...over });
+    expect(save({ role: "owner", enabled: false }).ok).toBe(false);
+    expect(save({ deniedCommands: ["nope-not-a-command"] }).ok).toBe(false);
+    expect(save({ deniedTools: ["rm -rf /"] }).ok).toBe(false);
+    expect(save({ enabled: false, deniedCommands: ["ping"], deniedTools: ["Bash"], deniedMcpServers: ["mcp__notion"] }).ok).toBe(true);
+    expect(store.rows.get("pal")).toEqual({
+      role: "pal",
+      enabled: false,
+      deniedCommands: ["ping"],
+      deniedTools: ["Bash"],
+      deniedMcpServers: ["notion"],
+    });
+    expect(app.roles().roles.find((r) => r.role === "pal")?.enabled).toBe(false);
+    // Without a store nothing can be saved, and roles still read as defaults.
+    expect(ports().app.saveRolePolicy({ role: "pal", enabled: false, deniedCommands: [], deniedTools: [], deniedMcpServers: [] }).ok).toBe(false);
+    expect(ports().app.roles().editable).toBe(false);
+  });
+
+  test("assignRole moves an existing user, never the owner and never into owner", () => {
+    const { app, users } = ports();
+    users.set("U1", { slackId: "U1", role: "pal", displayName: "Ann", addedBy: "x", createdAt: 1 });
+    users.set(OWNER, { slackId: OWNER, role: "owner", displayName: "Kai", addedBy: "system", createdAt: 1 });
+    expect(app.assignRole("U1", "executer").ok).toBe(true);
+    expect(users.get("U1")?.role).toBe("executer");
+    expect(app.assignRole("U1", "owner").ok).toBe(false);
+    expect(app.assignRole(OWNER, "pal").ok).toBe(false);
+    expect(app.assignRole("U404", "pal")).toMatchObject({ ok: false, status: 404 });
+  });
+});
+
+describe("dashboard user edits", () => {
+  const seeded = () => {
+    const env = ports();
+    env.users.set(OWNER, { slackId: OWNER, role: "owner", displayName: "Kai", addedBy: "system", createdAt: 1 });
+    env.users.set("U1", { slackId: "U1", role: "pal", displayName: "Ann", addedBy: "x", createdAt: 1 });
+    env.users.set("U2", { slackId: "U2", role: "pal", displayName: "Bea", addedBy: "x", createdAt: 1 });
+    return env;
+  };
+
+  test("edits name, GitHub logins and role, through the same github_login links the bot reads", async () => {
+    const { app, users, settings } = seeded();
+    settings.set("github_login:old-ann", "U1");
+    expect(app.updateUser({ slackId: "U1", displayName: " Annie ", githubLogins: "@Ann-GH, ann2", role: "executer" }).ok).toBe(true);
+    expect(users.get("U1")).toMatchObject({ displayName: "Annie", role: "executer" });
+    expect(settings.has("github_login:old-ann")).toBe(false);
+    expect(settings.get("github_login:ann-gh")).toBe("U1");
+    expect(settings.get("github_login:ann2")).toBe("U1");
+    expect((await app.listUsers()).find((u) => u.slackId === "U1")?.githubLogins).toEqual(["ann-gh", "ann2"]);
+  });
+
+  test("a corrected Slack id moves the record and its GitHub links", () => {
+    const { app, users, settings } = seeded();
+    settings.set("github_login:ann", "U1");
+    expect(app.updateUser({ slackId: "U1", newSlackId: "U9" }).ok).toBe(true);
+    expect(users.has("U1")).toBe(false);
+    expect(users.get("U9")?.displayName).toBe("Ann");
+    expect(settings.get("github_login:ann")).toBe("U9");
+  });
+
+  test("refuses collisions, bad input, and any change to the owner's id or role", () => {
+    const { app, settings } = seeded();
+    settings.set("github_login:bea", "U2");
+    expect(app.updateUser({ slackId: "U1", newSlackId: "U2" }).ok).toBe(false);
+    expect(app.updateUser({ slackId: "U1", newSlackId: OWNER }).ok).toBe(false);
+    expect(app.updateUser({ slackId: "U1", newSlackId: "nope" }).ok).toBe(false);
+    expect(app.updateUser({ slackId: "U1", githubLogins: "bad login!" }).ok).toBe(false);
+    const taken = app.updateUser({ slackId: "U1", githubLogins: "bea" });
+    expect(taken).toMatchObject({ ok: false, error: "bea is already linked to Bea (U2)" });
+    expect(app.updateUser({ slackId: OWNER, newSlackId: "U7" }).ok).toBe(false);
+    expect(app.updateUser({ slackId: OWNER, role: "pal" }).ok).toBe(false);
+    expect(app.updateUser({ slackId: OWNER, displayName: "Kai K", githubLogins: "kai" }).ok).toBe(true);
+    expect(app.updateUser({ slackId: "U404", displayName: "x" })).toMatchObject({ ok: false, status: 404 });
+  });
+});
+
+describe("dashboard names", () => {
+  test("conversations, their turns, the command log and spend never show a bare id", async () => {
+    const names = createNameResolver({
+      clock: () => 0,
+      lookups: {
+        conversation: async (id) =>
+          id === "C1" ? { kind: "channel", name: "team-chat" } : id === "D1" ? { kind: "im", userId: "U2" } : undefined,
+        users: async (ids) => Object.fromEntries(ids.map((id) => [id, id === "U2" ? "Bea" : id])),
+      },
+    });
+    const { app } = ports({
+      names,
+      messages: {
+        channels: () => [{ channelId: "C1" }, { channelId: "D1" }],
+        count: () => 0,
+        recentForChannel: () => [
+          { slackUserId: "U2", content: "ask <@U3|old> about it" },
+          { slackUserId: "U3", content: "ok" },
+        ],
+        clearChannel: () => undefined,
+      },
+      commandLog: { recent: () => [{ slackUserId: "U2", channelId: "D1" }], clear: () => undefined },
+      usage: { totals: () => ({}), byUser: () => [{ key: "U2" }], byKind: () => [] },
+    });
+    expect((await app.conversations()).map((c) => c.label)).toEqual(["#team-chat (C1)", "@Bea (D1)"]);
+    const convo = await app.conversation("C1");
+    expect(convo.channel.label).toBe("#team-chat (C1)");
+    expect(convo.messages.map((m) => m.userLabel)).toEqual(["Bea (U2)", "unknown (U3)"]);
+    expect(convo.messages[0]?.content).toBe("ask @unknown (U3) about it");
+    expect(await app.commandLog()).toEqual([
+      { slackUserId: "U2", channelId: "D1", userLabel: "Bea (U2)", channelLabel: "@Bea (D1)" },
+    ]);
+    expect(await app.usage("1")).toMatchObject({ names: { U2: "Bea (U2)" } });
   });
 });

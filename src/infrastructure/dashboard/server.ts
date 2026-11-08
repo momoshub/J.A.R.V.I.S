@@ -21,6 +21,8 @@ import type { UserRepo } from "../db/userRepo.ts";
 import type { LearningsRepo } from "../db/learningsRepo.ts";
 import type { KitViewRepo } from "../db/kitViewRepo.ts";
 import type { SettingsRepo } from "../db/settingsRepo.ts";
+import type { RolePolicyRepo } from "../db/rolePolicyRepo.ts";
+import { createNameResolver } from "../../application/nameResolver.ts";
 
 export type DashboardConfig = {
   port: number;
@@ -35,7 +37,10 @@ export type DashboardConfig = {
 };
 
 export type DashboardDeps = {
+  /** The RAW allowlist (not the role-enforced view): the deck edits members of a switched-off role too. */
   users: UserRepo;
+  /** Per-role policy; the bot enforces from the same rows. */
+  rolePolicies?: RolePolicyRepo;
   messages: MessageRepo;
   learnings: LearningsRepo;
   /**
@@ -197,6 +202,19 @@ export const createDashboard = (config: DashboardConfig, deps: DashboardDeps) =>
     usage: deps.usage,
     kitViews: deps.kitViews,
     resolveNames: deps.slack ? (ids) => deps.slack!.resolveNames([...ids]) : undefined,
+    rolePolicies: deps.rolePolicies,
+    // One cache for the life of the server, so opening a page never costs a
+    // Slack call per row - see `nameResolver.ts`.
+    names: createNameResolver({
+      clock: deps.clock,
+      knownName: (id) => deps.users.get(id)?.displayName || undefined,
+      lookups: deps.slack
+        ? {
+            users: (ids) => deps.slack!.resolveNames([...ids]),
+            conversation: async (id) => (deps.slack!.conversationInfo ? deps.slack!.conversationInfo(id) : undefined),
+          }
+        : undefined,
+    }),
   });
 
   /** A use case's outcome as a response: its value merged into `{ ok: true }`, or its refusal. */
@@ -235,13 +253,13 @@ export const createDashboard = (config: DashboardConfig, deps: DashboardDeps) =>
         case "/api/commands":
           return Response.json(app.commands());
         case "/api/command-log":
-          return Response.json(app.commandLog());
+          return Response.json(await app.commandLog());
         case "/api/usage":
-          return Response.json(app.usage(q("hours")));
+          return Response.json(await app.usage(q("hours")));
         case "/api/conversations":
-          return Response.json(app.conversations());
+          return Response.json(await app.conversations());
         case "/api/conversation":
-          return Response.json(app.conversation(q("channel") ?? ""));
+          return Response.json(await app.conversation(q("channel") ?? ""));
         // --- Slack console (live Slack Web API) ---
         case "/api/slack/conversations":
           return slackGuard(() => deps.slack!.listConversations());
@@ -273,9 +291,27 @@ export const createDashboard = (config: DashboardConfig, deps: DashboardDeps) =>
           return reply(app.saveUser(body.slackId, body.role));
         case "/api/users/remove":
           return reply(app.removeUser(body.slackId));
+        case "/api/users/update":
+          return reply(app.updateUser({
+            slackId: body.slackId,
+            newSlackId: body.newSlackId,
+            displayName: body.displayName,
+            githubLogins: body.githubLogins,
+            role: body.role,
+          }));
         case "/api/roles":
           app.setExecuterTools(body.executerTools);
           return ok();
+        case "/api/roles/policy":
+          return reply(app.saveRolePolicy({
+            role: body.role,
+            enabled: body.enabled,
+            deniedCommands: body.deniedCommands,
+            deniedTools: body.deniedTools,
+            deniedMcpServers: body.deniedMcpServers,
+          }));
+        case "/api/roles/assign":
+          return reply(app.assignRole(body.slackId, body.role));
         case "/api/kit/views":
           return reply(app.saveKitView(body.view));
         case "/api/learnings":

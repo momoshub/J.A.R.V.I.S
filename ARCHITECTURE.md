@@ -113,6 +113,8 @@ No I/O, no frameworks. Just data shapes and functions of their inputs.
 
 - `types.ts` - core data shapes (`AllowedUser`, `StoredMessage`, roles: pal/executer/admin/owner)
 - `access.ts`, `toolPolicy.ts`, `toolVisibility.ts` - who may talk to the bot, and the per-role CLI sandbox (skip-permissions vs `--allowedTools` allow-list + fixed cwd)
+- `rolePolicy.ts` - the dashboard-edited policy per role: on/off, and the commands, tools and MCP servers it is denied (restrict-only; the owner is never restricted)
+- `slackNames.ts` - how a person or conversation is shown: always name and id
 - `personality.ts`, `promptGuides.ts`, `conversation.ts`, `mentions.ts` - the system prompt from generic defaults + injected identity (procedure blocks as on-demand guide files for turns that can read them), context windowing, `<@ID>` annotation
 - `threadSession.ts`, `agentSession.ts` - one CLI session per thread and when it may be resumed
 - `adapter.ts`, `adapterCheck.ts` - memory as a checked, versioned directory (facts + skills) instead of an ever-growing list
@@ -139,7 +141,9 @@ Orchestrates the domain and depends on **ports**, not concrete adapters.
 - `accessRequests.ts` - unknown people ask the owner and admins, who decide with a reaction
 - `adapterMemory.ts`, `botProfile.ts`, `claudeTokens.ts` - memory, instance identity and CLI tokens
 - `slackAdmin.ts`, `draftReply.ts` - Console + power tools port, AI reply drafting
-- `dashboard.ts` - the dashboard's use cases (users, memory, identity, commands, usage, modals) over narrow ports, returning an `Outcome` the server maps to a status
+- `dashboard.ts` - the dashboard's use cases (users, roles, memory, identity, commands, usage, modals) over narrow ports, returning an `Outcome` the server maps to a status
+- `rolePolicies.ts` - wraps the allowlist so a switched-off role is off it for every check in the bot; the dashboard alone gets the raw repo
+- `nameResolver.ts` - cached Slack names (conversations.info / users.info) for the dashboard, so a render never calls Slack per row
 
 Tested with an in-memory SQLite database and a fake `LlmPort`.
 
@@ -156,7 +160,7 @@ Concrete implementations of the seams and the transports.
 - `inbox/inboxRepo.ts` - the inbox queue shared by both processes
 - `llm/claudeCli.ts` - the default `LlmPort`, wraps the local `claude` CLI (`--resume`, `stream-json`, per-call policy -> `--allowedTools`/cwd/timeout, the timeout stopping the whole process tree); `killTree.ts`, `toolTraceLog.ts` support it
 - `llm/anthropic.ts` - alternative `LlmPort` backed by the Anthropic API
-- `db/` - `bun:sqlite` client, schema + migrations, one repo per table (users, messages, sessions, watches, reminders, workflows, usage, turn and command logs, ...), `secretBox.ts` for encrypted tokens
+- `db/` - `bun:sqlite` client, schema + migrations, one repo per table (users, role policies, messages, sessions, watches, reminders, workflows, usage, turn and command logs, ...), `secretBox.ts` for encrypted tokens
 - `adapter/adapterStore.ts` - the memory adapter in the `adapter_files` table, mirrored to `data/adapter-mirror` so skills can be read by path
 - `github/` - `gh` CLI wrapper and review-request polling; the GitHub App's fetch client (`appClient.ts`, RS256 JWT -> cached installation token), credentials from files (`appCredentials.ts`) and webhook listener (`webhookServer.ts`)
 - `system/` - host probes (system load, Accessibility access, shell checks for watches), and `guideWriter.ts`, which writes the prompt's how-to guides to `data/prompt-guides`
@@ -191,7 +195,10 @@ Concrete implementations of the seams and the transports.
   if the database is empty or broken.
 - **Role-based tool policy.** owner/admin run the CLI full-access; pal/executer
   are sandboxed (allow-list + fixed cwd, no permission bypass). `review` is a
-  preset that always runs full-access.
+  preset that always runs full-access. On top of that, a per-role policy edited
+  from the dashboard (`role_policies`) can switch a role off or deny it
+  commands, tools and MCP servers - it only ever takes away, and never touches
+  the owner.
 - **The brain never names the actor.** Commands it runs carry a ticket bound to
   the person it is answering.
 - **The DB is committed** so identity/allowlist ship with the repo. Conversation

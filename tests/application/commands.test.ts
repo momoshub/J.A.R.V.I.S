@@ -152,6 +152,17 @@ const build = (thread: SlackMessage[] = [threadMsg("hi there")]): CommandDeps =>
 };
 
 describe("dispatchCommand", () => {
+  test("a role's dashboard policy denies a command, hides it from help, and never touches the owner", async () => {
+    const denied = new Set(["ping", "help"]);
+    const deps = { ...build(), deniedCommands: (role: string) => (role === "owner" ? new Set<string>() : denied) };
+    const pal = actor({ slackId: "U3", role: "pal" });
+    expect(await dispatchCommand(deps, pal, "C1", "ping")).toBe("The *pal* role is not allowed to run `ping`.");
+    const help = await dispatchCommand(deps, pal, "C1", "help");
+    expect(help).not.toContain("`ping`");
+    expect(help).toContain("`whoami`");
+    expect(await dispatchCommand(deps, actor(), "C1", "ping")).not.toContain("not allowed");
+  });
+
   test("help lists commands available to the role", async () => {
     const deps = build();
     const owner = await dispatchCommand(deps, actor(), "C1", "help");

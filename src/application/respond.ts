@@ -6,6 +6,7 @@
  */
 import type { ReviewGuard } from "./reviewGuard.ts";
 import { decideAccess } from "../domain/access.ts";
+import { disabledRoleReason } from "../domain/rolePolicy.ts";
 import { cleanInboundText } from "../domain/conversation.ts";
 import { commandLineOf, dispatchCommand, notifiesOwner } from "./commands.ts";
 import { runFrontTurn, runWorkflowTurn, WORKFLOW_MIN_ROLE } from "./workflow.ts";
@@ -265,6 +266,8 @@ export const respond = async (
 
   const decision = decideAccess(inbound.slackUserId, deps.ownerSlackId, deps.users.get);
   if (!decision.allowed) {
+    const off = deps.roleDisabled?.(inbound.slackUserId);
+    if (off) return { kind: "denied", text: disabledRoleReason(off) };
     const text = await requestAccess(
       deps,
       {

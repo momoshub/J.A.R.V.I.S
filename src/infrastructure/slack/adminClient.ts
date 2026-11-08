@@ -361,6 +361,18 @@ export const createSlackAdmin = (client: WebClient): SlackAdminPort => {
       return landed;
     },
 
+    conversationInfo: async (id) => {
+      try {
+        const res = (await client.conversations.info({ channel: id })) as { channel?: RawConversation };
+        const c = res.channel;
+        if (!c) return undefined;
+        const kind = c.is_im ? "im" : c.is_mpim ? "mpim" : c.is_private ? "group" : "channel";
+        return { kind, ...(c.name ? { name: c.name } : {}), ...(c.user ? { userId: c.user } : {}) };
+      } catch {
+        return undefined;
+      }
+    },
+
     resolveNames: async (ids) => {
       const entries = await Promise.all(ids.map(async (id) => [id, await userName(id)] as const));
       return Object.fromEntries(entries);
