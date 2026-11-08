@@ -9,18 +9,12 @@
  * numbers stay in text colours - the accent only marks the data.
  */
 import { useLayoutEffect, useRef, useState, type ReactNode } from "react";
+import { axisTicks, niceMax } from "./chartScale.ts";
 
 export type DayPoint = { date: string; value: number; detail?: ReactNode };
 
 const HEIGHT = 190;
 const PAD = { top: 12, right: 12, bottom: 26, left: 44 };
-
-/** The smallest 1/2/5 x 10^k at or above `v`, so gridlines land on round numbers. */
-export const niceMax = (v: number): number => {
-  if (!(v > 0)) return 1;
-  const p = 10 ** Math.floor(Math.log10(v));
-  return ([1, 2, 5, 10].find((m) => m * p >= v) ?? 10) * p;
-};
 
 const shortDate = (d: string): string => {
   const [, m, day] = d.split("-");
@@ -45,12 +39,15 @@ const useWidth = () => {
 type Props = {
   data: readonly DayPoint[];
   kind: "area" | "bar";
+  /** Formats ticks and the tooltip value. Absent: the series is a count, shown as whole numbers. */
   format?: (v: number) => string;
   /** Read out for screen readers; the visible title sits outside the chart. */
   label: string;
 };
 
-export function DayChart({ data, kind, format = (v) => String(Math.round(v)), label }: Props) {
+const count = (v: number): string => String(Math.round(v));
+
+export function DayChart({ data, kind, format = count, label }: Props) {
   const { ref, width } = useWidth();
   const [hover, setHover] = useState<number | null>(null);
   const n = data.length;
@@ -61,7 +58,7 @@ export function DayChart({ data, kind, format = (v) => String(Math.round(v)), la
   // Bars sit in slots; a line's points sit at slot centres, so both read the same days.
   const x = (i: number) => PAD.left + step * (i + 0.5);
   const y = (v: number) => PAD.top + plotH - (v / max) * plotH;
-  const ticks = [0, max / 2, max];
+  const ticks = axisTicks(max, format === count);
   const labelEvery = Math.max(1, Math.ceil(n / Math.max(1, Math.floor(plotW / 64))));
 
   const line = data.map((d, i) => `${i ? "L" : "M"}${x(i).toFixed(1)},${y(d.value).toFixed(1)}`).join("");

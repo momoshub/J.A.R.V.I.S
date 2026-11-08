@@ -30,7 +30,7 @@ import type { BotProfile } from "./botProfile.ts";
 import type { Clock } from "./ports.ts";
 import type { SlackDirectory } from "./slackDirectory.ts";
 import type { StatsRepo } from "../infrastructure/db/statsRepo.ts";
-import { fillDays, offsetMsOf, statsDays, windowStart, DAY_MS } from "../domain/dashboardStats.ts";
+import { fillDays, offsetMsOf, statsDays, windowStart } from "../domain/dashboardStats.ts";
 
 /** A refused use case: what to tell the caller, and the HTTP-ish status it maps to. */
 export type Refusal = { readonly ok: false; readonly error: string; readonly status: number };
@@ -640,9 +640,10 @@ export const createDashboardService = (p: DashboardPorts) => {
       spend: fillDays(s.spendPerDay(since, offset), now, days, offset, { runs: 0, costUsd: 0 }),
       topCommands: s.topCommands(since, STATS_TOP),
       topUsers: topUsers.map((u) => ({ ...u, label: names[u.key] ?? userLabel(u.key) })),
+      // Calendar days, like the charts: "today" is since local midnight.
       activeThreads: {
-        day: s.activeThreads(now - DAY_MS),
-        week: s.activeThreads(now - 7 * DAY_MS),
+        day: s.activeThreads(windowStart(now, 1, offset)),
+        week: s.activeThreads(windowStart(now, 7, offset)),
         window: s.activeThreads(since),
       },
     };

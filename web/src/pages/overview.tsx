@@ -6,7 +6,10 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
   const days = new URL(request.url).searchParams.get("days") ?? "30";
   const [overview, stats] = await Promise.all([
     get<Overview>("overview"),
-    get<StatsView>(`stats?days=${encodeURIComponent(days)}`),
+    // The charts are extra: a failed stats query must not take the counts and tiles down with it.
+    get<StatsView>(`stats?days=${encodeURIComponent(days)}`).catch(
+      (e: unknown): StatsView => ({ recording: false, error: e instanceof Error ? e.message : String(e) }),
+    ),
   ]);
   return { overview, stats };
 };
@@ -29,7 +32,7 @@ function Activity({ stats }: { stats: Extract<StatsView, { recording: true }> })
     { n: String(messages), l: `messages, last ${days}d` },
     { n: String(turns), l: failed ? `brain runs, ${failed} did not finish ok` : "brain runs, all ok" },
     { n: money(cost), l: "list-price model time" },
-    { n: String(stats.activeThreads.day), l: `threads live today, ${stats.activeThreads.week} this week` },
+    { n: String(stats.activeThreads.day), l: `threads live today, ${stats.activeThreads.week} in the last 7 days` },
   ];
   return (
     <>
@@ -175,7 +178,11 @@ export function OverviewPage() {
           </div>
         ))}
       </div>
-      {stats.recording && <Activity stats={stats} />}
+      {stats.recording ? (
+        <Activity stats={stats} />
+      ) : (
+        stats.error && <div className="banner error">Activity charts are unavailable: {stats.error}</div>
+      )}
       <h2>Jump to</h2>
       <div className="tiles">
         {tiles.map((t) => (

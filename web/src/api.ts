@@ -146,7 +146,7 @@ export type SlackMember = {
 };
 
 export type StatsView =
-  | { recording: false }
+  | { recording: false; error?: string }
   | {
       recording: true;
       days: number;

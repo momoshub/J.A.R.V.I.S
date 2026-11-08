@@ -55,9 +55,13 @@ export function ConversationsPage() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
   const sentinel = useRef<HTMLDivElement>(null);
+  /** Bumped on every reload, so a page fetched for the old list is dropped, not appended. */
+  const generation = useRef(0);
 
   // A clear revalidates the loader: start over from its first page.
   useEffect(() => {
+    generation.current += 1;
+    setLoading(false);
     setChannels(first.channels);
     setCursor(first.nextCursor);
     setError("");
@@ -65,16 +69,18 @@ export function ConversationsPage() {
 
   const more = useCallback(async () => {
     if (!cursor || loading) return;
+    const mine = generation.current;
     setLoading(true);
     try {
       const page = await get<ChannelPage>(`conversations?cursor=${encodeURIComponent(cursor)}`);
+      if (mine !== generation.current) return;
       setChannels((cur) => [...cur, ...page.channels.filter((c) => !cur.some((x) => x.channelId === c.channelId))]);
       setCursor(page.nextCursor);
       setError("");
     } catch (e) {
-      setError(e instanceof Error ? e.message : String(e));
+      if (mine === generation.current) setError(e instanceof Error ? e.message : String(e));
     } finally {
-      setLoading(false);
+      if (mine === generation.current) setLoading(false);
     }
   }, [cursor, loading]);
 
@@ -115,7 +121,9 @@ export function ConversationsPage() {
   );
 }
 
-const dayOf = (ms: number): string => fmtTime(ms).slice(0, 10);
+/** The reader's local day and time: a day rule at UTC midnight would split an evening in two. */
+const dayOf = (ms: number): string => new Date(ms).toLocaleDateString("sv-SE");
+const timeOf = (ms: number): string => new Date(ms).toLocaleTimeString("en-GB", { hour: "2-digit", minute: "2-digit" });
 
 /**
  * One conversation in reading order: oldest at the top, newest at the bottom,
@@ -135,8 +143,16 @@ export function ConversationPage() {
   /** The scroll height before older turns were prepended, to restore the position after. */
   const anchor = useRef<{ height: number; top: number } | null>(null);
   const [opened, setOpened] = useState(0);
+  /**
+   * Bumped whenever the loader hands over a conversation (another channel, or
+   * this one after a clear), so an older page still in flight for the previous
+   * one is dropped rather than stacked on top with its cursor.
+   */
+  const generation = useRef(0);
 
   useEffect(() => {
+    generation.current += 1;
+    setLoading(false);
     setMessages(first.messages);
     setBefore(first.nextBefore);
     setError("");
@@ -162,19 +178,21 @@ export function ConversationPage() {
   const older = useCallback(async () => {
     const el = scroller.current;
     if (!before || loading || !el || !channel) return;
+    const mine = generation.current;
     setLoading(true);
     try {
       const page = await get<ConversationView>(
         `conversation?channel=${encodeURIComponent(channel)}&before=${before}`,
       );
+      if (mine !== generation.current) return;
       anchor.current = { height: el.scrollHeight, top: el.scrollTop };
       setMessages((cur) => [...page.messages.filter((m) => !cur.some((x) => x.id === m.id)), ...cur]);
       setBefore(page.nextBefore);
       setError("");
     } catch (e) {
-      setError(e instanceof Error ? e.message : String(e));
+      if (mine === generation.current) setError(e instanceof Error ? e.message : String(e));
     } finally {
-      setLoading(false);
+      if (mine === generation.current) setLoading(false);
     }
   }, [before, loading, channel]);
 
@@ -209,7 +227,7 @@ export function ConversationPage() {
                 <div className="bubble-meta">
                   <span className={`badge ${m.role}`}>{m.role === "assistant" ? boot?.botName ?? "bot" : "user"}</span>
                   <span>{m.userLabel}</span>
-                  <span>{fmtTime(m.createdAt).slice(11)}</span>
+                  <span title={fmtTime(m.createdAt) + " UTC"}>{timeOf(m.createdAt)}</span>
                 </div>
                 <div className="bubble-content">{m.content}</div>
               </div>

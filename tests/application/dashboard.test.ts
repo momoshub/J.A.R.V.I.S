@@ -458,7 +458,7 @@ describe("overview stats", () => {
         spendPerDay: () => [],
         topCommands: () => [{ key: "review", runs: 3, failed: 1 }],
         topUsers: () => [{ key: "U1", turns: 5, commands: 2 }],
-        activeThreads: (since) => (since === now - DAY ? 1 : since === now - 7 * DAY ? 4 : 6),
+        activeThreads: (since) => (since === 20 * DAY ? 1 : since === 14 * DAY ? 4 : 6),
       },
     });
     const out = await app.stats("3");
