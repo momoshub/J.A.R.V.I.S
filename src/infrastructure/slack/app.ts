@@ -15,6 +15,7 @@ import { actOnMessageReaction, messageActionFor } from "../../application/messag
 import { APPROVE_ACTION, decideCommandApproval, REJECT_ACTION } from "../../application/commandLimits.ts";
 import { forHowLong } from "../../domain/runControl.ts";
 import { frontKeyOf } from "../../domain/workflowFront.ts";
+import { streamsToClose } from "../../application/runRegistry.ts";
 import {
   AGENT_SESSION_STOPPED,
   type AgentSessionStoppedEvent,
@@ -386,10 +387,12 @@ export const createHandler =
             holdUntilWorking: msg.following === true,
             // Remember where the reply is being written, so a crash mid-stream
             // can be tidied up by the next process instead of left half done.
-            onOpen:
-              msg.inbox && config.inbox
-                ? (ts) => config.inbox!.recordStream(msg.inbox!.rowId, msg.channelId, ts)
-                : undefined,
+            // And which turn it belongs to, so a stop press closes only the
+            // stream of the turn it stopped.
+            onOpen: (ts) => {
+              if (msg.inbox && config.inbox) config.inbox.recordStream(msg.inbox.rowId, msg.channelId, ts);
+              deps.runs?.streamOpened(msg.channelId, msg.messageTs, ts);
+            },
           },
         )
       : undefined;
@@ -1257,8 +1260,11 @@ export const createSlackApp = (config: SlackAppConfig, deps: Deps) => {
     const stopped = worker ?? front;
 
     const api = client as { apiCall: (method: string, args: Record<string, unknown>) => Promise<unknown> };
+    // Only the streams of what was stopped (or of nothing): a queued
+    // message's reply is in the same session, and Slack names it too.
+    const streams = deps.runs ? streamsToClose(deps.runs, plan.streams) : plan.streams;
     let closed = 0;
-    for (const ts of plan.streams) {
+    for (const ts of streams) {
       try {
         await api.apiCall("chat.stopStream", { channel: plan.channel, ts });
         closed += 1;
@@ -1276,7 +1282,7 @@ export const createSlackApp = (config: SlackAppConfig, deps: Deps) => {
         .catch(() => undefined);
     }
     log(
-      `agent session stop by ${plan.by}: ${stopped ? `stopped ${stopped.id}` : "nothing running"}, ${closed}/${plan.streams.length} streams closed`,
+      `agent session stop by ${plan.by}: ${stopped ? `stopped ${stopped.id}` : "nothing running"}, ${closed}/${streams.length} streams closed (${plan.streams.length - streams.length} kept)`,
     );
   }) as never);
 

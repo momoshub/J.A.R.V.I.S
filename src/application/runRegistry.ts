@@ -55,6 +55,12 @@ export type TrackedRun = {
   stoppedBy?: string;
   /** When the stop was asked for, so a slow death can be reported honestly. */
   stoppedAt?: number;
+  /**
+   * The streamed messages this turn opened. Slack's stop button names every
+   * open stream in the session, including the one a queued message already
+   * opened for its thinking card - this is how the press tells them apart.
+   */
+  streams?: string[];
 };
 
 export type RunRegistry = {
@@ -82,6 +88,12 @@ export type RunRegistry = {
   stopThread: (key: string, by: string) => TrackedRun | undefined;
   /** Every tracked run, whatever thread it is in - for a status report. */
   all: () => TrackedRun[];
+  /**
+   * Record that the turn answering this message opened a streamed message.
+   * Matched by the message, because the stream is made before the turn has a
+   * run id anyone outside it can see.
+   */
+  streamOpened: (channelId: string, messageTs: string, streamTs: string) => void;
 };
 
 type Entry = { run: TrackedRun; abort: AbortController };
@@ -114,7 +126,8 @@ export const createRunRegistry = (clock: () => number = () => Date.now()): RunRe
         // Called when the turn actually starts, as opposed to waiting its turn
         // in the queue - the two are stopped with different words.
         running: () => {
-          byId.set(run.id, { ...entry, run: { ...entry.run, state: "running" } });
+          // In place: a copy would drop what was recorded on the old object.
+          entry.run.state = "running";
         },
         done: () => {
           byId.delete(run.id);
@@ -132,7 +145,29 @@ export const createRunRegistry = (clock: () => number = () => Date.now()): RunRe
       const entry = [...byId.values()].find((e) => e.run.key === key && e.run.state === "running");
       return entry ? stopEntry(entry, by) : undefined;
     },
+    streamOpened: (channelId, messageTs, streamTs) => {
+      const entry = [...byId.values()].find((e) => e.run.channelId === channelId && e.run.messageTs === messageTs);
+      if (!entry) return;
+      entry.run.streams = [...(entry.run.streams ?? []), streamTs];
+    },
   };
+};
+
+/**
+ * Which of the streams Slack's stop button named should be closed: all of
+ * them, except one still owned by a turn that is not being stopped. Closing
+ * those used to kill a queued message's reply along with the turn the press
+ * was meant for. A stream nobody owns any more is closed, so a session left
+ * in `processing` by a finished turn can still leave it.
+ */
+export const streamsToClose = (runs: RunRegistry, streams: readonly string[]): string[] => {
+  const kept = new Set(
+    runs
+      .all()
+      .filter((r) => r.state !== "stopping")
+      .flatMap((r) => r.streams ?? []),
+  );
+  return streams.filter((ts) => !kept.has(ts));
 };
 
 export type RunPressOutcome =
