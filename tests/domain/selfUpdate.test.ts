@@ -36,11 +36,11 @@ describe("selfUpdateRules with a memory skill", () => {
   });
 
   test("a standalone reviewer comes before the merge", () => {
-    expect(short).toContain("standalone reviewer agent (background, fresh context, never you, stopped after the merge)");
+    expect(short).toContain("standalone reviewer agent (an Orca worker, fresh context, never you, talking only through PR comments)");
     expect(short).toContain("green CI before you merge it yourself with `bin/merge-when-green.sh`");
     expect(short.indexOf("standalone reviewer agent")).toBeLessThan(short.indexOf("merge it yourself"));
     // the full rule still exists for the prompts that carry it whole
-    expect(STANDALONE_REVIEW_RULE).toContain("run_in_background: true");
+    expect(STANDALONE_REVIEW_RULE).toContain("orca orchestration worker-start");
     expect(STANDALONE_REVIEW_RULE).toContain("At most 3 review rounds");
   });
 
@@ -85,14 +85,31 @@ describe("selfUpdateRules with no skill to read (the full block)", () => {
   test("every fix is reviewed by a standalone agent before it is merged", () => {
     expect(rules).toContain(STANDALONE_REVIEW_RULE);
     expect(rules).toContain("never the session that wrote the code");
-    // in the background, talked to over SendMessage, but the turn still waits
-    // for it and stops it once the PR is settled
-    expect(rules).toContain("run_in_background: true");
+    // an Orca worker that talks only on the PR, and the turn still waits for it
+    expect(rules).toContain("The reviewer is an Orca worker, never the Agent tool");
+    expect(STANDALONE_REVIEW_RULE).toContain("orca orchestration run-create");
     expect(STANDALONE_REVIEW_RULE).toContain("Never end your turn while it is open");
-    expect(STANDALONE_REVIEW_RULE).toContain("tell the same reviewer what you changed with SendMessage");
-    expect(STANDALONE_REVIEW_RULE.indexOf("stop the reviewer with TaskStop")).toBeGreaterThan(
-      STANDALONE_REVIEW_RULE.indexOf("bin/merge-when-green.sh"),
+    expect(STANDALONE_REVIEW_RULE).toContain("You never use SendMessage or TaskStop for it");
+    expect(STANDALONE_REVIEW_RULE).not.toContain("run_in_background");
+    // review and fix rounds are PR comments, marked since both share one account
+    expect(STANDALONE_REVIEW_RULE).toContain("`[review round N]`");
+    expect(STANDALONE_REVIEW_RULE).toContain("`[fix round N]`");
+    expect(STANDALONE_REVIEW_RULE).toContain("`VERDICT: clean`");
+    expect(STANDALONE_REVIEW_RULE.indexOf("post a PR comment that starts with `[fix round N]`")).toBeGreaterThan(
+      STANDALONE_REVIEW_RULE.indexOf("push, then"),
     );
+    // the worker ends itself, so nothing is left running after the merge or
+    // when the writer stops without another fix round
+    expect(STANDALONE_REVIEW_RULE).toContain("when the PR is merged or closed");
+    expect(STANDALONE_REVIEW_RULE).toContain("after 40 minutes with no new `[fix round N]` comment");
+    // and the writer never waits forever on a reviewer that died
+    expect(STANDALONE_REVIEW_RULE).toContain("shows the reviewer task completed or failed with no new review comment");
+    expect(STANDALONE_REVIEW_RULE).toContain("gives up after 30 minutes");
+    expect(STANDALONE_REVIEW_RULE).toContain("or the reviewer died or went silent, do not merge");
+    // the reviewer never touches the shared checkout it is started in
+    expect(STANDALONE_REVIEW_RULE).toContain("never checks out, edits or runs anything in the folder it starts in");
+    // the same fallback as every other Orca worker
+    expect(STANDALONE_REVIEW_RULE).toContain("or your tools refuse `orca`");
     // CI is part of the gate, through the helper that refuses on red
     expect(STANDALONE_REVIEW_RULE).toContain("Merge only with `bin/merge-when-green.sh <pr>`");
     expect(STANDALONE_REVIEW_RULE).toContain("Never merge before a clean review and green CI");
