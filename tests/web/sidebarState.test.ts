@@ -42,5 +42,11 @@ describe("sidebar shortcut", () => {
     expect(isToggleShortcut(key({ altKey: true }))).toBe(false);
     expect(isToggleShortcut(key({ target: { tagName: "TEXTAREA" } }))).toBe(false);
     expect(isToggleShortcut(key({ target: { tagName: "INPUT" } }))).toBe(false);
+    expect(isToggleShortcut(key({ target: { tagName: "DIV", isContentEditable: true } }))).toBe(false);
+  });
+
+  test("holding the keys or composing text does not flicker it", () => {
+    expect(isToggleShortcut(key({ repeat: true }))).toBe(false);
+    expect(isToggleShortcut(key({ isComposing: true }))).toBe(false);
   });
 });

@@ -25,9 +25,22 @@ export const writeCollapsed = (store: Store | undefined, collapsed: boolean): vo
   }
 };
 
-/** Ctrl/Cmd + B, the shortcut editors use for a sidebar. Not while typing in a field. */
-export const isToggleShortcut = (e: { key: string; metaKey: boolean; ctrlKey: boolean; altKey: boolean; shiftKey: boolean; target: unknown }): boolean => {
+/** Ctrl/Cmd + B, the shortcut editors use for a sidebar. Not on key repeat, mid-IME, or while typing. */
+type KeyLike = {
+  key: string;
+  metaKey: boolean;
+  ctrlKey: boolean;
+  altKey: boolean;
+  shiftKey: boolean;
+  repeat?: boolean;
+  isComposing?: boolean;
+  target: unknown;
+};
+
+export const isToggleShortcut = (e: KeyLike): boolean => {
+  if (e.repeat || e.isComposing) return false;
   if (e.key.toLowerCase() !== "b" || !(e.metaKey || e.ctrlKey) || e.altKey || e.shiftKey) return false;
-  const tag = (e.target as { tagName?: string } | null)?.tagName;
-  return tag !== "INPUT" && tag !== "TEXTAREA" && tag !== "SELECT";
+  const t = e.target as { tagName?: string; isContentEditable?: boolean } | null;
+  if (t?.isContentEditable) return false;
+  return t?.tagName !== "INPUT" && t?.tagName !== "TEXTAREA" && t?.tagName !== "SELECT";
 };

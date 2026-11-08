@@ -807,7 +807,7 @@ Some tools are **denied to every role, full access included** - `--disallowedToo
 
 A **React 19 + Vite + React Router 7** single-page app (in `web/`, library-mode `react-router` package) served by the bot and backed by a JSON API under `/api`. It wears a Claude-style theme (ivory paper, clay accent, serif headings) in `web/src/styles.css`, light by default and dark when the OS is - every colour is a CSS variable, so pages never hard-code one. Open `http://localhost:2001/` - it is loopback-only with no auth token (mutations still keep an automatic same-origin CSRF check). Tabs:
 
-The sidebar collapses to a slim rail of initials (its toggle button or Ctrl/Cmd+B, remembered per browser in `localStorage`); on a phone it is a top bar and does not collapse.
+The sidebar collapses to a slim rail of two-letter shortcuts (its toggle button or Ctrl/Cmd+B, remembered per browser in `localStorage`); on a phone it is a top bar and does not collapse.
 
 - **Overview** - counts for users, conversations, stored turns, learnings, and a tile into each area
 - **Users** - manage the allowlist and roles (the owner is protected)

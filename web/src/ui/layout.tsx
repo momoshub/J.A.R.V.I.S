@@ -7,22 +7,22 @@ const NAV = [
   {
     group: "Workspace",
     items: [
-      { to: "/", label: "Overview", end: true },
-      { to: "/conversations", label: "Conversations" },
-      { to: "/console", label: "Console" },
+      { to: "/", label: "Overview", short: "Ov", end: true },
+      { to: "/conversations", label: "Conversations", short: "Cv" },
+      { to: "/console", label: "Console", short: "Cn" },
     ],
   },
   {
     group: "Configure",
     items: [
-      { to: "/users", label: "Users" },
-      { to: "/learnings", label: "Memory" },
-      { to: "/identity", label: "Identity" },
-      { to: "/commands", label: "Commands" },
+      { to: "/users", label: "Users", short: "Us" },
+      { to: "/learnings", label: "Memory", short: "Me" },
+      { to: "/identity", label: "Identity", short: "Id" },
+      { to: "/commands", label: "Commands", short: "Cm" },
     ],
   },
-  { group: "Usage", items: [{ to: "/spend", label: "Spend" }] },
-  { group: "Docs", items: [{ to: "/architecture", label: "Architecture" }] },
+  { group: "Usage", items: [{ to: "/spend", label: "Spend", short: "Sp" }] },
+  { group: "Docs", items: [{ to: "/architecture", label: "Architecture", short: "Ar" }] },
 ];
 
 const storage = (): Storage | undefined => (typeof window === "undefined" ? undefined : window.localStorage);
@@ -52,8 +52,9 @@ function Mark() {
 
 /**
  * The shell: a sidebar that collapses to a slim rail (button or Ctrl/Cmd+B,
- * remembered per browser) and the page. Collapsed, each link shows its first
- * letter with the full name as its tooltip and accessible name.
+ * remembered per browser) and the page. Collapsed, each link shows its two-letter
+ * `short` (distinct, since three links start with C) with the full name as its
+ * tooltip and accessible name.
  */
 export function Layout() {
   const boot = useRouteLoaderData("root") as Bootstrap;
@@ -103,7 +104,7 @@ export function Layout() {
                 title={collapsed ? n.label : undefined}
                 aria-label={collapsed ? n.label : undefined}
               >
-                <span className="nav-initial" aria-hidden="true">{n.label[0]}</span>
+                <span className="nav-initial" aria-hidden="true">{n.short}</span>
                 <span className="nav-label">{n.label}</span>
               </NavLink>
             ))}
