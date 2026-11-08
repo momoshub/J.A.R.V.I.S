@@ -16,7 +16,7 @@ export const REQUIREMENTS = {
     "Review pull requests, raise and close tickets, investigate logs, on request",
     "Wait for things (CI, a merge, a reply) and pick the thread back up by itself",
     "Be called from GitHub and answer there",
-    "Fix itself: PR, standalone review, green CI, merge, restart",
+    "Fix itself: PR, standalone review for runtime code, green CI, merge, restart",
   ],
   nonFunctional: [
     "Never lose a Slack message, across restarts and crashes",

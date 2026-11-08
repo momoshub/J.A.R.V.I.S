@@ -113,8 +113,8 @@ describe("messages", () => {
     expect(text).toContain("then merge it yourself with `bin/merge-when-green.sh <pr>`");
     expect(text).not.toContain("no CI");
     // a review that never comes back clean ends the fix unmerged, with a result line
-    expect(text).toMatch(/still not clean after 3 rounds[^\n]*RESULT: not fixed`, and stop there/);
-    expect(text.indexOf("still not clean after 3 rounds")).toBeLessThan(text.indexOf("then merge it yourself"));
+    expect(text).toMatch(/still not clean after 2 rounds[^\n]*RESULT: not fixed`, and stop there/);
+    expect(text.indexOf("still not clean after 2 rounds")).toBeLessThan(text.indexOf("then merge it yourself"));
   });
 
   test("after notices", () => {

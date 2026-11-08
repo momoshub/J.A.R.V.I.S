@@ -44,13 +44,32 @@ describe("selfUpdateRules with a memory skill", () => {
     expect(short).not.toContain("Co-Authored");
   });
 
-  test("a standalone reviewer comes before the merge", () => {
-    expect(short).toContain("standalone reviewer agent (an Orca worker, fresh context, never you, talking only through PR comments)");
+  test("a standalone reviewer comes before the merge of runtime code", () => {
+    expect(short).toContain("standalone reviewer agent (Orca worker, fresh context, PR comments only, max 2 rounds)");
     expect(short).toContain("green CI before you merge it yourself with `bin/merge-when-green.sh`");
     expect(short.indexOf("standalone reviewer agent")).toBeLessThan(short.indexOf("merge it yourself"));
     // the full rule still exists for the prompts that carry it whole
     expect(STANDALONE_REVIEW_RULE).toContain("orca orchestration worker-start");
-    expect(STANDALONE_REVIEW_RULE).toContain("At most 3 review rounds");
+    expect(STANDALONE_REVIEW_RULE).toContain("At most 2 review rounds");
+  });
+
+  test("review by risk: docs and prompt text need no reviewer, runtime code does", () => {
+    for (const text of [short, rules, STANDALONE_REVIEW_RULE]) {
+      expect(text).toContain("docs, prompt text");
+      expect(text).toContain("dashboard UI");
+      expect(text).toMatch(/need none|gets no reviewer/);
+      expect(text).toContain("runtime code");
+    }
+    expect(short).toContain("for runtime code (logic, commands, adapters, `bin/`, or mixed)");
+    expect(STANDALONE_REVIEW_RULE).toContain("adapter skills, prompt guides or dashboard UI gets no reviewer");
+    expect(STANDALONE_REVIEW_RULE).toContain("a mixed PR counts as runtime code");
+    // the old blanket rule is gone, and so is the third round
+    expect(STANDALONE_REVIEW_RULE).not.toContain("every fix, no exceptions");
+    expect(STANDALONE_REVIEW_RULE).not.toContain("round 3,");
+    expect(STANDALONE_REVIEW_RULE).toContain("round 2 happens only when round 1 is `VERDICT: changes` with a real blocker");
+    expect(STANDALONE_REVIEW_RULE).toContain("there is never a round 3");
+    // CI is the gate either way
+    expect(STANDALONE_REVIEW_RULE).toContain("never merge anything before green CI");
   });
 
   test("never rewrites the live database", () => {
@@ -124,7 +143,7 @@ describe("selfUpdateRules with no skill to read (the full block)", () => {
     expect(STANDALONE_REVIEW_RULE).toContain("`ORCA_TERMINAL_HANDLE` is unset, `run-create` refuses it as `terminal_handle_stale`");
     // CI is part of the gate, through the helper that refuses on red
     expect(STANDALONE_REVIEW_RULE).toContain("Merge only with `bin/merge-when-green.sh <pr>`");
-    expect(STANDALONE_REVIEW_RULE).toContain("Never merge before a clean review and green CI");
+    expect(STANDALONE_REVIEW_RULE).toContain("Never merge runtime code before a clean review, and never merge anything before green CI");
     // the helper outlives the default tool timeout, and a slow CI is a retry, not a bypass
     expect(STANDALONE_REVIEW_RULE).toContain("Bash timeout of 600000");
     expect(STANDALONE_REVIEW_RULE).toContain("exit 3 means CI has not finished so run it again");
@@ -135,7 +154,8 @@ describe("selfUpdateRules with no skill to read (the full block)", () => {
       STANDALONE_REVIEW_RULE.indexOf("Fix every real finding"),
     );
     // and the loop is bounded, with a way out that is not a merge
-    expect(STANDALONE_REVIEW_RULE).toContain("At most 3 review rounds");
+    expect(STANDALONE_REVIEW_RULE).toContain("At most 2 review rounds");
+    expect(STANDALONE_REVIEW_RULE).toContain("after round 2,");
     expect(STANDALONE_REVIEW_RULE).toContain("do not merge - leave the PR open");
     // the step sits in the flow before the merge, and the rule before the restart
     const flow = rules.split("\n").find((l) => l.includes("every change goes this way")) ?? "";
