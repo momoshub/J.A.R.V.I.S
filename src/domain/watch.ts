@@ -95,6 +95,8 @@ export type BuiltinOptions = {
   readonly slackWaitScript?: string;
   /** `worker` only: the command that runs `bin/orca-worker-wait.ts` (bun + script path). */
   readonly orcaWorkerWait?: readonly string[];
+  /** `worker` only: fire on finished or died, never on waiting for input. */
+  readonly pastWait?: boolean;
 };
 
 /** An Orca dispatch id as `worker-start` prints it. */
@@ -136,7 +138,8 @@ export const builtinCheck = (
       return { error: "`watch worker` needs the dispatch id `worker-start` printed (`ctx_...`)" };
     }
     if (!opts.orcaWorkerWait?.length) return { error: "I have no way to watch an Orca worker here" };
-    return { check: [...opts.orcaWorkerWait, target].map(shellQuote).join(" ") };
+    const args = [...opts.orcaWorkerWait, target, ...(opts.pastWait ? ["--past-wait"] : [])];
+    return { check: args.map(shellQuote).join(" ") };
   }
   if (kind === "url") {
     if (!/^https?:\/\//i.test(target)) return { error: "`watch url` needs an http url" };
@@ -164,6 +167,8 @@ export type WatchArgs =
       readonly target?: string;
       /** `reply` only: the person or bot whose answer is being waited for. */
       readonly from?: string;
+      /** `worker` only: a worker already known to wait on a person; only its end counts. */
+      readonly pastWait?: boolean;
     }
   | { readonly ok: false; readonly error: string };
 
@@ -197,6 +202,7 @@ export const parseWatchArgs = (rest: string): WatchArgs => {
   let kind: BuiltinKind | undefined;
   let target: string | undefined;
   let from: string | undefined;
+  let pastWait = false;
   for (let i = 0; i < words.length; i++) {
     const w = (words[i] ?? "").toLowerCase();
     // A named wait is the FIRST word, and takes the next one as its target.
@@ -205,6 +211,12 @@ export const parseWatchArgs = (rest: string): WatchArgs => {
     if (kept.length === 0 && kind === undefined && asBuiltinKind(w) && words[i + 1]) {
       kind = asBuiltinKind(w);
       target = (words[++i] ?? "").replace(/^<|>$/g, "").split("|")[0];
+      continue;
+    }
+    // A re-armed watch on a worker parked on a person's answer: firing again
+    // on the same question every few minutes would just ask them again.
+    if (kind === "worker" && w === "--past-wait") {
+      pastWait = true;
       continue;
     }
     if (kind === "reply" && w === "from" && words[i + 1]) {
@@ -250,6 +262,7 @@ export const parseWatchArgs = (rest: string): WatchArgs => {
     ...(kind ? { kind } : {}),
     ...(target ? { target } : {}),
     ...(from ? { from } : {}),
+    ...(pastWait ? { pastWait } : {}),
   };
 };
 
@@ -313,7 +326,9 @@ export const orcaWorkerEvent = (stdout: string): WorkerEvent => {
     ...strings(r.attention),
   ];
   const wait = observation.agentWait ?? (isObj(r.terminal) ? r.terminal.agentWait : undefined);
-  if (attention.some((a) => /input/i.test(a)) || (wait !== undefined && wait !== null)) {
+  // Orca's own requires-action set: a worker parked on input, an approval or a
+  // request for guidance is waiting on someone either way.
+  if (attention.some((a) => /input|approval|guidance/i.test(a)) || (wait !== undefined && wait !== null)) {
     const why = isObj(wait) ? (str(wait.prompt) ?? str(wait.evidence) ?? str(wait.kind)) : undefined;
     return { kind: "waiting", detail: `${why ? why.slice(0, 200) : `attention ${attention.join(", ") || "agent wait"}`}${inRun}` };
   }
@@ -336,14 +351,15 @@ const workerLead = (output: string, waited: number): { readonly lead: string; re
   const m = output.match(WORKER_LINE);
   if (!m) return undefined;
   const [, id, kind, detail] = m;
-  const show = `\`orca orchestration worker-show --dispatch ${id} --json\``;
+  // The concise view carries no prompt; the full one has `observation.agentWait`.
+  const show = `\`orca orchestration worker-show --dispatch ${id} --json --full\``;
   if (kind === "finished") {
     return { waiting: false, lead: `Orca worker ${id} FINISHED after ${humanDuration(waited)} (${detail}). Read what it reported, then carry on with exactly this, and do not start it over:` };
   }
   if (kind === "died") {
     return { waiting: false, lead: `Orca worker ${id} DIED after ${humanDuration(waited)} without finishing (${detail}). Its job is not done: see what it left with ${show}, then carry on with this, redoing or restarting the part it did not finish:` };
   }
-  return { waiting: true, lead: `Orca worker ${id} is WAITING FOR INPUT after ${humanDuration(waited)} (${detail}) - it has not finished. See what it is asking with ${show}, answer or unblock it, and set a new \`watch worker ${id}\` for the rest. What you planned for when it is done:` };
+  return { waiting: true, lead: `Orca worker ${id} is WAITING FOR INPUT after ${humanDuration(waited)} (${detail}) - it has not finished. See what it is asking with ${show} (or its \`ask\` in \`orca orchestration inbox\`). If you can answer or unblock it yourself, do, then set a new \`watch worker ${id}\` for the rest. If only a person can answer, ask them here once, set \`watch reply\` on this thread to unblock it when they answer, and set \`watch worker ${id} --past-wait\` so this same question does not hand the thread back again - it then fires only when the worker finishes or dies. What you planned for when it is done:` };
 };
 
 /**

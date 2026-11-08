@@ -389,6 +389,16 @@ describe("dispatchCommand", () => {
     expect(w?.check).toBe("'/b/bun' '/x/orca-worker-wait.ts' 'ctx_b3290a07f606'");
     expect(w?.everyMs).toBe(180_000);
     expect(w?.note).toBe("merge its PR");
+
+    const past = await dispatchCommand(
+      { ...deps, watches, orcaWorkerWait: ["/b/bun", "/x/orca-worker-wait.ts"] },
+      actor(),
+      "C1",
+      "watch worker ctx_b3290a07f606 --past-wait merge its PR",
+      { threadTs: "8.8" },
+    );
+    expect(past).toContain("to finish, die,");
+    expect(past).not.toContain("stop for input");
   });
 
   test("a named wait with the wrong sort of target is refused", async () => {

@@ -237,6 +237,17 @@ describe("watch worker", () => {
     expect("check" in r && r.check).toBe("'/usr/bin/bun' '/repo/bin/orca-worker-wait.ts' 'ctx_abc123'");
   });
 
+  test("--past-wait is kept for a worker and passed to the helper", () => {
+    const a = parseWatchArgs("worker ctx_1 --past-wait merge it");
+    expect(a.ok && a.pastWait).toBe(true);
+    expect(a.ok && a.note).toBe("merge it");
+    const r = builtinCheck("worker", "ctx_1", { orcaWorkerWait: WAIT, pastWait: true });
+    expect("check" in r && r.check).toEndWith("'ctx_1' '--past-wait'");
+    // only a worker knows the flag
+    const p = parseWatchArgs("pr https://github.com/o/r/pull/1 --past-wait go");
+    expect(p.ok && p.pastWait).toBeUndefined();
+  });
+
   test("refuses anything that is not a dispatch id, or no helper", () => {
     expect("error" in builtinCheck("worker", "ctx_1; rm -rf /", { orcaWorkerWait: WAIT })).toBe(true);
     expect("error" in builtinCheck("worker", "task_123", { orcaWorkerWait: WAIT })).toBe(true);
@@ -263,6 +274,8 @@ describe("orcaWorkerEvent", () => {
   test("an input attention category or an agent wait is waiting", () => {
     const a = orcaWorkerEvent(full({ outcome: "in_progress", liveness: { verdict: "live" }, attention: { categories: ["input_required"] } }));
     expect(a.kind).toBe("waiting");
+    // Orca's requires-action set: a pending approval parks a worker just the same
+    expect(orcaWorkerEvent(full({ outcome: "in_progress", liveness: { verdict: "live" }, attention: { categories: ["approval"] } })).kind).toBe("waiting");
     const b = orcaWorkerEvent(
       JSON.stringify({
         ok: true,
@@ -313,13 +326,16 @@ describe("the worker hand-back says which of the three happened", () => {
   test("died", () => {
     const m = readyMessage("merge its PR", 600_000, line("died", "liveness exited, no outcome"));
     expect(m).toStartWith("Orca worker ctx_abc DIED after 10m without finishing");
-    expect(m).toContain("orca orchestration worker-show --dispatch ctx_abc --json");
+    expect(m).toContain("orca orchestration worker-show --dispatch ctx_abc --json --full");
   });
 
   test("waiting for input does not tell it to do the planned part yet", () => {
     const m = readyMessage("merge its PR", 600_000, line("waiting", "Allow edit?"));
     expect(m).toStartWith("Orca worker ctx_abc is WAITING FOR INPUT after 10m (Allow edit?)");
     expect(m).toContain("set a new `watch worker ctx_abc`");
+    // a person's answer: ask once, wait for the reply, and stop re-firing on the same question
+    expect(m).toContain("ask them here once, set `watch reply`");
+    expect(m).toContain("`watch worker ctx_abc --past-wait`");
     expect(m).toContain("Do not do the planned part above until the worker has finished");
     expect(m).not.toContain("Do it yourself, now");
   });

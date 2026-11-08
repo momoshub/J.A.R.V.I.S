@@ -63,7 +63,7 @@ export const SCHEDULE_COMMANDS: readonly CommandDef[] = [
     // The confirmation is for the brain, not the thread: it already says what
     // it is waiting for in its own words, and a second notice is just noise.
     quiet: true,
-    usage: "pr|checks|reply|url|worker <target> <what to do> | <what to do> -- <shell check> | list | cancel",
+    usage: "pr|checks|reply|url|worker <target> [--past-wait] <what to do> | <what to do> -- <shell check> | list | cancel",
     summary: "wait for a PR, CI, a reply, a url or an Orca worker, then carry on in this thread by itself",
     run: async ({ deps, actor, args, rest, prefix, threadTs, channelId }) => {
       if (!deps.watches) return "I have nowhere to keep a watch right now.";
@@ -115,6 +115,7 @@ export const SCHEDULE_COMMANDS: readonly CommandDef[] = [
           afterTs: (now / 1000).toFixed(6),
           from: parsed.from,
           orcaWorkerWait: deps.orcaWorkerWait,
+          pastWait: parsed.pastWait,
         });
         if ("error" in built) return built.error;
         check = built.check;
@@ -146,7 +147,7 @@ export const SCHEDULE_COMMANDS: readonly CommandDef[] = [
               : parsed.kind === "url"
                 ? parsed.target
                 : parsed.kind === "worker"
-                  ? `Orca worker \`${parsed.target}\` to finish, die or stop for input`
+                  ? `Orca worker \`${parsed.target}\` to finish, die${parsed.pastWait ? "" : " or stop for input"}`
                   : "";
       if (what) {
         return `⏳ waiting for ${what}, checking every ${humanDuration(parsed.everyMs)} and giving up after ${humanDuration(parsed.deadlineMs)}. I will carry on here by myself - you can still talk to me meanwhile. (\`${prefix} watch cancel\`, #${w.id})`;
