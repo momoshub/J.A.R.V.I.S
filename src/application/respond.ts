@@ -13,6 +13,7 @@ import { runFrontTurn, runWorkflowTurn, WORKFLOW_MIN_ROLE } from "./workflow.ts"
 import { afterFailedStep, afterWorkflowTurn, steerWorker } from "./workflowContinue.ts";
 import { frontDigest, type FrontDeps } from "./workflowFront.ts";
 import { frontKeyOf, steeredMessage } from "../domain/workflowFront.ts";
+import { SIGNATURES } from "../domain/messageFooter.ts";
 import { requestAccess } from "./accessRequests.ts";
 import { reviewRequestIn } from "../domain/reviewRequest.ts";
 import { busyNotice, nameOfRequest } from "../domain/runControl.ts";
@@ -203,7 +204,7 @@ export const respond = async (
               if (!tracked?.signal.aborted) {
                 await afterWorkflowTurn(deps, workflow, who.user.slackId, turn.wantsContinue, deps.commandPrefix);
               }
-              return { kind: "reply", text: turn.text };
+              return { kind: "reply", text: turn.text, by: SIGNATURES.workflowWorker };
             }
             if (key !== threadKey) {
               // The front: answer now, from a digest of where the worker is,
@@ -216,7 +217,7 @@ export const respond = async (
               if (turn.steers.length > 0 && !tracked?.signal.aborted) {
                 steerWorker(deps, workflow, who.user.slackId, turn.steers, threadKey);
               }
-              return { kind: "reply", text: turn.text };
+              return { kind: "reply", text: turn.text, by: SIGNATURES.workflowFront };
             }
           }
         }
@@ -312,8 +313,8 @@ export const respond = async (
   // commands (review) post through this; simple ones just return their text.
   const deliver = deps.slack
     ? inbound.viaSlash
-      ? (text: string) => deps.slack!.postDm(inbound.slackUserId, text)
-      : (text: string) => deps.slack!.post(inbound.channelId, text, inbound.threadTs)
+      ? (text: string) => deps.slack!.postDm(inbound.slackUserId, text, SIGNATURES.command)
+      : (text: string) => deps.slack!.post(inbound.channelId, text, inbound.threadTs, SIGNATURES.command)
     : undefined;
 
   // A slash command is invisible to everyone but its caller, so the owner gets
@@ -334,10 +335,11 @@ export const respond = async (
         root = await deps.slack!.postDm(
           deps.ownerSlackId,
           `📋 <@${actor.slackId}> ran \`${deps.slashCommand ?? "/bot"} ${line}\``,
+          SIGNATURES.command,
         );
         if (!root) return; // could not open the DM, so there is no thread to fill
       }
-      await deps.slack!.post(root.channel, text, root.ts);
+      await deps.slack!.post(root.channel, text, root.ts, SIGNATURES.command);
     } catch {
       // the owner's copy is never worth failing the caller's command over
     }
@@ -361,5 +363,5 @@ export const respond = async (
   });
   // Commands that returned their result rather than posting it still get copied.
   if (text.trim()) await toOwner(text);
-  return { kind: "reply", text };
+  return { kind: "reply", text, by: SIGNATURES.command };
 };

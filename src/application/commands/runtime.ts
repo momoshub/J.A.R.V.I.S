@@ -7,6 +7,7 @@ import { normaliseLabel, secondsLeft, totpCode } from "../../domain/totp.ts";
 import { tierOf } from "../../domain/threadSession.ts";
 import { forHowLong, stillStoppingNotice, stoppedNotice } from "../../domain/runControl.ts";
 import { SETTING_KEYS } from "../../infrastructure/db/settingsRepo.ts";
+import { SIGNATURES } from "../../domain/messageFooter.ts";
 import { type Context, type CommandDef, RANK, askForToken, since, reviewAgentsOf } from "./shared.ts";
 
 /**
@@ -40,6 +41,7 @@ const askForSecret = async (ctx: Context, label: string): Promise<string> => {
           },
         ],
         threadTs,
+        SIGNATURES.command,
       )
       .catch(() => undefined);
     if (posted) return "";

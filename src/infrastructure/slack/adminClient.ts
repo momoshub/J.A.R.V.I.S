@@ -7,6 +7,7 @@ import { WebClient } from "@slack/web-api";
 import { splitForBlocks, toMrkdwn } from "../../domain/slackFormat.ts";
 import { toBlockMessage } from "../../domain/blockKit.ts";
 import { type MessageBlock, visibleText } from "../../domain/slackMessageText.ts";
+import { footerBlock, footerLine, sectionChunks, signedText, SIGNATURES, withFooter } from "../../domain/messageFooter.ts";
 import type { SlackMember } from "../../domain/slackMembers.ts";
 import type {
   SlackAdminPort,
@@ -68,8 +69,10 @@ const mapPool = async <T, R>(items: T[], n: number, fn: (item: T) => Promise<R>)
   return out;
 };
 
-export const createSlackAdmin = (client: WebClient): SlackAdminPort => {
+export const createSlackAdmin = (client: WebClient, clock: () => number = Date.now): SlackAdminPort => {
   const nameCache = new Map<string, string>();
+  /** The grey signature line, stamped now: every post and edit carries one. */
+  const footer = (by?: string): string => footerLine(by ?? SIGNATURES.jarvis, clock());
   let botUserId: string | undefined;
 
   const getBotUserId = async (): Promise<string> => {
@@ -212,8 +215,14 @@ export const createSlackAdmin = (client: WebClient): SlackAdminPort => {
       }
     },
 
-    update: async (channel, ts, text) => {
-      await client.chat.update({ channel, ts, text });
+    update: async (channel, ts, text, by) => {
+      // Blocks every time: an edit that sent only text would keep the old
+      // blocks on screen, footer and all, and change nothing anyone sees.
+      // A refused rewrite (a stopped stream's block_mismatch, say) still edits
+      // the words, text-only, as before.
+      await client.chat
+        .update({ channel, ts, ...signedText(text, footer(by)) })
+        .catch(() => client.chat.update({ channel, ts, text }));
     },
 
     remove: async (channel, ts) => {
@@ -256,26 +265,35 @@ export const createSlackAdmin = (client: WebClient): SlackAdminPort => {
       await client.apiCall("chat.delete", { channel, ts, broadcast_delete: true });
     },
 
-    post: async (channel, text, threadTs) => {
+    post: async (channel, text, threadTs, by) => {
       const thread = threadTs ? { thread_ts: threadTs } : {};
-      const plain = () => client.chat.postMessage({ channel, text: toMrkdwn(text), ...thread });
+      const line = footer(by);
+      const body = toMrkdwn(text);
+      // Signed as sections; a refusal of those still gets the words out bare.
+      const bare = () => client.chat.postMessage({ channel, text: body, ...thread });
+      const plain = () => client.chat.postMessage({ channel, ...signedText(body, line), ...thread }).catch(bare);
       const rich = toBlockMessage(text, toMrkdwn);
       // A block Slack refuses falls back to the plain post rather than losing the message.
-      const posted = (await (rich ? client.chat.postMessage({ channel, ...rich, ...thread }).catch(plain) : plain())) as {
+      const posted = (await (rich
+        ? client.chat.postMessage({ channel, ...rich, blocks: withFooter(rich.blocks, line), ...thread }).catch(plain)
+        : plain())) as {
         ts?: string;
       };
       return posted.ts ? { channel, ts: posted.ts } : undefined;
     },
 
-    postDm: async (userId, text) => {
+    postDm: async (userId, text, by) => {
       const open = (await client.conversations.open({ users: userId })) as { channel?: { id?: string } };
       const channel = open.channel?.id;
       if (!channel) return undefined;
-      const posted = (await client.chat.postMessage({ channel, text: toMrkdwn(text) })) as { ts?: string };
+      const body = toMrkdwn(text);
+      const posted = (await client.chat
+        .postMessage({ channel, ...signedText(body, footer(by)) })
+        .catch(() => client.chat.postMessage({ channel, text: body }))) as { ts?: string };
       return posted.ts ? { channel, ts: posted.ts } : undefined;
     },
 
-    postDmInteractive: async (userId, text, actions) => {
+    postDmInteractive: async (userId, text, actions, by) => {
       const open = (await client.conversations.open({ users: userId })) as { channel?: { id?: string } };
       const channel = open.channel?.id;
       if (!channel) return undefined;
@@ -294,12 +312,13 @@ export const createSlackAdmin = (client: WebClient): SlackAdminPort => {
               ...(a.style ? { style: a.style } : {}),
             })),
           },
+          footerBlock(footer(by)),
         ],
       })) as { ts?: string };
       return posted.ts ? { channel, ts: posted.ts } : undefined;
     },
 
-    postInteractive: async (channel, text, actions, threadTs) => {
+    postInteractive: async (channel, text, actions, threadTs, by) => {
       const posted = (await client.chat.postMessage({
         channel,
         text,
@@ -316,12 +335,13 @@ export const createSlackAdmin = (client: WebClient): SlackAdminPort => {
               ...(a.style ? { style: a.style } : {}),
             })),
           },
+          footerBlock(footer(by)),
         ],
       })) as { ts?: string };
       return posted.ts ? { channel, ts: posted.ts } : undefined;
     },
 
-    postMenu: async (channel, text, menu, threadTs) => {
+    postMenu: async (channel, text, menu, threadTs, by) => {
       const elements: Record<string, unknown>[] = [];
       if (menu.select && menu.select.groups.length > 0) {
         elements.push({
@@ -361,14 +381,27 @@ export const createSlackAdmin = (client: WebClient): SlackAdminPort => {
             text: { type: "mrkdwn", text: toMrkdwn(chunk) },
           })),
           ...(elements.length > 0 ? [{ type: "actions", elements }] : []),
+          footerBlock(footer(by)),
         ] as never,
       })) as { ts?: string };
       return posted.ts ? { channel, ts: posted.ts } : undefined;
     },
 
-    settleInteractive: async (channel, ts, text) => {
+    settleInteractive: async (channel, ts, text, by) => {
       // Drop the buttons so a decided request cannot be clicked again.
-      await client.chat.update({ channel, ts, text, blocks: [{ type: "section", text: { type: "mrkdwn", text } }] });
+      await client.chat
+        .update({ channel, ts, ...signedText(text, footer(by)) })
+        // Refused: the same sections unsigned (still no buttons), and failing
+        // that a text-only edit, so at least the words change.
+        .catch(() =>
+          client.chat.update({
+            channel,
+            ts,
+            text: text || " ",
+            blocks: sectionChunks(text).map((chunk) => ({ type: "section", text: { type: "mrkdwn", text: chunk } })),
+          }),
+        )
+        .catch(() => client.chat.update({ channel, ts, text }));
     },
 
     addReactions: async (channel, ts, names) => {

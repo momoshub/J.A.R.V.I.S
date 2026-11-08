@@ -14,6 +14,7 @@
 import type { ConnectionHealth } from "../../domain/connectionHealth.ts";
 import { gatewayHealth } from "../../domain/inbox.ts";
 import { envelopeThread, unnotified } from "../../domain/drainNotice.ts";
+import { footerLine, SIGNATURES, withFooter } from "../../domain/messageFooter.ts";
 import type { InboxRepo, InboxRow, Interrupted } from "../inbox/inboxRepo.ts";
 
 /**
@@ -281,6 +282,7 @@ export const tidyInterrupted = async (
   row: Interrupted,
   notice: string,
   log: (line: string) => void = () => undefined,
+  clock: () => number = Date.now,
 ): Promise<void> => {
   const fail = (what: string, ts: string) => (err: unknown) =>
     log(`${what} ${row.channel}/${ts} failed: ${err instanceof Error ? err.message : String(err)}`);
@@ -288,7 +290,14 @@ export const tidyInterrupted = async (
     await api.apiCall("chat.stopStream", { channel: row.channel, ts }).catch(() => undefined);
     if (i === 0) {
       await api
-        .apiCall("chat.update", { channel: row.channel, ts, text: notice, blocks: [{ type: "markdown", text: notice }] })
+        .apiCall("chat.update", {
+          channel: row.channel,
+          ts,
+          text: notice,
+          // The markdown block is what a stopped stream accepts; the footer
+          // rides under it, signed and stamped like every other message.
+          blocks: withFooter([{ type: "markdown", text: notice }], footerLine(SIGNATURES.jarvis, clock())),
+        })
         .catch(fail("rewrite", ts));
     } else {
       await api.apiCall("chat.delete", { channel: row.channel, ts }).catch(fail("delete", ts));

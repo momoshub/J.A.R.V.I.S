@@ -64,6 +64,7 @@ describe("reviews run on the caller's own Claude token", () => {
     const ask = slackCalls.posts[slackCalls.posts.length - 1];
     expect(ask?.text).toContain("claude setup-token");
     expect(ask?.threadTs).toBe("111.1");
+    expect(ask?.by).toBe("command"); // command output, not Jarvis talking
     // the button carries the command, so submitting a token resumes it
     const button = slackCalls.buttons[slackCalls.buttons.length - 1] ?? "";
     expect(button).toContain("claude_token_add");

@@ -18,6 +18,7 @@ import {
   type EventProcessor,
 } from "../../src/infrastructure/slack/inboxReceiver.ts";
 import { interruptedNotice } from "../../src/domain/inbox.ts";
+import { footerBlock, footerLine } from "../../src/domain/messageFooter.ts";
 import { interruptedRules } from "../../src/domain/personality.ts";
 import { createSlackStream, type Streamer } from "../../src/infrastructure/slack/stream.ts";
 import { createHandler, type SlackAppConfig, type SlackClient } from "../../src/infrastructure/slack/app.ts";
@@ -361,10 +362,19 @@ describe("a reply cut off by a restart", () => {
       },
     };
     const notice = interruptedNotice("redeliver");
-    await tidyInterrupted(api, { id: 1, channel: "D1", streamTs: ["300.1", "300.2"], outcome: "redeliver", retried: false }, notice);
+    const now = 1_794_123_692_000;
+    await tidyInterrupted(
+      api,
+      { id: 1, channel: "D1", streamTs: ["300.1", "300.2"], outcome: "redeliver", retried: false },
+      notice,
+      undefined,
+      () => now,
+    );
+    // the markdown block a stopped stream needs, then the signed footer
+    const blocks = [{ type: "markdown", text: notice }, footerBlock(footerLine("Jarvis", now))];
     expect(calls).toEqual([
       ["chat.stopStream", { channel: "D1", ts: "300.1" }],
-      ["chat.update", { channel: "D1", ts: "300.1", text: notice, blocks: [{ type: "markdown", text: notice }] }],
+      ["chat.update", { channel: "D1", ts: "300.1", text: notice, blocks }],
       ["chat.stopStream", { channel: "D1", ts: "300.2" }],
       ["chat.delete", { channel: "D1", ts: "300.2" }],
     ]);
