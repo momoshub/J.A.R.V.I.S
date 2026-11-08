@@ -97,8 +97,8 @@ no classes.
   one past it tells its thread to hold on, is cut and its inbox row stays
   `running` with `cut_at` for the next process. Once the turns from before the
   request have finished the inbox is no longer read, so the wait ends within
-  one budget, and anyone writing in from then on is told why, what it waits
-  on and the latest it is back. Past 15 minutes it exits anyway and the rows it cut are
+  one budget, and anyone writing in from then on (or whose command was held
+  back before that) is told why, what it waits on and the latest it is back. Past 15 minutes it exits anyway and the rows it cut are
   redelivered to the next process on the same session. Where this goes next is
   in [`docs/rolling-restart.md`](docs/rolling-restart.md).
 

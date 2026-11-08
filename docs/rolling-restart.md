@@ -28,7 +28,8 @@ budget.
 - commands (typed with the prefix, or a spoken review request), slash commands
   and buttons are not claimed meanwhile (`waitsForRestart`): they start work
   that cannot be stopped part way, so they wait in the inbox for the next
-  process
+  process. A held-back command's thread is listed in the drain notice at
+  once, not only when the intake closes
 - once nothing from before the request is still running or in flight, the
   receiver stops claiming altogether (`pauseIntake`), so the budgeted turns
   left are the last and the wait ends within one budget. The gateway keeps

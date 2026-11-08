@@ -68,6 +68,8 @@ export type InboxReceiverOptions = {
 };
 
 export const INBOX_POLL_MS = 100;
+/** How far past the batch to look for held-back rows behind chat that is about to be claimed. */
+const HELD_LOOKAHEAD = 200;
 /** Old finished rows are swept roughly hourly. */
 const PRUNE_EVERY_MS = 60 * 60_000;
 
@@ -83,7 +85,7 @@ export const createInboxReceiver = (opts: InboxReceiverOptions) => {
   let budgetMs: number | undefined;
   /** Threads already told that a restart is holding their message. */
   const told = new Set<string>();
-  let waiting: { channel: string; threadTs?: string }[] = [];
+  const waiting: { channel: string; threadTs?: string }[] = [];
   /**
    * Rows handed to Bolt and not yet finished. `budgeted` rows were claimed
    * while a restart waits; `checked` once their budget ran out and they were
@@ -129,17 +131,20 @@ export const createInboxReceiver = (opts: InboxReceiverOptions) => {
   };
 
   /**
-   * While paused, look at what is waiting and list each thread once.
+   * While paused, look at what is waiting and list each thread once. While a
+   * restart waits but the intake is still open, list only the rows held back
+   * for the next process (`waitsForRestart`): chat is still being answered.
    *
    * Nothing is claimed: the rows have to stay pending for the next process.
    * This exists because silence and death look identical from a thread - a
    * question, then "??", then "??" into nothing is how a planned restart gets
    * reported as a bug.
    */
-  const reassure = (): void => {
+  const reassure = (only?: (row: InboxRow) => boolean): void => {
     if (!opts.onDeferred) return;
-    const targets = opts.inbox
-      .peek(opts.batch ?? 20, now())
+    const batch = opts.batch ?? 20;
+    const rows = only ? opts.inbox.peek(batch + HELD_LOOKAHEAD, now()).filter(only) : opts.inbox.peek(batch, now());
+    const targets = rows
       .map((row) => envelopeThread(row.body))
       .filter((t): t is { channel: string; threadTs?: string } => !!t);
     const fresh = unnotified(targets, told);
@@ -177,6 +182,8 @@ export const createInboxReceiver = (opts: InboxReceiverOptions) => {
       enforceBudget();
       if (paused) reassure();
       drain();
+      // After the claim, so the only rows left to list are the held-back ones.
+      if (!paused && budgetMs !== undefined && opts.waitsForRestart) reassure(opts.waitsForRestart);
       if (now() - lastPrune > PRUNE_EVERY_MS) {
         lastPrune = now();
         const gone = opts.inbox.prune(now());
@@ -229,9 +236,9 @@ export const createInboxReceiver = (opts: InboxReceiverOptions) => {
      * meanwhile waits in the inbox for the next process.
      */
     pause: (): void => {
+      // The list carries on: commands held back while the budget was on were
+      // already told, and the notice keeps naming them.
       paused = true;
-      told.clear();
-      waiting = [];
     },
     /**
      * A restart is waiting: keep taking rows, but each one claimed from now on

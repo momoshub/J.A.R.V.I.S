@@ -546,6 +546,42 @@ describe("a restart waiting with turns on a budget", () => {
     expect(inbox.peek(10, T0).map((r) => r.type)).toEqual(["slash_commands"]);
   });
 
+  test("a command held back while chat runs is listed in the drain notice before the intake closes", () => {
+    const inbox = openInbox(":memory:");
+    const app: EventProcessor = { processEvent: () => new Promise<void>(() => undefined) };
+    const told: (readonly { channel: string; threadTs?: string }[])[] = [];
+    const isCommand = (row: { body: Record<string, unknown> }) =>
+      ((row.body.event as { text?: string } | undefined)?.text ?? "").startsWith("!");
+    const receiver = createInboxReceiver({
+      inbox,
+      now: () => T0,
+      log: () => undefined,
+      waitsForRestart: isCommand,
+      onDeferred: (w) => void told.push(w),
+    });
+    receiver.init(app);
+    const cmd = message("Ev-cmd", "!review 12");
+    inbox.enqueue({ envelopeId: "c1", type: "events_api", body: { ...cmd, event: { ...cmd.event, channel: "C9", ts: "2.2" } } }, T0);
+    inbox.enqueue({ envelopeId: "e1", type: "events_api", body: message("Ev1") }, T0);
+    receiver.tickNow();
+    // no restart pending: both run, nothing to list
+    expect(told).toEqual([]);
+    expect(inbox.counts()).toMatchObject({ pending: 0, running: 2 });
+
+    const cmd2 = message("Ev-cmd2", "!review 13");
+    inbox.enqueue({ envelopeId: "c2", type: "events_api", body: { ...cmd2, event: { ...cmd2.event, channel: "C9", ts: "3.3" } } }, T0);
+    inbox.enqueue({ envelopeId: "e2", type: "events_api", body: message("Ev2") }, T0);
+    receiver.budget(BUDGET);
+    receiver.tickNow();
+    receiver.tickNow();
+    // the chat row was claimed; only the held-back command's thread is listed, once
+    expect(told).toEqual([[{ channel: "C9", threadTs: "3.3" }]]);
+    // closing the intake keeps the list instead of starting it over
+    receiver.pause();
+    receiver.tickNow();
+    expect(told).toEqual([[{ channel: "C9", threadTs: "3.3" }]]);
+  });
+
   test("before a restart the filter is not applied", () => {
     const inbox = openInbox(":memory:");
     const app: EventProcessor = { processEvent: async () => undefined };
