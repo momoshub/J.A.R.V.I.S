@@ -1,6 +1,8 @@
 import { describe, expect, test } from "bun:test";
 import {
   isArmedNotice,
+  OFFLINE_ALARM_LEAD_MS,
+  OFFLINE_ALARM_TICK_MS,
   offlineNotice,
   onlineNotice,
   openOfflineBeat,
@@ -43,5 +45,12 @@ describe("outageLength", () => {
     expect(outageLength(61_000)).toBe("2 min");
     expect(outageLength(60 * 60_000)).toBe("1 h");
     expect(outageLength(72 * 60_000)).toBe("1 h 12 min");
+  });
+});
+
+describe("alarm timing", () => {
+  test("the lead stays clear of Slack's ~5 min window where a cancel is ignored, even with a tick skipped", () => {
+    // Inside it chat.deleteScheduledMessage answers ok and the notice posts anyway.
+    expect(OFFLINE_ALARM_LEAD_MS - 2 * OFFLINE_ALARM_TICK_MS).toBeGreaterThan(5 * 60_000);
   });
 });

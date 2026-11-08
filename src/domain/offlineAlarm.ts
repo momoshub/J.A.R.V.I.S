@@ -7,7 +7,7 @@
  * looks like a bot ignoring you.
  *
  * So the alarm is armed on Slack's side ahead of time, as a dead man's switch:
- * every tick schedules the offline notice a few minutes out and cancels the
+ * every tick schedules the offline notice ten minutes out and cancels the
  * previous one. While the host is online the notice never comes due. When it
  * goes offline the cancel cannot reach Slack, and Slack posts it by itself.
  * Once the host is back, the next tick finds the notice in the channel and
@@ -17,12 +17,20 @@
  * notice's block id, so a restart in the middle of an outage still closes it.
  */
 
-/** How far ahead the notice is armed: the most an outage goes unreported. */
-export const OFFLINE_ALARM_LEAD_MS = 180_000;
+/**
+ * How far ahead the notice is armed: the most an outage goes unreported.
+ * Must stay well over 5 minutes: in prod Slack posted notices it had answered
+ * ok to deleting once they were within a few minutes of due (observed, not
+ * documented: at least ~2 min, ~5 assumed). A 3-minute lead meant every
+ * cancel was ignored and a notice posted every minute while online. It still
+ * posts at the full lead, but after ~5 minutes without a successful tick it
+ * can no longer be cancelled.
+ */
+export const OFFLINE_ALARM_LEAD_MS = 600_000;
 /** How often it is re-armed. Well under the lead, so one slow tick is not an alarm. */
 export const OFFLINE_ALARM_TICK_MS = 60_000;
 
-/** Per Slack call: far under the lead, so a stalled request cannot outlast it. */
+/** Per Slack call: far under the ~5 min that fires the notice, so a stalled request cannot outlast it. */
 export const OFFLINE_ALARM_REQUEST_TIMEOUT_MS = 20_000;
 
 /**

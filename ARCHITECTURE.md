@@ -71,7 +71,7 @@ no classes.
   requester; `workflowContinue` resumes long workflows after a restart;
   `innerChild` watches the bot's own conversations and queues fixes to itself;
   `offlineAlarm` keeps an "I'm offline" notice armed as a Slack scheduled
-  message a few minutes out, so Slack posts it by itself when the host loses
+  message ten minutes out (Slack ignores a cancel within ~5 min of due), so Slack posts it by itself when the host loses
   its connection, and edits it to "back online" when it returns.
   None of them hold a session or a queue slot while they wait.
 - **GitHub App.** A loopback listener (`GITHUB_APP_PORT`, reached through
