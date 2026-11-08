@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { STANDALONE_REVIEW_RULE } from "../../src/domain/selfUpdate.ts";
+import { STANDALONE_REVIEW_RULE, selfPrAccountsRule } from "../../src/domain/selfUpdate.ts";
 import {
   afterNotice,
   beforeNotice,
@@ -88,6 +88,12 @@ describe("messages", () => {
     expect(text).toContain("/src/bin/restart.sh");
     expect(text).toContain("never revert");
     expect(text).toContain("RESULT: fixed");
+  });
+
+  test("the fix PR follows the account split when there is one", () => {
+    const accounts = { author: "writer", reviewer: "checker" };
+    expect(fixPrompt(issue, "/src", "/src/bin/restart.sh", accounts)).toContain(selfPrAccountsRule(accounts));
+    expect(fixPrompt(issue, "/src", "/src/bin/restart.sh")).not.toContain("GitHub accounts:");
   });
 
   test("the fix runs in its own worktree and lands through a merged PR, never in the main folder", () => {

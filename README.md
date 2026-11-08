@@ -62,6 +62,7 @@ Required / notable env (see `.env.example`):
 | `GITHUB_APP_SLUG` | app slug, `@<slug>` calls it (default `jarvis-at-acme`) |
 | `GITHUB_APP_ALLOWED_OWNERS` | repo owners the app acts for, comma list (default `acme`) |
 | `GITHUB_APP_LABEL` | label that calls it on an issue/PR (default `jarvis`) |
+| `SELF_PR_AUTHOR` / `SELF_PR_REVIEWER` | gh logins for the bot's own PRs: the author opens the PR and answers reviews, the reviewer posts review comments and merges. Both or neither (unset: one account) |
 | `DASHBOARD_PORT` | dashboard port (local, loopback-only, no auth) |
 | `DASHBOARD_ALLOWED_ORIGINS` | extra browser origins allowed to POST (proxy/tunnel access) |
 | `DATABASE_PATH` | sqlite file (default `data/bot.db`) |
@@ -829,7 +830,7 @@ bun test           # full suite
 bun run typecheck  # tsc --noEmit
 ```
 
-CI (`.github/workflows/ci.yml`) runs both, plus the dashboard's typecheck and build (`web/`), on every PR and every push to `main`. The repo is private on a free plan, so GitHub cannot require it before a merge: merge with `bin/merge-when-green.sh <pr>`, which waits for the checks and refuses unless they are all green.
+CI (`.github/workflows/ci.yml`) runs both, plus the dashboard's typecheck and build (`web/`), on every PR and every push to `main`. The repo is private on a free plan, so GitHub cannot require it before a merge: merge with `bin/merge-when-green.sh <pr>`, which waits for the checks and refuses unless they are all green. With `SELF_PR_REVIEWER` set, run it as that account: `GH_TOKEN=$(gh auth token -u <reviewer>) bin/merge-when-green.sh <pr>`.
 
 ## Notes
 

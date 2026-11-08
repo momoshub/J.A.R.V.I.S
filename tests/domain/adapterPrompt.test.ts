@@ -109,8 +109,10 @@ describe("the fingerprint and the short self-update block", () => {
       for (const p of parts) h.update(p);
       return h.digest("hex").slice(0, 16);
     };
-    const short = selfUpdateRules("/fp/repo", "/fp/restart", true);
+    // with the account split rendered, so a change to that line reopens threads too
+    const short = selfUpdateRules("/fp/repo", "/fp/restart", true, { author: "fp-author", reviewer: "fp-reviewer" });
     expect(short).toContain("read the skill in your memory");
+    expect(short).toContain("GitHub accounts:");
     expect(promptFingerprint(build, "persona")).toBe(hash("prompt", "", short, guideIndexForFingerprint(["grafana", "datadog"])));
     expect(promptFingerprint(build, "persona")).not.toBe(hash("prompt", ""));
   });

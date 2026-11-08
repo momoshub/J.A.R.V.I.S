@@ -50,4 +50,14 @@ describe("loadConfig", () => {
     const c = loadConfig({ ...base, DASHBOARD_PORT: "3000" });
     expect(c.dashboardPort).toBe(3000);
   });
+
+  test("splits self PRs across two GitHub accounts only when both are set", () => {
+    expect(loadConfig(base).selfPrAccounts).toBeUndefined();
+    expect(loadConfig({ ...base, SELF_PR_AUTHOR: "writer" }).selfPrAccounts).toBeUndefined();
+    expect(loadConfig({ ...base, SELF_PR_AUTHOR: "writer", SELF_PR_REVIEWER: " " }).selfPrAccounts).toBeUndefined();
+    expect(loadConfig({ ...base, SELF_PR_AUTHOR: " writer ", SELF_PR_REVIEWER: "checker" }).selfPrAccounts).toEqual({
+      author: "writer",
+      reviewer: "checker",
+    });
+  });
 });

@@ -8,6 +8,7 @@ import { homedir } from "node:os";
 import { join } from "node:path";
 import { z } from "zod";
 import { parseAllowedOwners } from "../domain/githubApp.ts";
+import { parseSelfPrAccounts, type SelfPrAccounts } from "../domain/selfUpdate.ts";
 
 /** Where the GitHub App's credentials live by default: outside the repo, never in `.env`. */
 export const GITHUB_APP_DIR = join(homedir(), ".config", "jarvis", "github-app");
@@ -120,6 +121,12 @@ const schema = z
     GITHUB_APP_ALLOWED_OWNERS: z.string().default("acme"),
     // Label that calls the app when added to an issue or PR.
     GITHUB_APP_LABEL: z.string().default("jarvis"),
+
+    // GitHub accounts for the bot's own PRs (gh CLI logins on this host): the
+    // author opens the PR and answers reviews, the reviewer posts the review
+    // comments and merges. Both or neither; unset keeps whatever gh is active.
+    SELF_PR_AUTHOR: z.string().optional(),
+    SELF_PR_REVIEWER: z.string().optional(),
   })
   .refine((env) => env.LLM_PROVIDER !== "anthropic" || !!env.ANTHROPIC_API_KEY, {
     message: "ANTHROPIC_API_KEY is required when LLM_PROVIDER=anthropic",
@@ -175,6 +182,8 @@ export type AppConfig = {
     allowedOwners: string[];
     label: string;
   };
+  /** Who opens the bot's own PRs and who reviews and merges them; unset is one account. */
+  selfPrAccounts?: SelfPrAccounts;
 };
 
 /** A short human label for the active model, shown on the dashboard. */
@@ -236,5 +245,8 @@ export const loadConfig = (source: Record<string, string | undefined> = process.
       allowedOwners: parseAllowedOwners(env.GITHUB_APP_ALLOWED_OWNERS),
       label: env.GITHUB_APP_LABEL.trim(),
     },
+    ...((accounts) => (accounts ? { selfPrAccounts: accounts } : {}))(
+      parseSelfPrAccounts(env.SELF_PR_AUTHOR, env.SELF_PR_REVIEWER),
+    ),
   };
 };

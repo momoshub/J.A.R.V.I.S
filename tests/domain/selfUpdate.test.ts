@@ -1,5 +1,12 @@
 import { describe, expect, test } from "bun:test";
-import { RESTART_DELAY_MS, RESTART_MAX_WAIT_MS, STANDALONE_REVIEW_RULE, restartWhenIdle, selfUpdateRules } from "../../src/domain/selfUpdate.ts";
+import {
+  RESTART_DELAY_MS,
+  RESTART_MAX_WAIT_MS,
+  STANDALONE_REVIEW_RULE,
+  restartWhenIdle,
+  selfPrAccountsRule,
+  selfUpdateRules,
+} from "../../src/domain/selfUpdate.ts";
 
 const rules = selfUpdateRules("/repo", "/bin/jarvis-restart.sh");
 
@@ -236,5 +243,35 @@ describe("restartWhenIdle", () => {
   test("the default wait is bounded, and long enough for an ordinary turn", () => {
     expect(RESTART_MAX_WAIT_MS).toBeGreaterThanOrEqual(5 * 60_000);
     expect(RESTART_MAX_WAIT_MS).toBeLessThanOrEqual(60 * 60_000);
+  });
+});
+
+describe("self PR accounts", () => {
+  const accounts = { author: "writer", reviewer: "checker" };
+
+  test("no split, no line: one account does it all", () => {
+    expect(selfPrAccountsRule()).toBe("");
+    expect(short).not.toContain("GitHub accounts:");
+    expect(rules).not.toContain("GitHub accounts:");
+  });
+
+  test("the author opens the PR, the reviewer comments and merges", () => {
+    const line = selfPrAccountsRule(accounts);
+    expect(line).toContain("open the PR and post every `[fix round N]` comment as `writer`");
+    expect(line).toContain("`GH_TOKEN=$(gh auth token -u writer)` in front of `gh pr create`");
+    expect(line).toContain("posts every `[review round N]` comment as `checker`");
+    expect(line).toContain("merge as `checker`: `GH_TOKEN=$(gh auth token -u checker)` in front of `bin/merge-when-green.sh <pr>`");
+    // switching the active account would move it under every other session
+    expect(line).toContain("Never `gh auth switch`");
+  });
+
+  test("both the short and the full block carry it", () => {
+    expect(selfUpdateRules("/repo", "/bin/r.sh", true, accounts)).toContain(selfPrAccountsRule(accounts));
+    expect(selfUpdateRules("/repo", "/bin/r.sh", false, accounts)).toContain(selfPrAccountsRule(accounts));
+  });
+
+  test("the review rule no longer assumes one shared account", () => {
+    expect(STANDALONE_REVIEW_RULE).not.toContain("Both sides post from the same GitHub account");
+    expect(STANDALONE_REVIEW_RULE).toContain("even when both post from the same GitHub account");
   });
 });
