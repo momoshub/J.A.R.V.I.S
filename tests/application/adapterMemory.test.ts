@@ -318,6 +318,23 @@ describe("editAdapterFile", () => {
     expect(editAdapterFile(deps, "memory/NOTES.md", "- a\n", "dashboard", "- a\r\n- b\r\n").ok).toBe(true);
   });
 
+  test("a file stored with CRLF line ends can still be saved against its own base", () => {
+    const deps = setup({ "memory/NOTES.md": "- a\r\n- b\r\n" });
+    const stored = deps.store.files().get("memory/NOTES.md") ?? "";
+    expect(editAdapterFile(deps, "memory/NOTES.md", "- a\n- c\n", "dashboard", stored).ok).toBe(true);
+    expect(deps.store.files().get("memory/NOTES.md")).toBe("- a\n- c\n");
+  });
+
+  test("an existing case clash can be removed by blanking the exact path", () => {
+    const deps = setup({ "memory/people/U7.md": "- seven\n" });
+    const clashed = new Map(deps.store.files());
+    clashed.set("memory/People/U8.md", "- eight\n");
+    deps.store.write(clashed);
+    expect(editAdapterFile(deps, "memory/People/U8.md", "", "dashboard").ok).toBe(true);
+    expect(deps.store.files().has("memory/People/U8.md")).toBe(false);
+    expect(editAdapterFile(deps, "memory/People/U9.md", "- new", "dashboard").ok).toBe(false);
+  });
+
   test("a live manifest that stopped parsing can still be repaired by a hand edit", () => {
     const deps = setup();
     const broken = new Map(deps.store.files());

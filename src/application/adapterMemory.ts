@@ -227,19 +227,25 @@ export const editAdapterFile = (
   const prefixes = (p: string): string[] => p.split("/").map((_, i, parts) => parts.slice(0, i + 1).join("/"));
   const known = new Map<string, string>();
   for (const p of files.keys()) for (const pre of prefixes(p)) known.set(pre.toLowerCase(), pre);
-  const clash = prefixes(rel)
+  // A file already stored under this exact path adds no new row, so an old
+  // clash (from import or another host) can still be fixed or removed here.
+  const clash = files.has(rel)
+    ? undefined
+    : prefixes(rel)
     .map((pre) => ({ pre, other: known.get(pre.toLowerCase()) }))
     .find(({ pre, other }) => other !== undefined && other !== pre);
   if (clash) return { ok: false, violations: [`${clash.pre} clashes with ${clash.other}, which differs only in case`] };
   // A browser may hand a textarea back with CRLF line ends.
-  const text = content.replace(/\r\n/g, "\n");
-  if (base !== undefined && (files.get(rel) ?? "") !== base.replace(/\r\n/g, "\n")) {
+  const lf = (s: string): string => s.replace(/\r\n/g, "\n");
+  const text = lf(content);
+  // The stored side too: a file imported from disk may still carry CRLF.
+  if (base !== undefined && lf(files.get(rel) ?? "") !== lf(base)) {
     return { ok: false, violations: [`${rel} changed since it was opened - reload and redo the edit`] };
   }
   const blank = text.trim() === "";
   if (blank && rel === MANIFEST_FILE) return { ok: false, violations: [`${MANIFEST_FILE} cannot be removed`] };
   if (blank && !files.has(rel)) return { ok: false, violations: [`There is no ${rel} to remove.`] };
-  if (!blank && files.get(rel) === text) return { ok: true, warnings: [] };
+  if (!blank && files.get(rel) !== undefined && lf(files.get(rel) ?? "") === text) return { ok: true, warnings: [] };
   if (blank) files.delete(rel);
   else files.set(rel, text);
   return commitAdapter(deps, files, {
