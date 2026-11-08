@@ -16,7 +16,7 @@ import { SLACK_BREVITY, SLACK_FORMAT } from "./slackFormat.ts";
 import { BLOCK_KIT_RULES } from "./blockKit.ts";
 import { kitRules } from "./kitEvents.ts";
 import { type Adapter, type AdapterScope, renderAdapter } from "./adapter.ts";
-import { asGuide, type PromptGuide, renderGuideIndex } from "./promptGuides.ts";
+import { asGuide, investigateSummary, type PromptGuide, renderGuideIndex } from "./promptGuides.ts";
 import type { Participant, PromptContext, Reactable } from "./types.ts";
 
 /** Neutral fallback persona used when no custom one is configured. */
@@ -445,7 +445,7 @@ export const buildSystemPromptParts = (
     };
   }
   const guides = [
-    asGuide("investigate", investigating),
+    asGuide("investigate", investigating, investigateSummary(options.logSources ?? [])),
     asGuide("tickets", tickets),
     asGuide("credential-gap", reaching),
     asGuide("desktop", desktop),

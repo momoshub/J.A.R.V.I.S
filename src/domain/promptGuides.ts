@@ -34,8 +34,9 @@ export type PromptGuide = {
  * that does not exist - then says when the rest is worth reading.
  */
 export const GUIDE_SUMMARIES: Readonly<Record<GuideSlug, string>> = {
+  // the source order is a setting, so the real line comes from `investigateSummary`
   investigate:
-    "logs, metrics, traces, RUM - grafana (`gcx`) first, datadog only when grafana has nothing, NEVER cloudwatch. Read before any lookup into why something broke",
+    "logs, metrics, traces, RUM - try the configured sources in order, NEVER cloudwatch. Read before any lookup into why something broke",
   tickets:
     "a NEW report of the product misbehaving is raised as a ticket with the `ticket` command, after searching the tracker for a duplicate. Read before raising one",
   "credential-gap":
@@ -45,7 +46,7 @@ export const GUIDE_SUMMARIES: Readonly<Record<GuideSlug, string>> = {
   parallel:
     "a message with several independent asks is split and run in parallel as Orca workers, each answer posted as it lands. Read before spawning any background agent",
   "block-kit":
-    "a question with a fixed set of answers is asked with `jv:` buttons, never lettered options in text. Read before posting buttons, selects or a modal",
+    "a question with a fixed set of answers is asked with `jv:` buttons, never lettered options in text. Read before posting buttons, selects or a modal, or when a turn starts with [block kit event]",
   waiting:
     "you cannot wait - never say you will do something once X finishes, set a `watch` instead; `tell` steers another thread. Read for the watch and tell syntax",
 };
@@ -69,9 +70,19 @@ export const GUIDE_ORDER: readonly GuideSlug[] = [
 export const guideFile = (guide: PromptGuide): string =>
   `${guide.slug}-${createHash("sha256").update(guide.body).digest("hex").slice(0, 10)}.md`;
 
+/**
+ * The investigate line names the sources in their configured order - it is a
+ * setting (`log_sources`), so a fixed "grafana first" would contradict the
+ * guide on an instance that changed it.
+ */
+export const investigateSummary = (order: readonly string[]): string =>
+  order.length === 0
+    ? GUIDE_SUMMARIES.investigate
+    : `logs, metrics, traces, RUM - ${order.join(" first, then ")}${order.length > 1 ? " only when the one before has nothing" : ""}, NEVER cloudwatch. Read before any lookup into why something broke`;
+
 /** A block becomes a guide only when this turn would have rendered it at all. */
-export const asGuide = (slug: GuideSlug, block: string): PromptGuide | undefined =>
-  block.trim() ? { slug, summary: GUIDE_SUMMARIES[slug], body: block.trim() } : undefined;
+export const asGuide = (slug: GuideSlug, block: string, summary?: string): PromptGuide | undefined =>
+  block.trim() ? { slug, summary: summary ?? GUIDE_SUMMARIES[slug], body: block.trim() } : undefined;
 
 /** The always-on index that replaces the inlined blocks. */
 export const renderGuideIndex = (guides: readonly PromptGuide[], dir: string): string => {
@@ -86,8 +97,12 @@ export const renderGuideIndex = (guides: readonly PromptGuide[], dir: string): s
  * The index with stand-in paths, for the session fingerprint: a guided turn's
  * always-on lines are rules too, so changing one must reopen live threads.
  */
-export const guideIndexForFingerprint = (): string =>
+export const guideIndexForFingerprint = (logSources: readonly string[] = []): string =>
   renderGuideIndex(
-    GUIDE_ORDER.map((slug) => ({ slug, summary: GUIDE_SUMMARIES[slug], body: slug })),
+    GUIDE_ORDER.map((slug) => ({
+      slug,
+      summary: slug === "investigate" ? investigateSummary(logSources) : GUIDE_SUMMARIES[slug],
+      body: slug,
+    })),
     "/fp/guides",
   );

@@ -9,6 +9,7 @@ import type { SlackAdminPort, SlackMessage } from "../../src/application/slackAd
 import { createThreadSessionRepo } from "../../src/infrastructure/db/threadSessionRepo.ts";
 import type { LlmCompleteParams } from "../../src/application/ports.ts";
 import { syntheticTs } from "../../src/domain/slackLinks.ts";
+import { guideFile } from "../../src/domain/promptGuides.ts";
 
 const slackMsg = (over: Partial<SlackMessage> & { ts: string; userId: string; text: string }): SlackMessage => ({
   userName: "",
@@ -707,5 +708,58 @@ describe("handleMessage", () => {
     const deps = build(fakeLlm("ok", (_m, s) => (system = s)));
     await handleMessage(deps, { channelId: "C1", slackUserId: OWNER, text: "hi" });
     expect(system).not.toContain("Looking things up when something is wrong");
+  });
+});
+
+describe("how-to guides in a chat turn", () => {
+  const guided = (role: "owner" | "pal") => {
+    const calls: { system: string; written: string[] }[] = [];
+    const written: string[] = [];
+    const deps = build(
+      fakeLlm("ok", (_m, system) => calls.push({ system, written: [...written] })),
+    );
+    deps.toolPolicy = (r) => ({ skipPermissions: r === "owner" || r === "admin" });
+    deps.logSources = () => ["grafana"];
+    deps.grafanaGetScript = "/g.sh";
+    deps.guideDir = "/gd";
+    deps.users.upsert({ slackId: "Upal", role: "pal", displayName: "", addedBy: "x", createdAt: 1 });
+    const user = role === "owner" ? OWNER : "Upal";
+    return { deps, calls, written, user };
+  };
+  const INLINE = "Looking things up when something is wrong";
+
+  test("a full-access turn writes the guides first and the prompt points at them", async () => {
+    const { deps, calls, written, user } = guided("owner");
+    deps.writeGuides = (dir, guides) => written.push(...guides.map((g) => `${dir}/${guideFile(g)}`));
+    await handleMessage(deps, { channelId: "C1", slackUserId: user, text: "why is it slow" });
+    expect(written.length).toBeGreaterThan(0);
+    expect(calls[0]?.system).not.toContain(INLINE);
+    // written BEFORE the model ran, and every path it names exists
+    for (const path of written) expect(calls[0]?.system).toContain(`read: ${path}`);
+    expect(calls[0]?.written).toEqual(written);
+  });
+
+  test("a sandboxed turn keeps every block inline and writes nothing", async () => {
+    const { deps, calls, written, user } = guided("pal");
+    deps.writeGuides = (_dir, guides) => written.push(...guides.map((g) => g.slug));
+    await handleMessage(deps, { channelId: "C1", slackUserId: user, text: "why is it slow" });
+    expect(written).toEqual([]);
+    expect(calls[0]?.system).toContain(INLINE);
+  });
+
+  test("a guide dir with no writer stays inline", async () => {
+    const { deps, calls, user } = guided("owner");
+    await handleMessage(deps, { channelId: "C1", slackUserId: user, text: "why is it slow" });
+    expect(calls[0]?.system).toContain(INLINE);
+  });
+
+  test("a failed write falls back to the inline prompt", async () => {
+    const { deps, calls, user } = guided("owner");
+    deps.writeGuides = () => {
+      throw new Error("disk full");
+    };
+    await handleMessage(deps, { channelId: "C1", slackUserId: user, text: "why is it slow" });
+    expect(calls[0]?.system).toContain(INLINE);
+    expect(calls[0]?.system).not.toContain("read: /gd/");
   });
 });

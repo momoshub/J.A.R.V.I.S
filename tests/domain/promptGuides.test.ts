@@ -52,7 +52,7 @@ describe("how-to guides", () => {
     }
     for (const g of guides) {
       expect(prompt).toContain(`read: /gd/${guideFile(g)}`);
-      expect(prompt).toContain(GUIDE_SUMMARIES[g.slug]);
+      expect(prompt).toContain(g.summary);
     }
     // the guards that must hold unread stay always on
     expect(prompt).toContain("NEVER cloudwatch");
@@ -61,6 +61,21 @@ describe("how-to guides", () => {
     expect(prompt).toContain("Running my own commands");
     expect(prompt.trimEnd().endsWith(inline.slice(inline.indexOf("Identity lock")).trimEnd())).toBe(true);
     expect(prompt.length).toBeLessThan(inline.length / 2);
+  });
+
+  test("the investigate line follows the configured source order", () => {
+    const grafana = buildSystemPromptParts({ ...full, guideDir: "/gd" }).guides.find((g) => g.slug === "investigate");
+    expect(grafana?.summary).toContain("grafana");
+    const datadog = buildSystemPromptParts({ ...full, logSources: ["datadog"], guideDir: "/gd" }).guides.find(
+      (g) => g.slug === "investigate",
+    );
+    expect(datadog?.summary).toContain("datadog");
+    expect(datadog?.summary).not.toContain("grafana");
+    expect(datadog?.summary).toContain("NEVER cloudwatch");
+  });
+
+  test("the block-kit line also points an incoming event at the guide", () => {
+    expect(GUIDE_SUMMARIES["block-kit"]).toContain("[block kit event]");
   });
 
   test("a turn that cannot read files keeps everything inline", () => {

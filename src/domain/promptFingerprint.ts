@@ -45,6 +45,11 @@ const SENTINELS = {
   canRaiseTickets: true,
   commandBudget: 50,
   following: true,
+  // so the waiting and desktop blocks render too, and a change to either
+  // reopens live threads like any other rule
+  canWatch: true,
+  macUiScript: "/fp/mac-ui",
+  desktopScript: "/fp/desktop",
 };
 
 /**
@@ -68,6 +73,6 @@ export const promptFingerprint = (
     // likewise the build above inlines every guide's full text, which covers
     // the guides themselves; the always-on index a guided turn gets instead is
     // hashed here, so a changed guard line reopens live threads too
-    .update(guideIndexForFingerprint())
+    .update(guideIndexForFingerprint(SENTINELS.logSources))
     .digest("hex")
     .slice(0, 16);
