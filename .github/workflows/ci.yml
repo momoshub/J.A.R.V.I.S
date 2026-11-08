@@ -1,0 +1,26 @@
+# Typecheck and tests on every PR and every push to main. The repo is private
+# on a free plan, so GitHub cannot require this check before a merge: the gate
+# is bin/merge-when-green.sh, which every self-fix merges through.
+name: ci
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  checks:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.4.3 # same as the host; bump together
+      - run: bun install --frozen-lockfile
+      - run: bun run typecheck
+      - run: bun test

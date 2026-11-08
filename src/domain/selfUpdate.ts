@@ -99,19 +99,23 @@ export const restartWhenIdle = (deps: IdleRestartDeps): void => {
 };
 
 /**
- * Every change to the bot's own source is read by a second agent before it is
- * merged (owner's rule). The session that wrote a fix is the worst judge of it:
- * it shares the blind spot that caused the bug. A fresh agent reading the diff
- * cold is the only review a self-merged repo gets.
+ * Every change to the bot's own source is read by a second agent and passes CI
+ * before it is merged (owner's rule). The session that wrote a fix is the worst
+ * judge of it: it shares the blind spot that caused the bug. The reviewer runs
+ * in the background and stays alive until the merge, so finding -> fix ->
+ * re-review is a conversation with one reviewer over SendMessage instead of a
+ * fresh cold read every round. It must not outlive the turn unwatched: the
+ * writer waits for it and stops it once the PR is settled. GitHub cannot
+ * require the check on this plan, so `bin/merge-when-green.sh` is the CI gate.
  */
 export const STANDALONE_REVIEW_RULE =
-  "before you merge, a standalone reviewer agent reviews the PR - every fix, no exceptions. Spawn a separate agent with the Agent tool in the FOREGROUND (`run_in_background: false`), never a fork and never the session that wrote the code, give it the PR url and what the change is for, and wait for its report before doing anything else. It reads the diff cold and reports correctness bugs, regressions, missing tests and stale docs. Fix every real finding on the branch, re-run `bun run typecheck` and `bun test`, push, and run a fresh reviewer again. Only correctness, regression, test and doc findings block, style nits do not. At most 3 review rounds: if it is still not clean after the third, do not merge - leave the PR open, link it and say what is still open. Say in your reply what the reviewer found. Never merge before a clean review";
+  "before you merge, a standalone reviewer agent reviews the PR and CI is green - every fix, no exceptions. Spawn a separate agent with the Agent tool in the BACKGROUND (`run_in_background: true`), never a fork and never the session that wrote the code, give it the PR url and what the change is for, and tell it to report its findings and stay ready to re-review. It reads the diff cold and reports correctness bugs, regressions, missing tests and stale docs. Never end your turn while it is open: wait for its report. Fix every real finding on the branch, re-run `bun run typecheck` and `bun test`, push, then tell the same reviewer what you changed with SendMessage so it re-reads the new diff - push back or ask it the same way. Only correctness, regression, test and doc findings block, style nits do not. At most 3 review rounds: if it is still not clean after the third, do not merge - leave the PR open, link it and say what is still open. Merge only with `bin/merge-when-green.sh <pr>` from the worktree, after the last push, with a Bash timeout of 600000: it waits for CI on that exact commit and refuses on red, exit 3 means CI has not finished so run it again, and red CI is a finding to fix like any other. Never fall back to a bare `gh pr merge`. Once the PR is merged or left open, stop the reviewer with TaskStop. Say in your reply what the reviewer found. Never merge before a clean review and green CI";
 
 const fullRules = (repoPath: string, restartScript: string): string => `
 
 Working on your own source (${repoPath}):
 - you may read it like any other repository, but never edit it in place: other sessions share that folder, and two of them editing it at once is how changes get lost or tangled. It is Bun + TypeScript, functional, no classes, no \`any\`, and local imports carry \`.ts\`
-- every change goes this way: \`git fetch\`, \`git worktree add .claude/worktrees/<name> -b <branch> origin/main\`, edit and test there, push the branch, open a PR, get it reviewed by a standalone reviewer agent (next line), merge it yourself, then \`git -C ${repoPath} pull --no-rebase\` to bring it into the main folder, and only then restart
+- every change goes this way: \`git fetch\`, \`git worktree add .claude/worktrees/<name> -b <branch> origin/main\`, edit and test there, push the branch, open a PR, get it reviewed by a standalone reviewer agent and green CI (next line), merge it yourself, then \`git -C ${repoPath} pull --no-rebase\` to bring it into the main folder, and only then restart
 - ${STANDALONE_REVIEW_RULE}
 - a PR description and commits carry no attribution at all: no "Generated with ..." line (Jarvis or Claude Code) and no co-author trailer
 - adjust or add tests with any behaviour change. A change with no test is a change nobody can keep
@@ -138,7 +142,7 @@ export const selfUpdateRules = (repoPath?: string, restartScript?: string, hasSk
 
 Working on your own source (${repoPath}):
 - before changing it, read the skill in your memory about changing your own source: it holds the full procedure. The lines below always hold
-- never edit ${repoPath} in place, other sessions share it: \`git worktree add .claude/worktrees/<name> -b <branch> origin/main\`, docs and tests in the same PR, then a standalone reviewer agent (foreground, fresh context, never you) before you merge it yourself, then \`git -C ${repoPath} pull --no-rebase\` and, for a code change, \`${restartScript}\`, which only restarts you if typecheck and tests pass
+- never edit ${repoPath} in place, other sessions share it: \`git worktree add .claude/worktrees/<name> -b <branch> origin/main\`, docs and tests in the same PR, then a standalone reviewer agent (background, fresh context, never you, stopped after the merge) and green CI before you merge it yourself with \`bin/merge-when-green.sh\`, then \`git -C ${repoPath} pull --no-rebase\` and, for a code change, \`${restartScript}\`, which only restarts you if typecheck and tests pass
 - after the restart helper, say what you changed and that I restart once idle (up to ${Math.round(RESTART_MAX_WAIT_MS / 60_000)} minutes). Expect to be a new process: anything you were part-way through is gone
 - PR descriptions and commits carry no attribution at all
 - while I am running, never \`git stash\`, \`checkout\`, \`reset\` or \`rebase\` over \`data/*.db\`: it swaps the live database out and I crash mid-turn

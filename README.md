@@ -823,6 +823,8 @@ bun test           # full suite
 bun run typecheck  # tsc --noEmit
 ```
 
+CI (`.github/workflows/ci.yml`) runs both on every PR and every push to `main`. The repo is private on a free plan, so GitHub cannot require it before a merge: merge with `bin/merge-when-green.sh <pr>`, which waits for the checks and refuses unless they are all green.
+
 ## Notes
 
 - Architecture is documented in [ARCHITECTURE.md](./ARCHITECTURE.md).

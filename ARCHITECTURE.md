@@ -83,7 +83,9 @@ no classes.
   a channel and run as a turn in that thread as the matched Slack person; the
   turn answers on GitHub through `bin/github-app-comment.sh` ->
   `/api/github-app/comment`, ticketed and bound to that one issue.
-- **Self-update.** `bin/jarvis-restart.sh` runs typecheck and tests and only
+- **Self-update.** A fix lands through a PR that a background reviewer agent
+  reads and CI (`.github/workflows/ci.yml`) passes, merged only by
+  `bin/merge-when-green.sh`. `bin/jarvis-restart.sh` runs typecheck and tests and only
   restarts when both pass. `restartWhenIdle` then drains: the inbox is no
   longer read and timers that start turns hold, so it waits only for the turns
   already running, and anyone writing in meanwhile is told why, what it waits

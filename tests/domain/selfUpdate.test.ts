@@ -36,10 +36,11 @@ describe("selfUpdateRules with a memory skill", () => {
   });
 
   test("a standalone reviewer comes before the merge", () => {
-    expect(short).toContain("standalone reviewer agent (foreground, fresh context, never you)");
+    expect(short).toContain("standalone reviewer agent (background, fresh context, never you, stopped after the merge)");
+    expect(short).toContain("green CI before you merge it yourself with `bin/merge-when-green.sh`");
     expect(short.indexOf("standalone reviewer agent")).toBeLessThan(short.indexOf("merge it yourself"));
     // the full rule still exists for the prompts that carry it whole
-    expect(STANDALONE_REVIEW_RULE).toContain("run_in_background: false");
+    expect(STANDALONE_REVIEW_RULE).toContain("run_in_background: true");
     expect(STANDALONE_REVIEW_RULE).toContain("At most 3 review rounds");
   });
 
@@ -84,8 +85,21 @@ describe("selfUpdateRules with no skill to read (the full block)", () => {
   test("every fix is reviewed by a standalone agent before it is merged", () => {
     expect(rules).toContain(STANDALONE_REVIEW_RULE);
     expect(rules).toContain("never the session that wrote the code");
-    // in the foreground, so the turn cannot end before the review is in
-    expect(rules).toContain("run_in_background: false");
+    // in the background, talked to over SendMessage, but the turn still waits
+    // for it and stops it once the PR is settled
+    expect(rules).toContain("run_in_background: true");
+    expect(STANDALONE_REVIEW_RULE).toContain("Never end your turn while it is open");
+    expect(STANDALONE_REVIEW_RULE).toContain("tell the same reviewer what you changed with SendMessage");
+    expect(STANDALONE_REVIEW_RULE.indexOf("stop the reviewer with TaskStop")).toBeGreaterThan(
+      STANDALONE_REVIEW_RULE.indexOf("bin/merge-when-green.sh"),
+    );
+    // CI is part of the gate, through the helper that refuses on red
+    expect(STANDALONE_REVIEW_RULE).toContain("Merge only with `bin/merge-when-green.sh <pr>`");
+    expect(STANDALONE_REVIEW_RULE).toContain("Never merge before a clean review and green CI");
+    // the helper outlives the default tool timeout, and a slow CI is a retry, not a bypass
+    expect(STANDALONE_REVIEW_RULE).toContain("Bash timeout of 600000");
+    expect(STANDALONE_REVIEW_RULE).toContain("exit 3 means CI has not finished so run it again");
+    expect(STANDALONE_REVIEW_RULE).toContain("Never fall back to a bare `gh pr merge`");
     // a fix made after review is checked again before it can merge
     expect(STANDALONE_REVIEW_RULE.indexOf("re-run `bun run typecheck` and `bun test`")).toBeGreaterThan(
       STANDALONE_REVIEW_RULE.indexOf("Fix every real finding"),
