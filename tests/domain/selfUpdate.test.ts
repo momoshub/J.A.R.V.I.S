@@ -96,6 +96,10 @@ describe("selfUpdateRules with no skill to read (the full block)", () => {
     // CI is part of the gate, through the helper that refuses on red
     expect(STANDALONE_REVIEW_RULE).toContain("Merge only with `bin/merge-when-green.sh <pr>`");
     expect(STANDALONE_REVIEW_RULE).toContain("Never merge before a clean review and green CI");
+    // the helper outlives the default tool timeout, and a slow CI is a retry, not a bypass
+    expect(STANDALONE_REVIEW_RULE).toContain("Bash timeout of 600000");
+    expect(STANDALONE_REVIEW_RULE).toContain("exit 3 means CI has not finished so run it again");
+    expect(STANDALONE_REVIEW_RULE).toContain("Never fall back to a bare `gh pr merge`");
     // a fix made after review is checked again before it can merge
     expect(STANDALONE_REVIEW_RULE.indexOf("re-run `bun run typecheck` and `bun test`")).toBeGreaterThan(
       STANDALONE_REVIEW_RULE.indexOf("Fix every real finding"),
