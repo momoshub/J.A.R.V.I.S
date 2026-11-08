@@ -3,7 +3,8 @@ import {
   createdHandleOf,
   createOrcaCli,
   createOrcaTerminal,
-  isLiveHandle,
+  handleState,
+  ORCA_CALL_TIMEOUT_MS,
   type OrcaRun,
 } from "../../src/infrastructure/system/orcaTerminal.ts";
 
@@ -12,13 +13,14 @@ const shown = (handle: string, extra: Record<string, unknown> = {}) =>
 const stale = JSON.stringify({ ok: false, error: { code: "terminal_handle_stale" } });
 
 /** A scripted Orca: which handles are live, what `create` issues next, every call made. */
-const fakeOrca = (opts: { live?: string[]; next?: string[]; down?: boolean }) => {
+const fakeOrca = (opts: { live?: string[]; next?: string[]; down?: boolean; silent?: boolean }) => {
   const live = new Set(opts.live ?? []);
   const next = [...(opts.next ?? [])];
   const calls: string[] = [];
   const run: OrcaRun = async (args) => {
     calls.push(args.slice(0, 2).join(" "));
     if (opts.down) return { code: 1, stdout: "" };
+    if (opts.silent && args[1] === "show") return { code: -1, stdout: "" };
     if (args[1] === "show") {
       const h = args[3] as string;
       return live.has(h) ? { code: 0, stdout: shown(h) } : { code: 1, stdout: stale };
@@ -49,11 +51,13 @@ const setup = (orca: ReturnType<typeof fakeOrca>, stored?: string) => {
 
 describe("orca terminal output", () => {
   test("a handle is live only when Orca shows that exact one, attached", () => {
-    expect(isLiveHandle(shown("term_a"), "term_a")).toBe(true);
-    expect(isLiveHandle(shown("term_a"), "term_b")).toBe(false);
-    expect(isLiveHandle(shown("term_a", { orphaned: true }), "term_a")).toBe(false);
-    expect(isLiveHandle(stale, "term_a")).toBe(false);
-    expect(isLiveHandle("not json", "term_a")).toBe(false);
+    expect(handleState(shown("term_a"), "term_a")).toBe("live");
+    expect(handleState(shown("term_a"), "term_b")).toBe("gone");
+    expect(handleState(shown("term_a", { orphaned: true }), "term_a")).toBe("gone");
+    expect(handleState(stale, "term_a")).toBe("gone");
+    // no answer at all is not the same as "gone"
+    expect(handleState("", "term_a")).toBe("unknown");
+    expect(handleState("not json", "term_a")).toBe("unknown");
   });
 
   test("create's handle is read from result.terminal.handle", () => {
@@ -100,12 +104,48 @@ describe("createOrcaTerminal", () => {
     const { terminal, saved, tick } = setup(orca, "term_kept");
     expect(await terminal.handle()).toBeUndefined();
     expect(await terminal.handle()).toBeUndefined();
-    expect(orca.calls).toEqual(["terminal show", "terminal create"]);
+    expect(orca.calls).toEqual(["terminal show"]);
     // the kept handle is not thrown away: it is still good if Orca was only busy
     expect(saved()).toBe("term_kept");
     tick(1_000);
     await terminal.handle();
-    expect(orca.calls.length).toBe(4);
+    expect(orca.calls).toEqual(["terminal show", "terminal show"]);
+  });
+
+  test("Orca not running and nothing kept: the create fails and nothing is saved", async () => {
+    const orca = fakeOrca({ down: true });
+    const { terminal, saved } = setup(orca);
+    expect(await terminal.handle()).toBeUndefined();
+    expect(orca.calls).toEqual(["terminal create"]);
+    expect(saved()).toBeUndefined();
+  });
+
+  test("a live terminal that was only slow to answer is not replaced by a second one", async () => {
+    const orca = fakeOrca({ live: ["term_kept"], next: ["term_leak"], silent: true });
+    const { terminal, saved } = setup(orca, "term_kept");
+    expect(await terminal.handle()).toBeUndefined();
+    expect(orca.calls).toEqual(["terminal show"]);
+    expect(saved()).toBe("term_kept");
+  });
+
+  test("losing the terminal is logged once, not on every check", async () => {
+    const orca = fakeOrca({ down: true });
+    const logs: string[] = [];
+    let now = 0;
+    const terminal = createOrcaTerminal({
+      run: orca.run,
+      load: () => undefined,
+      save: () => undefined,
+      worktree: "path:/work",
+      now: () => now,
+      ttlMs: 1_000,
+      log: (l) => void logs.push(l),
+    });
+    await terminal.handle();
+    now += 1_000;
+    await terminal.handle();
+    expect(logs).toHaveLength(1);
+    expect(logs[0]).toContain("no terminal of my own");
   });
 
   test("turns that start together share one check and one terminal", async () => {
@@ -132,6 +172,16 @@ describe("createOrcaCli", () => {
   test("a missing binary answers like a runtime that is down", async () => {
     const run = createOrcaCli("/nonexistent/orca-bin");
     expect(await run(["status"])).toEqual({ code: -1, stdout: "" });
+  });
+
+  test("a hung orca is stopped at the bound, so it cannot hold a turn", async () => {
+    const run = createOrcaCli("/bin/sleep", 100);
+    const started = Date.now();
+    const r = await run(["5"]);
+    expect(Date.now() - started).toBeLessThan(3_000);
+    expect(r.code).not.toBe(0);
+    // and the default bound is short next to a turn
+    expect(ORCA_CALL_TIMEOUT_MS).toBeLessThanOrEqual(5_000);
   });
 
   test("returns the exit code and stdout", async () => {

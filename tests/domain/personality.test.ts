@@ -450,7 +450,7 @@ describe("a message with several questions", () => {
     // the turn orchestrates from the bot's own terminal, never a borrowed one
     expect(out).toContain("`ORCA_TERMINAL_HANDLE` in your environment is the bot's own Orca terminal");
     expect(out).toContain("never pass another pane's handle");
-    expect(out).toContain("`ORCA_TERMINAL_HANDLE` is unset");
+    expect(out).toContain("`ORCA_TERMINAL_HANDLE` is unset, `run-create` refuses it as `terminal_handle_stale`");
     expect(out).toContain("Fall back to the Agent tool");
     expect(out).toContain("orca orchestration run-create");
     expect(out).toContain("worker-start --run <runId>");

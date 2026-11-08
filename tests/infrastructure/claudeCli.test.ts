@@ -233,24 +233,30 @@ describe("createClaudeCliLlm", () => {
       `#!/usr/bin/env bash\ncat > /dev/null\necho "{\\"type\\":\\"result\\",\\"subtype\\":\\"success\\",\\"is_error\\":false,\\"result\\":\\"[$ORCA_TERMINAL_HANDLE]\\"}"`,
     );
     // the pane that started the bot leaves its own handle in the environment
+    const before = process.env.ORCA_TERMINAL_HANDLE;
     process.env.ORCA_TERMINAL_HANDLE = "term_someone-elses-pane";
-    let handle: string | undefined = "term_own";
-    const llm = createClaudeCliLlm({ binPath: bin, turnEnv: async () => ({ ORCA_TERMINAL_HANDLE: handle }) });
+    try {
+      let handle: string | undefined = "term_own";
+      const llm = createClaudeCliLlm({ binPath: bin, turnEnv: async () => ({ ORCA_TERMINAL_HANDLE: handle }) });
 
-    expect(await llm.complete({ system: "s", messages: [{ role: "user", content: "hi" }] })).toBe("[term_own]");
-    // Orca down: no handle at all, not the borrowed one
-    handle = undefined;
-    expect(await llm.complete({ system: "s", messages: [{ role: "user", content: "hi" }] })).toBe("[]");
+      expect(await llm.complete({ system: "s", messages: [{ role: "user", content: "hi" }] })).toBe("[term_own]");
+      // Orca down: no handle at all, not the borrowed one
+      handle = undefined;
+      expect(await llm.complete({ system: "s", messages: [{ role: "user", content: "hi" }] })).toBe("[]");
 
-    delete process.env.ORCA_TERMINAL_HANDLE;
-    // a provider that throws costs the turn its handle, not the turn
-    const broken = createClaudeCliLlm({
-      binPath: bin,
-      turnEnv: async () => {
-        throw new Error("orca exploded");
-      },
-    });
-    expect(await broken.complete({ system: "s", messages: [{ role: "user", content: "hi" }] })).toBe("[]");
+      delete process.env.ORCA_TERMINAL_HANDLE;
+      // a provider that throws costs the turn its handle, not the turn
+      const broken = createClaudeCliLlm({
+        binPath: bin,
+        turnEnv: async () => {
+          throw new Error("orca exploded");
+        },
+      });
+      expect(await broken.complete({ system: "s", messages: [{ role: "user", content: "hi" }] })).toBe("[]");
+    } finally {
+      if (before === undefined) delete process.env.ORCA_TERMINAL_HANDLE;
+      else process.env.ORCA_TERMINAL_HANDLE = before;
+    }
   });
 
   test("a turn is told which session it is, so it never mistakes itself for another writer", async () => {

@@ -38,7 +38,7 @@ export type OrcaTerminal = {
 
 export const ORCA_TERMINAL_TITLE = "jarvis-orchestrator";
 export const ORCA_HANDLE_TTL_MS = 60_000;
-const ORCA_CALL_TIMEOUT_MS = 10_000;
+export const ORCA_CALL_TIMEOUT_MS = 5_000;
 
 type ShowResult = { ok?: boolean; result?: { terminal?: { handle?: unknown; orphaned?: unknown } } };
 
@@ -50,11 +50,16 @@ const parse = (stdout: string): ShowResult | undefined => {
   }
 };
 
-/** True when `orca terminal show --json` says this exact handle is live. */
-export const isLiveHandle = (stdout: string, handle: string): boolean => {
+/**
+ * What `orca terminal show --json` says about this handle: `live`, `gone`
+ * (Orca answered and it is stale, orphaned or another terminal), or
+ * `unknown` when Orca gave no answer at all - timed out, not running.
+ */
+export const handleState = (stdout: string, handle: string): "live" | "gone" | "unknown" => {
   const r = parse(stdout);
-  const t = r?.ok === true ? r.result?.terminal : undefined;
-  return t?.handle === handle && t.orphaned !== true;
+  if (!r || typeof r.ok !== "boolean") return "unknown";
+  const t = r.ok ? r.result?.terminal : undefined;
+  return t?.handle === handle && t.orphaned !== true ? "live" : "gone";
 };
 
 /** The handle `orca terminal create --json` issued, if it issued one. */
@@ -70,11 +75,16 @@ export const createOrcaTerminal = (config: OrcaTerminalConfig): OrcaTerminal => 
   let answer: string | undefined;
   let checkedAt: number | undefined;
   let inflight: Promise<string | undefined> | undefined;
+  let failing = false;
 
   const settle = async (): Promise<string | undefined> => {
     if (known) {
       const shown = await config.run(["terminal", "show", "--terminal", known, "--json"]);
-      if (shown.code === 0 && isLiveHandle(shown.stdout, known)) return known;
+      const state = handleState(shown.stdout, known);
+      if (state === "live" && shown.code === 0) return known;
+      // No answer is not "gone": creating a second pane over a live one that
+      // was only slow to answer would leak it.
+      if (state === "unknown") return undefined;
     }
     const made = await config.run([
       "terminal", "create", "--worktree", config.worktree, "--title", ORCA_TERMINAL_TITLE, "--json",
@@ -94,6 +104,9 @@ export const createOrcaTerminal = (config: OrcaTerminalConfig): OrcaTerminal => 
     inflight ??= settle()
       .catch(() => undefined)
       .then((h) => {
+        // Said once when it stops working, not on every check while it is down.
+        if (!h && !failing) config.log?.("[orca] no terminal of my own (Orca not running, or it refused the worktree); turns get no ORCA_TERMINAL_HANDLE");
+        failing = !h;
         answer = h;
         checkedAt = config.now();
         inflight = undefined;
