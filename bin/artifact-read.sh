@@ -36,7 +36,7 @@ case "$URL" in
   *) echo "artifact-read: not a claude.ai artifact url: $URL" >&2; exit 2 ;;
 esac
 
-OUT="$(mktemp -t artifact-read)" || exit 1
+OUT="$(mktemp "${TMPDIR:-/tmp}/artifact-read.XXXXXX")" || exit 1
 # The session writes here; mktemp made the file, and an empty file is how we
 # know it has not finished yet.
 : > "$OUT"
