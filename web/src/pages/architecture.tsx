@@ -218,7 +218,7 @@ export function ArchitecturePage() {
   useEffect(() => {
     const el = stage.current;
     if (!el || typeof IntersectionObserver === "undefined") return;
-    const io = new IntersectionObserver(([e]) => setStageVisible(e?.isIntersecting ?? true), { threshold: 0.15 });
+    const io = new IntersectionObserver(([e]) => setStageVisible((e?.intersectionRatio ?? 1) >= 0.15), { threshold: [0, 0.15] });
     io.observe(el);
     return () => io.disconnect();
   }, []);

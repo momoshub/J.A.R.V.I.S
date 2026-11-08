@@ -341,7 +341,7 @@ button.icon.primary { width: 42px; height: 42px; }
 @media (max-width: 760px) {
   .arch-dock { grid-template-columns: auto auto auto minmax(0, 1fr) auto; border-radius: 18px; }
   .arch-dock-progress { display: none; }
-  .arch-dock-now span { display: none; }
+  .arch-dock-now code + span { display: none; }
 }
 @media (max-width: 1100px) {
   .arch-side { grid-template-columns: 1fr; }
