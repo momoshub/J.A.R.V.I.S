@@ -807,12 +807,14 @@ Some tools are **denied to every role, full access included** - `--disallowedToo
 
 A **React 19 + Vite + React Router 7** single-page app (in `web/`, library-mode `react-router` package) served by the bot and backed by a JSON API under `/api`. It wears a Claude-style theme (ivory paper, clay accent, serif headings) in `web/src/styles.css`, light by default and dark when the OS is - every colour is a CSS variable, so pages never hard-code one. Open `http://localhost:2001/` - it is loopback-only with no auth token (mutations still keep an automatic same-origin CSRF check). Tabs:
 
+The sidebar collapses to a slim rail of initials (its toggle button or Ctrl/Cmd+B, remembered per browser in `localStorage`); on a phone it is a top bar and does not collapse.
+
 - **Overview** - counts for users, conversations, stored turns, learnings, and a tile into each area
 - **Users** - manage the allowlist and roles (the owner is protected)
 - **Memory** - with a memory adapter: teach one fact, edit any adapter file by hand (one whole file per save, checked by the same gate as `adapter refine` and kept as a revision; blank a file to remove it), or revert to an earlier revision. Without an adapter it is the flat **Learnings** list: edit one in place and save, or delete it
 - **Identity** - edit the bot name, "thinking" label, and system prompt (persona), or reset the persona to default
 - **Conversations** - browse the bot's own stored memory (SQLite), read turns, clear a channel
-- **Architecture** - how the bot is built, as a system design walkthrough: an interactive diagram of every process, module and store, request flows you can play step by step (a mention, a typed command, the brain running a command, a call from GitHub, a polled review run as the `review` command, a watch coming good, a restart that loses nothing), the layers, and the design decisions with their trade-offs. Drawn from `web/src/systemModel.ts`
+- **Architecture** - how the bot is built, as a system design walkthrough: an interactive diagram of every process, module and store, request flows you can play step by step (the diagram takes the full page width, with the player and the box inspector under it) (a mention, a typed command, the brain running a command, a call from GitHub, a polled review run as the `review` command, a watch coming good, a restart that loses nothing), the layers, and the design decisions with their trade-offs. Drawn from `web/src/systemModel.ts`
 - **Console** - a live Slack message manager (the web port of a terminal TUI): pick a channel/DM, read messages and threads, edit or delete the bot's own messages, reply, and generate an AI draft to review before posting. Requires extra Slack scopes (below); missing scopes surface as an in-app error.
 
 Identity and learnings are stored in the DB and applied on the next reply - no restart.
