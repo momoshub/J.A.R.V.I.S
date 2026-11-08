@@ -7,6 +7,7 @@
  */
 import type { PromptMessage } from "../domain/types.ts";
 import type { ToolPolicy } from "../domain/toolPolicy.ts";
+import type { BackgroundStopResult } from "../domain/threadBackground.ts";
 
 /** An incremental event produced while the model is generating a reply. */
 export type LlmStreamEvent =
@@ -84,6 +85,22 @@ export type ToolTrace =
 
 /** Told about every tool call and result; wired at the composition root. */
 export type ToolTraceSink = (trace: ToolTrace, bill: BillingContext | undefined) => void;
+
+/**
+ * The background agents a thread's turns started outside their own process
+ * tree (`claude --bg` sessions, Orca workers), found from the thread's tool
+ * trace and stopped through each tool's own CLI. Never throws.
+ */
+export type BackgroundAgentsPort = {
+  stopForThread: (q: {
+    channelId: string;
+    threadTs: string;
+    /** Who asked: their own launches are theirs to stop. */
+    actor: string;
+    /** An admin may stop anyone's. */
+    mayStopOthers: boolean;
+  }) => Promise<BackgroundStopResult>;
+};
 
 /** Whose credential paid: the bot's own, the caller's token, or the host login. */
 export type UsagePayer = "bot" | "caller" | "host";

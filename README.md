@@ -542,6 +542,14 @@ since nobody is waiting on their place in line.
 
 `//bot stop` does the same from a thread without needing a new message, which is
 the case buttons cannot cover: a turn going wrong while you have nothing to add.
+It also ends the background agents the thread's turns started outside their
+own process - `claude --bg` sessions and Orca workers, from this turn or an
+earlier one - and says what it stopped ("stopped the turn, and 1 background
+agent it started"). They are found from the thread's tool log (the launch
+command and the id it printed) and stopped with `claude stop` /
+`orca orchestration worker-stop`, never by killing processes, so nobody
+else's session is touched. Background agents started with the Agent tool run
+inside the turn and end with it.
 
 Your own turn is yours to stop. Stopping someone else's takes an admin, because
 a turn is their work and - with per-user tokens - their money. A button that

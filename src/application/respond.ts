@@ -24,7 +24,7 @@ import type { UserRole } from "../domain/types.ts";
 import type { PostedRef } from "./slackAdmin.ts";
 import type { TurnOutcome } from "../infrastructure/db/turnLogRepo.ts";
 import { handleMessage, type HandleMessageDeps, type HandleResult, type InboundMessage } from "./handleMessage.ts";
-import type { LlmStreamSink } from "./ports.ts";
+import type { BackgroundAgentsPort, LlmStreamSink } from "./ports.ts";
 
 export type RespondDeps = HandleMessageDeps & Pick<FrontDeps, "workerCalls"> & {
   /**
@@ -35,6 +35,8 @@ export type RespondDeps = HandleMessageDeps & Pick<FrontDeps, "workerCalls"> & {
   threadQueue?: ThreadQueue;
   /** In-flight turns, so one can be stopped from a button or a command. */
   runs?: RunRegistry;
+  /** Background agents a thread's turns left running, so `stop` ends them too. */
+  backgroundAgents?: BackgroundAgentsPort;
   /** One review per PR at a time, across the review inbox and `review`. */
   reviewGuard?: ReviewGuard;
   /** True while a restart waits for running turns; pending workflow steps hold. */

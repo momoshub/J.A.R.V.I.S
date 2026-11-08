@@ -81,6 +81,13 @@ const readTail = (file: string, bytes: number): string => {
 };
 
 /**
+ * The raw end of a thread's whole trace (every run kind), for a reader that
+ * parses it itself. "" when there is none. Never throws.
+ */
+export const readThreadTrace = (dir: string, channel: string, threadTs: string, tailBytes: number): string =>
+  readTail(traceFileFor(dir, { actor: "", kind: "", channel, threadTs }, new Date()), tailBytes);
+
+/**
  * The newest tool calls in a thread's trace, made by runs of `kind` (the
  * worker's billing kind), oldest first, each marked if its result was an
  * error. Reads only the end of the file, so a thread with a long history
