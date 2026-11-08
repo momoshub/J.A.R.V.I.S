@@ -96,6 +96,7 @@ export const migrate = (db: Database): void => {
   migrateAdapterFiles(db);
   migrateGithubApp(db);
   migrateRolePolicies(db);
+  migrateDriftEvents(db);
 };
 
 /**
@@ -121,6 +122,45 @@ const migrateRolePolicies = (db: Database): void => {
     user_version: 0,
   };
   if (user_version < 24) db.exec("PRAGMA user_version = 24;");
+};
+
+/**
+ * Migration v25: voice drift the inner child steered.
+ *
+ * One row per drifted reply, UNIQUE on (channel, reply key) so the same reply
+ * is nudged at most once. The reply key is the Slack ts of the drifted reply
+ * when it could be found, else `m<message id>`. Everything the owner reviews
+ * afterwards is here: the rule broken, the excerpt, the nudge sent, the log
+ * message, and what the session answered. `outcome` runs
+ * `steering -> corrected|no_change|no_reply|failed`.
+ */
+const migrateDriftEvents = (db: Database): void => {
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS drift_events (
+      id             INTEGER PRIMARY KEY AUTOINCREMENT,
+      channel_id     TEXT NOT NULL,
+      thread_ts      TEXT NOT NULL,
+      reply_key      TEXT NOT NULL,
+      reply_ts       TEXT NOT NULL DEFAULT '',
+      rules          TEXT NOT NULL,
+      excerpt        TEXT NOT NULL DEFAULT '',
+      nudge          TEXT NOT NULL DEFAULT '',
+      log_channel    TEXT NOT NULL DEFAULT '',
+      log_ts         TEXT NOT NULL DEFAULT '',
+      steered_at     INTEGER NOT NULL DEFAULT 0,
+      follow_up_text TEXT NOT NULL DEFAULT '',
+      follow_up_ts   TEXT NOT NULL DEFAULT '',
+      outcome        TEXT NOT NULL DEFAULT 'steering',
+      created_at     INTEGER NOT NULL,
+      updated_at     INTEGER NOT NULL,
+      UNIQUE (channel_id, reply_key)
+    );
+  `);
+  db.exec("CREATE INDEX IF NOT EXISTS idx_drift_events_steered ON drift_events (steered_at);");
+  const { user_version } = db.query<{ user_version: number }, []>("PRAGMA user_version").get() ?? {
+    user_version: 0,
+  };
+  if (user_version < 25) db.exec("PRAGMA user_version = 25;");
 };
 
 /**

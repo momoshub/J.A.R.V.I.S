@@ -81,7 +81,13 @@ Be strict. Most batches contain nothing, and an empty answer is the normal one. 
 
 Answer with ONLY a JSON array, no prose and no code fence. Each item:
 {"fingerprint":"short-kebab-key","title":"one line","severity":"critical|bug","channelId":"...","threadTs":"...","evidence":"what in the turn shows it","hint":"where in the code you would look, if you can tell"}
-"critical" means people are being failed right now. Use the channel and thread of the turn that shows it. Answer [] when there is nothing.`;
+"critical" means people are being failed right now. Use the channel and thread of the turn that shows it.
+
+Separately, voice drift - not a defect, never reported as one above. Capitals, dashes, semicolons, arrows, headings and bold are checked elsewhere: ignore them. You check one thing only: a turn whose reply is written in a different natural language from what it was asked in (code, names, quotes and commands do not count). For each such turn add an item to the same array:
+{"drift":"language","turn":N,"excerpt":"the first words of the reply"}
+where N is the turn's #number. Be strict here too.
+
+Answer [] when there is nothing.`;
 
 export const triageMessage = (turns: readonly ObservedTurn[], known: readonly string[]): string =>
   [

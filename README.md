@@ -53,7 +53,7 @@ Required / notable env (see `.env.example`):
 | `COMMAND_PREFIX` | message command trigger (default `//bot`; legacy `!` always works) |
 | `SLASH_COMMAND` | Slack slash command to register (default `/bot`) |
 | `OWNER_SLACK_ID` | the owner, cannot be removed |
-| `DRAIN_NOTICE_CHANNEL` | channel for the one restart notice listing waiting threads (unset: silent) |
+| `DRAIN_NOTICE_CHANNEL` | channel for the one restart notice listing waiting threads (unset: silent); also where the inner child logs voice drift unless `inner_child_drift_channel` is set |
 | `OFFLINE_ALARM_CHANNEL` | channel told when the host loses its connection, via a Slack scheduled message kept armed; a channel id, not a name (unset: no alarm) |
 | `GITHUB_APP_ID` | GitHub App id (unset: `app.json` beside the private key) - see [Calling it from GitHub](#calling-it-from-github) |
 | `GITHUB_APP_PRIVATE_KEY_PATH` | app private key (default `~/.config/jarvis/github-app/private-key.pem`) |
@@ -450,6 +450,25 @@ call was being refused:
 It never affects `ok`. Nothing core needs the desktop, which is exactly why its
 absence would otherwise go unnoticed - and a probe that fails for some other
 reason reports `unknown` rather than blaming a permission.
+
+## The inner child
+
+An always-on part that reads the bot's own finished turns every ten minutes.
+Set `inner_child_channel` (a setting) to turn it on, `inner_child=off` to pause.
+
+- **Defects in the bot itself** are filed and fixed by the bot in that channel,
+  announced before and after, at most four fixes a day.
+- **Voice drift** - a final reply that starts a paragraph with a capital (`I`
+  and acronyms excepted), uses an em/en dash, a semicolon, an arrow, a markdown
+  heading or `**bold**`, or answers in a different language from the thread -
+  is never fixed in code and the reply is never edited. The session that wrote
+  it gets a private nudge in its own thread to re-check that reply's content
+  and correct anything wrong in a new reply; only that correction appears.
+  Each event is a `drift_events` row, an activity log line, and a message in
+  the drift log channel with the nudge, followed by the session's answer in its
+  thread. The channel is the `inner_child_drift_channel` setting, falling back
+  to `DRAIN_NOTICE_CHANNEL`; `off` turns drift steering off. One nudge per
+  reply, at most 12 a day, never in a workflow thread.
 
 ## Staying online
 

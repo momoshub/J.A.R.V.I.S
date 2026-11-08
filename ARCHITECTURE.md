@@ -70,7 +70,10 @@ no classes.
   fresh turn when it is ready; `reminders` posts at the time with no model;
   `reviewInbox` polls GitHub for review requests and runs `review` as the
   requester; `workflowContinue` resumes long workflows after a restart;
-  `innerChild` watches the bot's own conversations and queues fixes to itself;
+  `innerChild` watches the bot's own conversations and queues fixes to itself,
+  and steers a session whose reply drifted from the voice rules (a private
+  nudge to re-check that reply, logged in the drift log channel and
+  `drift_events`, never an edit and never a code fix);
   `offlineAlarm` keeps an "I'm offline" notice armed as a Slack scheduled
   message ten minutes out (Slack ignores a cancel within ~5 min of due), so Slack posts it by itself when the host loses
   its connection, and edits it to "back online" when it returns.
@@ -120,6 +123,7 @@ No I/O, no frameworks. Just data shapes and functions of their inputs.
 - `adapter.ts`, `adapterCheck.ts` - memory as a checked, versioned directory (facts + skills) instead of an ever-growing list
 - `watch.ts`, `reminder.ts`, `selfUpdate.ts`, `runControl.ts` - waits, reminders, draining restart, stopping a turn
 - `offlineAlarm.ts` - the dead man's switch notice and its back-online edit
+- `innerChild.ts`, `voiceDrift.ts` - the self-review triage, and the cheap voice-drift check, nudge and log lines
 - `githubApp.ts` - webhook signature, owner allowlist, trigger detection and what the GitHub App says
 - `*Prompt.ts` - prompts for the preset tasks (review, ticket, investigate, read, note, workflow, ...)
 - `blockKit.ts`, `kitEvents.ts`, `slackFormat.ts`, `slackLinks.ts` - Slack formatting, Block Kit and links
