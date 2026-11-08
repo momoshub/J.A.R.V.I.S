@@ -453,6 +453,8 @@ describe("a message with several questions", () => {
     expect(out).toContain('length > 0 and all(. == "completed" or . == "failed")');
     expect(out).toContain("inbox --terminal run:<runId> --full");
     expect(out).toContain("never through the Workflow tool");
+    // the self-fix reviewer is the exception: a background Agent it can message
+    expect(out).toContain("The reviewer on your own fix is not one of these: it uses the Agent tool, in the background");
   });
 
   test("each part is handed over as it lands, folded into one message", () => {
