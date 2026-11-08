@@ -222,11 +222,13 @@ function AdapterMemory({
   files,
   error,
   warnings,
+  unsaved,
 }: {
   a: AdapterView;
   files: AdapterFile[];
   error?: string;
   warnings?: string[];
+  unsaved?: { path: string; content: string };
 }) {
   return (
     <>
@@ -253,6 +255,12 @@ function AdapterMemory({
         One file per save, checked by the same gate as refine and kept as a revision. Blank a file to remove it.
       </p>
       {(warnings ?? []).length > 0 && <pre className="card">{(warnings ?? []).join("\n")}</pre>}
+      {unsaved && (
+        <>
+          <p className="muted">Not saved - your text for <code>{unsaved.path}</code>, to copy back in:</p>
+          <pre className="card">{unsaved.content}</pre>
+        </>
+      )}
       {files.map((f) => (
         <details key={f.path} className="card">
           <summary><code>{f.path}</code></summary>
@@ -393,9 +401,11 @@ function LearningsPage() {
     adapter: AdapterView;
     files: AdapterFile[];
   };
-  const action = useActionData() as { error?: string; warnings?: string[] } | undefined;
+  const action = useActionData() as
+    | { error?: string; warnings?: string[]; unsaved?: { path: string; content: string } }
+    | undefined;
   return adapter.configured
-    ? <AdapterMemory a={adapter} files={files} error={action?.error} warnings={action?.warnings} />
+    ? <AdapterMemory a={adapter} files={files} error={action?.error} warnings={action?.warnings} unsaved={action?.unsaved} />
     : <LegacyLearnings learnings={learnings} error={action?.error} />;
 }
 
@@ -552,12 +562,17 @@ const router = createBrowserRouter([
         action: guard(async ({ request }) => {
           const fd = await request.formData();
           const intent = fd.get("intent");
-          if (intent === "edit")
+          if (intent === "edit") {
+            const path = String(fd.get("path") ?? "");
+            const content = String(fd.get("content") ?? "");
+            // A refused save reloads the page and rebuilds the editor from
+            // what is stored, so the text typed is handed back to be copied.
             return post<{ ok: true; warnings: string[] }>("adapter/file", {
-              path: fd.get("path"),
-              content: String(fd.get("content") ?? ""),
+              path,
+              content,
               base: String(fd.get("base") ?? ""),
-            });
+            }).catch((e: unknown) => ({ error: e instanceof Error ? e.message : String(e), unsaved: { path, content } }));
+          }
           if (intent === "revert") await post("adapter/revert", { id: Number(fd.get("id")) });
           else if (intent === "remove") await post("learnings/remove", { id: Number(fd.get("id")) });
           else if (intent === "update")

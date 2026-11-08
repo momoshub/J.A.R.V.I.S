@@ -221,8 +221,16 @@ export const editAdapterFile = (
   const files = new Map(deps.store.files());
   // Same reason on a case-insensitive disk (the default on macOS): `Run.sh`
   // beside `run.sh` is two rows and one mirror file.
-  const clash = [...files.keys()].find((p) => p !== rel && p.toLowerCase() === rel.toLowerCase());
-  if (clash) return { ok: false, violations: [`${rel} clashes with ${clash}, which differs only in case`] };
+  // Every folder on the way counts, not just the whole path: `a/Scripts/x`
+  // beside `a/scripts/y` shares one folder there, and the next sync deletes
+  // whichever name has no exact row.
+  const prefixes = (p: string): string[] => p.split("/").map((_, i, parts) => parts.slice(0, i + 1).join("/"));
+  const known = new Map<string, string>();
+  for (const p of files.keys()) for (const pre of prefixes(p)) known.set(pre.toLowerCase(), pre);
+  const clash = prefixes(rel)
+    .map((pre) => ({ pre, other: known.get(pre.toLowerCase()) }))
+    .find(({ pre, other }) => other !== undefined && other !== pre);
+  if (clash) return { ok: false, violations: [`${clash.pre} clashes with ${clash.other}, which differs only in case`] };
   // A browser may hand a textarea back with CRLF line ends.
   const text = content.replace(/\r\n/g, "\n");
   if (base !== undefined && (files.get(rel) ?? "") !== base.replace(/\r\n/g, "\n")) {

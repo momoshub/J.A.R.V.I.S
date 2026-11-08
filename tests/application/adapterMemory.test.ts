@@ -309,6 +309,27 @@ describe("editAdapterFile", () => {
   test("a path differing from an existing one only in case is refused", () => {
     const deps = setup({ "memory/people/U7.md": "- here\n" });
     expect(editAdapterFile(deps, "memory/people/u7.md", "- other", "dashboard").ok).toBe(false);
+    expect(editAdapterFile(deps, "memory/People/U8.md", "- other", "dashboard").ok).toBe(false);
+    expect(editAdapterFile(deps, "memory/people/U8.md", "- fine", "dashboard").ok).toBe(true);
+  });
+
+  test("a base sent with CRLF line ends still matches the LF text stored", () => {
+    const deps = setup({ "memory/NOTES.md": "- a\n- b\n" });
+    expect(editAdapterFile(deps, "memory/NOTES.md", "- a\n", "dashboard", "- a\r\n- b\r\n").ok).toBe(true);
+  });
+
+  test("a live manifest that stopped parsing can still be repaired by a hand edit", () => {
+    const deps = setup();
+    const broken = new Map(deps.store.files());
+    broken.set("adapter.yaml", "template: [unclosed");
+    try {
+      deps.store.write(broken);
+    } catch {
+      /* the store may refuse to load it back; the row is what matters */
+    }
+    expect(() => deps.store.load()).toThrow();
+    expect(editAdapterFile(deps, "adapter.yaml", MANIFEST, "dashboard").ok).toBe(true);
+    expect(deps.store.load().manifest.name).toBe("Memory");
   });
 
   test("a manifest edit that widens its limits is taken, and the new path can then be written", () => {
