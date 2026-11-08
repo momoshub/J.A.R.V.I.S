@@ -74,7 +74,8 @@ body {
 }
 ::selection { background: var(--accent-soft); }
 
-.app { display: grid; grid-template-columns: 248px 1fr; min-height: 100%; }
+.app { display: grid; grid-template-columns: 248px 1fr; min-height: 100%; transition: grid-template-columns 0.18s ease; }
+.app.collapsed { grid-template-columns: 64px 1fr; }
 
 /* sidebar */
 .sidebar {
@@ -87,8 +88,13 @@ body {
   position: sticky;
   top: 0;
   height: 100vh;
+  /* Clip in both states, including mid-transition, and scroll when the rail is taller than the window. */
+  min-width: 0;
+  overflow-x: hidden;
+  overflow-y: auto;
 }
-.brand { display: flex; align-items: center; gap: 10px; padding: 4px 10px 20px; }
+.brand { display: flex; align-items: center; gap: 10px; padding: 4px 4px 20px 10px; }
+.brand-text { flex: 1; min-width: 0; }
 .brand .mark { width: 26px; height: 26px; flex: none; color: var(--accent); }
 .brand-name { font-family: var(--serif); font-size: 19px; font-weight: 500; letter-spacing: -0.2px; line-height: 1.1; }
 .brand-sub { color: var(--muted); font-size: 12px; }
@@ -103,11 +109,23 @@ body {
 .side-foot { margin-top: auto; color: var(--muted); font-size: 12px; padding: 12px; border-top: 1px solid var(--border); }
 .side-foot .k { margin-top: 8px; }
 .side-foot .k:first-child { margin-top: 0; }
+.side-toggle { flex: none; display: grid; place-items: center; width: 30px; height: 30px; padding: 0; background: transparent; color: var(--muted); border-radius: var(--radius-sm); }
+.side-toggle:hover { background: var(--hover); color: var(--text); filter: none; }
+.nav-initial { display: none; }
+.app.collapsed .sidebar { padding: 20px 10px; }
+.app.collapsed .brand { flex-direction: column; padding: 4px 0 14px; gap: 12px; }
+.app.collapsed .brand-text, .app.collapsed .nav-group, .app.collapsed .nav-label, .app.collapsed .side-foot { display: none; }
+.app.collapsed .sidebar nav { padding-top: 8px; margin-top: 4px; border-top: 1px solid var(--border); align-items: center; }
+.app.collapsed .sidebar nav:first-of-type { border-top: none; }
+.app.collapsed .sidebar nav a { width: 40px; height: 36px; padding: 0; display: grid; place-items: center; }
+.app.collapsed .nav-initial { display: block; font-family: var(--serif); font-size: 15px; }
 .side-foot code { display: block; font-size: 12px; margin-top: 2px; word-break: break-all; background: none; padding: 0; }
 
 /* main */
 main { padding: 44px 56px 64px; max-width: 1040px; width: 100%; transition: opacity 0.15s; }
 main.loading { opacity: 0.55; }
+/* The architecture page is a diagram: give it the width the reading pages do not need. */
+main:has(.arch) { max-width: 1480px; }
 h1 { font-family: var(--serif); font-weight: 500; font-size: 30px; line-height: 1.2; margin: 0 0 10px; letter-spacing: -0.4px; }
 h2 { font-family: var(--serif); font-weight: 500; font-size: 20px; margin: 34px 0 10px; letter-spacing: -0.2px; }
 .card > h2 { margin: 0; padding: 16px 18px 6px; font-size: 17px; }
@@ -228,11 +246,20 @@ button.link.danger-link { color: var(--danger); }
   .sidebar nav { flex-direction: row; flex-wrap: wrap; }
   .side-foot { display: none; }
   main { padding: 28px 18px; }
+  /* On a phone the sidebar is already a top bar, so collapsing does nothing. */
+  .side-toggle { display: none; }
+  .app.collapsed { grid-template-columns: 1fr; }
+  .app.collapsed .sidebar { padding: 20px 14px; }
+  .app.collapsed .brand { flex-direction: row; padding: 4px 10px 4px; }
+  .app.collapsed .brand-text, .app.collapsed .nav-label { display: block; }
+  .app.collapsed .nav-initial { display: none; }
+  .app.collapsed .sidebar nav { border-top: none; padding-top: 0; margin-top: 0; }
+  .app.collapsed .sidebar nav a { width: auto; height: auto; padding: 7px 12px; display: block; }
 }
 
 /* architecture */
 .seg.flows { flex-wrap: wrap; margin: 6px 0 14px; }
-.arch { display: grid; grid-template-columns: minmax(0, 1fr) 330px; gap: 14px; align-items: start; }
+.arch { display: grid; grid-template-columns: minmax(0, 1fr); gap: 14px; align-items: start; }
 .arch-stage { padding: 8px; margin: 0; }
 .arch-svg { display: block; width: 100%; height: auto; font-family: var(--sans); user-select: none; }
 .arch-zone { fill: var(--panel-2); stroke: var(--border); stroke-dasharray: 5 5; }
@@ -262,7 +289,7 @@ button.link.danger-link { color: var(--danger); }
 .swatch.store { background: var(--info-soft); border-color: var(--info); }
 .swatch.timer { background: var(--ok-soft); border-color: var(--ok); }
 .swatch.process { border-color: var(--muted); }
-.arch-side { display: flex; flex-direction: column; gap: 14px; position: sticky; top: 16px; }
+.arch-side { display: grid; grid-template-columns: minmax(0, 1.4fr) minmax(0, 1fr); gap: 14px; align-items: start; }
 .arch-side .card { margin: 0; }
 .arch-player { padding: 14px 16px; }
 .arch-player-head b { display: block; font-family: var(--serif); font-weight: 500; font-size: 17px; }
@@ -296,7 +323,7 @@ button.link.danger-link { color: var(--danger); }
 .decision b { font-family: var(--serif); font-weight: 500; font-size: 16px; }
 .decision p { margin: 6px 0 0; font-size: 13.5px; }
 
+/* Viewport width, so the 248px sidebar and the page padding are counted in. */
 @media (max-width: 1100px) {
-  .arch { grid-template-columns: 1fr; }
-  .arch-side { position: static; }
+  .arch-side { grid-template-columns: 1fr; }
 }
