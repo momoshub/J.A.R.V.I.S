@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import {
   CANVAS,
   DECISIONS,
@@ -32,6 +32,24 @@ const wirePath = (e: SysEdge): string => {
 
 const edgeKey = (from: string, to: string) => `${from}>${to}`;
 const STEP_MS = 1900;
+
+/**
+ * The dot that travels a wire. SMIL times count from page load, so an
+ * animation added later with the default begin is already over and the dot
+ * would sit at the end. It waits on `indefinite` and is started on mount,
+ * before paint, so it never shows at the canvas origin either.
+ */
+function Packet({ path }: { path: string }) {
+  const motion = useRef<SVGAnimateMotionElement>(null);
+  useLayoutEffect(() => {
+    motion.current?.beginElement();
+  }, []);
+  return (
+    <circle r={6} className="arch-packet">
+      <animateMotion ref={motion} begin="indefinite" dur={`${STEP_MS * 0.7}ms`} fill="freeze" path={path} />
+    </circle>
+  );
+}
 
 const KIND_LABEL: Record<SysNode["kind"], string> = {
   external: "outside the host",
@@ -77,11 +95,7 @@ function Diagram({
         return (
           <g key={k} className={`arch-edge${on ? " live" : ""}${seen ? " seen" : ""}`}>
             <path id={`w-${k}`} d={d} markerEnd={on ? "url(#arrow-live)" : "url(#arrow)"} />
-            {on && (
-              <circle r={6} className="arch-packet" key={`${k}-${visited.size}`}>
-                <animateMotion dur={`${STEP_MS * 0.7}ms`} fill="freeze" path={d} />
-              </circle>
-            )}
+            {on && <Packet key={`${k}-${visited.size}`} path={d} />}
           </g>
         );
       })}
