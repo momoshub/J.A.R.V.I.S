@@ -11,9 +11,11 @@ const fakeSlack = (
   const updates: { ts: string; msg: AlarmMessage }[] = [];
   const calls: string[] = [];
   let next = 0;
-  const net = <T>(name: string, fn: () => T): Promise<T> => {
+  // Async like the real client: a throw inside is a rejection, never a sync throw.
+  const net = async <T>(name: string, fn: () => T): Promise<T> => {
     calls.push(name);
-    return opts.offline?.() ? Promise.reject(new Error("ENOTFOUND slack.com")) : Promise.resolve(fn());
+    if (opts.offline?.()) throw new Error("ENOTFOUND slack.com");
+    return fn();
   };
   const slack: OfflineAlarmSlack = {
     schedule: (_c, postAt, msg) =>
@@ -97,23 +99,21 @@ describe("offline alarm", () => {
     const lines: string[] = [];
     const s = fakeSlack({ blindList: true });
     const alarm = createOfflineAlarm({ channel: "C1", slack: s.slack, clock: () => 1, log: (l) => lines.push(l) });
-    await alarm.tick();
-    await alarm.tick();
+    for (let i = 0; i < 5; i++) await alarm.tick();
+    expect(s.calls.filter((c) => c === "schedule")).toHaveLength(5);
     expect(s.armed).toHaveLength(0);
     expect(lines[0]).toContain("not in the scheduled list");
   });
 
-  test("a notice Slack just posted cannot be cancelled: the tick fails, the next one closes it", async () => {
+  test("a notice Slack is posting right now cannot be cancelled: the same tick still closes what was posted", async () => {
     const beat = 1_000;
+    const lines: string[] = [];
     const s = fakeSlack({ failUnschedule: true, recent: [{ ts: "1.1", blocks: offlineNotice(beat).blocks }] });
     s.armed.push({ id: "OLD", postAt: 1, text: offlineNotice(beat).text });
-    const alarm = createOfflineAlarm({ channel: "C1", slack: s.slack, clock: () => beat + 60_000 });
+    const alarm = createOfflineAlarm({ channel: "C1", slack: s.slack, clock: () => beat + 60_000, log: (l) => lines.push(l) });
     await alarm.tick();
-    expect(s.updates).toHaveLength(0);
-    s.armed.splice(0, 1);
-    const ok = fakeSlack({ recent: [{ ts: "1.1", blocks: offlineNotice(beat).blocks }] });
-    await createOfflineAlarm({ channel: "C1", slack: ok.slack, clock: () => beat + 120_000 }).tick();
-    expect(ok.updates.map((u) => u.ts)).toEqual(["1.1"]);
+    expect(lines.some((l) => l.includes("could not cancel OLD"))).toBe(true);
+    expect(s.updates.map((u) => u.ts)).toEqual(["1.1"]);
   });
 
   test("a tick still in flight is not overlapped", async () => {
@@ -129,13 +129,28 @@ describe("offline alarm", () => {
     expect(s.calls.filter((c) => c === "schedule")).toHaveLength(1);
   });
 
-  test("disarm cancels every armed notice and nothing else", async () => {
+  test("disarm cancels every armed notice and nothing else, and ticks stop", async () => {
     const s = fakeSlack();
     const alarm = createOfflineAlarm({ channel: "C1", slack: s.slack, clock: () => 1 });
     await alarm.tick();
     await alarm.disarm();
+    await alarm.tick();
     expect(s.armed).toHaveLength(0);
-    expect(s.calls.filter((c) => c === "unschedule")).toHaveLength(1);
+    expect(s.calls.filter((c) => c === "schedule")).toHaveLength(1);
+  });
+
+  test("disarm during a tick waits for it, so the notice it was arming does not outlive the stop", async () => {
+    let release: () => void = () => {};
+    const gate = new Promise<void>((r) => (release = r));
+    const s = fakeSlack();
+    s.armed.push({ id: "OLD", postAt: 1, text: offlineNotice(1).text });
+    const slow: OfflineAlarmSlack = { ...s.slack, schedule: async (...a) => (await gate, s.slack.schedule(...a)) };
+    const alarm = createOfflineAlarm({ channel: "C1", slack: slow, clock: () => 1 });
+    const ticking = alarm.tick();
+    const disarming = alarm.disarm();
+    release();
+    await Promise.all([ticking, disarming]);
+    expect(s.armed).toHaveLength(0);
   });
 
   test("disarm offline only logs", async () => {
@@ -143,5 +158,14 @@ describe("offline alarm", () => {
     const s = fakeSlack({ offline: () => true });
     await createOfflineAlarm({ channel: "C1", slack: s.slack, clock: () => 1, log: (l) => lines.push(l) }).disarm();
     expect(lines[0]).toContain("could not disarm");
+  });
+
+  test("a stalled network cannot hold disarm past its bound", async () => {
+    const lines: string[] = [];
+    const s = fakeSlack();
+    const stalled: OfflineAlarmSlack = { ...s.slack, scheduled: () => new Promise(() => {}) };
+    const alarm = createOfflineAlarm({ channel: "C1", slack: stalled, clock: () => 1, disarmWaitMs: 20, log: (l) => lines.push(l) });
+    await alarm.disarm();
+    expect(lines[0]).toContain("timed out");
   });
 });

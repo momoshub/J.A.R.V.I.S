@@ -877,7 +877,12 @@ const main = async () => {
     ? createOfflineAlarm({
         channel: alarmChannel,
         slack: createOfflineAlarmSlack(
-          new WebClient(config.slackBotToken, { retryConfig: { retries: 0 }, timeout: OFFLINE_ALARM_REQUEST_TIMEOUT_MS }),
+          new WebClient(config.slackBotToken, {
+            retryConfig: { retries: 0 },
+            timeout: OFFLINE_ALARM_REQUEST_TIMEOUT_MS,
+            // A 429 would otherwise sleep out retry-after, which the timeout does not cover.
+            rejectRateLimitedCalls: true,
+          }),
         ),
         clock: Date.now,
         log: (l) => console.error(`[offline-alarm] ${l}`),
@@ -891,8 +896,10 @@ const main = async () => {
     console.log("\nShutting down ...");
     clearInterval(watchTimer);
     clearInterval(alarmTimer);
-    // A deliberate stop is not an outage. (A restart exits without this, and
-    // the next process re-arms within seconds.)
+    // A deliberate stop is not an outage. This covers `launchctl kickstart -k`
+    // and a Mac shutting down or logging out too (all SIGTERM): a few unarmed
+    // seconds before the next process re-arms, and no notice for a shutdown.
+    // `jarvis-restart.sh` exits without it, and the next process cancels the leftover.
     await offlineAlarm?.disarm();
     dashboard.stop();
     webhookServer?.stop();

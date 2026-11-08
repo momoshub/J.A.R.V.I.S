@@ -96,9 +96,10 @@ const schema = z
     // could never be found and cancelled.
     OFFLINE_ALARM_CHANNEL: z
       .string()
+      .trim()
       .regex(/^[CG][A-Z0-9]+$/, "OFFLINE_ALARM_CHANNEL must be a channel id like C0123ABC, not a name")
       .optional()
-      .or(z.literal("").transform(() => undefined)),
+      .or(z.string().trim().length(0).transform(() => undefined)),
 
     // GitHub App: people call the bot from an issue/PR (mention or label) and
     // the answer is posted back there as the app. Started only when the app id,

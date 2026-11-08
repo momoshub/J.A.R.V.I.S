@@ -13,6 +13,8 @@ describe("loadConfig", () => {
     expect(loadConfig(base).offlineAlarmChannel).toBeUndefined();
     expect(loadConfig({ ...base, OFFLINE_ALARM_CHANNEL: "" }).offlineAlarmChannel).toBeUndefined();
     expect(loadConfig({ ...base, OFFLINE_ALARM_CHANNEL: "C0TEST00002" }).offlineAlarmChannel).toBe("C0TEST00002");
+    expect(loadConfig({ ...base, OFFLINE_ALARM_CHANNEL: " " }).offlineAlarmChannel).toBeUndefined();
+    expect(loadConfig({ ...base, OFFLINE_ALARM_CHANNEL: "C0TEST00002 " }).offlineAlarmChannel).toBe("C0TEST00002");
     expect(() => loadConfig({ ...base, OFFLINE_ALARM_CHANNEL: "#jarvis_status" })).toThrow(/channel id/);
   });
 

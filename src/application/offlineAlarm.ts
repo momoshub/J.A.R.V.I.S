@@ -39,6 +39,8 @@ export type OfflineAlarmDeps = {
   readonly slack: OfflineAlarmSlack;
   readonly clock: Clock;
   readonly leadMs?: number;
+  /** The most a stop waits on `disarm`, so a stalled network cannot hold shutdown. */
+  readonly disarmWaitMs?: number;
   readonly log?: (msg: string) => void;
 };
 
@@ -46,18 +48,23 @@ export type OfflineAlarm = {
   /** Arm, cancel the rest, close. Never throws, safe on a timer. */
   tick: () => Promise<void>;
   /**
-   * Cancel every armed notice: for a deliberate stop, which is not an outage.
-   * Never on a restart - the next process re-arms within seconds anyway.
+   * Stop ticking and cancel every armed notice: for a deliberate stop (SIGTERM,
+   * SIGINT), which is not an outage. Waits for a tick in flight first, or the
+   * notice it is arming would outlive the stop. Bounded by `disarmWaitMs`.
    */
   disarm: () => Promise<void>;
 };
+
+/** Default bound on `disarm`, under launchd's 20s stop timeout with room for the rest of shutdown. */
+export const DISARM_WAIT_MS = 5_000;
 
 const message = (e: unknown): string => (e instanceof Error ? e.message : String(e));
 
 export const createOfflineAlarm = (deps: OfflineAlarmDeps): OfflineAlarm => {
   const log = deps.log ?? (() => {});
   const leadMs = deps.leadMs ?? OFFLINE_ALARM_LEAD_MS;
-  let running = false;
+  let inFlight: Promise<void> | undefined;
+  let stopped = false;
   // Logged once per outage, not once a minute.
   let failing = false;
 
@@ -80,35 +87,55 @@ export const createOfflineAlarm = (deps: OfflineAlarmDeps): OfflineAlarm => {
       await deps.slack.unschedule(deps.channel, fresh);
       throw new Error(`the armed notice ${fresh} is not in the scheduled list - is the channel an id?`);
     }
+    // One failed cancel (a notice Slack is posting right now) must not stop
+    // the others, nor the close below.
     for (const s of listed) {
-      if (s.id !== fresh && isArmedNotice(s.text)) await deps.slack.unschedule(deps.channel, s.id);
+      if (s.id === fresh || !isArmedNotice(s.text)) continue;
+      await deps.slack.unschedule(deps.channel, s.id).catch((e: unknown) => log(`could not cancel ${s.id}: ${message(e)}`));
+    }
+  };
+
+  const once = async (): Promise<void> => {
+    try {
+      await rearm();
+      await closeOpenNotices();
+      if (failing) log("back online, re-armed");
+      failing = false;
+    } catch (e) {
+      if (!failing) log(`tick failed, the armed notice stands: ${message(e)}`);
+      failing = true;
+    }
+  };
+
+  const cancelAll = async (): Promise<void> => {
+    for (const s of await deps.slack.scheduled(deps.channel)) {
+      if (isArmedNotice(s.text)) await deps.slack.unschedule(deps.channel, s.id);
     }
   };
 
   return {
     tick: async () => {
-      if (running) return;
-      running = true;
-      try {
-        await rearm();
-        await closeOpenNotices();
-        if (failing) log("back online, re-armed");
-        failing = false;
-      } catch (e) {
-        if (!failing) log(`tick failed, the armed notice stands: ${message(e)}`);
-        failing = true;
-      } finally {
-        running = false;
-      }
+      if (inFlight || stopped) return;
+      inFlight = once().finally(() => {
+        inFlight = undefined;
+      });
+      await inFlight;
     },
     disarm: async () => {
-      try {
-        for (const s of await deps.slack.scheduled(deps.channel)) {
-          if (isArmedNotice(s.text)) await deps.slack.unschedule(deps.channel, s.id);
-        }
-      } catch (e) {
-        log(`could not disarm: ${message(e)}`);
-      }
+      stopped = true;
+      const work = (async () => {
+        await inFlight;
+        await cancelAll();
+      })().catch((e: unknown) => log(`could not disarm: ${message(e)}`));
+      let timer: ReturnType<typeof setTimeout> | undefined;
+      const timeout = new Promise<void>((resolve) => {
+        timer = setTimeout(() => {
+          log("disarm timed out, an armed notice may still post");
+          resolve();
+        }, deps.disarmWaitMs ?? DISARM_WAIT_MS);
+      });
+      await Promise.race([work, timeout]);
+      clearTimeout(timer);
     },
   };
 };
