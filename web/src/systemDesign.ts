@@ -97,6 +97,8 @@ export const TABLES: Table[] = [
     cols: [{ name: "role", key: "pk" }, { name: "enabled" }, { name: "denied_commands" }, { name: "denied_tools" }, { name: "denied_mcp_servers" }] },
   { name: "github_app_deliveries", db: "bot.db", note: "the GitHub App's dedupe and queue", col: 0, row: 3,
     cols: [{ name: "id", key: "pk" }, { name: "trigger" }, { name: "state" }, { name: "slack_channel" }, { name: "slack_ts" }] },
+  { name: "orca_questions", db: "bot.db", note: "Orca worker questions put to their thread, once", col: 1, row: 4,
+    cols: [{ name: "message_id", key: "pk" }, { name: "run_id" }, { name: "dispatch_id" }, { name: "channel_id", key: "ref" }, { name: "thread_ts", key: "ref" }, { name: "state" }] },
 ];
 
 export const RELATIONS: Relation[] = [
@@ -108,6 +110,7 @@ export const RELATIONS: Relation[] = [
   { from: "workflows", to: "messages", on: "channel_id, thread_ts (own durable session_id, not a thread_sessions row)" },
   { from: "watches", to: "messages", on: "channel_id, thread_ts" },
   { from: "turn_log", to: "messages", on: "channel_id, thread_ts" },
+  { from: "orca_questions", to: "messages", on: "channel_id, thread_ts (the thread that started the worker, via orca_threads)" },
   { from: "adapter_revisions", to: "adapter_files", on: "snapshot of every row" },
 ];
 

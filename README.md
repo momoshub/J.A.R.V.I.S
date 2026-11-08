@@ -565,13 +565,16 @@ limit"; whoever stopped it already knows, and the thread has been told.
 A turn that starts an Orca worker (`orca orchestration worker-start`) is that
 worker's coordinator, through the bot's own Orca terminal - a bare shell, so
 nobody would see a question the worker asks, and it would wait forever. The
-bot links every worker to the thread whose turn started it, reads each such
+bot links every worker to the Slack thread whose turn started it (chat or
+workflow; a GitHub App turn has no thread and is not linked), reads each such
 Run's mailbox every 30 seconds, and puts any question still waiting to that
 thread as a turn opening with `[orca question]`. The turn answers it with
 `orca orchestration reply` from what the thread knows, or picks the safe
 option and says so; it never waits on the thread. Each question is delivered
 once, a delivery a restart cut is retried while the question is still open,
-and an answered question or a finished worker gets no turn.
+and an answered question or a finished worker gets no turn. In a workflow
+thread the question goes to the workflow's worker session, not the front,
+since only the worker can run `orca`.
 
 ## One turn at a time
 

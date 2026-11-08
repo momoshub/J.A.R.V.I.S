@@ -76,7 +76,8 @@ no classes.
   started a worker in (linked from the turn's tool trace as `worker-start`
   prints it) and hands each question a worker is still blocked on to that
   thread as a turn that answers it with `orca orchestration reply`, once per
-  question (`orca_questions`); `workflowContinue` resumes long workflows after a restart;
+  question (`orca_questions`; in a workflow thread on the worker's lane via
+  `workerLane`, since the front cannot run `orca`); `workflowContinue` resumes long workflows after a restart;
   `innerChild` watches the bot's own conversations and queues fixes to itself,
   and steers a session whose reply drifted from the voice rules (a private
   nudge to re-check that reply, logged in the drift log channel and
