@@ -138,7 +138,7 @@ Orchestrates the domain and depends on **ports**, not concrete adapters.
 - `ports.ts` - `LlmPort` (optional streaming + per-call tool `policy`), `Clock` and sink seams
 - `respond.ts` - routes an inbound message to command or chat
 - `handleMessage.ts` - the chat flow (access -> remember -> ask model -> remember), applying the role's tool policy
-- `commands.ts`, `commandTickets.ts`, `commandLimits.ts`, `brainRun.ts` - the command registry (configurable prefix + slash, role gates, help), the brain's tickets, allowances and result delivery
+- `commands.ts`, `commandTickets.ts`, `commandLimits.ts`, `brainRun.ts` - the command registry (configurable prefix + slash, role gates, help), the brain's tickets, allowances and result delivery. The command definitions live in `commands/`, one file per group (`chat`, `schedule`, `people`, `adapter`, `learnings`, `errands`, `review`, `runtime`, `slack`), with `commands/shared.ts` for the deps, the `CommandDef` type and the helpers more than one group uses
 - `threadQueue.ts`, `runRegistry.ts` - one turn per thread, and stopping one
 - `watcher.ts`, `reminders.ts`, `reviewInbox.ts`, `reviewGuard.ts`, `innerChild.ts`, `offlineAlarm.ts` - the timers
 - `githubApp.ts` - calls from the GitHub App: dedupe/queue, identity mapping, the turn, the answer back
