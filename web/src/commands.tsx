@@ -1,4 +1,4 @@
-import { Form, useLoaderData, useRouteLoaderData } from "react-router-dom";
+import { Form, useLoaderData, useRouteLoaderData } from "react-router";
 import { fmtTime, type Bootstrap, type CommandInfo, type CommandLogEntry } from "./api.ts";
 
 type Data = { commands: CommandInfo[]; disabled: string[]; log: CommandLogEntry[] };

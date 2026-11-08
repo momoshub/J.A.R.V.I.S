@@ -805,9 +805,9 @@ Some tools are **denied to every role, full access included** - `--disallowedToo
 
 ## Dashboard
 
-A **React 19 + Vite + React Router 7** single-page app (in `web/`) served by the bot and backed by a JSON API under `/api`. Open `http://localhost:2001/` - it is loopback-only with no auth token (mutations still keep an automatic same-origin CSRF check). Tabs:
+A **React 19 + Vite + React Router 7** single-page app (in `web/`, library-mode `react-router` package) served by the bot and backed by a JSON API under `/api`. It wears a Claude-style theme (ivory paper, clay accent, serif headings) in `web/src/styles.css`, light by default and dark when the OS is - every colour is a CSS variable, so pages never hard-code one. Open `http://localhost:2001/` - it is loopback-only with no auth token (mutations still keep an automatic same-origin CSRF check). Tabs:
 
-- **Overview** - counts for users, conversations, stored turns, learnings
+- **Overview** - counts for users, conversations, stored turns, learnings, and a tile into each area
 - **Users** - manage the allowlist and roles (the owner is protected)
 - **Memory** - with a memory adapter: teach one fact, edit any adapter file by hand (one whole file per save, checked by the same gate as `adapter refine` and kept as a revision; blank a file to remove it), or revert to an earlier revision. Without an adapter it is the flat **Learnings** list: edit one in place and save, or delete it
 - **Identity** - edit the bot name, "thinking" label, and system prompt (persona), or reset the persona to default
@@ -823,7 +823,7 @@ bun test           # full suite
 bun run typecheck  # tsc --noEmit
 ```
 
-CI (`.github/workflows/ci.yml`) runs both on every PR and every push to `main`. The repo is private on a free plan, so GitHub cannot require it before a merge: merge with `bin/merge-when-green.sh <pr>`, which waits for the checks and refuses unless they are all green.
+CI (`.github/workflows/ci.yml`) runs both, plus the dashboard's typecheck and build (`web/`), on every PR and every push to `main`. The repo is private on a free plan, so GitHub cannot require it before a merge: merge with `bin/merge-when-green.sh <pr>`, which waits for the checks and refuses unless they are all green.
 
 ## Notes
 

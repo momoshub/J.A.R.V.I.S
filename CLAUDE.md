@@ -16,7 +16,7 @@ bun start             # run the bot + dashboard
 bun run setup         # install + build:web
 ```
 
-Always run `bun run typecheck` AND `bun test` before considering a change done. The `web/` app has its own `tsconfig`/deps - typecheck it with `cd web && bunx tsc --noEmit` after touching it, and rebuild (`bun run build:web`) since the bot serves `web/dist`.
+Always run `bun run typecheck` AND `bun test` before considering a change done. The `web/` app has its own `tsconfig`/deps - typecheck it with `cd web && bunx tsc --noEmit` after touching it, and rebuild (`bun run build:web`) since the bot serves `web/dist`. CI typechecks and builds `web/` too. `web/dist` is not committed and is read per request, so after a web-only merge run `bun run build:web` in the main folder - no restart needed.
 
 ## Architecture (clean, layered - dependencies point inward)
 
@@ -26,7 +26,7 @@ Always run `bun run typecheck` AND `bun test` before considering a change done. 
 - `src/infrastructure` - adapters: `slack/*` (`gateway`, `inboxReceiver`, `app`, `stream`, `adminClient`, `offlineAlarmClient`), `inbox/inboxRepo`, `db/*` (bun:sqlite repos + schema/migration), `llm/claudeCli` + `llm/anthropic`, `github/*` (incl. the GitHub App's `appClient`/`appCredentials`/`webhookServer`), `system/*` (host probes, `guideWriter`), `dashboard/server`, `adapter/adapterStore`
 - `src/config/env.ts` - zod-validated env, fails fast
 - Composition roots: `src/index.ts` wires the bot, `src/gateway.ts` reads only `SLACK_APP_TOKEN` + the inbox path so a new bot setting can never stop the gateway from starting
-- `web/` - React 19 + Vite + React Router 7 dashboard (JSON API under `/api`)
+- `web/` - React 19 + Vite + React Router 7 dashboard (`react-router` package, not `react-router-dom`; Claude-style theme, colours only via the CSS variables in `styles.css`; JSON API under `/api`)
 - Full docs: `README.md`, `ARCHITECTURE.md`
 
 ## Conventions

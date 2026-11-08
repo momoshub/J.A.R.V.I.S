@@ -15,7 +15,7 @@ import {
   useRouteLoaderData,
   type ActionFunctionArgs,
   type LoaderFunctionArgs,
-} from "react-router-dom";
+} from "react-router";
 import {
   fmtTime,
   get,
@@ -48,15 +48,37 @@ const guard =
   };
 
 const NAV = [
-  { to: "/", label: "Overview", end: true },
-  { to: "/users", label: "Users" },
-  { to: "/learnings", label: "Memory" },
-  { to: "/identity", label: "Identity" },
-  { to: "/conversations", label: "Conversations" },
-  { to: "/console", label: "Console" },
-  { to: "/commands", label: "Commands" },
-  { to: "/spend", label: "Spend" },
+  {
+    group: "Workspace",
+    items: [
+      { to: "/", label: "Overview", end: true },
+      { to: "/conversations", label: "Conversations" },
+      { to: "/console", label: "Console" },
+    ],
+  },
+  {
+    group: "Configure",
+    items: [
+      { to: "/users", label: "Users" },
+      { to: "/learnings", label: "Memory" },
+      { to: "/identity", label: "Identity" },
+      { to: "/commands", label: "Commands" },
+    ],
+  },
+  { group: "Usage", items: [{ to: "/spend", label: "Spend" }] },
 ];
+
+/** A four-point spark, the brand mark. Drawn in currentColor so the theme owns it. */
+function Mark() {
+  return (
+    <svg className="mark" viewBox="0 0 24 24" aria-hidden="true">
+      <path
+        fill="currentColor"
+        d="M12 1.5c.5 0 .9.4 1 .9l.9 6.1a2 2 0 0 0 1.6 1.6l6.1.9a1 1 0 0 1 0 2l-6.1.9a2 2 0 0 0-1.6 1.6l-.9 6.1a1 1 0 0 1-2 0l-.9-6.1a2 2 0 0 0-1.6-1.6l-6.1-.9a1 1 0 0 1 0-2l6.1-.9a2 2 0 0 0 1.6-1.6l.9-6.1c.1-.5.5-.9 1-.9Z"
+      />
+    </svg>
+  );
+}
 
 function Layout() {
   const boot = useRouteLoaderData("root") as Bootstrap;
@@ -65,23 +87,26 @@ function Layout() {
     <div className="app">
       <aside className="sidebar">
         <div className="brand">
-          <span className="dot" />
+          <Mark />
           <div>
             <div className="brand-name">{boot?.botName ?? "control deck"}</div>
             <div className="brand-sub">control deck</div>
           </div>
         </div>
-        <nav>
-          {NAV.map((n) => (
-            <NavLink key={n.to} to={n.to} end={n.end} className={({ isActive }) => (isActive ? "active" : "")}>
-              {n.label}
-            </NavLink>
-          ))}
-        </nav>
+        {NAV.map((g) => (
+          <nav key={g.group} aria-label={g.group}>
+            <div className="nav-group">{g.group}</div>
+            {g.items.map((n) => (
+              <NavLink key={n.to} to={n.to} end={n.end} className={({ isActive }) => (isActive ? "active" : "")}>
+                {n.label}
+              </NavLink>
+            ))}
+          </nav>
+        ))}
         <div className="side-foot">
-          <div>model</div>
+          <div className="k">model</div>
           <code>{boot?.model}</code>
-          <div style={{ marginTop: 10 }}>owner</div>
+          <div className="k">owner</div>
           <code>{boot?.ownerSlackId}</code>
         </div>
       </aside>
@@ -111,15 +136,27 @@ function Banner({ error }: { error?: string }) {
 /* ---------- Overview ---------- */
 function OverviewPage() {
   const { overview } = useLoaderData() as { overview: Overview };
+  const boot = useRouteLoaderData("root") as Bootstrap;
   const cards = [
     { n: overview.users, l: "allowed users" },
     { n: overview.conversations, l: "conversations" },
     { n: overview.messages, l: "stored turns" },
     { n: overview.learnings, l: overview.memory ? "memory items" : "learnings" },
   ];
+  const tiles = [
+    { to: "/users", t: "Users", d: "Who may talk to the bot, and with which role" },
+    { to: "/learnings", t: "Memory", d: "Teach a fact, edit the adapter, revert a revision" },
+    { to: "/identity", t: "Identity", d: "Name, persona and system prompt" },
+    { to: "/console", t: "Console", d: "Read, reply to and edit Slack messages" },
+    { to: "/commands", t: "Commands", d: "Turn commands on or off, see what ran" },
+    { to: "/spend", t: "Spend", d: "What the model consumed, by person and command" },
+  ];
   return (
     <>
-      <h1>Overview</h1>
+      <div className="hero">
+        <h1>Good to see you</h1>
+        <p className="muted">{boot?.botName ?? "The bot"} at a glance. Everything below is live from its own database.</p>
+      </div>
       <div className="cards">
         {cards.map((c) => (
           <div className="card stat" key={c.l}>
@@ -128,7 +165,15 @@ function OverviewPage() {
           </div>
         ))}
       </div>
-      <p className="muted">Manage the allowlist, curate learnings, edit the identity, and browse conversations from the tabs.</p>
+      <h2>Jump to</h2>
+      <div className="tiles">
+        {tiles.map((t) => (
+          <Link className="card tile" to={t.to} key={t.to}>
+            <b>{t.t}</b>
+            <span>{t.d}</span>
+          </Link>
+        ))}
+      </div>
     </>
   );
 }
