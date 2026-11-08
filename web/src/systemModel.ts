@@ -53,7 +53,7 @@ export const NODES: SysNode[] = [
     files: ["src/application/respond.ts"] },
   { id: "commands", label: "commands", sub: "role gate, allowance, audit", kind: "module", x: 650, y: 230,
     about: "The command registry. Every run checks the caller's role, spends an allowance and lands in the audit log.",
-    files: ["src/application/commands.ts", "src/application/commandLimits.ts", "src/application/brainRun.ts"] },
+    files: ["src/application/commands.ts", "src/application/commands/shared.ts", "src/application/commandLimits.ts", "src/application/brainRun.ts"] },
   { id: "chat", label: "handleMessage", sub: "access, remember, ask", kind: "module", x: 830, y: 430,
     about: "The chat flow: check access, store the turn, ask the model with the role's tool policy, store the answer.",
     files: ["src/application/handleMessage.ts", "src/domain/toolPolicy.ts"] },
