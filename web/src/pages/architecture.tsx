@@ -15,6 +15,7 @@ import {
   type SysNode,
 } from "../systemModel.ts";
 import { playerAction, stepIndex } from "../ui/playerKeys.ts";
+import { SystemDesignSections } from "./systemDesign.tsx";
 
 const byId = new Map(NODES.map((n) => [n.id, n]));
 /** `checkModel` (tested) guarantees every id a flow or wire names is here. */
@@ -359,6 +360,8 @@ export function ArchitecturePage() {
           </div>
         ))}
       </div>
+
+      <SystemDesignSections />
     </>
   );
 }
