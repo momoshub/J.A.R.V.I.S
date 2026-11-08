@@ -4,8 +4,9 @@
  * and the live workers as a table.
  *
  * The same report also goes out as mrkdwn `text` (today's plain report plus
- * the Orca lines), which is what a notification, a screen reader and the
- * brain reading the command's output get. Only blocks Slack takes in a
+ * the Orca lines): the notification and screen-reader fallback, a refused
+ * post's stand-in, and - through `readableText` - what the brain reads back
+ * when it runs the command. Only blocks Slack takes in a
  * message: header, section, context, divider, table. Never `alert`.
  */
 import { type Block, MAX_BLOCKS } from "./blockKit.ts";

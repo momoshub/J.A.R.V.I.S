@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { runForBrain, STARTED_MESSAGE } from "../../src/application/brainRun.ts";
+import { blockKitReply } from "../../src/domain/blockKit.ts";
 
 const recorder = () => {
   const posts: string[] = [];
@@ -80,5 +81,15 @@ describe("runForBrain", () => {
     expect(logged).toHaveLength(1);
     expect(posts).toHaveLength(1);
     expect(posts[0]).toContain("claude CLI exited with code 137");
+  });
+
+  test("a Block Kit reply posts as the fence but comes back to the brain as its words", async () => {
+    const { posts, post } = recorder();
+    const reply = blockKitReply("*cpu* fine", [{ type: "divider" }]);
+    const errand = await runForBrain({ quiet: false, start: async () => reply, post, handoffMs: 1000, onLateError: () => {} });
+    expect(errand).toEqual({ result: "*cpu* fine", posted: true });
+    expect(posts).toEqual([reply]);
+    const tool = await runForBrain({ quiet: true, start: async () => reply, post, handoffMs: 1000, onLateError: () => {} });
+    expect(tool.result).toBe("*cpu* fine");
   });
 });

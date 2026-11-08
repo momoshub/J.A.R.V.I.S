@@ -176,6 +176,17 @@ export type RawMessage = {
  * itself. This is the key the bot's memory is scoped by, so getting it wrong
  * either splits one conversation apart or merges two that are unrelated.
  */
+/**
+ * A slash command's ephemeral answer. A reply carrying Block Kit (`sys`) goes
+ * out as its blocks with its own words as `text`; anything else as it was.
+ */
+export const slashReply = (
+  text: string,
+): { response_type: "ephemeral"; text: string; blocks?: Block[] } => {
+  const rich = toBlockMessage(text, toMrkdwn);
+  return rich ? { response_type: "ephemeral", text: rich.plain ?? rich.text, blocks: rich.blocks } : { response_type: "ephemeral", text };
+};
+
 export const threadKeyOf = (m: { ts: string; thread_ts?: string }): string => m.thread_ts ?? m.ts;
 
 /** Only plain human DMs: reject bot echoes, edits/joins (subtypes) and non-DM channels. */
@@ -206,7 +217,7 @@ type SlashArgs = {
     trigger_id?: string;
   };
   ack: () => Promise<unknown>;
-  respond: (msg: { response_type?: "ephemeral" | "in_channel"; text: string }) => Promise<unknown>;
+  respond: (msg: { response_type?: "ephemeral" | "in_channel"; text: string; blocks?: Block[] }) => Promise<unknown>;
   /** Bolt's WebClient. Narrowed at the one call site that needs views.open. */
   client: unknown;
 };
@@ -553,7 +564,7 @@ export const createHandler =
         const words = rich?.plain ?? toMrkdwn(result.text);
         const bare = () => msg.say({ text: words, ...extra });
         const plain = () => msg.say({ ...signedText(words, footer), ...extra }).catch(bare);
-        if (rich) await msg.say({ ...rich, blocks: withFooter(rich.blocks, footer), ...extra }).catch(plain);
+        if (rich) await msg.say({ text: rich.text, blocks: withFooter(rich.blocks, footer), ...extra }).catch(plain);
         else await plain();
       }
     } catch (err) {
@@ -1486,7 +1497,9 @@ export const createSlackApp = (config: SlackAppConfig, deps: Deps) => {
         result.kind === "ignored"
           ? "Nothing to do."
           : result.text.trim() || "on it — I'll reply in your DM 📩";
-      await reply({ response_type: "ephemeral", text });
+      const ephemeral = slashReply(text);
+      // Blocks the response_url refuses still get the words out.
+      await reply(ephemeral).catch(() => reply({ response_type: "ephemeral", text: ephemeral.text }));
     };
   app.command(config.slashCommand, runSlash(""));
   app.command("/rv", runSlash("review"));

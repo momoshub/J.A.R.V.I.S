@@ -283,7 +283,7 @@ export const createSlackAdmin = (client: WebClient, clock: () => number = Date.n
       const plain = () => client.chat.postMessage({ channel, ...signedText(body, line), ...thread }).catch(sections);
       // A block Slack refuses falls back to the plain post rather than losing the message.
       const posted = (await (rich
-        ? client.chat.postMessage({ channel, ...rich, blocks: withFooter(rich.blocks, line), ...thread }).catch(plain)
+        ? client.chat.postMessage({ channel, text: rich.text, blocks: withFooter(rich.blocks, line), ...thread }).catch(plain)
         : plain())) as {
         ts?: string;
       };

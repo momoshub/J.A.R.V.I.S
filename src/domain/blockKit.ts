@@ -213,6 +213,13 @@ export const toBlockMessage = (
   return { text: plainText, blocks: blocks.slice(0, MAX_BLOCKS), ...(covered ? { plain: plainText } : {}) };
 };
 
+/**
+ * A reply as words for a reader that sees text, not blocks (the brain reading
+ * a command's result): a code-made Block Kit reply becomes its own text,
+ * anything else is returned unchanged.
+ */
+export const readableText = (text: string): string => toBlockMessage(text)?.plain ?? text;
+
 /** The prompt half: what the model may use, and when not to. */
 export const BLOCK_KIT_RULES = `Block Kit (rich layouts, use sparingly):
 - when the content is genuinely structured - a table of numbers, a warning that must stand out, options to browse, a step plan - you may render it as real Slack blocks: a fenced code block tagged blockkit, holding a JSON array of blocks

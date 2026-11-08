@@ -12,6 +12,8 @@
  * outcome says in so many words whether the thread has it.
  */
 
+import { readableText } from "../domain/blockKit.ts";
+
 export type BrainRunOutcome = {
   result: string;
   /** True when the thread has (or will get) the output, so the caller must not repeat it. */
@@ -33,7 +35,8 @@ export const STARTED_MESSAGE = "started - it reports into the thread as it goes"
 
 export const runForBrain = async (deps: BrainRunDeps): Promise<BrainRunOutcome> => {
   // A tool-like command answers its CALLER, who waits on it to carry on.
-  if (deps.quiet) return { result: await deps.start(), posted: false };
+  // The caller reads words: a Block Kit reply (`sys`) comes back as its own text.
+  if (deps.quiet) return { result: readableText(await deps.start()), posted: false };
 
   const run = deps.start(deps.post);
   // Do not make the caller wait. The chat turn is a CLI process on a
@@ -46,7 +49,7 @@ export const runForBrain = async (deps: BrainRunDeps): Promise<BrainRunOutcome> 
   if (settled.done) {
     if (!settled.text.trim()) return { result: "", posted: false };
     await deps.post(settled.text);
-    return { result: settled.text, posted: true };
+    return { result: readableText(settled.text), posted: true };
   }
   // Nobody is waiting on it any more, so a failure has to be SAID in the
   // thread. Logged only, the thread sat on "investigating" for good and the
