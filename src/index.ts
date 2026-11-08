@@ -61,6 +61,7 @@ import { createSelfIssueRepo } from "./infrastructure/db/selfIssueRepo.ts";
 import { NO_TOOLS } from "./domain/toolPolicy.ts";
 import { createReminderSender } from "./application/reminders.ts";
 import { createShellCheck } from "./infrastructure/system/shellCheck.ts";
+import { createOrcaCli, createOrcaTerminal } from "./infrastructure/system/orcaTerminal.ts";
 
 import { createWorkflowRepo } from "./infrastructure/db/workflowRepo.ts";
 import { resumeContinues } from "./application/workflowContinue.ts";
@@ -115,7 +116,13 @@ const ensureDir = (path: string): string => {
 };
 
 /** Pick the brain based on config: the local Claude Code CLI or the API. */
-const buildLlm = (config: AppConfig, cwd: string, onUsage?: UsageSink, onToolTrace?: ToolTraceSink): LlmPort =>
+const buildLlm = (
+  config: AppConfig,
+  cwd: string,
+  onUsage?: UsageSink,
+  onToolTrace?: ToolTraceSink,
+  turnEnv?: () => Promise<Record<string, string | undefined>>,
+): LlmPort =>
   config.llmProvider === "claude-cli"
     ? createClaudeCliLlm({
         binPath: config.claudeBin,
@@ -125,6 +132,7 @@ const buildLlm = (config: AppConfig, cwd: string, onUsage?: UsageSink, onToolTra
         timeoutMs: config.claudeTimeoutMs,
         onUsage,
         onToolTrace,
+        turnEnv,
       })
     : createAnthropicLlm({
         // guaranteed present for this provider by config validation
@@ -330,7 +338,23 @@ const main = async () => {
 
   // One file per thread, beside the bot's own logs - what every turn ran, in full.
   const toolTrace = createToolTraceLog(join(config.logDir, "threads"));
-  const llm = buildLlm(config, fullCwd, recordUsage, toolTrace);
+  // The bot's own Orca terminal, so a turn can open Runs and start workers.
+  // Every turn gets its handle - or, with Orca down, no handle at all, never
+  // one inherited from whatever pane started the bot.
+  const orcaTerminal = config.orcaTerminalWorktree
+    ? createOrcaTerminal({
+        run: createOrcaCli(),
+        load: () => settings.get(SETTING_KEYS.orcaTerminalHandle),
+        save: (handle) => settings.set(SETTING_KEYS.orcaTerminalHandle, handle),
+        worktree: config.orcaTerminalWorktree,
+        now: clock,
+        log: (line) => console.log(line),
+      })
+    : undefined;
+  const turnEnv = async () => ({ ORCA_TERMINAL_HANDLE: await orcaTerminal?.handle() });
+  // Checked once at boot, so the first turn does not pay for it.
+  void orcaTerminal?.handle();
+  const llm = buildLlm(config, fullCwd, recordUsage, toolTrace, turnEnv);
   console.log(`[llm] ${profile().name}'s brain: ${modelLabel(config)}`);
 
   // Slack Web API + AI drafting, shared by the console and the power-tool commands.
