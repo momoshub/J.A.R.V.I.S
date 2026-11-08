@@ -11,6 +11,7 @@ import { asAgentCap, DEFAULT_REVIEW_AGENTS } from "../../domain/reviewPrompt.ts"
 import { mentionedId } from "../../domain/mentions.ts";
 import { encodeRequest, TOKEN_ACTION, type ClaudeTokenPort } from "../claudeTokens.ts";
 import { tokenGuide, tokenWhy } from "../../domain/claudeToken.ts";
+import { SIGNATURES } from "../../domain/messageFooter.ts";
 import { type TotpPort } from "../totp.ts";
 import type { RunRegistry } from "../runRegistry.ts";
 import type { ThreadQueue } from "../threadQueue.ts";
@@ -281,6 +282,7 @@ export const askForToken = async (ctx: Context, line: string, force = false): Pr
           },
         ],
         threadTs,
+        SIGNATURES.command,
       )
       .catch(() => undefined);
     if (posted) {

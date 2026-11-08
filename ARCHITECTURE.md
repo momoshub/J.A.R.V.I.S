@@ -91,10 +91,14 @@ no classes.
   `bin/merge-when-green.sh`. `bin/jarvis-restart.sh` runs typecheck and tests and only
   restarts when both pass. With `SELF_PR_AUTHOR`/`SELF_PR_REVIEWER` set, the
   PR is opened as the author and reviewed, approved and merged as the reviewer
-  (the approval is fired by `merge-when-green.sh` right before the merge). `restartWhenIdle` then drains: the inbox is no
-  longer read and timers that start turns hold, so it waits only for the turns
-  already running, and anyone writing in meanwhile is told why, what it waits
-  on and the latest it is back. Past 15 minutes it exits anyway and the rows it cut are
+  (the approval is fired by `merge-when-green.sh` right before the merge). `restartWhenIdle` then drains: timers that start turns hold, and new
+  chat messages are still answered, each turn on `RESTART_TURN_BUDGET_MS` (2 min;
+  commands, slash commands and buttons wait in the inbox instead);
+  one past it tells its thread to hold on, is cut and its inbox row stays
+  `running` with `cut_at` for the next process. Once the turns from before the
+  request have finished the inbox is no longer read, so the wait ends within
+  one budget, and anyone writing in from then on (or whose command was held
+  back before that) is told why, what it waits on and the latest it is back. Past 15 minutes it exits anyway and the rows it cut are
   redelivered to the next process on the same session. Where this goes next is
   in [`docs/rolling-restart.md`](docs/rolling-restart.md).
 
@@ -129,6 +133,7 @@ No I/O, no frameworks. Just data shapes and functions of their inputs.
 - `githubApp.ts` - webhook signature, owner allowlist, trigger detection and what the GitHub App says
 - `*Prompt.ts` - prompts for the preset tasks (review, ticket, investigate, read, note, workflow, ...)
 - `blockKit.ts`, `kitEvents.ts`, `slackFormat.ts`, `slackLinks.ts` - Slack formatting, Block Kit and links
+- `usageFooter.ts`, `collapseSteps.ts`, `messageFooter.ts` - the one grey line under a message: who wrote it (Jarvis, inner child Jarvis, watch, reminder, ...), what the turn cost, the step summary, and when it was last updated (restamped on every edit); `sectionChunks` cuts plain text into sections Slack accepts, hard-splitting long lines and keeping code fences closed
 
 Fully unit tested, no mocks needed.
 
@@ -162,7 +167,7 @@ Concrete implementations of the seams and the transports.
 - `slack/inboxReceiver.ts` - the Bolt receiver that reads the inbox instead of a socket
 - `slack/app.ts` - Bolt listeners + slash commands mapping Slack events to `respond`
 - `slack/stream.ts`, `slack/fences.ts` - bridges the `LlmStreamSink` onto Slack's `chatStream` (text + `task_update` tool cards, Block Kit fences), falling back to a single post
-- `slack/adminClient.ts` - `SlackAdminPort` over the Slack Web API
+- `slack/adminClient.ts` - `SlackAdminPort` over the Slack Web API; every post and edit carries the signed footer (`by` names the poster), falling back to bare text when Slack refuses the blocks
 - `slack/offlineAlarmClient.ts` - the offline alarm's scheduled-message calls
 - `inbox/inboxRepo.ts` - the inbox queue shared by both processes
 - `llm/claudeCli.ts` - the default `LlmPort`, wraps the local `claude` CLI (`--resume`, `stream-json`, per-call policy -> `--allowedTools`/cwd/timeout, the timeout stopping the whole process tree, `turnEnv` for per-turn environment such as the Orca handle); `killTree.ts`, `toolTraceLog.ts` support it; `backgroundAgents.ts` finds a thread's `claude --bg` sessions and Orca workers in its trace and stops them through their own CLIs for `stop`

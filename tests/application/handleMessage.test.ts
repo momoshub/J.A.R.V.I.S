@@ -10,6 +10,7 @@ import { createThreadSessionRepo } from "../../src/infrastructure/db/threadSessi
 import type { LlmCompleteParams } from "../../src/application/ports.ts";
 import { syntheticTs } from "../../src/domain/slackLinks.ts";
 import { guideFile } from "../../src/domain/promptGuides.ts";
+import { RESTART_STOPPER } from "../../src/application/runRegistry.ts";
 
 const slackMsg = (over: Partial<SlackMessage> & { ts: string; userId: string; text: string }): SlackMessage => ({
   userName: "",
@@ -442,6 +443,35 @@ describe("handleMessage", () => {
     // same session, resumed - and only the new turn, not the thread again
     expect(seen[1]?.session).toEqual({ id: "sess-1", resume: true, name: "jarvis-C1-100.1" });
     expect(seen[1]?.messages.map((m) => m.content)).toEqual(["second"]);
+  });
+
+  test("a turn cut for a restart stores no fragment and leaves the message unseen for the retry", async () => {
+    // a streamed turn killed after it had spoken returns its fragment instead
+    // of throwing; taken as the answer, the retry was handed its own half-reply
+    const cut = new AbortController();
+    const seen: LlmCompleteParams[] = [];
+    const deps = build({
+      complete: async (p) => {
+        seen.push(p);
+        if (seen.length === 1) {
+          cut.abort(RESTART_STOPPER);
+          return "half an ans";
+        }
+        return "ok";
+      },
+    });
+    deps.threadSessions = createThreadSessionRepo(db);
+    deps.newSessionId = () => "sess-1";
+    deps.slack = { ...noopSlack, replies: async () => [slackMsg({ ts: "100.1", userId: OWNER, text: "first" })] };
+    const inbound = { channelId: "C1", slackUserId: OWNER, text: "first", threadTs: "100.1", messageTs: "100.1" };
+
+    expect(await handleMessage(deps, inbound, undefined, cut.signal)).toEqual({ kind: "ignored" });
+    expect(deps.messages.recentForThread("C1", "100.1", 10).some((m) => m.role === "assistant")).toBe(false);
+
+    // the next process redelivers it: same session, and the question is still the new turn
+    await handleMessage(deps, inbound);
+    expect(seen[1]?.session).toEqual({ id: "sess-1", resume: true, name: "jarvis-C1-100.1" });
+    expect(seen[1]?.messages.map((m) => m.content)).toContain("first");
   });
 
   test("a turn that dies still leaves its session bound, so the retry resumes it", async () => {

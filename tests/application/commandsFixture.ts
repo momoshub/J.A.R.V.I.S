@@ -25,7 +25,7 @@ export const actor = (over: Partial<AllowedUser> = {}): AllowedUser => ({
 export const llm: LlmPort = { complete: async () => "drafted answer" };
 
 export type SlackCalls = {
-  posts: { channel: string; text: string; threadTs?: string }[];
+  posts: { channel: string; text: string; threadTs?: string; by?: string }[];
   reactions: string[];
   removed: { channel: string; ts: string }[];
   buttons: string[];
@@ -54,8 +54,8 @@ export const fakeSlack = (calls: SlackCalls, thread: SlackMessage[] = []): Slack
     calls.buttons.push(...actions.map((a) => `${a.actionId}:${a.value}`));
     return { channel: userId, ts: `notice-${calls.posts.length}` };
   },
-  postInteractive: async (channel, text, actions, threadTs) => {
-    calls.posts.push({ channel, text, threadTs });
+  postInteractive: async (channel, text, actions, threadTs, by) => {
+    calls.posts.push({ channel, text, threadTs, ...(by ? { by } : {}) });
     calls.buttons.push(...actions.map((a) => `${a.actionId}:${a.value}`));
     return { channel, ts: `interactive-${calls.posts.length}` };
   },

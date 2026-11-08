@@ -53,11 +53,12 @@ import {
 import { annotateMentions, extractMentionIds } from "../../domain/mentions.ts";
 import { isTimeout } from "../../domain/threadSession.ts";
 import { toMrkdwn } from "../../domain/slackFormat.ts";
-import { toBlockMessage, type Block } from "../../domain/blockKit.ts";
+import { MAX_BLOCKS, toBlockMessage, type Block } from "../../domain/blockKit.ts";
 import { couldFollowThread, followVerdict, isOneOnOneThread, isSpeech, startsAutoFollow } from "../../domain/threadFollow.ts";
 import { unfollowOnReaction } from "../../application/followReaction.ts";
 import { collapsedBlocks, collapseSteps } from "../../domain/collapseSteps.ts";
 import { usageFooter } from "../../domain/usageFooter.ts";
+import { footerLine, restamp, signedText, SIGNATURES, withFooter } from "../../domain/messageFooter.ts";
 import { isSilenceNote } from "../../domain/silence.ts";
 import {
   decodeKitMeta,
@@ -409,6 +410,7 @@ export const createHandler =
           viaSlash: false,
           following: msg.following === true,
           interrupted: (msg.inbox?.attempt ?? 1) > 1,
+          ...(msg.inbox ? { inboxRowId: msg.inbox.rowId } : {}),
         },
         stream?.sink,
       );
@@ -435,14 +437,22 @@ export const createHandler =
       const parts = stream?.parts ?? [];
       const fail = (e: unknown) => log(`collapse failed: ${e instanceof Error ? e.message : String(e)}`);
       const collapsed = collapseSteps(stream?.steps ?? []);
-      const footer = stream?.usage ? usageFooter(stream.usage) : undefined;
+      // Signed and stamped now: this is the moment the message is written
+      // for the last time, so "updated" is when the turn finished.
+      const footer = footerLine(
+        (result.kind === "reply" ? result.by : undefined) ?? SIGNATURES.jarvis,
+        deps.clock(),
+        stream?.usage ? usageFooter(stream.usage) : undefined,
+      );
       const tidy = (text: string, withTail: boolean) => {
         const tailCollapsed = withTail ? collapsed : undefined;
         const tailFooter = withTail ? footer : undefined;
         const body = toMrkdwn(text);
         const rich = toBlockMessage(text, toMrkdwn);
+        const tail = collapsedBlocks("", tailCollapsed, tailFooter);
+        // The fence may already hold Slack's 50; the tail must still fit.
         const blocks = rich?.blocks
-          ? [...rich.blocks, ...collapsedBlocks("", tailCollapsed, tailFooter)]
+          ? [...rich.blocks.slice(0, MAX_BLOCKS - tail.length), ...tail]
           : collapsedBlocks(body, tailCollapsed, tailFooter);
         return { text: body, blocks };
       };
@@ -503,7 +513,9 @@ export const createHandler =
           for (const part of rest) {
             await msg.client.chat.delete?.({ channel: msg.channelId, ts: part.ts }).catch(fail);
           }
-        } else if (parts.length === 1 && stream?.ts && (collapsed || footer)) {
+        } else if (parts.length === 1 && stream?.ts) {
+          // Always rewritten now, not only when there is something to
+          // collapse: every message carries its signature footer.
           await msg.client.chat
             .update({ channel: msg.channelId, ts: stream.ts, ...tidy(result.text, true) })
             // A tidy-up that fails must leave the answer exactly as it was.
@@ -534,10 +546,13 @@ export const createHandler =
         // A reply carrying a ```blockkit fence posts as blocks, its prose in
         // markdown blocks around them; anything else stays a plain text post.
         // Blocks Slack refuses (`invalid_blocks`) fall back to the plain post.
+        // Either way it carries the signature footer.
         const rich = toBlockMessage(result.text, toMrkdwn);
         const extra = { thread_ts: msg.threadTs };
-        const plain = () => msg.say({ text: toMrkdwn(result.text), ...extra });
-        if (rich) await msg.say({ ...rich, ...extra }).catch(plain);
+        // A refused signed post still gets the words out, bare.
+        const bare = () => msg.say({ text: toMrkdwn(result.text), ...extra });
+        const plain = () => msg.say({ ...signedText(toMrkdwn(result.text), footer), ...extra }).catch(bare);
+        if (rich) await msg.say({ ...rich, blocks: withFooter(rich.blocks, footer), ...extra }).catch(plain);
         else await plain();
       }
     } catch (err) {
@@ -552,7 +567,8 @@ export const createHandler =
         ? "that one ran past my time limit for a single turn, so I lost it. it usually means I was digging through a lot - ask me again with a narrower scope, or run it as a `workflow` which has no such limit"
         : "Sorry, I hit an error handling that. Please try again in a moment.";
       await msg
-        .say({ text, thread_ts: msg.threadTs })
+        .say({ ...signedText(text, footerLine(SIGNATURES.jarvis, deps.clock())), thread_ts: msg.threadTs })
+        .catch(() => msg.say({ text, thread_ts: msg.threadTs }))
         .catch(() => undefined);
     }
   };
@@ -676,7 +692,12 @@ export const createKitListeners = (
       // or unticked on screen has to go back to what was settled.
       if (snapsBack(action.type) && pressed?.ts && pressed.blocks && channel) {
         try {
-          await (client as KitClient).chat.update?.({ channel, ts: pressed.ts, text: pressed.text ?? "", blocks: snapBackBlocks(pressed.blocks) });
+          await (client as KitClient).chat.update?.({
+            channel,
+            ts: pressed.ts,
+            text: pressed.text ?? "",
+            blocks: restamp(snapBackBlocks(pressed.blocks), SIGNATURES.jarvis, Date.now()),
+          });
           log(`kit snap back ${actionId} on ${pressed.ts}`);
         } catch (err) {
           log(`kit snap back ${actionId} on ${pressed.ts} failed: ${slackRefusal(err)}`);
@@ -703,7 +724,12 @@ export const createKitListeners = (
         if (submit) lines = voteLines(current);
         latestBlocks.set(ts, blocks);
         try {
-          await (client as KitClient).chat.update?.({ channel, ts, text: pressed.text ?? "", blocks });
+          await (client as KitClient).chat.update?.({
+            channel,
+            ts,
+            text: pressed.text ?? "",
+            blocks: restamp(blocks, SIGNATURES.jarvis, Date.now()),
+          });
         } catch (err) {
           log(`kit vote ${actionId} on ${ts} failed: ${slackRefusal(err)}`);
         }
@@ -727,7 +753,11 @@ export const createKitListeners = (
           channel,
           ts: pressed.ts,
           text: pressed.text ?? "",
-          blocks: retireKit(pressed.blocks, pressedNote(by, pickedLabel(action)), actionId, picksOf(body.state?.values)),
+          blocks: restamp(
+            retireKit(pressed.blocks, pressedNote(by, pickedLabel(action)), actionId, picksOf(body.state?.values)),
+            SIGNATURES.jarvis,
+            Date.now(),
+          ),
         });
       } catch (err) {
         log(`kit lock ${actionId} on ${pressed.ts} failed: ${slackRefusal(err)}`);
@@ -802,7 +832,7 @@ export const retireOpenKit = async (
         channel: m.channel,
         ts: x.ts,
         text: x.text ?? "",
-        blocks: retireKit(x.blocks ?? [], repliedNote(m.user)),
+        blocks: restamp(retireKit(x.blocks ?? [], repliedNote(m.user)), SIGNATURES.jarvis, Date.now()),
       });
     }
     if (open.length) log(`kit retired ${open.length} open question(s) in ${m.channel}/${m.thread_ts}: answered in text`);
@@ -903,7 +933,9 @@ export const createSlackApp = (config: SlackAppConfig, deps: Deps) => {
             slash: config.slashCommand,
             threadTs,
             preApproved: true,
-            reply: deps.slack ? async (text: string) => void (await deps.slack!.post(channelId, text, threadTs)) : undefined,
+            reply: deps.slack
+              ? async (text: string) => void (await deps.slack!.post(channelId, text, threadTs, SIGNATURES.command))
+              : undefined,
           }),
       );
       log(`command approval ${outcome.kind}`);
@@ -985,8 +1017,8 @@ export const createSlackApp = (config: SlackAppConfig, deps: Deps) => {
     const channel = req?.channelId;
     const saved = `🔐 got it, token ${tokenHint(token)} saved for <@${userId}>`;
     try {
-      if (channel) await deps.slack?.post(channel, saved, req?.threadTs);
-      else await deps.slack?.postDm(userId, saved);
+      if (channel) await deps.slack?.post(channel, saved, req?.threadTs, SIGNATURES.command);
+      else await deps.slack?.postDm(userId, saved, SIGNATURES.command);
       log(`claude token saved for ${userId}`);
       // Resume whatever was blocked on it, so nobody has to type it twice.
       const actor = deps.users.get(userId);
@@ -995,7 +1027,9 @@ export const createSlackApp = (config: SlackAppConfig, deps: Deps) => {
           prefix: config.commandPrefix,
           slash: config.slashCommand,
           threadTs: req.threadTs,
-          reply: deps.slack ? async (text: string) => void (await deps.slack!.post(channel, text, req.threadTs)) : undefined,
+          reply: deps.slack
+            ? async (text: string) => void (await deps.slack!.post(channel, text, req.threadTs, SIGNATURES.command))
+            : undefined,
         });
       }
     } catch (err) {
@@ -1075,8 +1109,8 @@ export const createSlackApp = (config: SlackAppConfig, deps: Deps) => {
     // The key itself is never echoed - only what it is called and who it is for.
     const saved = `🔐 setup key saved as \`${outcome.label}\`${outcome.account ? ` (${outcome.account})` : ""}. \`${config.slashCommand} 2fa ${outcome.label}\` for a code.`;
     try {
-      if (channel) await deps.slack?.post(channel, saved, req?.threadTs);
-      else await deps.slack?.postDm(userId, saved);
+      if (channel) await deps.slack?.post(channel, saved, req?.threadTs, SIGNATURES.command);
+      else await deps.slack?.postDm(userId, saved, SIGNATURES.command);
       log(`totp secret saved as ${outcome.label} by ${userId}`);
     } catch (err) {
       log(`2fa follow-up failed: ${err instanceof Error ? err.message : String(err)}`);
@@ -1119,7 +1153,7 @@ export const createSlackApp = (config: SlackAppConfig, deps: Deps) => {
     const user = deps.users.get(by);
     if (!user) return;
     const reply = async (text: string) => {
-      await deps.slack?.post(channelId, text, threadTs);
+      await deps.slack?.post(channelId, text, threadTs, SIGNATURES.command);
     };
     try {
       const text = await dispatchCommand(deps, user, channelId, line, {
@@ -1483,6 +1517,10 @@ export const createSlackApp = (config: SlackAppConfig, deps: Deps) => {
     inFlight: () => config.inbox?.inFlight() ?? 0,
     /** Stop taking envelopes from the inbox, ahead of a restart. No-op on a socket. */
     pauseIntake: (): void => config.inbox?.pause(),
+    /** A restart waits: envelopes taken from now on run on `ms`. No-op on a socket. */
+    budgetIntake: (ms: number): void => config.inbox?.budget(ms),
+    /** Envelopes being handled that were taken before a restart was asked for. */
+    unbudgetedInFlight: () => config.inbox?.unbudgetedInFlight() ?? 0,
     /** Mark the envelopes still running as cut by a planned restart. */
     markCut: (): number => config.inbox?.markCut() ?? 0,
   };

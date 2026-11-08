@@ -49,6 +49,7 @@ import type { SlackAdminPort, SlackMessage } from "./slackAdmin.ts";
 import type { GitHubPort } from "./github.ts";
 import type { DraftReply } from "./draftReply.ts";
 import type { SelfPrAccounts } from "../domain/selfUpdate.ts";
+import { isRestartCut } from "./runRegistry.ts";
 
 export type HandleMessageDeps = {
   users: UserRepo;
@@ -203,6 +204,8 @@ export type InboundMessage = {
   following?: boolean;
   /** A retry: a restart cut the first attempt at this message off part way. */
   interrupted?: boolean;
+  /** The gateway inbox row this came in on, so a restart can cut its turn. */
+  inboxRowId?: number;
   /**
    * Resume the thread's session even if it was opened under older rules.
    * A watch handing a thread back is finishing work that session started -
@@ -229,7 +232,11 @@ export type InboundMessage = {
 export const EMPTY_REPLY_FALLBACK = "I do not have anything useful to add there.";
 
 export type HandleResult =
-  | { kind: "reply"; text: string }
+  /**
+   * `by` names who wrote the reply when it is not plain Jarvis (a workflow
+   * worker, a command), for the footer signature (domain/messageFooter.ts).
+   */
+  | { kind: "reply"; text: string; by?: string }
   | { kind: "denied"; text: string }
   | { kind: "ignored" };
 
@@ -450,6 +457,12 @@ export const handleMessage = async (
     raw = await run({ ...base, messages: cold(), session: { id: sessionId, resume: false, name } });
   }
   const reply = raw.trim();
+
+  // Cut for a restart: what came back is a fragment, and the next process
+  // picks the message up again on this session. Recording the fragment as the
+  // answer, or moving the session past the message, would hand the retry its
+  // own half-reply as the new turn instead of the question.
+  if (isRestartCut(signal)) return { kind: "ignored" };
 
   // Already bound above; this only records that the turn landed and how far the
   // session has now been shown.

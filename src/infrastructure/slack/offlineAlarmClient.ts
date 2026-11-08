@@ -5,6 +5,7 @@
 import type { KnownBlock, WebClient } from "@slack/web-api";
 import type { ChannelMessage, OfflineAlarmSlack, ScheduledMessage } from "../../application/offlineAlarm.ts";
 import type { AlarmMessage } from "../../domain/offlineAlarm.ts";
+import { footerBlock, footerLine, SIGNATURES } from "../../domain/messageFooter.ts";
 
 /**
  * How far back to look for a notice Slack posted while we were gone. Enough
@@ -12,14 +13,21 @@ import type { AlarmMessage } from "../../domain/offlineAlarm.ts";
  */
 const RECENT_LIMIT = 50;
 
-const blocks = (msg: AlarmMessage): KnownBlock[] => msg.blocks.map((b) => ({ ...b, text: { ...b.text } }));
+/**
+ * The notice plus its signature footer, stamped `atMs`: when Slack will post
+ * it for a scheduled notice, now for an edit.
+ */
+const blocks = (msg: AlarmMessage, atMs: number): KnownBlock[] => [
+  ...msg.blocks.map((b) => ({ ...b, text: { ...b.text } })),
+  footerBlock(footerLine(SIGNATURES.offlineAlarm, atMs)) as KnownBlock,
+];
 
 /**
  * Wants its own client with a timeout: the shared one has none, and a request
  * stalled on a half-open socket would hold every later tick for minutes, past the
  * point a cancel still lands, and the alarm fired while online.
  */
-export const createOfflineAlarmSlack = (client: WebClient): OfflineAlarmSlack => {
+export const createOfflineAlarmSlack = (client: WebClient, clock: () => number = Date.now): OfflineAlarmSlack => {
   let botUserId: string | undefined;
   const me = async (): Promise<string> => {
     if (botUserId) return botUserId;
@@ -35,7 +43,7 @@ export const createOfflineAlarmSlack = (client: WebClient): OfflineAlarmSlack =>
         channel,
         post_at: postAtSecs,
         text: msg.text,
-        blocks: blocks(msg),
+        blocks: blocks(msg, postAtSecs * 1000),
       })) as { scheduled_message_id?: string };
       if (!res.scheduled_message_id) throw new Error("chat.scheduleMessage returned no id");
       return res.scheduled_message_id;
@@ -61,7 +69,7 @@ export const createOfflineAlarmSlack = (client: WebClient): OfflineAlarmSlack =>
       );
     },
     update: async (channel, ts, msg) => {
-      await client.chat.update({ channel, ts, text: msg.text, blocks: blocks(msg) });
+      await client.chat.update({ channel, ts, text: msg.text, blocks: blocks(msg, clock()) });
     },
   };
 };

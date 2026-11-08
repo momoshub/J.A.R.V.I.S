@@ -2,6 +2,8 @@ import { describe, expect, test } from "bun:test";
 import {
   RESTART_DELAY_MS,
   RESTART_MAX_WAIT_MS,
+  RESTART_HOLD_NOTICE,
+  RESTART_TURN_BUDGET_MS,
   STANDALONE_REVIEW_RULE,
   restartWhenIdle,
   selfPrAccountsRule,
@@ -70,7 +72,8 @@ describe("selfUpdateRules with no skill to read (the full block)", () => {
   test("the restart is deferred, and it is told why that matters", () => {
     expect(rules).toContain("waits a few seconds so your reply lands first");
     expect(rules).toContain("holds until no turn is running in any thread");
-    expect(rules).toContain("taking no new message meanwhile");
+    expect(rules).toContain("New messages are still answered meanwhile, each on a short budget (`RESTART_TURN_BUDGET_MS`, 2 minutes unless set otherwise)");
+    expect(rules).toContain("Once the turns from before the restart finish it takes no new message");
     expect(rules).toContain(`after ${RESTART_MAX_WAIT_MS / 60_000} minutes it restarts anyway`);
     expect(rules).toContain("picked up again by the new process on the same session");
     expect(rules).toContain("expect to be a new process");
@@ -212,12 +215,11 @@ describe("restartWhenIdle", () => {
     h.tick();
     expect(h.exits()).toBe(1);
     expect(h.pending).toHaveLength(0);
-    expect(h.logs).toEqual(["restart deferred: turns still running, taking no new work until they finish"]);
+    expect(h.logs).toEqual(["restart deferred: turns still running; new messages still run, each on a short budget"]);
     expect(h.events).toEqual(["drain", "exit"]);
   });
 
-  test("new work stops the moment it is asked, before the delay even runs", () => {
-    // a busy thread must not keep the bot from ever being idle
+  test("new turns go on a budget the moment it is asked, before the delay even runs", () => {
     const h = harness([]);
     expect(h.events).toEqual(["drain"]);
     expect(h.exits()).toBe(0);
@@ -241,6 +243,49 @@ describe("restartWhenIdle", () => {
     h.tick();
     h.tick();
     expect(h.events).toEqual(["drain", "exit"]);
+  });
+
+  test("once the turns from before it finish, new work stops - once - so the wait converges", () => {
+    // A steady trickle of new messages must not keep it from ever being idle:
+    // after `settled` it stops taking work and only the budgeted turns remain.
+    const pending: { fn: () => void; ms: number }[] = [];
+    const events: string[] = [];
+    const busy = [true, true, true, true, false];
+    const settled = [false, true, true, true];
+    restartWhenIdle({
+      onDrain: () => events.push("drain"),
+      onSettled: () => events.push("settled"),
+      settled: () => settled.shift() ?? true,
+      onForce: () => events.push("force"),
+      isIdle: () => !(busy.shift() ?? false),
+      exit: () => events.push("exit"),
+      schedule: (fn, ms) => void pending.push({ fn, ms }),
+      delayMs: 100,
+      pollMs: 10,
+      maxWaitMs: 1_000,
+    });
+    while (pending.length > 0) pending.shift()?.fn();
+    expect(events).toEqual(["drain", "settled", "exit"]);
+  });
+
+  test("idle before anything settles exits without closing the intake", () => {
+    const events: string[] = [];
+    const pending: (() => void)[] = [];
+    restartWhenIdle({
+      onSettled: () => events.push("settled"),
+      settled: () => true,
+      isIdle: () => true,
+      exit: () => events.push("exit"),
+      schedule: (fn) => void pending.push(fn),
+    });
+    pending.shift()?.();
+    expect(events).toEqual(["exit"]);
+  });
+
+  test("the turn budget is short next to the longest wait", () => {
+    expect(RESTART_TURN_BUDGET_MS).toBeGreaterThanOrEqual(30_000);
+    expect(RESTART_TURN_BUDGET_MS).toBeLessThan(RESTART_MAX_WAIT_MS);
+    expect(RESTART_HOLD_NOTICE).toContain("đợi em xíu");
   });
 
   test("the default wait is bounded, and long enough for an ordinary turn", () => {

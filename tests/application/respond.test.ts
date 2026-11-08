@@ -4,7 +4,7 @@ import { createUserRepo } from "../../src/infrastructure/db/userRepo.ts";
 import { createMessageRepo } from "../../src/infrastructure/db/messageRepo.ts";
 import { respond, type RespondDeps } from "../../src/application/respond.ts";
 import { createThreadQueue } from "../../src/application/threadQueue.ts";
-import { createRunRegistry } from "../../src/application/runRegistry.ts";
+import { createRunRegistry, RESTART_STOPPER } from "../../src/application/runRegistry.ts";
 import { createWorkflowRepo } from "../../src/infrastructure/db/workflowRepo.ts";
 import { createTurnLogRepo } from "../../src/infrastructure/db/turnLogRepo.ts";
 import { createWatchRepo } from "../../src/infrastructure/db/watchRepo.ts";
@@ -383,6 +383,25 @@ describe("recording how a turn ended", () => {
     expect(t?.error).toContain("disk I/O error");
     // and it is the thing `mindful continue` will re-run
     expect(turns.stuckThreads(0)).toHaveLength(1);
+  });
+
+  test("a turn cut for a restart after it spoke is recorded stopped, not answered", async () => {
+    // a streamed turn killed after its first words returns the fragment
+    // instead of throwing; finishing it as the reply would leave a half answer
+    // with a usage footer, and log as done a turn the next process re-runs
+    const runs = createRunRegistry();
+    const { deps, turns } = withTurns({
+      complete: async () => {
+        const running = runs.current("C1:9.9");
+        runs.stop(running!.id, RESTART_STOPPER);
+        return "the form is slow bec";
+      },
+    });
+    deps.threadQueue = createThreadQueue();
+    deps.runs = runs;
+    expect(await respond(deps, inbound)).toEqual({ kind: "ignored" });
+    const [t] = turns.since(0);
+    expect(t?.outcome).toBe("stopped");
   });
 
   test("an instance with no turn log still answers", async () => {

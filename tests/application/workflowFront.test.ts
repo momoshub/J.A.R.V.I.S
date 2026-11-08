@@ -135,7 +135,7 @@ describe("workflow front and worker", () => {
     expect(b.deps.threadQueue!.depth(KEY)).toBe(1);
 
     const res = await b.say("status?");
-    expect(res).toEqual({ kind: "reply", text: "it is running the tests" });
+    expect(res).toEqual({ kind: "reply", text: "it is running the tests", by: "workflow front" });
     // the worker's queue never saw it
     expect(b.deps.threadQueue!.depth(KEY)).toBe(1);
     expect(b.deps.threadQueue!.depth(frontKeyOf(KEY))).toBe(0);
@@ -160,7 +160,7 @@ describe("workflow front and worker", () => {
     await b.fire(); // a step is running
 
     const res = await b.say("dark theme please");
-    expect(res).toEqual({ kind: "reply", text: "Passing that on." });
+    expect(res).toEqual({ kind: "reply", text: "Passing that on.", by: "workflow front" });
     expect(b.live()?.steers.map((s) => s.text)).toEqual(["use the dark theme"]);
     // the worker is busy: nothing extra is kicked, it lands at the step boundary
     expect(b.timers).toHaveLength(0);

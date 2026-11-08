@@ -1179,7 +1179,7 @@ describe("owner copy of slash commands", () => {
       },
     };
     const res = await slashFrom(deps, "Upal", "ask what is 2+2");
-    expect(res).toEqual({ kind: "reply", text: "drafted answer" });
+    expect(res).toEqual({ kind: "reply", text: "drafted answer", by: "command" });
   });
 });
 
