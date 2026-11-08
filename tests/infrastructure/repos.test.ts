@@ -113,6 +113,40 @@ describe("messageRepo", () => {
     expect(chans.find((c) => c.channelId === "C1")?.count).toBe(2);
     expect(chans[0]?.lastAt).toBe(5);
   });
+
+  test("pageForChannel walks upwards by id, oldest-first within a page", () => {
+    const repo = createMessageRepo(db);
+    for (let i = 1; i <= 5; i++) repo.append({ channelId: "C1", slackUserId: "U1", role: "user", content: `m${i}` }, i);
+    repo.append({ channelId: "C2", slackUserId: "U1", role: "user", content: "other" }, 9);
+    const first = repo.pageForChannel("C1", undefined, 2);
+    expect(first.messages.map((m) => m.content)).toEqual(["m4", "m5"]);
+    const second = repo.pageForChannel("C1", first.nextBefore, 2);
+    expect(second.messages.map((m) => m.content)).toEqual(["m2", "m3"]);
+    const last = repo.pageForChannel("C1", second.nextBefore, 2);
+    expect(last.messages.map((m) => m.content)).toEqual(["m1"]);
+    expect(last.nextBefore).toBeUndefined();
+    // Exactly a page left: no cursor to a page that would be empty.
+    expect(repo.pageForChannel("C1", first.nextBefore, 3).nextBefore).toBeUndefined();
+    expect(repo.countForChannel("C1")).toBe(5);
+  });
+
+  test("channelsPage continues after its cursor, ties broken by id", () => {
+    const repo = createMessageRepo(db);
+    repo.append({ channelId: "C1", slackUserId: "U1", role: "user", content: "a" }, 1);
+    repo.append({ channelId: "C2", slackUserId: "U1", role: "user", content: "b" }, 5);
+    repo.append({ channelId: "C3", slackUserId: "U1", role: "user", content: "c" }, 5);
+    repo.append({ channelId: "C4", slackUserId: "U1", role: "user", content: "d" }, 7);
+    const ids: string[] = [];
+    let cursor: string | undefined;
+    for (let i = 0; i < 5; i++) {
+      const page = repo.channelsPage(cursor, 2);
+      ids.push(...page.channels.map((c) => c.channelId));
+      cursor = page.nextCursor;
+      if (!cursor) break;
+    }
+    expect(ids).toEqual(["C4", "C3", "C2", "C1"]);
+    expect(repo.channelsPage("garbage", 10).channels).toHaveLength(4);
+  });
 });
 
 describe("settingsRepo", () => {

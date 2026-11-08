@@ -74,7 +74,7 @@ export const NODES: SysNode[] = [
     files: ["bin/"] },
   { id: "api", label: "dashboard API", sub: "Bun.serve, loopback", kind: "process", x: 830, y: 330,
     about: "This dashboard, plus /api/commands/run and /api/github-app/comment for the brain. Loopback only.",
-    files: ["src/infrastructure/dashboard/server.ts", "src/application/dashboard.ts", "src/application/commandTickets.ts", "src/application/nameResolver.ts"] },
+    files: ["src/infrastructure/dashboard/server.ts", "src/application/dashboard.ts", "src/application/commandTickets.ts", "src/application/nameResolver.ts", "src/application/slackDirectory.ts", "src/infrastructure/db/statsRepo.ts"] },
   { id: "db", label: "bot.db", sub: "users, turns, memory", kind: "store", x: 100, y: 560,
     about: "SQLite: allowlist and roles, stored turns, sessions, watches, reminders, usage, the memory adapter.",
     files: ["src/infrastructure/db/", "src/infrastructure/adapter/adapterStore.ts"] },

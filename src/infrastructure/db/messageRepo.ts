@@ -37,6 +37,28 @@ export type ChannelSummary = {
   lastAt: number;
 };
 
+/** A page of turns, oldest-first, and where the next (older) page starts. */
+export type MessagePage = {
+  messages: StoredMessage[];
+  /** Pass as `before` for the page above this one; absent at the very first turn. */
+  nextBefore?: number;
+};
+
+/** A page of channels, most-recently-active first, and the cursor for the next one. */
+export type ChannelPage = {
+  channels: ChannelSummary[];
+  nextCursor?: string;
+};
+
+/** `<lastAt>:<channelId>` - the last row of a page, which the next page starts after. */
+export const channelCursor = (c: ChannelSummary): string => `${c.lastAt}:${c.channelId}`;
+const parseChannelCursor = (cursor: string | undefined): { lastAt: number; channelId: string } | undefined => {
+  const at = cursor?.indexOf(":") ?? -1;
+  if (!cursor || at < 1) return undefined;
+  const lastAt = Number(cursor.slice(0, at));
+  return Number.isFinite(lastAt) ? { lastAt, channelId: cursor.slice(at + 1) } : undefined;
+};
+
 export type MessageRepo = {
   append: (message: NewMessage, createdAt: number) => StoredMessage;
   /** Recent turns for a channel, returned oldest-first. Every thread in it. */
@@ -50,6 +72,16 @@ export type MessageRepo = {
   count: () => number;
   /** Distinct channels with a turn count, most-recently-active first. */
   channels: () => ChannelSummary[];
+  /** One page of `channels()`, continuing after `cursor` (from the previous page's `nextCursor`). */
+  channelsPage: (cursor: string | undefined, limit: number) => ChannelPage;
+  /**
+   * Up to `limit` turns of a channel older than message id `before` (newest
+   * page when absent), returned oldest-first - one screen of a conversation,
+   * read upwards.
+   */
+  pageForChannel: (channelId: string, before: number | undefined, limit: number) => MessagePage;
+  /** How many turns a channel holds. */
+  countForChannel: (channelId: string) => number;
 };
 
 export const createMessageRepo = (db: DbClient): MessageRepo => {
@@ -77,7 +109,45 @@ export const createMessageRepo = (db: DbClient): MessageRepo => {
      FROM messages GROUP BY channel_id ORDER BY last_at DESC`,
   );
 
+  type ChannelRow = { channel_id: string; n: number; last_at: number };
+  const channelsFirstStmt = db.query<ChannelRow, [number]>(
+    `SELECT channel_id, COUNT(*) AS n, MAX(created_at) AS last_at
+     FROM messages GROUP BY channel_id ORDER BY last_at DESC, channel_id DESC LIMIT ?`,
+  );
+  const channelsAfterStmt = db.query<ChannelRow, [number, number, string, number]>(
+    `SELECT channel_id, COUNT(*) AS n, MAX(created_at) AS last_at
+     FROM messages GROUP BY channel_id
+     HAVING last_at < ?1 OR (last_at = ?2 AND channel_id < ?3)
+     ORDER BY last_at DESC, channel_id DESC LIMIT ?4`,
+  );
+  const pageStmt = db.query<Row, [string, number, number]>(
+    `SELECT * FROM messages WHERE channel_id = ? AND id < ? ORDER BY id DESC LIMIT ?`,
+  );
+  const channelCountStmt = db.query<{ n: number }, [string]>(
+    "SELECT COUNT(*) AS n FROM messages WHERE channel_id = ?",
+  );
+  const toSummary = (r: ChannelRow): ChannelSummary => ({ channelId: r.channel_id, count: r.n, lastAt: r.last_at });
+
   return {
+    channelsPage: (cursor, limit) => {
+      const size = Math.max(1, limit);
+      const after = parseChannelCursor(cursor);
+      // One extra row says whether there is a next page without a COUNT.
+      const rows = after
+        ? channelsAfterStmt.all(after.lastAt, after.lastAt, after.channelId, size + 1)
+        : channelsFirstStmt.all(size + 1);
+      const channels = rows.slice(0, size).map(toSummary);
+      const last = channels[channels.length - 1];
+      return rows.length > size && last ? { channels, nextCursor: channelCursor(last) } : { channels };
+    },
+    pageForChannel: (channelId, before, limit) => {
+      const size = Math.max(1, limit);
+      const rows = pageStmt.all(channelId, before ?? Number.MAX_SAFE_INTEGER, size + 1);
+      const messages = rows.slice(0, size).map(toMessage).reverse();
+      const oldest = messages[0];
+      return rows.length > size && oldest ? { messages, nextBefore: oldest.id } : { messages };
+    },
+    countForChannel: (channelId) => channelCountStmt.get(channelId)?.n ?? 0,
     append: (message, createdAt) => {
       const row = insertStmt.get({
         $channelId: message.channelId,

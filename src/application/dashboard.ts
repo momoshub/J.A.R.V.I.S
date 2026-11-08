@@ -28,6 +28,9 @@ import { SETTING_KEYS } from "../infrastructure/db/settingsRepo.ts";
 import { listCommandInfo } from "./commands.ts";
 import type { BotProfile } from "./botProfile.ts";
 import type { Clock } from "./ports.ts";
+import type { SlackDirectory } from "./slackDirectory.ts";
+import type { StatsRepo } from "../infrastructure/db/statsRepo.ts";
+import { fillDays, offsetMsOf, statsDays, windowStart } from "../domain/dashboardStats.ts";
 
 /** A refused use case: what to tell the caller, and the HTTP-ish status it maps to. */
 export type Refusal = { readonly ok: false; readonly error: string; readonly status: number };
@@ -87,10 +90,20 @@ export type DashboardPorts = {
   readonly messages: {
     readonly channels: () => readonly { readonly channelId: string }[];
     readonly count: () => number;
-    readonly recentForChannel: (
-      channelId: string,
+    readonly channelsPage: (
+      cursor: string | undefined,
       limit: number,
-    ) => readonly { readonly slackUserId: string; readonly content: string }[];
+    ) => { readonly channels: readonly { readonly channelId: string }[]; readonly nextCursor?: string };
+    /** Turns older than message id `before` (newest when absent), oldest-first. */
+    readonly pageForChannel: (
+      channelId: string,
+      before: number | undefined,
+      limit: number,
+    ) => {
+      readonly messages: readonly { readonly slackUserId: string; readonly content: string }[];
+      readonly nextBefore?: number;
+    };
+    readonly countForChannel: (channelId: string) => number;
     readonly clearChannel: (channelId: string) => unknown;
   };
   readonly learnings: {
@@ -123,12 +136,23 @@ export type DashboardPorts = {
     readonly byKind: (since: number, limit?: number) => readonly unknown[];
   };
   readonly kitViews?: { readonly save: (view: KitView, at: number) => string };
+  /** The workspace's members, cached, for the Users page's search. Absent: no search, paste an id. */
+  readonly directory?: SlackDirectory;
+  /** Aggregates for the overview charts. */
+  readonly stats?: StatsRepo;
+  /** The host's `Date#getTimezoneOffset`, so a chart's days are the reader's days. */
+  readonly timezoneOffset?: () => number;
   /** Resolve Slack display names for ids with none stored. Failure means "no names". */
   readonly resolveNames?: (ids: readonly string[]) => Promise<Record<string, string>>;
 };
 
 const SLACK_ID = /^[UW][A-Z0-9]+$/;
-const CONVERSATION_LIMIT = 200;
+/** Turns per page of a conversation, and its ceiling when the page asks for more. */
+const CONVERSATION_PAGE = 50;
+const CHANNEL_PAGE = 30;
+const PAGE_MAX = 200;
+const MEMBER_RESULTS = 8;
+const STATS_TOP = 8;
 const COMMAND_LOG_LIMIT = 200;
 /** Every write made from the deck is recorded as made by it. */
 const BY = "dashboard";
@@ -137,6 +161,16 @@ const parseCsv = (v: string | undefined): Set<string> =>
   new Set((v ?? "").split(",").map((s) => s.trim()).filter(Boolean));
 
 const text = (v: unknown): string => String(v ?? "").trim();
+/** A page size from a query string, clamped; anything unreadable means `fallback`. */
+export const pageSize = (v: string | null | undefined, fallback: number): number => {
+  const n = Math.floor(Number(v));
+  return Number.isFinite(n) && n > 0 ? Math.min(n, PAGE_MAX) : fallback;
+};
+/** A message-id cursor, or undefined for "start at the newest". */
+const beforeId = (v: string | null | undefined): number | undefined => {
+  const n = Number(v);
+  return v && Number.isInteger(n) && n > 0 ? n : undefined;
+};
 /**
  * A role the deck may hand out, or undefined. Never `owner` (there is one, and
  * it comes from the environment), and never a silent fallback: bad input is
@@ -208,7 +242,11 @@ export const createDashboardService = (p: DashboardPorts) => {
     }));
   },
 
-  saveUser: (slackIdIn: unknown, role: unknown): Outcome<null> => {
+  /**
+   * Add someone, or change their role. `displayName` is the name the search
+   * showed when they were picked; it only fills an empty one, never overwrites.
+   */
+  saveUser: (slackIdIn: unknown, role: unknown, displayNameIn?: unknown): Outcome<null> => {
     const slackId = text(slackIdIn);
     if (!SLACK_ID.test(slackId)) return refuse("Invalid Slack id");
     if (slackId === p.ownerSlackId) return refuse("The owner record cannot be modified");
@@ -218,7 +256,7 @@ export const createDashboardService = (p: DashboardPorts) => {
     p.users.upsert({
       slackId,
       role: next,
-      displayName: existing?.displayName ?? "",
+      displayName: existing?.displayName || text(displayNameIn),
       addedBy: BY,
       createdAt: existing?.createdAt ?? p.clock(),
     });
@@ -288,6 +326,32 @@ export const createDashboardService = (p: DashboardPorts) => {
       if (current) p.users.upsert({ ...current, role: nextRole });
     }
     return done(null);
+  },
+
+  /**
+   * Workspace members matching what was typed, for the Users page's picker.
+   * Each carries the role they already hold, so the picker can say "already
+   * added" instead of offering a second row.
+   */
+  searchMembers: async (queryIn: unknown): Promise<Outcome<{ members: readonly unknown[] }>> => {
+    if (!p.directory) return refuse("Slack directory is not wired up - paste a Slack id instead", 503);
+    const query = text(queryIn).slice(0, 80);
+    try {
+      const found = await p.directory.search(query, MEMBER_RESULTS);
+      return done({
+        members: found.map((m) => ({
+          id: m.id,
+          handle: m.handle,
+          realName: m.realName,
+          displayName: m.displayName,
+          title: m.title,
+          avatar: m.avatar,
+          role: p.users.get(m.id)?.role,
+        })),
+      });
+    } catch (e) {
+      return refuse(`Could not read the Slack directory: ${e instanceof Error ? e.message : String(e)}`, 502);
+    }
   },
 
   /** Put an existing user in a role, from the Roles page. */
@@ -459,22 +523,38 @@ export const createDashboardService = (p: DashboardPorts) => {
 
   resetPrompt: () => p.settings.remove(SETTING_KEYS.systemPrompt),
 
-  /** Stored conversations, each named: `#channel (C…)`, a DM as the person. */
-  conversations: async () => {
-    const channels = p.messages.channels();
-    const labels = await conversationLabels(channels.map((c) => c.channelId));
-    return channels.map((c) => ({ ...c, label: labels[c.channelId] }));
+  /**
+   * One page of stored conversations, most recently active first, each named:
+   * `#channel (C…)`, a DM as the person. `cursor` is the previous page's
+   * `nextCursor`; the page scrolls, so only one page is ever named at a time.
+   */
+  conversations: async (cursor?: string | null, limit?: string | null) => {
+    const page = p.messages.channelsPage(cursor || undefined, pageSize(limit, CHANNEL_PAGE));
+    const labels = await conversationLabels(page.channels.map((c) => c.channelId));
+    return {
+      channels: page.channels.map((c) => ({ ...c, label: labels[c.channelId] })),
+      ...(page.nextCursor ? { nextCursor: page.nextCursor } : {}),
+    };
   },
 
-  /** One conversation's turns, every author - and everyone mentioned - named as well as id'd. */
-  conversation: async (channel: string) => {
-    const messages = channel ? p.messages.recentForChannel(channel, CONVERSATION_LIMIT) : [];
+  /**
+   * One page of a conversation's turns, oldest-first, every author - and
+   * everyone mentioned - named as well as id'd. No `before` is the newest page;
+   * `nextBefore` is what to pass for the one above it, absent at the top.
+   */
+  conversation: async (channel: string, before?: string | null, limit?: string | null) => {
+    const page = channel
+      ? p.messages.pageForChannel(channel, beforeId(before), pageSize(limit, CONVERSATION_PAGE))
+      : { messages: [] };
+    const messages = page.messages;
     const [labels, people] = await Promise.all([
       conversationLabels(channel ? [channel] : []),
       userLabels(messages.flatMap((m) => [m.slackUserId, ...mentionedIds(m.content)])),
     ]);
     return {
       channel: { id: channel, label: labels[channel] ?? `unknown (${channel})` },
+      total: channel ? p.messages.countForChannel(channel) : 0,
+      ...(page.nextBefore ? { nextBefore: page.nextBefore } : {}),
       messages: messages.map((m) => ({
         ...m,
         content: labelMentions(m.content, people),
@@ -535,6 +615,37 @@ export const createDashboardService = (p: DashboardPorts) => {
       byUser,
       byKind: p.usage.byKind(since, 25),
       names,
+    };
+  },
+
+  /**
+   * The overview's charts: a day series per table over the last `days` days
+   * (zeros included), the busiest commands and people, and how many threads
+   * were live. Days are the host's local days.
+   */
+  stats: async (daysIn: string | null) => {
+    if (!p.stats) return { recording: false as const };
+    const days = statsDays(daysIn);
+    const now = p.clock();
+    const offset = offsetMsOf(p.timezoneOffset?.() ?? 0);
+    const since = windowStart(now, days, offset);
+    const s = p.stats;
+    const topUsers = s.topUsers(since, STATS_TOP);
+    const names = await userLabels(topUsers.map((u) => u.key));
+    return {
+      recording: true as const,
+      days,
+      messages: fillDays(s.messagesPerDay(since, offset), now, days, offset, { user: 0, assistant: 0 }),
+      turns: fillDays(s.turnsPerDay(since, offset), now, days, offset, { ok: 0, failed: 0 }),
+      spend: fillDays(s.spendPerDay(since, offset), now, days, offset, { runs: 0, costUsd: 0 }),
+      topCommands: s.topCommands(since, STATS_TOP),
+      topUsers: topUsers.map((u) => ({ ...u, label: names[u.key] ?? userLabel(u.key) })),
+      // Calendar days, like the charts: "today" is since local midnight.
+      activeThreads: {
+        day: s.activeThreads(windowStart(now, 1, offset)),
+        week: s.activeThreads(windowStart(now, 7, offset)),
+        window: s.activeThreads(since),
+      },
     };
   },
 

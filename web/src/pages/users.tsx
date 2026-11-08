@@ -1,7 +1,9 @@
-import { Form, Link, useActionData, useLoaderData } from "react-router";
+import { useEffect, useState } from "react";
+import { Form, Link, useActionData, useFetcher, useLoaderData } from "react-router";
 import { get, post, type AllowedUser, type Bootstrap } from "../api.ts";
 import { guard } from "../routes/guard.ts";
 import { Banner } from "../ui/feedback.tsx";
+import { MemberPicker, type Picked } from "../ui/memberPicker.tsx";
 
 export const loader = async () => {
   const [users, boot] = await Promise.all([get<AllowedUser[]>("users"), get<Bootstrap>("bootstrap")]);
@@ -21,7 +23,10 @@ export const action = guard(async ({ request }) => {
       // The owner's row has no role picker: leaving it out keeps the role as it is.
       ...(fd.has("role") ? { role: fd.get("role") } : {}),
     });
-  } else await post("users", { slackId: fd.get("slackId"), role: fd.get("role") });
+  } else {
+    await post("users", { slackId: fd.get("slackId"), role: fd.get("role"), displayName: fd.get("displayName") ?? "" });
+    return { ok: true, added: String(fd.get("slackId") ?? "") };
+  }
   return { ok: true };
 });
 
@@ -31,6 +36,70 @@ const ROLE_HELP: Record<string, string> = {
   executer: "sandboxed, tools assigned on Roles",
   pal: "sandboxed read-only tools + review",
 };
+
+const ROLES = ["pal", "executer", "admin"] as const;
+
+/**
+ * Adding someone: find them in the workspace, pick a role, add. A fetcher, so
+ * the form can clear itself once the row lands without a page navigation.
+ */
+function AddUser() {
+  const fetcher = useFetcher<{ ok?: boolean; added?: string; error?: string }>();
+  const [picked, setPicked] = useState<Picked | undefined>();
+  const [role, setRole] = useState<(typeof ROLES)[number]>("pal");
+  const busy = fetcher.state !== "idle";
+  const done = fetcher.state === "idle" && fetcher.data?.ok ? fetcher.data.added : undefined;
+
+  useEffect(() => {
+    if (done) {
+      setPicked(undefined);
+      setRole("pal");
+    }
+  }, [done]);
+
+  const already = picked?.member?.role;
+  return (
+    <fetcher.Form method="post" className="card add-user">
+      <input type="hidden" name="intent" value="add" />
+      <input type="hidden" name="slackId" value={picked?.id ?? ""} />
+      <input type="hidden" name="displayName" value={picked?.name ?? ""} />
+      <input type="hidden" name="role" value={role} />
+      <div className="add-user-head">
+        <b>Add someone</b>
+        <span className="muted">Search the Slack workspace, pick a role, add.</span>
+      </div>
+      <div className="add-user-row">
+        <div className="add-user-who">
+          <MemberPicker picked={picked} onPick={setPicked} />
+        </div>
+        <div className="seg" role="radiogroup" aria-label="role">
+          {ROLES.map((r) => (
+            <button
+              type="button"
+              key={r}
+              role="radio"
+              aria-checked={role === r}
+              className={role === r ? "seg-on" : ""}
+              onClick={() => setRole(r)}
+              title={ROLE_HELP[r]}
+            >
+              {r}
+            </button>
+          ))}
+        </div>
+        <button type="submit" disabled={!picked || busy}>
+          {busy ? "adding…" : already ? `make ${role}` : "add"}
+        </button>
+      </div>
+      <div className="add-user-foot muted">
+        {already
+          ? `${picked?.name} is already on the list as ${already}; adding changes their role.`
+          : ROLE_HELP[role]}
+      </div>
+      {fetcher.data?.error && <div className="banner error">{fetcher.data.error}</div>}
+    </fetcher.Form>
+  );
+}
 
 function UserRow({ u, isOwner }: { u: AllowedUser; isOwner: boolean }) {
   // One form per row; the inputs live in the cells and point at it by id.
@@ -100,16 +169,7 @@ export function UsersPage() {
         review inbox and GitHub App use to know who is asking. What each role may do is on <Link to="/roles">Roles</Link>.
       </p>
       <Banner error={action?.error} />
-      <Form method="post" className="row">
-        <input type="hidden" name="intent" value="add" />
-        <input name="slackId" placeholder="U0123456789" pattern="[UW][A-Z0-9]+" required />
-        <select name="role" defaultValue="pal">
-          <option value="pal">pal</option>
-          <option value="executer">executer</option>
-          <option value="admin">admin</option>
-        </select>
-        <button type="submit">add / update</button>
-      </Form>
+      <AddUser />
       <div className="card table">
         <table>
           <thead>
