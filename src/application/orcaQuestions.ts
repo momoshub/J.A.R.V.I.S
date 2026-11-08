@@ -36,6 +36,8 @@ export const ORCA_QUESTION_POLL_MS = 30_000;
 export const ORCA_QUESTION_WINDOW_MS = 3 * 24 * 60 * 60_000;
 /** Deliveries of one question before the bridge stops trying (each one cut short). */
 export const MAX_ATTEMPTS = 3;
+/** Runs read per poll, newest first; past this the oldest are skipped (and it says so). */
+export const MAX_RUNS_PER_POLL = 100;
 /** Bash calls whose result has not come back yet, kept at most. */
 const MAX_PENDING_CALLS = 500;
 
@@ -56,6 +58,8 @@ export type OrcaQuestionDeps = {
     text: string;
     keepSession?: boolean;
     unprompted?: boolean;
+    /** In a workflow thread, the worker's session answers, not the front. */
+    workerLane?: boolean;
   }) => Promise<void>;
   /** Whether whoever started the worker may still run turns. */
   mayRun: (slackUserId: string) => boolean;
@@ -136,6 +140,9 @@ export const createOrcaQuestionBridge = (deps: OrcaQuestionDeps): OrcaQuestionBr
           keepSession: true,
           // Nobody typed it: no "yours is next" notice behind a running turn.
           unprompted: true,
+          // A workflow's worker started it, and only its session (with full
+          // tools) can run the reply - the front cannot run `orca`.
+          workerLane: true,
         })
         .then(() => deps.repo.settle(q.id, "delivered", deps.clock()))
         // Left `delivering`: the next tick tries again while it is still unanswered.
@@ -189,8 +196,9 @@ export const createOrcaQuestionBridge = (deps: OrcaQuestionDeps): OrcaQuestionBr
     lastPoll = now;
     running = true;
     try {
-      const runs = deps.repo.runsSince(now - ORCA_QUESTION_WINDOW_MS);
+      const runs = deps.repo.runsSince(now - ORCA_QUESTION_WINDOW_MS, MAX_RUNS_PER_POLL);
       if (runs.length === 0 || !(await deps.ready())) return;
+      if (runs.length >= MAX_RUNS_PER_POLL) log(`${runs.length} Runs linked in the window; only the newest ${MAX_RUNS_PER_POLL} are read`);
       for (const runId of runs) {
         const box = await deps.orca(["orchestration", "inbox", "--terminal", `run:${runId}`, "--limit", "100", "--full", "--json"]);
         const questions = questionsIn(box.stdout, runId);

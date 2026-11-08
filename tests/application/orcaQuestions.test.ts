@@ -33,7 +33,7 @@ let runBox: string;
 let workerBox: string;
 let workerShow: string;
 let calls: string[][];
-let turns: { channelId: string; threadTs: string; slackUserId: string; text: string; keepSession?: boolean; unprompted?: boolean }[];
+let turns: { channelId: string; threadTs: string; slackUserId: string; text: string; keepSession?: boolean; unprompted?: boolean; workerLane?: boolean }[];
 
 const build = (over: Partial<OrcaQuestionDeps> = {}) =>
   createOrcaQuestionBridge({
@@ -101,7 +101,7 @@ describe("tick", () => {
     await b.tick();
     await flush();
     expect(turns).toHaveLength(1);
-    expect(turns[0]).toMatchObject({ ...THREAD, keepSession: true, unprompted: true });
+    expect(turns[0]).toMatchObject({ ...THREAD, keepSession: true, unprompted: true, workerLane: true });
     expect(turns[0]?.text).toContain(`orca orchestration reply --id msg_q1 --run ${RUN}`);
     expect(repo.question("msg_q1")?.state).toBe("delivered");
     now += ORCA_QUESTION_POLL_MS;

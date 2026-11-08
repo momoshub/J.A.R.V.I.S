@@ -95,6 +95,10 @@ export type HandleMessageDeps = {
     keepSession?: boolean;
     /** A workflow step the bot started itself, not a human message. */
     autoContinue?: boolean;
+    /** Started by the bot, nobody typed it: no "yours is next" notice. */
+    unprompted?: boolean;
+    /** In a workflow thread, run on the worker's lane (see `InboundMessage`). */
+    workerLane?: boolean;
   }) => Promise<void>;
   /** Timer for a workflow's next step; injected so tests need not wait. */
   continueTimer?: (fn: () => void, ms: number) => void;
@@ -226,6 +230,15 @@ export type InboundMessage = {
    * on its place in line, so it posts no "yours is next" notice.
    */
   unprompted?: boolean;
+  /**
+   * In a workflow thread, run on the worker's lane - the workflow session,
+   * the thread's own key, full tools - rather than the front's. For an Orca
+   * worker's question: the session that started the worker must answer it,
+   * and the front's tools cannot run `orca`. Unlike `autoContinue` it is not
+   * a step: no steers are taken and no next step is scheduled. Outside a
+   * workflow it changes nothing.
+   */
+  workerLane?: boolean;
 };
 
 /** What a turn says when the model said nothing. A placeholder, not an answer. */

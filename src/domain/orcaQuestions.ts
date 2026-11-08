@@ -131,5 +131,5 @@ export const questionTurnText = (q: OrcaQuestion): string => {
 
 ${clip(q.question)}${options}
 
-Answer it now, from what this thread already knows: \`orca orchestration reply --id ${q.id} --run ${q.runId} --body "<answer>"\` (ORCA_TERMINAL_HANDLE is already set, so no --from; for a long answer pass --body "$(cat <<'EOF' ... EOF)"). That reply is the only way the worker hears you, and it waits until you send one. Do not ask the thread and wait for an answer - nobody may come. If the thread does not settle it, pick the safe option, reply with that, and say so. Then tell the thread in one short line what the worker asked and what you answered.`;
+Answer it now, from what this thread already knows: \`orca orchestration reply --id ${q.id} --run ${q.runId} --body "<answer>"\` (ORCA_TERMINAL_HANDLE is already set, so no --from; for a long answer pass --body "$(cat <<'EOF' ... EOF)"). That reply is the only way the worker hears you, and it waits until you send one. Do not ask the thread and wait for an answer - nobody may come. If the thread does not settle it, pick the safe option, reply with that, and say so. If reply says it is already answered (\`duplicate\` / \`answer_conflict\`) or the dispatch is no longer active, say that in one line and stop. Then tell the thread in one short line what the worker asked and what you answered.`;
 };
