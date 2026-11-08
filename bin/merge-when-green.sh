@@ -12,6 +12,12 @@
 # lands meanwhile is never merged unchecked. Any failed or cancelled check, or
 # the timeout -> no merge, exit non-zero.
 #
+# It also reads the PR's mergeability (`mergeable`, `mergeStateStatus`) on every
+# poll. A PR that conflicts with its base (CONFLICTING / DIRTY) gets no CI run
+# from GitHub at all, so waiting is pointless: it says so and exits 4 at once -
+# merge the base in, resolve, push, run it again. UNKNOWN means GitHub is still
+# computing it: keep polling, and never merge until it is known.
+#
 # Right before the merge it approves the PR (`gh pr review --approve`) as the
 # merging account, so the PR carries a real "Approved" review, not only review
 # comments. GitHub refuses to approve a closed PR, hence before, not after. It
@@ -21,8 +27,9 @@
 # approval stops the merge (exit 1).
 #
 # The default timeout stays under the 10 minute ceiling of a foreground tool
-# call; give that call a timeout to match. Exit 3 means "not finished yet":
-# run it again.
+# call; give that call a timeout to match. Exit codes: 0 merged, 1 red CI or a
+# failed approval, 2 usage, 3 "not finished yet" (run it again), 4 the PR
+# conflicts with its base (resolve first, rerunning alone never helps).
 set -uo pipefail
 
 PR=${1:-}
@@ -71,6 +78,13 @@ while :; do
   if [ "$head" != "$SHA" ]; then
     why="PR head is ${head:-unknown}, waiting for $SHA (pushed?)"
   else
+    mergeability=$(gh pr view "$PR" --json mergeable,mergeStateStatus -q '"\(.mergeable) \(.mergeStateStatus)"' 2>/dev/null)
+    case " $mergeability " in
+      *" CONFLICTING "* | *" DIRTY "*)
+        echo "PR $PR conflicts with its base, merge the base in and resolve first - not merging" >&2
+        exit 4
+        ;;
+    esac
     out=$(gh pr checks "$PR" --json name,bucket 2>&1)
     if ! printf '%s' "$out" | jq -e 'type == "array"' >/dev/null 2>&1; then
       if printf '%s' "$out" | grep -qi "no checks reported"; then
@@ -91,6 +105,8 @@ while :; do
         why="check '$REQUIRED' has not appeared yet"
       elif printf '%s' "$out" | jq -e 'any(.[]; .bucket == "pending")' >/dev/null; then
         why="checks still running"
+      elif [ "${mergeability%% *}" != "MERGEABLE" ]; then
+        why="GitHub has not worked out yet whether PR $PR merges cleanly (${mergeability:-unknown})"
       else
         printf '%s' "$out" | jq -r '.[] | "\(.name): \(.bucket)"'
         approve || exit 1

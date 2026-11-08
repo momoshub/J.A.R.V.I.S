@@ -12,16 +12,19 @@ afterEach(() => {
 });
 
 type Check = { name: string; bucket: string };
-/** One poll: the PR head GitHub shows, and what `pr checks` answers (null = none reported yet). */
-type Round = { head?: string; checks: Check[] | null };
+/**
+ * One poll: the PR head GitHub shows, its "<mergeable> <mergeStateStatus>"
+ * (default "MERGEABLE CLEAN"), and what `pr checks` answers (null = none reported yet).
+ */
+type Round = { head?: string; mergeable?: string; checks: Check[] | null };
 
 type Review = { author: { login: string }; state: string; commit: { oid: string } };
 /** Who runs the merge, who opened the PR, the reviews already on it, and whether `pr review` fails. */
 type Accounts = { me?: string; author?: string; reviews?: Review[]; reviewFails?: boolean };
 
 /**
- * A stand-in `gh` on PATH. `pr view` answers the current round's head (or the
- * PR author / reviews when asked for them), `pr checks` its checks and then
+ * A stand-in `gh` on PATH. `pr view` answers the current round's head (or its
+ * mergeability, or the PR author / reviews when asked for them), `pr checks` its checks and then
  * moves to the next round (the last one repeats), `api user` the merging
  * login, and `pr review` / `pr merge` leave a marker with their arguments -
  * the gate is tested without a real PR. By default a second account merges, so
@@ -32,6 +35,7 @@ const fakeGh = (rounds: Round[], accounts: Accounts = {}) => {
   dirs.push(dir);
   rounds.forEach((r, i) => {
     writeFileSync(join(dir, `head.${i}`), r.head ?? SHA);
+    writeFileSync(join(dir, `mergeable.${i}`), r.mergeable ?? "MERGEABLE CLEAN");
     writeFileSync(join(dir, `checks.${i}`), r.checks === null ? "" : JSON.stringify(r.checks));
   });
   writeFileSync(join(dir, "me"), accounts.me ?? "checker");
@@ -46,6 +50,7 @@ n=$(cat "${dir}/count" 2>/dev/null || echo 0)
 if [ "$1 $2" = "api user" ]; then cat "${dir}/me"; exit 0; fi
 if [ "$1 $2 $4 $5" = "pr view --json author" ]; then cat "${dir}/author"; exit 0; fi
 if [ "$1 $2 $4 $5" = "pr view --json reviews" ]; then cat "${dir}/reviews"; exit 0; fi
+if [ "$1 $2 $4 $5" = "pr view --json mergeable,mergeStateStatus" ]; then cat "${dir}/mergeable.$n"; exit 0; fi
 if [ "$1 $2" = "pr view" ]; then cat "${dir}/head.$n"; exit 0; fi
 if [ "$1 $2" = "pr review" ]; then echo "$@" > "${dir}/approved"; exit ${accounts.reviewFails ? 1 : 0}; fi
 if [ "$1 $2" = "pr checks" ]; then
@@ -186,6 +191,38 @@ describe("merge-when-green.sh", () => {
   test("cannot tell who merges -> no merge", async () => {
     const r = await run(fakeGh([{ checks: [ci("pass")] }], { me: "" }), ["42"]);
     expect(r.code).toBe(1);
+    expect(r.approved).toBeNull();
+    expect(r.merged).toBeNull();
+  });
+
+  test("a PR that conflicts with its base is refused at once with exit 4, not polled until the timeout", async () => {
+    for (const mergeable of ["CONFLICTING DIRTY", "CONFLICTING UNKNOWN", "UNKNOWN DIRTY"]) {
+      const dir = fakeGh([{ mergeable, checks: null }]);
+      const r = await run(dir, ["42", "540"]);
+      expect(r.code).toBe(4);
+      expect(r.stderr).toContain("PR 42 conflicts with its base, merge the base in and resolve first - not merging");
+      expect(r.merged).toBeNull();
+      expect(r.approved).toBeNull();
+      // it never waited for checks GitHub will not run
+      expect(existsSync(join(dir, "count"))).toBe(false);
+    }
+  });
+
+  test("mergeability still being computed (UNKNOWN) -> keeps polling, merges once it is known", async () => {
+    const dir = fakeGh([
+      { mergeable: "UNKNOWN UNKNOWN", checks: [ci("pass")] },
+      { mergeable: "MERGEABLE CLEAN", checks: [ci("pass")] },
+    ]);
+    const r = await run(dir, ["42"]);
+    expect(r.code).toBe(0);
+    expect(r.merged).toContain(`pr merge 42 --merge --match-head-commit ${SHA}`);
+    expect(readFileSync(join(dir, "count"), "utf8").trim()).toBe("2");
+  });
+
+  test("mergeability that never resolves -> times out unmerged with exit 3", async () => {
+    const r = await run(fakeGh([{ mergeable: "UNKNOWN UNKNOWN", checks: [ci("pass")] }]), ["42", "0"]);
+    expect(r.code).toBe(3);
+    expect(r.stderr).toContain("merges cleanly");
     expect(r.approved).toBeNull();
     expect(r.merged).toBeNull();
   });
