@@ -59,6 +59,7 @@ import type { MessageRepo } from "../infrastructure/db/messageRepo.ts";
 import type { SelfIssue, SelfIssueRepo } from "../infrastructure/db/selfIssueRepo.ts";
 import type { TurnLogRepo } from "../infrastructure/db/turnLogRepo.ts";
 import type { Clock, LlmPort } from "./ports.ts";
+import type { SelfPrAccounts } from "../domain/selfUpdate.ts";
 import { EMPTY_REPLY_FALLBACK } from "./handleMessage.ts";
 
 const DAY_MS = 24 * 60 * 60 * 1000;
@@ -76,6 +77,8 @@ export type InnerChildDeps = {
   botName: () => string;
   sourceDir: string;
   restartScript: string;
+  /** Who opens a fix PR and who reviews and merges it; unset is one account. */
+  selfPrAccounts?: SelfPrAccounts;
   /** Tools denied to the triage run: it reads text, it never acts. */
   noTools: readonly string[];
   /** Off switch, read every tick. */
@@ -256,7 +259,7 @@ export const createInnerChild = (deps: InnerChildDeps): InnerChild => {
         channelId: deps.channelId,
         threadTs,
         slackUserId: deps.ownerSlackId,
-        text: fixPrompt(brief(issue), deps.sourceDir, deps.restartScript),
+        text: fixPrompt(brief(issue), deps.sourceDir, deps.restartScript, deps.selfPrAccounts),
       });
       const outcome = readOutcome(reply);
       deps.issues.settle(issue.id, outcome, deps.clock());

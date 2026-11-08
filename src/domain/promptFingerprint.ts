@@ -41,6 +41,7 @@ const SENTINELS = {
   slackReadScript: "/fp/slack",
   repoPath: "/fp/repo",
   restartScript: "/fp/restart",
+  selfPrAccounts: { author: "fp-author", reviewer: "fp-reviewer" },
   logSources: ["grafana", "datadog"] as const,
   canRaiseTickets: true,
   commandBudget: 50,
@@ -72,7 +73,7 @@ export const promptFingerprint = (
     // the sentinels carry no adapter, so the build above renders the full
     // self-update block; the short one a turn with a visible skill gets is
     // hashed here, or a change to it would never reopen a live thread
-    .update(selfUpdateRules(SENTINELS.repoPath, SENTINELS.restartScript, true))
+    .update(selfUpdateRules(SENTINELS.repoPath, SENTINELS.restartScript, true, SENTINELS.selfPrAccounts))
     // likewise the build above inlines every guide's full text, which covers
     // the guides themselves; the always-on index a guided turn gets instead is
     // hashed here, so a changed guard line reopens live threads too

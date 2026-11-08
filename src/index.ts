@@ -476,6 +476,7 @@ const main = async () => {
     artifactScript,
     restartScript,
     repoPath,
+    selfPrAccounts: config.selfPrAccounts,
     draft,
     toolPolicy,
     // A person's own Claude Code credential: required by `review`, used by every
@@ -851,6 +852,7 @@ const main = async () => {
     botName: () => profile().name,
     sourceDir: repoPath,
     restartScript,
+    selfPrAccounts: config.selfPrAccounts,
     noTools: NO_TOOLS,
     enabled: () =>
       !!innerChildChannel() && settings.get(SETTING_KEYS.innerChild)?.trim().toLowerCase() !== "off",

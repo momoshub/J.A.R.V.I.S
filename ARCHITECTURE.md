@@ -89,7 +89,8 @@ no classes.
 - **Self-update.** A fix lands through a PR that a reviewer Orca worker
   reads (rounds are PR comments, fixes are pushes) and CI (`.github/workflows/ci.yml`) passes, merged only by
   `bin/merge-when-green.sh`. `bin/jarvis-restart.sh` runs typecheck and tests and only
-  restarts when both pass. `restartWhenIdle` then drains: the inbox is no
+  restarts when both pass. With `SELF_PR_AUTHOR`/`SELF_PR_REVIEWER` set, the
+  PR is opened as the author and reviewed and merged as the reviewer. `restartWhenIdle` then drains: the inbox is no
   longer read and timers that start turns hold, so it waits only for the turns
   already running, and anyone writing in meanwhile is told why, what it waits
   on and the latest it is back. Past 15 minutes it exits anyway and the rows it cut are

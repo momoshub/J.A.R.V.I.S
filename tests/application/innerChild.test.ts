@@ -148,6 +148,17 @@ describe("inner child", () => {
     expect(sent.slice(sent.indexOf("second question"))).toContain("answer to the second");
   });
 
+  test("a fix run carries the self PR account split from its deps", async () => {
+    cursor = now - 100;
+    addTurn();
+    triageAnswer = JSON.stringify([finding()]);
+    await build({ selfPrAccounts: { author: "writer", reviewer: "checker" } }).tick();
+    await settle();
+    expect(fixes).toHaveLength(1);
+    expect(fixes[0]!.text).toContain("GitHub accounts:");
+    expect(fixes[0]!.text).toContain("as `writer`");
+  });
+
   test("the same defect is never filed twice", async () => {
     cursor = now - 100;
     addTurn();

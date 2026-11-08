@@ -11,7 +11,7 @@ import { ticketChatRules } from "./ticketPrompt.ts";
 import { credentialGapRules } from "./credentialGap.ts";
 import { slackReadRules } from "./slackRead.ts";
 import { macUiRules } from "./macUi.ts";
-import { selfUpdateRules } from "./selfUpdate.ts";
+import { selfUpdateRules, type SelfPrAccounts } from "./selfUpdate.ts";
 import { SLACK_BREVITY, SLACK_FORMAT } from "./slackFormat.ts";
 import { BLOCK_KIT_RULES } from "./blockKit.ts";
 import { kitRules } from "./kitEvents.ts";
@@ -331,6 +331,8 @@ export type BuildSystemPromptOptions = PromptContext & {
   readonly desktopScript?: string;
   readonly repoPath?: string;
   readonly restartScript?: string;
+  /** Who opens the bot's own PRs and who reviews and merges them. */
+  readonly selfPrAccounts?: SelfPrAccounts;
   /** this turn's ticket, which carries who a triggered command runs as */
   readonly runTicket?: string;
   /** how many commands this turn may run before the runaway guard stops it */
@@ -416,7 +418,7 @@ export const buildSystemPromptParts = (
   // Self-fixing lives in a memory skill when this turn can see one.
   const skillsVisible =
     !!options.adapter && options.adapter.skills.length > 0 && options.adapterScope?.canReadFiles !== false;
-  const selfWork = selfUpdateRules(options.repoPath, options.restartScript, skillsVisible);
+  const selfWork = selfUpdateRules(options.repoPath, options.restartScript, skillsVisible, options.selfPrAccounts);
   // A turn that can read files carries the procedures as guides; one that
   // cannot (a sandboxed tier) could never open them, so it keeps them inline.
   const guided = !!options.guideDir && options.adapterScope?.canReadFiles !== false;

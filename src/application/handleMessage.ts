@@ -48,6 +48,7 @@ import type { ThreadSessionRepo } from "../infrastructure/db/threadSessionRepo.t
 import type { SlackAdminPort, SlackMessage } from "./slackAdmin.ts";
 import type { GitHubPort } from "./github.ts";
 import type { DraftReply } from "./draftReply.ts";
+import type { SelfPrAccounts } from "../domain/selfUpdate.ts";
 
 export type HandleMessageDeps = {
   users: UserRepo;
@@ -152,6 +153,8 @@ export type HandleMessageDeps = {
   restartScript?: string;
   /** The bot's own source tree, so it can work on itself. Admin+ only. */
   repoPath?: string;
+  /** Who opens the bot's own PRs and who reviews and merges them. Admin+ only, with repoPath. */
+  selfPrAccounts?: SelfPrAccounts;
   /** Long-running workflow sessions bound to a thread. */
   workflows?: WorkflowRepo;
   /** Pending access requests, so a stranger is put to the owner rather than refused. */
@@ -332,6 +335,7 @@ export const handleMessage = async (
     // restarted into is a crash-loop that cannot be fixed from Slack.
     repoPath: canTeach(decision.user.role) ? deps.repoPath : undefined,
     restartScript: canTeach(decision.user.role) ? deps.restartScript : undefined,
+    selfPrAccounts: canTeach(decision.user.role) ? deps.selfPrAccounts : undefined,
     // Offered to everyone: the command's own role gate decides what actually
     // runs, so asking in words can never do more than typing it would.
     runUrl: deps.runUrl,

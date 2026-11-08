@@ -106,19 +106,48 @@ export const restartWhenIdle = (deps: IdleRestartDeps): void => {
  * agent) and the two talk only on the PR: the reviewer posts each round as a
  * PR comment, the writer answers with a push and a comment saying what changed,
  * and the reviewer re-reads. Orca cannot wake the writer, so the writer polls
- * the PR for the next review comment. Both share one GitHub account, so each
- * comment opens with a marker that says who wrote it. GitHub cannot require
+ * the PR for the next review comment. Each comment opens with a marker that
+ * says who wrote it - they may share one GitHub account (see
+ * `selfPrAccountsRule` for when they do not). GitHub cannot require
  * the check on this plan, so `bin/merge-when-green.sh` is the CI gate.
  */
 export const STANDALONE_REVIEW_RULE =
-  "before you merge, a standalone reviewer agent reviews the PR and CI is green - every fix, no exceptions. The reviewer is an Orca worker, never the Agent tool, never a fork and never the session that wrote the code: open a fresh Run with `orca orchestration run-create --objective <short> --json` and start it with `orca orchestration worker-start --run <runId> --spec-file <brief> --task-title <short> --worktree path:<a folder or repo Orca knows, see `orca repo list`> --agent claude --json` (only if `orca status` says the runtime is not reachable or your tools refuse `orca`, use a background Agent tool reviewer on the same PR-comment protocol, and say so). Its brief gives the PR url and what the change is for, and tells it the whole review happens on the PR. It reads the diff only through `gh pr diff` / `gh pr view` and never checks out, edits or runs anything in the folder it starts in - that may be a live checkout other sessions share - and if it needs to run the checks it cuts its own `git worktree add` from `origin/<branch>` and removes it after. It reports correctness bugs, regressions, missing tests and stale docs as one PR comment that starts with `[review round N]` (N from 1) and ends with `VERDICT: clean` or `VERDICT: changes`, then polls the PR every 30s for a `[fix round N]` comment answering that round and re-reviews the head as `[review round N+1]`, even when that fix comment only pushes back or asks and the head did not move - it still counts as a round. It exits when it posts `VERDICT: clean`, after round 3, when the PR is merged or closed, or after 40 minutes with no new `[fix round N]` comment. You never use SendMessage or TaskStop for it. Never end your turn while it is open: wait for its next `[review round N]` comment in a Bash loop (background, or foreground chunks of up to 10 minutes re-run until the deadline) that also stops when `orca orchestration task-list --run <runId> --json` shows the reviewer task completed or failed with no new review comment, and gives up after 30 minutes - a reviewer that died or never answered is a review that is not clean. Fix every real finding on the branch, re-run `bun run typecheck` and `bun test`, push, then post a PR comment that starts with `[fix round N]` (the round you are answering) and says what you changed, finding by finding - push back or ask it the same way. After `[review round 3]` with `VERDICT: changes` the reviewer is gone: post no fix comment and wait for nothing. Both sides post from the same GitHub account, so the markers are how each tells the other apart: no attribution, no names. Only correctness, regression, test and doc findings block, style nits do not. At most 3 review rounds: if it is still not clean after the third, or the reviewer died or went silent, do not merge - leave the PR open, link it and say what is still open. Merge only with `bin/merge-when-green.sh <pr>` from the worktree, after the last push, with a Bash timeout of 600000: it waits for CI on that exact commit and refuses on red, exit 3 means CI has not finished so run it again, and red CI is a finding to fix like any other. Never fall back to a bare `gh pr merge`. Say in your reply what the reviewer found. Never merge before a clean review and green CI";
+  "before you merge, a standalone reviewer agent reviews the PR and CI is green - every fix, no exceptions. The reviewer is an Orca worker, never the Agent tool, never a fork and never the session that wrote the code: open a fresh Run with `orca orchestration run-create --objective <short> --json` and start it with `orca orchestration worker-start --run <runId> --spec-file <brief> --task-title <short> --worktree path:<a folder or repo Orca knows, see `orca repo list`> --agent claude --json` (only if `orca status` says the runtime is not reachable or your tools refuse `orca`, use a background Agent tool reviewer on the same PR-comment protocol, and say so). Its brief gives the PR url and what the change is for, and tells it the whole review happens on the PR. It reads the diff only through `gh pr diff` / `gh pr view` and never checks out, edits or runs anything in the folder it starts in - that may be a live checkout other sessions share - and if it needs to run the checks it cuts its own `git worktree add` from `origin/<branch>` and removes it after. It reports correctness bugs, regressions, missing tests and stale docs as one PR comment that starts with `[review round N]` (N from 1) and ends with `VERDICT: clean` or `VERDICT: changes`, then polls the PR every 30s for a `[fix round N]` comment answering that round and re-reviews the head as `[review round N+1]`, even when that fix comment only pushes back or asks and the head did not move - it still counts as a round. It exits when it posts `VERDICT: clean`, after round 3, when the PR is merged or closed, or after 40 minutes with no new `[fix round N]` comment. You never use SendMessage or TaskStop for it. Never end your turn while it is open: wait for its next `[review round N]` comment in a Bash loop (background, or foreground chunks of up to 10 minutes re-run until the deadline) that also stops when `orca orchestration task-list --run <runId> --json` shows the reviewer task completed or failed with no new review comment, and gives up after 30 minutes - a reviewer that died or never answered is a review that is not clean. Fix every real finding on the branch, re-run `bun run typecheck` and `bun test`, push, then post a PR comment that starts with `[fix round N]` (the round you are answering) and says what you changed, finding by finding - push back or ask it the same way. After `[review round 3]` with `VERDICT: changes` the reviewer is gone: post no fix comment and wait for nothing. The markers are how each side tells the other apart, even when both post from the same GitHub account: no attribution, no names. Only correctness, regression, test and doc findings block, style nits do not. At most 3 review rounds: if it is still not clean after the third, or the reviewer died or went silent, do not merge - leave the PR open, link it and say what is still open. Merge only with `bin/merge-when-green.sh <pr>` from the worktree, after the last push, with a Bash timeout of 600000: it waits for CI on that exact commit and refuses on red, exit 3 means CI has not finished so run it again, and red CI is a finding to fix like any other. Never fall back to a bare `gh pr merge`. Say in your reply what the reviewer found. Never merge before a clean review and green CI";
 
-const fullRules = (repoPath: string, restartScript: string): string => `
+/** The two GitHub logins a self-fix PR is split across. */
+export type SelfPrAccounts = { readonly author: string; readonly reviewer: string };
+
+/**
+ * Both logins or nothing: half a split would leave one step on the wrong
+ * account, and one login twice is no second pair of eyes.
+ */
+export const parseSelfPrAccounts = (author?: string, reviewer?: string): SelfPrAccounts | undefined => {
+  const a = author?.trim();
+  const r = reviewer?.trim();
+  return a && r && a.toLowerCase() !== r.toLowerCase() ? { author: a, reviewer: r } : undefined;
+};
+
+/**
+ * Owner's rule: the PR is opened by one account and reviewed and merged by
+ * another, so GitHub shows a real second pair of eyes. Each command picks its
+ * account with `GH_TOKEN=$(gh auth token -u <login>)` rather than `gh auth
+ * switch`, which would flip the active account under every other session.
+ * A login gh does not hold prints no token, and an empty GH_TOKEN is read as
+ * unset, so gh would quietly fall back to the active account: the rule makes
+ * that a stop, not a silent post under the wrong name.
+ */
+export const selfPrAccountsRule = (accounts?: SelfPrAccounts): string => {
+  if (!accounts) return "";
+  const as = (login: string) => `\`GH_TOKEN=$(gh auth token -u ${login})\``;
+  return `GitHub accounts: open the PR and post every \`[fix round N]\` comment as \`${accounts.author}\` (${as(accounts.author)} in front of \`gh pr create\` and \`gh pr comment\`); the reviewer posts every \`[review round N]\` comment as \`${accounts.reviewer}\` (say so in its brief, with ${as(accounts.reviewer)} in front of \`gh pr comment\`); merge as \`${accounts.reviewer}\`: ${as(accounts.reviewer)} in front of \`bin/merge-when-green.sh <pr>\`. Check each login first: if \`gh auth token -u <login>\` fails or prints nothing, stop and say so - an empty GH_TOKEN falls back to the active account without a word, and neither side may post or merge under the wrong one (say the same in the reviewer's brief). Never \`gh auth switch\`: it flips the account under every other session`;
+};
+
+const fullRules = (repoPath: string, restartScript: string, accounts?: SelfPrAccounts): string => `
 
 Working on your own source (${repoPath}):
 - you may read it like any other repository, but never edit it in place: other sessions share that folder, and two of them editing it at once is how changes get lost or tangled. It is Bun + TypeScript, functional, no classes, no \`any\`, and local imports carry \`.ts\`
 - every change goes this way: \`git fetch\`, \`git worktree add .claude/worktrees/<name> -b <branch> origin/main\`, edit and test there, push the branch, open a PR, get it reviewed by a standalone reviewer agent and green CI (next line), merge it yourself, then \`git -C ${repoPath} pull --no-rebase\` to bring it into the main folder, and only then restart
-- ${STANDALONE_REVIEW_RULE}
+- ${STANDALONE_REVIEW_RULE}${accounts ? `\n- ${selfPrAccountsRule(accounts)}` : ""}
 - a PR description and commits carry no attribution at all: no "Generated with ..." line (Jarvis or Claude Code) and no co-author trailer
 - adjust or add tests with any behaviour change. A change with no test is a change nobody can keep
 - once it is pulled into the main folder, \`${restartScript}\` runs \`bun run typecheck\` and \`bun test\`, and only restarts you if BOTH pass. It will refuse on a red build, which is the point: you would come back into code that does not compile, and \`KeepAlive\` would restart you into it every fifteen seconds until a human walked to the machine
@@ -137,14 +166,19 @@ Working on your own source (${repoPath}):
  * instance without the skill loses nothing. The instance skill repeats the
  * restart wait in prose; keep it in step with RESTART_MAX_WAIT_MS.
  */
-export const selfUpdateRules = (repoPath?: string, restartScript?: string, hasSkills = false): string => {
+export const selfUpdateRules = (
+  repoPath?: string,
+  restartScript?: string,
+  hasSkills = false,
+  accounts?: SelfPrAccounts,
+): string => {
   if (!repoPath || !restartScript) return "";
-  if (!hasSkills) return fullRules(repoPath, restartScript);
+  if (!hasSkills) return fullRules(repoPath, restartScript, accounts);
   return `
 
 Working on your own source (${repoPath}):
 - before changing it, read the skill in your memory about changing your own source: it holds the full procedure. The lines below always hold
-- never edit ${repoPath} in place, other sessions share it: \`git worktree add .claude/worktrees/<name> -b <branch> origin/main\`, docs and tests in the same PR, then a standalone reviewer agent (an Orca worker, fresh context, never you, talking only through PR comments) and green CI before you merge it yourself with \`bin/merge-when-green.sh\`, then \`git -C ${repoPath} pull --no-rebase\` and, for a code change, \`${restartScript}\`, which only restarts you if typecheck and tests pass
+- never edit ${repoPath} in place, other sessions share it: \`git worktree add .claude/worktrees/<name> -b <branch> origin/main\`, docs and tests in the same PR, then a standalone reviewer agent (an Orca worker, fresh context, never you, talking only through PR comments) and green CI before you merge it yourself with \`bin/merge-when-green.sh\`, then \`git -C ${repoPath} pull --no-rebase\` and, for a code change, \`${restartScript}\`, which only restarts you if typecheck and tests pass${accounts ? `\n- ${selfPrAccountsRule(accounts)}` : ""}
 - after the restart helper, say what you changed and that I restart once idle (up to ${Math.round(RESTART_MAX_WAIT_MS / 60_000)} minutes). Expect to be a new process: anything you were part-way through is gone
 - PR descriptions and commits carry no attribution at all
 - while I am running, never \`git stash\`, \`checkout\`, \`reset\` or \`rebase\` over \`data/*.db\`: it swaps the live database out and I crash mid-turn
