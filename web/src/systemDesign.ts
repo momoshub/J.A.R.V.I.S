@@ -16,7 +16,7 @@ export const REQUIREMENTS = {
     "Review pull requests, raise and close tickets, investigate logs, on request",
     "Wait for things (CI, a merge, a reply) and pick the thread back up by itself",
     "Be called from GitHub and answer there",
-    "Fix itself: PR, standalone review, green CI, merge, restart",
+    "Fix itself: PR, standalone review for runtime code, green CI, merge, restart",
   ],
   nonFunctional: [
     "Never lose a Slack message, across restarts and crashes",
@@ -40,6 +40,7 @@ export const LIMITS: Limit[] = [
   { label: "interactive ack wait", value: 2_500, unit: "ms", source: "src/domain/inbox.ts:ACK_WAIT_MS", why: "under Slack's 3s, so a modal's validation errors still arrive" },
   { label: "socket away before self-exit", value: 180_000, unit: "ms", source: "src/domain/connectionHealth.ts:CONNECTION_GRACE_MS", why: "a deaf socket looks alive; exiting lets launchd revive it" },
   { label: "offline notice lead", value: 600_000, unit: "ms", source: "src/domain/offlineAlarm.ts:OFFLINE_ALARM_LEAD_MS", why: "kept armed on Slack's side; Slack ignores a cancel within ~5 min of due" },
+  { label: "stuck-work sweep", value: 15 * 60_000, unit: "ms", source: "src/domain/stuckWork.ts:SWEEP_TICK_MS", why: "dead Orca workers and quiet PRs DMed to the owner; one item at most every 4h" },
   { label: "fastest watch poll", value: 15_000, unit: "ms", source: "src/domain/watch.ts:MIN_EVERY_MS", why: "a watch is a shell command on a timer" },
   { label: "longest watch", value: 6 * 60 * 60_000, unit: "ms", source: "src/domain/watch.ts:MAX_DEADLINE_MS", why: "a watch nobody ends is a leak with a timer" },
   { label: "always-on memory budget", value: 8_000, unit: "bytes", source: "src/domain/adapterCheck.ts:ALWAYS_ON_BUDGET", why: "what loads into every prompt; refine must get under it" },
@@ -99,6 +100,8 @@ export const TABLES: Table[] = [
     cols: [{ name: "id", key: "pk" }, { name: "trigger" }, { name: "state" }, { name: "slack_channel" }, { name: "slack_ts" }] },
   { name: "orca_questions", db: "bot.db", note: "Orca worker questions put to their thread, once", col: 1, row: 4,
     cols: [{ name: "message_id", key: "pk" }, { name: "run_id" }, { name: "dispatch_id" }, { name: "channel_id", key: "ref" }, { name: "thread_ts", key: "ref" }, { name: "state" }] },
+  { name: "orca_worker_usage", db: "bot.db", note: "an Orca worker's Claude session, tokens and list-price cost", col: 2, row: 4,
+    cols: [{ name: "dispatch_id", key: "pk" }, { name: "run_id" }, { name: "session_id" }, { name: "models" }, { name: "tokens" }, { name: "cost_usd" }] },
 ];
 
 export const RELATIONS: Relation[] = [

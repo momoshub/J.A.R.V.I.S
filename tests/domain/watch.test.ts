@@ -1,4 +1,5 @@
 import { describe, expect, test } from "bun:test";
+import { workerUsage, workerUsageLine } from "../../src/domain/workerUsage.ts";
 import {
   DEFAULT_EVERY_MS,
   gaveUpMessage,
@@ -370,6 +371,21 @@ describe("the worker hand-back says which of the three happened", () => {
     expect(m).toStartWith("Orca worker ctx_abc FINISHED after 10m (outcome succeeded)");
     expect(m).toContain("merge its PR");
     expect(m).toContain("Do it yourself, now");
+  });
+
+  test("a usage line becomes a sentence the turn repeats, never raw JSON", () => {
+    const usage = workerUsageLine(
+      workerUsage("ctx_abc", "sess-1", [
+        { model: "claude-opus-5-5", messages: 3, input: 1000, output: 2000, cacheWrite5m: 0, cacheWrite1h: 0, cacheRead: 0 },
+      ]),
+    );
+    const m = readyMessage("merge its PR", 600_000, `${line("finished", "outcome succeeded")}\n${usage}`);
+    expect(m).toContain("The worker used 3.0k tokens");
+    expect(m).toContain("at list price, claude-opus-5-5 (Claude session sess-1)");
+    expect(m).toContain("Say that in one line in your reply");
+    expect(m).not.toContain('"models"');
+    // no usage line, no sentence
+    expect(readyMessage("merge its PR", 600_000, line("finished", "outcome succeeded"))).not.toContain("The worker used");
   });
 
   test("died", () => {

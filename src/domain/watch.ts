@@ -17,6 +17,7 @@
  * that carries on. Polling costs nothing - no model, no session - and the
  * thread stays live the whole time.
  */
+import { parseWorkerUsageLine, usageSummary } from "./workerUsage.ts";
 
 /** How often a watch may poll at the fastest. Anything tighter is a spin. */
 export const MIN_EVERY_MS = 15_000;
@@ -372,6 +373,8 @@ export const orcaWorkerEvent = (stdout: string): WorkerEvent => {
 export const workerEventLine = (dispatchId: string, ev: { readonly kind: string; readonly detail: string }): string =>
   `orca worker ${dispatchId} ${ev.kind}: ${ev.detail}`;
 
+const USAGE_PREFIX = /^orca worker ctx_[A-Za-z0-9_-]+ usage \{/;
+
 const WORKER_LINE = /^orca worker (ctx_[A-Za-z0-9_-]+) (finished|died|waiting): (.*)$/m;
 
 /** The hand-back's opening, naming which of the three happened. */
@@ -415,7 +418,10 @@ const blockedLead = (tasks: readonly string[]): string =>
  * not ask for permission you were already given.
  */
 export const readyMessage = (note: string, waited: number, output?: string): string => {
-  const tail = (output ?? "").trim().split("\n").slice(-3).join("\n").slice(0, 400);
+  const usage = parseWorkerUsageLine(output ?? "");
+  // The usage line is JSON for the watcher to store; the turn gets it as a sentence.
+  const lines = (output ?? "").trim().split("\n").filter((l) => !(usage && USAGE_PREFIX.test(l)));
+  const tail = lines.slice(-3).join("\n").slice(0, 400);
   const worker = workerLead(output ?? "", waited);
   const blocked = worker ? [] : blockedTasks(output ?? "");
   return [
@@ -427,6 +433,9 @@ export const readyMessage = (note: string, waited: number, output?: string): str
     worker?.waiting
       ? "Unblock it yourself, now, when you can answer it from what you know or can look up; only when the question is genuinely a person's to answer, ask them here in one line. Do not do the planned part above until the worker has finished."
       : "Do it yourself, now, with the commands and tools you already have. This was agreed before the wait - you are finishing a job, not proposing one, so do not ask whether to go ahead and do not hand the steps back for someone else to type. If something genuinely stops you, say in one line what you tried and what blocked it.",
+    usage
+      ? `\nThe worker used ${usageSummary(usage)} (Claude session ${usage.sessionId}). Say that in one line in your reply, with the worker's result.`
+      : "",
     tail ? `\nWhat the check last printed:\n${tail}` : "",
   ]
     .join("\n")

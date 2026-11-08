@@ -300,7 +300,7 @@ Waiting for something to finish:
   \`${prefix} watch checks <pr-url> <what you will do next>\` - until CI stops running, pass or fail
   \`${prefix} watch reply <thread-link> [from <@someone>] <what you will do next>\` - until somebody answers there
   \`${prefix} watch url <url> <what you will do next>\` - until it responds
-  \`${prefix} watch worker <dispatchId> <what you will do next>\` - until that Orca worker finishes, dies or stands waiting for input; the hand-back says which. Set one right after EVERY \`orca orchestration worker-start\`, with the \`dispatchId\` it printed - one per worker
+  \`${prefix} watch worker <dispatchId> <what you will do next>\` - until that Orca worker finishes, dies or stands waiting for input; the hand-back says which, and what the worker used in tokens and list-price dollars (say it with the result). Set one right after EVERY \`orca orchestration worker-start\`, with the \`dispatchId\` it printed - one per worker. Asked later what a worker or a Run cost: \`${prefix} worker-cost <dispatchId|runId>\`
   \`${prefix} watch <what you will do next> -- <shell command that exits 0 when ready>\` - anything else
 - Add \`--every <interval>\` and \`--until <give up after>\` when the defaults (every minute, 45 minutes; every 3 minutes, 3 hours for \`worker\`) are wrong for it. A deploy you expect to take an hour needs \`--until 90m\`, not hope.
 - One watch per thing. If you are waiting on two, set two - they are cheap, and a single watch on the slower one loses the other.

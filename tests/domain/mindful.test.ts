@@ -21,6 +21,30 @@ const base: MindfulView = {
 };
 
 describe("mindfulReport", () => {
+  test("stuck Orca tasks and quiet PRs are shown with their threads, after broken turns", () => {
+    const out = mindfulReport(
+      {
+        ...base,
+        stuckWork: {
+          tasks: [{ taskId: "task_1", runId: "run_a", title: "review", why: "worker exited", owner: { channelId: "C1", threadTs: "1.2" } }],
+          prs: [{ number: 9, title: "fix", url: "https://github.com/o/r/pull/9", lastActivityAt: NOW - 3_600_000 }],
+          problems: [],
+        },
+      },
+      "acme",
+    );
+    expect(out).not.toContain("nothing running, nothing stuck");
+    expect(out).toContain("*orca tasks with no live worker* - 1");
+    expect(out).toContain("<https://acme.slack.com/archives/C1/p12|thread>");
+    expect(out).toContain("*quiet PRs* - 1");
+    expect(out).toContain("quiet 1h00m - no thread");
+  });
+
+  test("what could not be checked is said, not passed off as nothing", () => {
+    const out = mindfulReport({ ...base, stuckWork: { tasks: [], prs: [], problems: ["Orca (not running)"] } });
+    expect(out).toContain("_could not check: Orca (not running)_");
+  });
+
   test("a quiet instance says so instead of printing empty headings", () => {
     expect(mindfulReport(base)).toContain("nothing running, nothing stuck");
   });

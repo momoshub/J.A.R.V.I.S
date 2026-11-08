@@ -1,6 +1,7 @@
 /** Shared types and helpers for the command registry and its groups. */
 
 import type { ReviewGuard } from "../reviewGuard.ts";
+import type { WorkerUsagePort } from "../workerCost.ts";
 import { DEFAULT_BOT_NAME } from "../../domain/personality.ts";
 import { ALWAYS_ON_BUDGET } from "../../domain/adapterCheck.ts";
 import { type AdapterDeps } from "../adapterMemory.ts";
@@ -30,6 +31,7 @@ import type { UsageRepo } from "../../infrastructure/db/usageRepo.ts";
 import type { TurnLogRepo } from "../../infrastructure/db/turnLogRepo.ts";
 import type { WatchRepo } from "../../infrastructure/db/watchRepo.ts";
 import type { ReminderRepo } from "../../infrastructure/db/reminderRepo.ts";
+import type { StuckWork } from "../../domain/stuckWork.ts";
 import type { FollowRepo } from "../../infrastructure/db/followRepo.ts";
 import type { WorkflowRepo } from "../../infrastructure/db/workflowRepo.ts";
 import type { CommandApprovalRepo } from "../../infrastructure/db/commandApprovalRepo.ts";
@@ -56,6 +58,8 @@ export type CommandDeps = {
   slackWaitScript?: string;
   /** The command that runs `bin/orca-worker-wait.ts` (bun + script), for `watch worker`. */
   orcaWorkerWait?: readonly string[];
+  /** Measures what an Orca worker used, for `worker-cost`. */
+  workerUsage?: WorkerUsagePort;
   llm?: LlmPort;
   promptContext?: () => PromptContext;
   botInfo?: () => { botName: string; model: string };
@@ -86,6 +90,8 @@ export type CommandDeps = {
   reminders?: ReminderRepo;
   /** Minutes east of UTC that reminder times are read in. Defaults to the host's. */
   tzOffsetMinutes?: () => number;
+  /** Dispatched Orca tasks with no live worker and quiet PRs on the bot's own repo, for `mindful`. */
+  stuckWork?: () => Promise<StuckWork>;
   /** The workspace domain, so `mindful` can print clickable thread links. */
   slackTeam?: () => string | undefined;
   /**

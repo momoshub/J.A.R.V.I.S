@@ -98,6 +98,36 @@ export const migrate = (db: Database): void => {
   migrateRolePolicies(db);
   migrateDriftEvents(db);
   migrateOrcaQuestions(db);
+  migrateWorkerUsage(db);
+};
+
+/**
+ * Migration v27: what each Orca worker used.
+ *
+ * Orca keeps no tokens, cost or session id for a worker, so this row is the
+ * dispatch -> Claude session link plus the usage summed from its transcript,
+ * written when a `watch worker` fires and whenever `worker-cost` measures it.
+ * `models` is the per-model JSON (`ModelUsage[]`); `cost_usd` is list price,
+ * NULL when no model in it has a price.
+ */
+const migrateWorkerUsage = (db: Database): void => {
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS orca_worker_usage (
+      dispatch_id TEXT PRIMARY KEY,
+      run_id      TEXT NOT NULL DEFAULT '',
+      session_id  TEXT NOT NULL,
+      started_at  INTEGER,
+      models      TEXT NOT NULL,
+      tokens      INTEGER NOT NULL,
+      cost_usd    REAL,
+      measured_at INTEGER NOT NULL
+    );
+  `);
+  db.exec("CREATE INDEX IF NOT EXISTS idx_orca_worker_usage_run ON orca_worker_usage (run_id);");
+  const { user_version } = db.query<{ user_version: number }, []>("PRAGMA user_version").get() ?? {
+    user_version: 0,
+  };
+  if (user_version < 27) db.exec("PRAGMA user_version = 27;");
 };
 
 /**
