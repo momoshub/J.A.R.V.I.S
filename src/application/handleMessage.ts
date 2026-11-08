@@ -14,7 +14,8 @@ import {
   endAtTrigger,
   reactableMessages,
 } from "../domain/conversation.ts";
-import { buildSystemPrompt } from "../domain/personality.ts";
+import { buildSystemPrompt, buildSystemPromptParts } from "../domain/personality.ts";
+import type { PromptGuide } from "../domain/promptGuides.ts";
 import { adapterRules } from "../domain/adapter.ts";
 import { hasContent } from "../domain/mentions.ts";
 import type { Clock, LlmPort, LlmStreamSink } from "./ports.ts";
@@ -114,6 +115,13 @@ export type HandleMessageDeps = {
   threadSessionsOn?: () => boolean;
   /** Absolute path of the reaction helper, granted to every role. */
   reactScript?: string;
+  /**
+   * Where the how-to guides are written. Set, a turn that can read files gets
+   * the procedure blocks as files it reads on demand rather than inlined.
+   */
+  guideDir?: string;
+  /** Writes the guides a prompt points at, before the turn that reads them. */
+  writeGuides?: (dir: string, guides: readonly PromptGuide[]) => void;
   /** Absolute path of the Slack file downloader, granted to every role. */
   fileScript?: string;
   /** Absolute path of the read-only Grafana helper, granted to every role. */
@@ -278,7 +286,7 @@ export const handleMessage = async (
   // Needed before the prompt is built: a sandboxed turn cannot read the
   // adapter's files, so it must not be offered skills it could never open.
   const policy = deps.toolPolicy?.(decision.user.role, inbound.channelId);
-  const system = buildSystemPrompt({
+  const promptOptions: Parameters<typeof buildSystemPromptParts>[0] = {
     botName: ctx.botName,
     base: ctx.base,
     learnings: ctx.learnings,
@@ -330,7 +338,22 @@ export const handleMessage = async (
       participantIds: participants.map((p) => p.id),
       canReadFiles: tierOf(policy) === "full",
     },
-  });
+    // Only with somewhere to write them: a guide the turn cannot open is a
+    // rule it never sees.
+    guideDir: deps.writeGuides ? deps.guideDir : undefined,
+  };
+  const built = buildSystemPromptParts(promptOptions);
+  // The prompt names the guide files, so they must exist before it runs. A
+  // failed write falls back to the inlined prompt rather than pointing at
+  // files that are not there.
+  let system = built.prompt;
+  if (built.guides.length > 0 && deps.guideDir && deps.writeGuides) {
+    try {
+      deps.writeGuides(deps.guideDir, built.guides);
+    } catch {
+      system = buildSystemPromptParts({ ...promptOptions, guideDir: undefined }).prompt;
+    }
+  }
 
   // One CLI session per thread, per access tier: the model keeps its own context
   // between turns, so it is handed only what it has not seen rather than the

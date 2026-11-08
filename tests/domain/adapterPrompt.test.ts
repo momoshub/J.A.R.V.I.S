@@ -1,3 +1,4 @@
+import { guideIndexForFingerprint } from "../../src/domain/promptGuides.ts";
 import { describe, expect, test } from "bun:test";
 import { type Adapter, adapterRules, parseManifest } from "../../src/domain/adapter.ts";
 import { buildSystemPrompt } from "../../src/domain/personality.ts";
@@ -110,7 +111,7 @@ describe("the fingerprint and the short self-update block", () => {
     };
     const short = selfUpdateRules("/fp/repo", "/fp/restart", true);
     expect(short).toContain("read the skill in your memory");
-    expect(promptFingerprint(build, "persona")).toBe(hash("prompt", "", short));
+    expect(promptFingerprint(build, "persona")).toBe(hash("prompt", "", short, guideIndexForFingerprint()));
     expect(promptFingerprint(build, "persona")).not.toBe(hash("prompt", ""));
   });
 });

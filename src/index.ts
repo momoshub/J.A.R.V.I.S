@@ -6,6 +6,7 @@
  * the Slack listener and the dashboard. Everything below this file is decoupled
  * and independently testable.
  */
+import { writeGuides } from "./infrastructure/system/guideWriter.ts";
 import { mkdirSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { tmpdir } from "node:os";
@@ -447,6 +448,9 @@ const main = async () => {
     // A bug reported in chat becomes a ticket, but only once there is a tracker.
     canRaiseTickets: () => !!settings.get(SETTING_KEYS.ticketTracker)?.trim(),
     reactScript,
+    // The how-to guides a full-access turn reads on demand (promptGuides.ts).
+    guideDir: join(import.meta.dir, "..", "data", "prompt-guides"),
+    writeGuides,
     fileScript,
     grafanaGetScript,
     slackReadScript,
