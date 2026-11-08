@@ -54,6 +54,7 @@ import { loadGithubAppCredentials, webhookSecretOf } from "./infrastructure/gith
 import { startWebhookServer } from "./infrastructure/github/webhookServer.ts";
 import { createGithubAppRepo } from "./infrastructure/db/githubAppRepo.ts";
 import { createInnerChild } from "./application/innerChild.ts";
+import { createDriftRepo } from "./infrastructure/db/driftRepo.ts";
 import { createSelfIssueRepo } from "./infrastructure/db/selfIssueRepo.ts";
 import { NO_TOOLS } from "./domain/toolPolicy.ts";
 import { createReminderSender } from "./application/reminders.ts";
@@ -856,6 +857,37 @@ const main = async () => {
       if (result.kind === "ignored") return "";
       if (result.text.trim()) await slackAdmin.post(channelId, result.text, threadTs);
       return result.text;
+    },
+    // Voice drift: a nudge run in the drifted thread as whoever that turn
+    // answered (their role, their session), never posted there. Only its
+    // reply is, unless it is a silence note.
+    drift: {
+      events: createDriftRepo(db),
+      logChannel: () => {
+        const v = settings.get(SETTING_KEYS.innerChildDriftChannel)?.trim() ?? "";
+        if (v.toLowerCase() === "off") return "";
+        return v || config.drainNoticeChannel || "";
+      },
+      replies: (channel, threadTs) => slackAdmin.replies(channel, threadTs),
+      steer: async ({ channelId, threadTs, slackUserId, text }) => {
+        const result = await respond(deps, {
+          channelId,
+          slackUserId,
+          text,
+          threadTs,
+          messageTs: syntheticTs(clock()),
+          viaSlash: false,
+          following: false,
+          keepSession: true,
+          unprompted: true,
+        });
+        // A refusal (the person lost access since) is not posted: nobody asked.
+        if (result.kind !== "reply" || !result.text.trim()) return { text: "" };
+        if (isSilenceNote(result.text)) return { text: result.text };
+        const posted = await slackAdmin.post(channelId, result.text, threadTs);
+        return { text: result.text, ...(posted ? { ts: posted.ts } : {}) };
+      },
+      activity: (event, data) => activity.event(event, data),
     },
     log: (msg) => console.error(`[inner-child] ${msg}`),
   });

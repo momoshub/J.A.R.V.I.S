@@ -44,6 +44,8 @@ export const SETTING_KEYS = {
   innerChild: "inner_child",
   /** Where its last triage stopped (ms), so a restart neither re-reads nor skips. */
   innerChildCursor: "inner_child_cursor",
+  /** Channel each voice-drift nudge is logged in. Empty falls back to `DRAIN_NOTICE_CHANNEL`; "off" stops drift steering. */
+  innerChildDriftChannel: "inner_child_drift_channel",
   /** Channel GitHub review requests of the bot's account are posted and reviewed in. Empty = off. */
   reviewInboxChannel: "review_inbox_channel",
   /** ISO time of the last review request handled. */
