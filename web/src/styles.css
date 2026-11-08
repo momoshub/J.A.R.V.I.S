@@ -4,7 +4,7 @@
  * colour is a variable so a page never hard-codes one.
  */
 :root {
-  color-scheme: light dark;
+  color-scheme: light;
   --bg: #faf9f5;
   --panel: #ffffff;
   --panel-2: #f5f4ed;
@@ -36,33 +36,33 @@
   --mono: ui-monospace, SFMono-Regular, Menlo, monospace;
 }
 
-@media (prefers-color-scheme: dark) {
-  :root {
-    --bg: #262624;
-    --panel: #30302e;
-    --panel-2: #2a2a28;
-    --sidebar: #1f1e1d;
-    --border: #3d3d3a;
-    --border-strong: #4a4a46;
-    --text: #f0eee6;
-    --muted: #a6a39a;
-    --accent: #d97757;
-    --accent-ink: #1f1e1d;
-    --accent-soft: rgba(217, 119, 87, 0.14);
-    --accent-line: rgba(217, 119, 87, 0.38);
-    --link: #e5947a;
-    --code: #e5a88f;
-    --code-bg: rgba(240, 238, 230, 0.06);
-    --danger: #e07a70;
-    --danger-soft: rgba(224, 122, 112, 0.12);
-    --ok: #8fbf9a;
-    --ok-soft: rgba(143, 191, 154, 0.13);
-    --info: #9bb4d1;
-    --info-soft: rgba(155, 180, 209, 0.13);
-    --hover: rgba(240, 238, 230, 0.05);
-    --shadow: 0 1px 2px rgba(0, 0, 0, 0.2);
-    --shadow-float: 0 8px 28px rgba(0, 0, 0, 0.45);
-  }
+/* Dark, when index.html or the toggle resolves it (system preference included). */
+:root[data-theme="dark"] {
+  color-scheme: dark;
+  --bg: #262624;
+  --panel: #30302e;
+  --panel-2: #2a2a28;
+  --sidebar: #1f1e1d;
+  --border: #3d3d3a;
+  --border-strong: #4a4a46;
+  --text: #f0eee6;
+  --muted: #a6a39a;
+  --accent: #d97757;
+  --accent-ink: #1f1e1d;
+  --accent-soft: rgba(217, 119, 87, 0.14);
+  --accent-line: rgba(217, 119, 87, 0.38);
+  --link: #e5947a;
+  --code: #e5a88f;
+  --code-bg: rgba(240, 238, 230, 0.06);
+  --danger: #e07a70;
+  --danger-soft: rgba(224, 122, 112, 0.12);
+  --ok: #8fbf9a;
+  --ok-soft: rgba(143, 191, 154, 0.13);
+  --info: #9bb4d1;
+  --info-soft: rgba(155, 180, 209, 0.13);
+  --hover: rgba(240, 238, 230, 0.05);
+  --shadow: 0 1px 2px rgba(0, 0, 0, 0.2);
+  --shadow-float: 0 8px 28px rgba(0, 0, 0, 0.45);
 }
 
 * { box-sizing: border-box; }
@@ -95,9 +95,9 @@ body {
   overflow-x: hidden;
   overflow-y: auto;
 }
-.brand { display: flex; align-items: center; gap: 10px; padding: 4px 4px 20px 10px; }
+.brand { display: flex; align-items: center; gap: 4px; padding: 4px 4px 20px 10px; }
+.brand .mark { width: 26px; height: 26px; flex: none; color: var(--accent); margin-right: 6px; }
 .brand-text { flex: 1; min-width: 0; }
-.brand .mark { width: 26px; height: 26px; flex: none; color: var(--accent); }
 .brand-name { font-family: var(--serif); font-size: 19px; font-weight: 500; letter-spacing: -0.2px; line-height: 1.1; }
 .brand-sub { color: var(--muted); font-size: 12px; }
 .nav-group { color: var(--muted); font-size: 11.5px; font-weight: 500; padding: 14px 12px 4px; }
@@ -117,7 +117,8 @@ body {
 .nav-icon { flex: none; opacity: 0.75; }
 .sidebar nav a.active .nav-icon, .sidebar nav a:hover .nav-icon { opacity: 1; color: var(--accent); }
 .app.collapsed .sidebar { padding: 20px 10px; }
-.app.collapsed .brand { flex-direction: column; padding: 4px 0 14px; gap: 12px; }
+.app.collapsed .brand { flex-direction: column; padding: 4px 0 14px; gap: 8px; }
+.app.collapsed .brand .mark { margin: 0 0 4px; }
 .app.collapsed .brand-text, .app.collapsed .nav-group, .app.collapsed .nav-label, .app.collapsed .side-foot { display: none; }
 .app.collapsed .sidebar nav { padding-top: 8px; margin-top: 4px; border-top: 1px solid var(--border); align-items: center; }
 .app.collapsed .sidebar nav:first-of-type { border-top: none; }
@@ -250,7 +251,7 @@ button.link.danger-link { color: var(--danger); }
   .side-foot { display: none; }
   main { padding: 28px 18px; }
   /* On a phone the sidebar is already a top bar, so collapsing does nothing. */
-  .side-toggle { display: none; }
+  .collapse-toggle { display: none; }
   .app.collapsed { grid-template-columns: 1fr; }
   .app.collapsed .sidebar { padding: 20px 14px; }
   .app.collapsed .brand { flex-direction: row; padding: 4px 10px 4px; }

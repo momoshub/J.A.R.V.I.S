@@ -805,7 +805,7 @@ Some tools are **denied to every role, full access included** - `--disallowedToo
 
 ## Dashboard
 
-A **React 19 + Vite + React Router 7** single-page app (in `web/`, library-mode `react-router` package) served by the bot and backed by a JSON API under `/api`. It wears a Claude-style theme (ivory paper, clay accent, serif headings) in `web/src/styles.css`, light by default and dark when the OS is - every colour is a CSS variable, so pages never hard-code one. Open `http://localhost:2001/` - it is loopback-only with no auth token (mutations still keep an automatic same-origin CSRF check). Tabs:
+A **React 19 + Vite + React Router 7** single-page app (in `web/`, library-mode `react-router` package) served by the bot and backed by a JSON API under `/api`. It wears a Claude-style theme (ivory paper, clay accent, serif headings) in `web/src/styles.css`, light or dark. The theme button beside the sidebar toggle cycles system -> light -> dark (remembered per browser); "system" follows the OS live. Every colour is a CSS variable, so pages never hard-code one. Open `http://localhost:2001/` - it is loopback-only with no auth token (mutations still keep an automatic same-origin CSRF check). Tabs:
 
 The sidebar collapses to a slim rail of icons, with each page's full name as the tooltip and accessible name (toggle button or Ctrl/Cmd+B, remembered per browser in `localStorage`); on a phone it is a top bar of text links and does not collapse.
 
