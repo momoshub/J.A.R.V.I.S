@@ -1,4 +1,4 @@
-import { useLoaderData, useSearchParams } from "react-router-dom";
+import { useLoaderData, useSearchParams } from "react-router";
 import type { UsageView } from "./api.ts";
 
 /** 1_234_567 -> "1.2M". The same shapes the Slack report uses. */

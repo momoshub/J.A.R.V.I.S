@@ -160,7 +160,7 @@ Concrete implementations of the seams and the transports.
 - `github/` - `gh` CLI wrapper and review-request polling; the GitHub App's fetch client (`appClient.ts`, RS256 JWT -> cached installation token), credentials from files (`appCredentials.ts`) and webhook listener (`webhookServer.ts`)
 - `system/` - host probes (system load, Accessibility access, shell checks for watches), and `guideWriter.ts`, which writes the prompt's how-to guides to `data/prompt-guides`
 - `dashboard/server.ts` - `Bun.serve` JSON API under `/api` plus the React SPA built to `web/dist`
-- `web/` - the dashboard front end: React 19 + Vite + React Router 7
+- `web/` - the dashboard front end: React 19 + Vite + React Router 7 (`react-router` package)
 
 ### `src/config`
 
