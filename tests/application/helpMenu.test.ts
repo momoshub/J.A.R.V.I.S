@@ -7,6 +7,7 @@ import type { InteractiveMenu, SlackAdminPort } from "../../src/application/slac
 import type { AllowedUser } from "../../src/domain/types.ts";
 import { MENU_SELECT_ACTION, menuRunActionId } from "../../src/domain/commandMenu.ts";
 import type { SystemReading } from "../../src/domain/systemStatus.ts";
+import { toBlockMessage } from "../../src/domain/blockKit.ts";
 
 const OWNER = "U0OWNER";
 const actor = (role: AllowedUser["role"] = "owner"): AllowedUser => ({
@@ -156,16 +157,46 @@ describe("help as a menu", () => {
 });
 
 describe("sys", () => {
-  test("it reports the host, leading with the verdict", async () => {
+  test("it reports the host as Block Kit, leading with the verdict, with today's text as the fallback", async () => {
     const d = deps({
       system: { read: async () => reading, history: () => [reading], stop: () => {} },
       botInfo: () => ({ botName: "Jarvis", model: "opus" }),
     });
-    const out = await run(d, "sys");
+    const msg = toBlockMessage(await run(d, "sys"));
 
-    expect(out).toContain("nothing abnormal");
-    expect(out).toContain("*cpu*");
-    expect(out).toContain("*memory*");
+    expect(msg?.blocks[0]).toMatchObject({ type: "header", text: { text: ":large_green_circle: Nothing abnormal" } });
+    expect(msg?.text).toContain("nothing abnormal");
+    expect(msg?.text).toContain("*cpu*");
+    expect(msg?.text).toContain("*memory*");
+    // No Orca probe wired: no Orca section at all, rather than "unreachable".
+    expect(msg?.text).not.toContain("orca");
+    expect(msg?.plain).toBe(msg?.text);
+  });
+
+  test("with Orca wired it adds the Orca section; with Orca down, one line and the rest stands", async () => {
+    const system = { read: async () => reading, history: () => [], stop: () => {} };
+    const up = deps({
+      system,
+      orca: {
+        read: async () => ({
+          kind: "ok",
+          runtime: { reachable: true, state: "ready", appRunning: true, appPid: 42 },
+          runs: [{ id: "run_a", objective: "ship it" }],
+          tasks: [{ id: "t1", runId: "run_a", title: "build", status: "dispatched", createdAt: 1_700_000_000_000 - 90_000 }],
+          unreadRuns: 0,
+          moreRuns: false,
+        }),
+      },
+    });
+    const ok = toBlockMessage(await run(up, "sys"));
+    expect(ok?.text).toContain("*orca* ready, app pid 42 - 1 active run: 1 running, 0 completed");
+    expect(ok?.text).toContain("- build (ship it, 1m)");
+    expect(ok?.blocks.map((b) => b.type)).toContain("table");
+
+    const down = deps({ system, orca: { read: async () => ({ kind: "unreachable", reason: "timed out" }) } });
+    const msg = toBlockMessage(await run(down, "sys"));
+    expect(msg?.text).toContain("*cpu*");
+    expect(msg?.text).toContain("*orca* unreachable (timed out)");
   });
 
   test("it says so rather than inventing numbers when it cannot read the host", async () => {

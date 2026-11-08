@@ -64,6 +64,7 @@ import { NO_TOOLS } from "./domain/toolPolicy.ts";
 import { createReminderSender } from "./application/reminders.ts";
 import { createShellCheck } from "./infrastructure/system/shellCheck.ts";
 import { createOrcaCli, createOrcaTerminal } from "./infrastructure/system/orcaTerminal.ts";
+import { createOrcaProbe } from "./infrastructure/system/orcaProbe.ts";
 import { measureWorker, runDispatches } from "./infrastructure/system/workerTranscript.ts";
 import { createWorkerUsageRepo } from "./infrastructure/db/workerUsageRepo.ts";
 import { keepWorkerUsage } from "./application/workerCost.ts";
@@ -542,6 +543,8 @@ const main = async () => {
     stuckWork: stuckWorkProbe.scan,
     reviewGuard: createReviewGuard(clock),
     system,
+    // Orca for `sys`: runtime, Runs and live workers, bounded and never throwing.
+    orca: createOrcaProbe({ run: createOrcaCli() }),
     threadSessionsOn: () => settings.get(SETTING_KEYS.threadSessions)?.trim().toLowerCase() !== "off",
     // A stranger is put to the owner for a ✅ / ❌ rather than refused outright.
     accessRequests,

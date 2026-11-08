@@ -3,6 +3,7 @@ import type { WebClient } from "@slack/web-api";
 import { createSlackAdmin } from "../../src/infrastructure/slack/adminClient.ts";
 import { FOOTER_BLOCK_ID, footerLine } from "../../src/domain/messageFooter.ts";
 import { usageFooter } from "../../src/domain/usageFooter.ts";
+import { blockKitReply } from "../../src/domain/blockKit.ts";
 
 const NOW = 1_794_123_692_000;
 
@@ -97,6 +98,21 @@ describe("every message the admin client writes is signed", () => {
     expect(calls.map(([, a]) => Array.isArray(a.blocks))).toEqual([true, true, false]);
     expect(calls[2]?.[1]).toEqual({ channel: "C1", text: "still here", thread_ts: "100.1" });
     expect(ref).toEqual({ channel: "C1", ts: "3.0" });
+  });
+
+  test("a Block Kit reply with its own words falls back to those words, never its JSON", async () => {
+    // First post (the rich blocks) refused; the fallback posts carry the fence's text.
+    let first = true;
+    const { calls, admin } = fake(() => {
+      const refuse = first;
+      first = false;
+      return refuse;
+    });
+    await admin.post("C1", blockKitReply("*cpu* fine", [{ type: "header", text: { type: "plain_text", text: "ok" } }]), "100.1");
+    expect((calls[0]?.[1].blocks as Block[])[0]?.type).toBe("header");
+    expect(calls[0]?.[1].text).toBe("*cpu* fine");
+    expect(calls[1]?.[1].text).toBe("*cpu* fine");
+    expect(JSON.stringify(calls[1]?.[1])).not.toContain("blockkit");
   });
 
   test("an edit sends blocks, so the old ones never stay on screen, and is restamped", async () => {

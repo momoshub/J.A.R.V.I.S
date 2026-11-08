@@ -4,6 +4,7 @@ import {
   createKitListeners,
   retireOpenKit,
   shouldHandleDm,
+  slashReply,
   threadKeyOf,
   type Incoming,
   type SlackAppConfig,
@@ -16,6 +17,7 @@ import { createMessageRepo } from "../../src/infrastructure/db/messageRepo.ts";
 import type { LlmPort, LlmStreamEvent } from "../../src/application/ports.ts";
 import type { RespondDeps } from "../../src/application/respond.ts";
 import { FOOTER_BLOCK_ID } from "../../src/domain/messageFooter.ts";
+import { blockKitReply } from "../../src/domain/blockKit.ts";
 
 const OWNER = "U0OWNER0001";
 
@@ -66,6 +68,8 @@ const build = (opts: {
   streamUpdates: boolean;
   rec?: Recorded;
   thinkingAfterMs?: number;
+  /** `say` throws on any post carrying blocks, as Slack does on `invalid_blocks`. */
+  refuseBlocks?: boolean;
 }) => {
   const db = openDatabase(":memory:");
   const users = createUserRepo(db);
@@ -118,7 +122,10 @@ const build = (opts: {
     threadTs,
     messageTs: "111.1",
     client,
-    say: async (m) => said.push({ text: m.text, ...(m.reply_broadcast ? { reply_broadcast: true } : {}) }),
+    say: async (m) => {
+      if (opts.refuseBlocks && m.blocks?.some((b) => b.type !== "markdown" && b.type !== "context")) throw new Error("invalid_blocks");
+      said.push({ text: m.text, ...(m.reply_broadcast ? { reply_broadcast: true } : {}) });
+    },
   });
   return { handle, msg, said, updates, deletes, rec, messages };
 };
@@ -877,5 +884,27 @@ describe("Block Kit the brain built", () => {
     expect(r.acks).toHaveLength(2);
     expect(r.turns).toHaveLength(1);
     expect(r.turns[0]?.text).toContain("closed the modal");
+  });
+});
+
+describe("a Block Kit reply that carries its own words", () => {
+  const reply = blockKitReply("*cpu* fine", [{ type: "header", text: { type: "plain_text", text: "ok" } }]);
+
+  test("posts the blocks with the words as text, and refused, posts the words - never the JSON", async () => {
+    const ok = build({ llm: streamingLlm(reply), streamUpdates: false });
+    await ok.handle(ok.msg("hi"));
+    expect(ok.said.map((m) => m.text)).toEqual(["*cpu* fine"]);
+
+    const refused = build({ llm: streamingLlm(reply), streamUpdates: false, refuseBlocks: true });
+    await refused.handle(refused.msg("hi"));
+    expect(refused.said.map((m) => m.text)).toEqual(["*cpu* fine"]);
+  });
+
+  test("a slash command answers with the blocks and the words, not the fence", () => {
+    const out = slashReply(reply);
+    expect(out.text).toBe("*cpu* fine");
+    expect(out.blocks?.[0]?.type).toBe("header");
+    expect(JSON.stringify(out)).not.toContain("blockkit");
+    expect(slashReply("plain words")).toEqual({ response_type: "ephemeral", text: "plain words" });
   });
 });
