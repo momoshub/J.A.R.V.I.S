@@ -349,4 +349,33 @@ describe("workflow auto-continue", () => {
     const streamed = seen.map((e) => (e.type === "text" ? e.delta : "")).join("");
     expect(streamed).not.toContain("[");
   });
+
+  test("a step nobody watched carries its usage to the reply, signed by the worker", async () => {
+    const b = build(keepGoing);
+    await b.start("x");
+    const usage = {
+      model: "claude-opus-5-5",
+      inputTokens: 1,
+      outputTokens: 2,
+      cacheReadTokens: 3,
+      cacheWriteTokens: 4,
+      costUsd: 0.25,
+      durationMs: 5000,
+    };
+    b.deps.llm = {
+      complete: async (p) => {
+        p.onUsage?.(usage);
+        return "step done.\n[continue]";
+      },
+    };
+    const res = await respond(b.deps, {
+      channelId: C,
+      slackUserId: OWNER,
+      text: CONTINUE_MESSAGE,
+      threadTs: T,
+      messageTs: "999.9",
+      autoContinue: true,
+    });
+    expect(res).toEqual({ kind: "reply", text: "step done.", by: "workflow worker", usage });
+  });
 });
