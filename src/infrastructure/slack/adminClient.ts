@@ -218,10 +218,13 @@ export const createSlackAdmin = (client: WebClient, clock: () => number = Date.n
     update: async (channel, ts, text, by) => {
       // Blocks every time: an edit that sent only text would keep the old
       // blocks on screen, footer and all, and change nothing anyone sees.
-      // A refused rewrite (a stopped stream's block_mismatch, say) still edits
-      // the words, text-only, as before.
+      // A refused markdown block is retried as sections; a refused rewrite
+      // (a stopped stream's block_mismatch, say) still edits the words,
+      // text-only, as before.
+      const line = footer(by);
       await client.chat
-        .update({ channel, ts, ...signedText(text, footer(by)) })
+        .update({ channel, ts, ...signedText(text, line) })
+        .catch(() => client.chat.update({ channel, ts, ...signedSections(text, line) }))
         .catch(() => client.chat.update({ channel, ts, text }));
     },
 
@@ -393,8 +396,8 @@ export const createSlackAdmin = (client: WebClient, clock: () => number = Date.n
       // Drop the buttons so a decided request cannot be clicked again.
       await client.chat
         .update({ channel, ts, ...signedText(text, footer(by)) })
-        // Refused: the same sections unsigned (still no buttons), and failing
-        // that a text-only edit, so at least the words change.
+        // Refused: the text as unsigned sections (still no buttons), and
+        // failing that a text-only edit, so at least the words change.
         .catch(() =>
           client.chat.update({
             channel,

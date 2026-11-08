@@ -102,8 +102,24 @@ describe("every message the admin client writes is signed", () => {
       },
     } as unknown as WebClient;
     await createSlackAdmin(client, () => NOW).update("C1", "5.5", "edited");
+    expect(calls).toHaveLength(3);
+    expect(calls[2]).toEqual({ channel: "C1", ts: "5.5", text: "edited" });
+  });
+
+  test("an edit whose markdown block is refused is retried as signed sections, not text-only", async () => {
+    const calls: Record<string, unknown>[] = [];
+    const client = {
+      chat: {
+        update: async (a: Record<string, unknown>) => {
+          calls.push(a);
+          if ((a.blocks as Block[] | undefined)?.some((b) => b.type === "markdown")) throw new Error("invalid_blocks");
+        },
+      },
+    } as unknown as WebClient;
+    await createSlackAdmin(client, () => NOW).update("C1", "5.5", "draining: 1 turn left", "command");
     expect(calls).toHaveLength(2);
-    expect(calls[1]).toEqual({ channel: "C1", ts: "5.5", text: "edited" });
+    expect((calls[1]?.blocks as Block[]).map((b) => b.type)).toEqual(["section", "context"]);
+    expect(signedBy(calls[1])).toStartWith("command · ");
   });
 
   test("a refused settle still drops the buttons, unsigned, then falls back to text-only", async () => {
