@@ -109,7 +109,8 @@ export const createOfflineAlarm = (deps: OfflineAlarmDeps): OfflineAlarm => {
 
   const cancelAll = async (): Promise<void> => {
     for (const s of await deps.slack.scheduled(deps.channel)) {
-      if (isArmedNotice(s.text)) await deps.slack.unschedule(deps.channel, s.id);
+      if (!isArmedNotice(s.text)) continue;
+      await deps.slack.unschedule(deps.channel, s.id).catch((e: unknown) => log(`could not cancel ${s.id}: ${message(e)}`));
     }
   };
 

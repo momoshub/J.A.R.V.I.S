@@ -153,6 +153,26 @@ describe("offline alarm", () => {
     expect(s.armed).toHaveLength(0);
   });
 
+  test("disarm keeps cancelling past one that fails", async () => {
+    const lines: string[] = [];
+    const s = fakeSlack();
+    s.armed.push({ id: "A", postAt: 1, text: offlineNotice(1).text }, { id: "B", postAt: 1, text: offlineNotice(2).text });
+    let first = true;
+    const flaky: OfflineAlarmSlack = {
+      ...s.slack,
+      unschedule: async (c, id) => {
+        if (first) {
+          first = false;
+          throw new Error("message_not_found");
+        }
+        return s.slack.unschedule(c, id);
+      },
+    };
+    await createOfflineAlarm({ channel: "C1", slack: flaky, clock: () => 1, log: (l) => lines.push(l) }).disarm();
+    expect(s.armed.map((a) => a.id)).toEqual(["A"]);
+    expect(lines[0]).toContain("could not cancel A");
+  });
+
   test("disarm offline only logs", async () => {
     const lines: string[] = [];
     const s = fakeSlack({ offline: () => true });
