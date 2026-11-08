@@ -97,9 +97,11 @@ no classes.
   a channel and run as a turn in that thread as the matched Slack person; the
   turn answers on GitHub through `bin/github-app-comment.sh` ->
   `/api/github-app/comment`, ticketed and bound to that one issue.
-- **Self-update.** A fix lands through a PR that a reviewer Orca worker
-  reads (rounds are PR comments, fixes are pushes) and CI (`.github/workflows/ci.yml`) passes, merged only by
-  `bin/merge-when-green.sh`. `bin/jarvis-restart.sh` runs typecheck and tests and only
+- **Self-update.** A fix lands through a PR that CI (`.github/workflows/ci.yml`)
+  passes, merged only by `bin/merge-when-green.sh`. When it touches runtime code
+  (logic, commands, adapters, `bin/` scripts, or a mixed PR) a reviewer Orca worker
+  reads it first, at most 2 rounds (rounds are PR comments, fixes are pushes); docs,
+  prompt text, skills and dashboard UI need no reviewer. `bin/jarvis-restart.sh` runs typecheck and tests and only
   restarts when both pass. With `SELF_PR_AUTHOR`/`SELF_PR_REVIEWER` set, the
   PR is opened as the author and reviewed, approved and merged as the reviewer
   (the approval is fired by `merge-when-green.sh` right before the merge). `restartWhenIdle` then drains: timers that start turns hold, and new
