@@ -447,6 +447,9 @@ describe("a message with several questions", () => {
     expect(out).toContain("Background agents always run as Orca workers, never the Agent tool");
     expect(out).toContain("orca orchestration worker-start");
     expect(out).toContain("Orca still cannot wake you");
+    // a worker's question comes back as a turn, answered with reply
+    expect(out).toContain("`[orca question]`");
+    expect(out).toContain("`orca orchestration reply`");
     // the turn orchestrates from the bot's own terminal, never a borrowed one
     expect(out).toContain("`ORCA_TERMINAL_HANDLE` in your environment is the bot's own Orca terminal");
     expect(out).toContain("never pass another pane's handle");

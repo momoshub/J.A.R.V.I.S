@@ -97,6 +97,47 @@ export const migrate = (db: Database): void => {
   migrateGithubApp(db);
   migrateRolePolicies(db);
   migrateDriftEvents(db);
+  migrateOrcaQuestions(db);
+};
+
+/**
+ * Migration v26: Orca questions bridged back to Slack.
+ *
+ * `orca_threads` remembers which thread started each Orca worker, keyed by
+ * its dispatch id and by its Run id (`ctx_...` / `run_...`); the first thread
+ * to name an id keeps it. `orca_questions` is one row per worker question the
+ * bridge has acted on, so it is put to the thread at most once and a restart
+ * picks up a delivery that was cut. `state` runs `delivering -> delivered`,
+ * or ends `answered` / `closed` / `refused` / `gave_up` without a turn.
+ */
+const migrateOrcaQuestions = (db: Database): void => {
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS orca_threads (
+      orca_id       TEXT PRIMARY KEY,
+      channel_id    TEXT NOT NULL,
+      thread_ts     TEXT NOT NULL,
+      slack_user_id TEXT NOT NULL,
+      created_at    INTEGER NOT NULL
+    );
+  `);
+  db.exec("CREATE INDEX IF NOT EXISTS idx_orca_threads_created ON orca_threads (created_at);");
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS orca_questions (
+      message_id  TEXT PRIMARY KEY,
+      run_id      TEXT NOT NULL,
+      dispatch_id TEXT NOT NULL,
+      channel_id  TEXT NOT NULL,
+      thread_ts   TEXT NOT NULL,
+      state       TEXT NOT NULL,
+      attempts    INTEGER NOT NULL DEFAULT 0,
+      created_at  INTEGER NOT NULL,
+      updated_at  INTEGER NOT NULL
+    );
+  `);
+  const { user_version } = db.query<{ user_version: number }, []>("PRAGMA user_version").get() ?? {
+    user_version: 0,
+  };
+  if (user_version < 26) db.exec("PRAGMA user_version = 26;");
 };
 
 /**

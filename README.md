@@ -47,7 +47,7 @@ Required / notable env (see `.env.example`):
 | `CLAUDE_MODEL_PAL` | model for `pal` chat (default `haiku`) - see [Model per role](#model-per-role) |
 | `CLAUDE_SKIP_PERMISSIONS` | `true` grants full tool access - see the security note (claude-cli) |
 | `CLAUDE_CWD` | working dir for the CLI; blank = neutral temp dir outside this repo |
-| `ORCA_TERMINAL_WORKTREE` | Orca worktree selector the bot opens its own terminal in, handed to every turn as `ORCA_TERMINAL_HANDLE` so it can run `orca orchestration` (default `path:~/Workspaces`; `off` disables). Orca not running = no handle, turns fall back to the Agent tool |
+| `ORCA_TERMINAL_WORKTREE` | Orca worktree selector the bot opens its own terminal in, handed to every turn as `ORCA_TERMINAL_HANDLE` so it can run `orca orchestration` (default `path:~/Workspaces`; `off` disables). Orca not running = no handle, turns fall back to the Agent tool. A question one of those workers asks (`orca orchestration ask`) is put to the Slack thread that started it as a turn, which answers it with `orca orchestration reply` - see [Orca workers' questions](#orca-workers-questions) |
 | `ANTHROPIC_API_KEY` / `ANTHROPIC_MODEL` | required only when `LLM_PROVIDER=anthropic` |
 | `BOT_NAME` | bootstrap bot name for a fresh DB (default `Assistant`) |
 | `BOT_THINKING_LABEL` / `BOT_THINKING_DONE_LABEL` | bootstrap "thinking" step labels |
@@ -559,6 +559,22 @@ work finished on its own.
 A stopped turn is **not** reported as a failure. It is killed the same way a
 timeout kills one, so without care it would come back as "ran past my time
 limit"; whoever stopped it already knows, and the thread has been told.
+
+## Orca workers' questions
+
+A turn that starts an Orca worker (`orca orchestration worker-start`) is that
+worker's coordinator, through the bot's own Orca terminal - a bare shell, so
+nobody would see a question the worker asks, and it would wait forever. The
+bot links every worker to the Slack thread whose turn started it (chat or
+workflow; a GitHub App turn has no thread and is not linked), reads each such
+Run's mailbox every 30 seconds, and puts any question still waiting to that
+thread as a turn opening with `[orca question]`. The turn answers it with
+`orca orchestration reply` from what the thread knows, or picks the safe
+option and says so; it never waits on the thread. Each question is delivered
+once, a delivery a restart cut is retried while the question is still open,
+and an answered question or a finished worker gets no turn. In a workflow
+thread the question goes to the workflow's worker session, not the front,
+since only the worker can run `orca`.
 
 ## One turn at a time
 
