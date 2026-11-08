@@ -49,8 +49,8 @@ describe("outageLength", () => {
 });
 
 describe("alarm timing", () => {
-  test("the lead stays clear of Slack's ~5 min window where a cancel is ignored", () => {
+  test("the lead stays clear of Slack's ~5 min window where a cancel is ignored, even with a tick skipped", () => {
     // Inside it chat.deleteScheduledMessage answers ok and the notice posts anyway.
-    expect(OFFLINE_ALARM_LEAD_MS - OFFLINE_ALARM_TICK_MS).toBeGreaterThan(5 * 60_000);
+    expect(OFFLINE_ALARM_LEAD_MS - 2 * OFFLINE_ALARM_TICK_MS).toBeGreaterThan(5 * 60_000);
   });
 });

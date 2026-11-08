@@ -19,16 +19,17 @@
 
 /**
  * How far ahead the notice is armed: the most an outage goes unreported.
- * Must stay well over 5 minutes: Slack hands a scheduled message off once it
- * is about 5 minutes from due, and from then on `chat.deleteScheduledMessage`
- * still answers ok but the message posts anyway. A 3-minute lead meant every
- * cancel was ignored and a notice posted every minute while online.
+ * Must stay well over 5 minutes: in prod Slack posted notices it had answered
+ * ok to deleting once they were within a few minutes of due (observed, not
+ * documented). A 3-minute lead meant every cancel was ignored and a notice
+ * posted every minute while online. So in practice ~5 minutes without a
+ * successful tick fires it, not the full lead.
  */
 export const OFFLINE_ALARM_LEAD_MS = 600_000;
 /** How often it is re-armed. Well under the lead, so one slow tick is not an alarm. */
 export const OFFLINE_ALARM_TICK_MS = 60_000;
 
-/** Per Slack call: far under the lead, so a stalled request cannot outlast it. */
+/** Per Slack call: far under the ~5 min that fires the notice, so a stalled request cannot outlast it. */
 export const OFFLINE_ALARM_REQUEST_TIMEOUT_MS = 20_000;
 
 /**

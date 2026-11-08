@@ -16,8 +16,8 @@ const blocks = (msg: AlarmMessage): KnownBlock[] => msg.blocks.map((b) => ({ ...
 
 /**
  * Wants its own client with a timeout: the shared one has none, and a request
- * stalled on a half-open socket would hold every later tick until the 10-minute
- * lead ran out and the alarm fired while online.
+ * stalled on a half-open socket would hold every later tick for minutes, past the
+ * point a cancel still lands, and the alarm fired while online.
  */
 export const createOfflineAlarmSlack = (client: WebClient): OfflineAlarmSlack => {
   let botUserId: string | undefined;
