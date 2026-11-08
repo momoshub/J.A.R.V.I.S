@@ -117,7 +117,7 @@ export const respond = async (
     // them. A person's message runs on the front's key, so it is answered
     // while a step is running instead of waiting behind it.
     const inWorkflow =
-      !inbound.autoContinue && inbound.threadTs
+      !inbound.autoContinue && !inbound.workerLane && inbound.threadTs
         ? deps.workflows?.activeFor(inbound.channelId, inbound.threadTs) !== undefined
         : false;
     const key = inWorkflow ? frontKeyOf(threadKey) : threadKey;
@@ -206,6 +206,14 @@ export const respond = async (
               if (!tracked?.signal.aborted) {
                 await afterWorkflowTurn(deps, workflow, who.user.slackId, turn.wantsContinue, deps.commandPrefix);
               }
+              return { kind: "reply", text: turn.text, by: SIGNATURES.workflowWorker, ...(turn.usage ? { usage: turn.usage } : {}) };
+            }
+            if (inbound.workerLane) {
+              // Asked of the worker's own session (an Orca worker's question),
+              // not a step: no steers taken, no next step scheduled.
+              const turn = await runWorkflowTurn(deps, workflow, who.user, cleanInboundText(inbound.text), false, sink, tracked?.signal);
+              if (isRestartCut(tracked?.signal)) return restartCut();
+              record("ok");
               return { kind: "reply", text: turn.text, by: SIGNATURES.workflowWorker };
             }
             if (key !== threadKey) {
@@ -219,7 +227,7 @@ export const respond = async (
               if (turn.steers.length > 0 && !tracked?.signal.aborted) {
                 steerWorker(deps, workflow, who.user.slackId, turn.steers, threadKey);
               }
-              return { kind: "reply", text: turn.text, by: SIGNATURES.workflowFront };
+              return { kind: "reply", text: turn.text, by: SIGNATURES.workflowFront, ...(turn.usage ? { usage: turn.usage } : {}) };
             }
           }
         }

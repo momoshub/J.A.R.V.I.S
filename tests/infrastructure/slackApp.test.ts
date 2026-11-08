@@ -314,8 +314,8 @@ describe("createHandler streaming truth table", () => {
     const r = build({ llm: streamingLlm("plain post"), streamUpdates: false });
     await r.handle({ ...r.msg("hi"), say: async (m) => void posts.push(m) });
     expect(posts).toHaveLength(1);
-    const blocks = posts[0]?.blocks as { type: string; block_id?: string; text?: { text?: string } }[];
-    expect(blocks[0]).toMatchObject({ type: "section", text: { text: "plain post" } });
+    const blocks = posts[0]?.blocks as { type: string; block_id?: string; text?: string }[];
+    expect(blocks[0]).toEqual({ type: "markdown", text: "plain post" });
     expect(blocks.at(-1)).toMatchObject({ type: "context", block_id: FOOTER_BLOCK_ID });
   });
 

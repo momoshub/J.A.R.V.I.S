@@ -133,15 +133,42 @@ export const sectionChunks = (text: string, limit: number = SECTION_LIMIT): stri
 };
 
 /**
- * A plain mrkdwn post as blocks, so it can carry the footer: one section per
- * chunk (`sectionChunks`, every one under Slack's 3000), then the footer.
+ * Slack's cap on all the `markdown` blocks in one message, together - not per
+ * block, so splitting the text across several does not buy more room.
  */
-export const signedText = (mrkdwn: string, line: string): { text: string; blocks: Block[] } => ({
+export const MARKDOWN_LIMIT = 12_000;
+
+const section = (chunk: string): Block => ({ type: "section", text: { type: "mrkdwn", text: chunk } });
+
+/**
+ * A plain mrkdwn post as blocks, so it can carry the footer: the text in a
+ * `markdown` block, then the footer.
+ *
+ * Not sections: Slack folds a long section behind "Show more", so a watch
+ * firing or an auto-continue - a turn nobody watched stream - posted its answer
+ * half hidden, while the same answer streamed live showed in full. A `markdown`
+ * block is what the live reply ends up as (`collapsedBlocks`, the Block Kit
+ * post in `toBlockMessage`), and Slack does not fold it.
+ *
+ * Text past `MARKDOWN_LIMIT` carries on in sections (`sectionChunks`, every one
+ * under Slack's 3000) rather than being refused whole. A post whose markdown
+ * block Slack refuses can fall back to `signedSections`.
+ */
+export const signedText = (mrkdwn: string, line: string): { text: string; blocks: Block[] } => {
+  const [head, ...rest] = sectionChunks(mrkdwn, MARKDOWN_LIMIT);
+  return {
+    text: mrkdwn || " ",
+    blocks: withFooter(
+      [...(head ? [{ type: "markdown", text: head }] : []), ...rest.flatMap((c) => sectionChunks(c)).map(section)],
+      line,
+    ),
+  };
+};
+
+/** The same post as sections only (one per `sectionChunks` chunk), then the footer. */
+export const signedSections = (mrkdwn: string, line: string): { text: string; blocks: Block[] } => ({
   text: mrkdwn || " ",
-  blocks: withFooter(
-    sectionChunks(mrkdwn).map((chunk) => ({ type: "section", text: { type: "mrkdwn", text: chunk } })),
-    line,
-  ),
+  blocks: withFooter(sectionChunks(mrkdwn).map(section), line),
 });
 
 /**

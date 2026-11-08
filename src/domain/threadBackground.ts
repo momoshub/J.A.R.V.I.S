@@ -40,7 +40,7 @@ export type BackgroundLaunch = {
 const isRecord = (v: unknown): v is Record<string, unknown> => typeof v === "object" && v !== null;
 
 /** The shell command of a Bash call's input JSON, or "" for anything else. */
-const bashCommand = (name: unknown, input: unknown): string => {
+export const bashCommand = (name: unknown, input: unknown): string => {
   if (name !== "Bash" || typeof input !== "string") return "";
   try {
     const parsed: unknown = JSON.parse(input);
@@ -84,6 +84,9 @@ const count = (text: string, pattern: RegExp): number => [...text.matchAll(patte
 const SETUP_SEGMENT = /^\s*(?:(?:cd|export)(?:\s.*)?|(?:[A-Za-z_][A-Za-z0-9_]*=\S*\s*)*)$/;
 const CLAUDE_BG_AT = new RegExp(CLAUDE_BG_CALL.source);
 const ORCA_WORKER_AT = new RegExp(ORCA_WORKER_CALL.source);
+const ORCA_WORKER_ANYWHERE = new RegExp(ORCA_WORKER_CALL.source, "m");
+/** Whether a command runs `orca orchestration worker-start` in command position somewhere. */
+export const runsOrcaWorkerStart = (command: string): boolean => ORCA_WORKER_ANYWHERE.test(command);
 /** A launcher that starts the segment, or harmless setup. */
 const isLaunchSegment = (segment: string): boolean =>
   SETUP_SEGMENT.test(segment) || segment.search(CLAUDE_BG_AT) === 0 || segment.search(ORCA_WORKER_AT) === 0;

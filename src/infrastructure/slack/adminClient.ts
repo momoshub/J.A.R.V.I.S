@@ -7,8 +7,9 @@ import { WebClient } from "@slack/web-api";
 import { splitForBlocks, toMrkdwn } from "../../domain/slackFormat.ts";
 import { toBlockMessage } from "../../domain/blockKit.ts";
 import { type MessageBlock, visibleText } from "../../domain/slackMessageText.ts";
-import { footerBlock, footerLine, sectionChunks, signedText, SIGNATURES, withFooter } from "../../domain/messageFooter.ts";
+import { footerBlock, footerLine, sectionChunks, signedSections, signedText, SIGNATURES, withFooter } from "../../domain/messageFooter.ts";
 import type { SlackMember } from "../../domain/slackMembers.ts";
+import { type FooterUsage, usageFooter } from "../../domain/usageFooter.ts";
 import type {
   SlackAdminPort,
   SlackConversation,
@@ -72,7 +73,8 @@ const mapPool = async <T, R>(items: T[], n: number, fn: (item: T) => Promise<R>)
 export const createSlackAdmin = (client: WebClient, clock: () => number = Date.now): SlackAdminPort => {
   const nameCache = new Map<string, string>();
   /** The grey signature line, stamped now: every post and edit carries one. */
-  const footer = (by?: string): string => footerLine(by ?? SIGNATURES.jarvis, clock());
+  const footer = (by?: string, usage?: FooterUsage): string =>
+    footerLine(by ?? SIGNATURES.jarvis, clock(), usage ? usageFooter(usage) : undefined);
   let botUserId: string | undefined;
 
   const getBotUserId = async (): Promise<string> => {
@@ -218,10 +220,13 @@ export const createSlackAdmin = (client: WebClient, clock: () => number = Date.n
     update: async (channel, ts, text, by) => {
       // Blocks every time: an edit that sent only text would keep the old
       // blocks on screen, footer and all, and change nothing anyone sees.
-      // A refused rewrite (a stopped stream's block_mismatch, say) still edits
-      // the words, text-only, as before.
+      // A refused markdown block is retried as sections; a refused rewrite
+      // (a stopped stream's block_mismatch, say) still edits the words,
+      // text-only, as before.
+      const line = footer(by);
       await client.chat
-        .update({ channel, ts, ...signedText(text, footer(by)) })
+        .update({ channel, ts, ...signedText(text, line) })
+        .catch(() => client.chat.update({ channel, ts, ...signedSections(text, line) }))
         .catch(() => client.chat.update({ channel, ts, text }));
     },
 
@@ -265,13 +270,15 @@ export const createSlackAdmin = (client: WebClient, clock: () => number = Date.n
       await client.apiCall("chat.delete", { channel, ts, broadcast_delete: true });
     },
 
-    post: async (channel, text, threadTs, by) => {
+    post: async (channel, text, threadTs, by, usage) => {
       const thread = threadTs ? { thread_ts: threadTs } : {};
-      const line = footer(by);
+      const line = footer(by, usage);
       const body = toMrkdwn(text);
-      // Signed as sections; a refusal of those still gets the words out bare.
+      // Signed in a markdown block, which Slack never folds behind "Show
+      // more"; refused, the same as sections; refused again, the words bare.
       const bare = () => client.chat.postMessage({ channel, text: body, ...thread });
-      const plain = () => client.chat.postMessage({ channel, ...signedText(body, line), ...thread }).catch(bare);
+      const sections = () => client.chat.postMessage({ channel, ...signedSections(body, line), ...thread }).catch(bare);
+      const plain = () => client.chat.postMessage({ channel, ...signedText(body, line), ...thread }).catch(sections);
       const rich = toBlockMessage(text, toMrkdwn);
       // A block Slack refuses falls back to the plain post rather than losing the message.
       const posted = (await (rich
@@ -391,8 +398,8 @@ export const createSlackAdmin = (client: WebClient, clock: () => number = Date.n
       // Drop the buttons so a decided request cannot be clicked again.
       await client.chat
         .update({ channel, ts, ...signedText(text, footer(by)) })
-        // Refused: the same sections unsigned (still no buttons), and failing
-        // that a text-only edit, so at least the words change.
+        // Refused: the text as unsigned sections (still no buttons), and
+        // failing that a text-only edit, so at least the words change.
         .catch(() =>
           client.chat.update({
             channel,

@@ -447,6 +447,9 @@ describe("a message with several questions", () => {
     expect(out).toContain("Background agents always run as Orca workers, never the Agent tool");
     expect(out).toContain("orca orchestration worker-start");
     expect(out).toContain("Orca still cannot wake you");
+    // a worker's question comes back as a turn, answered with reply
+    expect(out).toContain("`[orca question]`");
+    expect(out).toContain("`orca orchestration reply`");
     // the turn orchestrates from the bot's own terminal, never a borrowed one
     expect(out).toContain("`ORCA_TERMINAL_HANDLE` in your environment is the bot's own Orca terminal");
     expect(out).toContain("never pass another pane's handle");
@@ -460,6 +463,16 @@ describe("a message with several questions", () => {
     // the self-fix reviewer is an Orca worker too, no Agent-tool exception left
     expect(out).toContain("The reviewer on your own fix is one of these too: an Orca worker that talks to you only through PR comments");
     expect(out).not.toContain("so you can talk to it with SendMessage");
+  });
+
+  test("every worker started is followed by a watch worker, when a watch can be set", () => {
+    const opts = { learnings: [], commandPrefix: "//bot", runScript: "/r.sh", runUrl: "http://x", runTicket: "t" };
+    const admin = buildSystemPrompt({ ...opts, canWatch: true });
+    expect(admin).toContain("Every `worker-start` is followed, in the same turn, by `//bot watch worker <dispatchId>");
+    expect(admin).toContain("finishes, dies or stands waiting for input");
+    expect(admin).toContain("`//bot watch worker <dispatchId> <what you will do next>`");
+    // no watch to set, no rule pointing at one
+    expect(buildSystemPrompt({ ...opts, canWatch: false })).not.toContain("watch worker");
   });
 
   test("each part is handed over as it lands, folded into one message", () => {

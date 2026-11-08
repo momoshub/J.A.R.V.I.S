@@ -223,6 +223,31 @@ describe("workflow front and worker", () => {
     expect(b.live()?.steers).toEqual([]);
   });
 
+  test("a workerLane turn (an Orca worker's question) runs on the worker's session, not the front, and is no step", async () => {
+    const b = build({ worker: () => "replied to the worker", front: () => "front should not answer" });
+    await b.start();
+    const before = b.workerCalls().length;
+    const res = await respond(b.deps, {
+      channelId: C,
+      slackUserId: OWNER,
+      text: "[orca question] reply to it",
+      threadTs: T,
+      messageTs: "300.1",
+      keepSession: true,
+      unprompted: true,
+      workerLane: true,
+    });
+    expect(res).toEqual({ kind: "reply", text: "replied to the worker", by: "workflow worker" });
+    expect(b.frontCalls()).toHaveLength(0);
+    const call = b.workerCalls()[before]!;
+    // the worker's own session, with the full-access policy that can run `orca`
+    expect(call.session).toEqual({ id: SESSION, resume: true });
+    expect(call.policy?.skipPermissions).toBe(true);
+    expect(lastMessage(call)).toBe("[orca question] reply to it");
+    // not a step: nothing scheduled after it
+    expect(b.timers).toHaveLength(0);
+  });
+
   test("workflow stop ends the running worker step and the steers with it", async () => {
     const b = build({ worker: () => "did a step\n[continue]", front: () => "ok\n[steer] also add RSS" });
     await b.start();

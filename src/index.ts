@@ -48,6 +48,8 @@ import { createKitViewRepo } from "./infrastructure/db/kitViewRepo.ts";
 import { createWatcher } from "./application/watcher.ts";
 import { createReviewGuard } from "./application/reviewGuard.ts";
 import { createReviewInbox } from "./application/reviewInbox.ts";
+import { createOrcaQuestionBridge } from "./application/orcaQuestions.ts";
+import { createOrcaQuestionRepo } from "./infrastructure/db/orcaQuestionRepo.ts";
 import { createGhReviewRequests } from "./infrastructure/github/reviewRequests.ts";
 import { createGithubApp, type GithubApp } from "./application/githubApp.ts";
 import { createGithubAppClient } from "./infrastructure/github/appClient.ts";
@@ -263,6 +265,9 @@ const main = async () => {
   const slackReadScript = join(import.meta.dir, "..", "bin", "slack-read.sh");
   // How `watch reply` asks whether anybody has answered yet.
   const slackWaitScript = join(import.meta.dir, "..", "bin", "slack-wait.sh");
+  // How `watch worker` asks whether an Orca worker finished, died or waits for
+  // input. Run with this process's own bun: launchd's PATH may not have one.
+  const orcaWorkerWait = [process.execPath, join(import.meta.dir, "..", "bin", "orca-worker-wait.ts")];
   // Drives any Mac app through the Accessibility API - no Automation needed.
   const macUiScript = join(import.meta.dir, "..", "bin", "mac-ui.js");
   // The second driver, for every app but Arc. launchd's PATH has no Homebrew,
@@ -349,7 +354,15 @@ const main = async () => {
     );
 
   // One file per thread, beside the bot's own logs - what every turn ran, in full.
-  const toolTrace = createToolTraceLog(join(config.logDir, "threads"));
+  const traceLog = createToolTraceLog(join(config.logDir, "threads"));
+  // Orca workers a thread starts are linked to it as their launch goes by, so
+  // a worker's question can find its way back (the bridge is built below,
+  // once there is a turn path to hand questions to).
+  let orcaQuestions: { observe: ToolTraceSink } | undefined;
+  const toolTrace: ToolTraceSink = (trace, bill) => {
+    traceLog(trace, bill);
+    orcaQuestions?.observe(trace, bill);
+  };
   // The bot's own Orca terminal, so a turn can open Runs and start workers.
   // Every turn gets its handle - or, with Orca down, no handle at all, never
   // one inherited from whatever pane started the bot.
@@ -433,6 +446,7 @@ const main = async () => {
     follows,
     reminders,
     slackWaitScript,
+    orcaWorkerWait,
     macUiScript,
     agentDesktop,
     desktopScript,
@@ -448,6 +462,7 @@ const main = async () => {
       keepSession,
       autoContinue,
       unprompted,
+      workerLane,
     }: {
       channelId: string;
       threadTs: string;
@@ -456,6 +471,7 @@ const main = async () => {
       keepSession?: boolean;
       autoContinue?: boolean;
       unprompted?: boolean;
+      workerLane?: boolean;
     }) => {
       const result = await respond(deps, {
         channelId,
@@ -468,11 +484,19 @@ const main = async () => {
         keepSession,
         autoContinue,
         unprompted,
+        workerLane,
       });
       // A turn nobody watched live can still answer with a note about not
       // answering; posted, it reads as the whole reply.
       if (result.kind !== "ignored" && result.text.trim() && !isSilenceNote(result.text)) {
-        await slackAdmin.post(channelId, result.text, threadTs, result.kind === "reply" ? result.by : undefined);
+        // Signed with what the turn cost, as a reply streamed live would be.
+        await slackAdmin.post(
+          channelId,
+          result.text,
+          threadTs,
+          result.kind === "reply" ? result.by : undefined,
+          result.kind === "reply" ? result.usage : undefined,
+        );
       }
     },
     disabledCommands,
@@ -806,6 +830,22 @@ const main = async () => {
     log: (msg) => console.error(`[watch] ${msg}`),
     onError: onDbError,
   });
+  // A worker's `orca orchestration ask` lands in the bot's own Orca terminal,
+  // which nobody reads. This puts each one to the thread that started the
+  // worker, as a turn that answers it with `orca orchestration reply`.
+  const orcaBridge = orcaTerminal
+    ? createOrcaQuestionBridge({
+        repo: createOrcaQuestionRepo(db),
+        clock,
+        orca: createOrcaCli(),
+        ready: async () => !!(await orcaTerminal.handle()),
+        runTurn: deps.runTurn!,
+        mayRun: (id) => id === config.ownerSlackId || !!users.get(id),
+        log: (msg) => console.error(`[orca-questions] ${msg}`),
+        onError: onDbError,
+      })
+    : undefined;
+  orcaQuestions = orcaBridge;
   // Reminders ride the same timer: they need no model either, only a post.
   const reminderSender = createReminderSender({
     reminders,
@@ -999,6 +1039,8 @@ const main = async () => {
     void watcher.tick().catch(tickFailed("watch"));
     void innerChild.tick().catch(tickFailed("inner-child"));
     void reviewInbox.tick().catch(tickFailed("review-inbox"));
+    // Questions Orca workers are blocked on, put to the threads that started them.
+    void orcaBridge?.tick().catch(tickFailed("orca-questions"));
     // Calls that arrived while a restart drained, or a previous process left.
     void githubApp?.tick().catch(tickFailed("github-app"));
   }, WATCH_TICK_MS);

@@ -632,6 +632,43 @@ describe("recording what a run cost", () => {
     const out = await llm.complete({ system: "sys", messages: [{ role: "user", content: "hi" }] });
     expect(out).toBe("done");
   });
+
+  test("the caller hears the run's usage too, one-shot or traced", async () => {
+    const bin = fakeBin(`#!/usr/bin/env bash\ncat > /dev/null\necho '${RESULT_LINE}'`);
+    const heard: unknown[] = [];
+    await createClaudeCliLlm({ binPath: bin }).complete({
+      system: "sys",
+      messages: [{ role: "user", content: "hi" }],
+      onUsage: (u) => heard.push(u),
+    });
+    await createClaudeCliLlm({ binPath: bin, onToolTrace: () => {} }).complete({
+      system: "sys",
+      messages: [{ role: "user", content: "hi" }],
+      onUsage: (u) => heard.push(u),
+    });
+    const expected = {
+      model: "claude-opus-5-5",
+      inputTokens: 3,
+      outputTokens: 7,
+      cacheReadTokens: 11,
+      cacheWriteTokens: 13,
+      costUsd: 0.5,
+      durationMs: 1234,
+    };
+    expect(heard).toEqual([expected, expected]);
+  });
+
+  test("a caller's usage hook that throws never takes the turn down with it", async () => {
+    const bin = fakeBin(`#!/usr/bin/env bash\ncat > /dev/null\necho '${RESULT_LINE}'`);
+    const out = await createClaudeCliLlm({ binPath: bin }).complete({
+      system: "sys",
+      messages: [{ role: "user", content: "hi" }],
+      onUsage: () => {
+        throw new Error("boom");
+      },
+    });
+    expect(out).toBe("done");
+  });
 });
 
 describe("usageOf", () => {

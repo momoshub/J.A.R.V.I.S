@@ -44,11 +44,11 @@ export const GUIDE_SUMMARIES: Readonly<Record<GuideSlug, string>> = {
   desktop:
     "driving a Mac app or Brave on the real screen - only through the desktop helper, never osascript, one session at a time. Read before touching the screen",
   parallel:
-    "a message with several independent asks is split and run in parallel as Orca workers, each answer posted as it lands. Read before spawning any background agent",
+    "a message with several independent asks is split and run in parallel as Orca workers, each answer posted as it lands, and every worker you start gets a `watch worker <dispatchId>` when you can set watches. Read before spawning any background agent",
   "block-kit":
     "a question with a fixed set of answers is asked with `jv:` buttons, never lettered options in text. Read before posting buttons, selects or a modal, or when a turn starts with [block kit event]",
   waiting:
-    "you cannot wait - never say you will do something once X finishes, set a `watch` instead; `tell` steers another thread. Read for the watch and tell syntax",
+    "you cannot wait - never say you will do something once X finishes, set a `watch` instead (`watch worker <dispatchId>` after every Orca worker you start); `tell` steers another thread. Read for the watch and tell syntax",
 };
 
 /** Order the index lists them in. */
