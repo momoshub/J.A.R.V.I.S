@@ -12,6 +12,7 @@
 //   mac-ui.js windows <app>                      window titles (AX sees what AppleScript cannot)
 //   mac-ui.js close  <app> <title-substring>     close windows by title
 //   mac-ui.js menu   <app> <Menu> <Item>         pick a menu item
+//   mac-ui.js release-keys                       let go of every modifier key
 //
 // WHY THIS AND NOT APPLESCRIPT. AppleScript/System Events needs the Automation
 // TCC permission, which this host does not grant the bot - that is the -1712
@@ -154,6 +155,25 @@ function clickElement(el, real) {
   return 'click';
 }
 
+// Key events come from a PRIVATE source and always carry their flags, even
+// none. A null source reads and writes the shared HID state: one Shift-flagged
+// event posted to the HID tap left Shift "held" for everything after it, and
+// later keystrokes fired as shortcuts on the person's Mac (new windows,
+// bookmarks, Finder). releaseModifiers then lets go of every modifier anyway,
+// in a finally, so nothing outlives the command - whoever pressed it.
+var MODIFIER_CODES = [56, 60, 55, 54, 58, 61, 59, 62, 63]; // shift, cmd, option, control (left/right), fn
+function keySource() { return $.CGEventSourceCreate($.kCGEventSourceStatePrivate); }
+function postKey(src, code, isDown, flagsMask) {
+  var ev = $.CGEventCreateKeyboardEvent(src, code, isDown);
+  $.CGEventSetFlags(ev, flagsMask);
+  $.CGEventPost($.kCGHIDEventTap, ev);
+  sleep(0.02);
+}
+function releaseModifiers() {
+  var src = keySource();
+  MODIFIER_CODES.forEach(function (code) { postKey(src, code, false, 0); });
+}
+
 // JXA's console.log writes to STDERR. osascript prints whatever `run` returns
 // to stdout, so everything is accumulated and returned instead - otherwise a
 // caller parsing stdout gets an empty string and the tool looks broken.
@@ -186,7 +206,12 @@ function dispatch(argv) {
     out(list);
     return;
   }
-  if (!cmd || !name) throw new Error('usage: mac-ui.js <apps|tree|find|click|type|key|read|windows|close|menu> <app> [...]');
+  if (cmd === 'release-keys') {
+    releaseModifiers();
+    out({ released: MODIFIER_CODES.length });
+    return;
+  }
+  if (!cmd || !name) throw new Error('usage: mac-ui.js <apps|tree|find|click|type|key|read|windows|close|menu|release-keys> <app> [...]');
 
   var ref = appRef(name, { launch: flags.launch, activate: cmd !== 'tree' && cmd !== 'read' && cmd !== 'windows' && cmd !== 'apps' });
 
@@ -249,12 +274,13 @@ function dispatch(argv) {
     var code = CODES[text.toLowerCase()];
     if (code === undefined) throw new Error('unknown key "' + text + '" - use return, tab, space, escape, arrows, delete');
     var flagsMask = (flags.cmd ? $.kCGEventFlagMaskCommand : 0) | (flags.shift ? $.kCGEventFlagMaskShift : 0);
-    [true, false].forEach(function (isDown) {
-      var ev = $.CGEventCreateKeyboardEvent($(), code, isDown);
-      if (flagsMask) $.CGEventSetFlags(ev, flagsMask);
-      $.CGEventPost($.kCGHIDEventTap, ev);
-      sleep(0.02);
-    });
+    var src = keySource();
+    try {
+      postKey(src, code, true, flagsMask);
+      postKey(src, code, false, flagsMask);
+    } finally {
+      releaseModifiers();
+    }
     out({ key: text });
     return;
   }

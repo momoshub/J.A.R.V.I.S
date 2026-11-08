@@ -5,7 +5,10 @@ import {
   decideDesktopLock,
   isDesktopFree,
   isReadOnly,
+  releasesKeysAfter,
 } from "../../src/domain/desktopLock.ts";
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
 
 const held = { holder: "s1", since: 1_000, last: 2_000, action: "agent-desktop click @e3" };
 
@@ -71,5 +74,29 @@ describe("busyMessage", () => {
     expect(m).toContain("agent-desktop click @e3");
     expect(m).toContain("do NOT open another window");
     expect(m).toContain("/x/desktop.ts free");
+  });
+});
+
+describe("modifier keys never stay held", () => {
+  test("every action ends by releasing the modifiers, whichever driver ran it", () => {
+    expect(releasesKeysAfter("agent-desktop", ["press", "cmd+a"])).toBe(true);
+    expect(releasesKeysAfter("agent-desktop", ["type", "@e3", "a+b"])).toBe(true);
+    expect(releasesKeysAfter("mac-ui", ["key", "Brave Browser", "return", "--shift"])).toBe(true);
+  });
+
+  test("reading the screen, or the release itself, does not", () => {
+    expect(releasesKeysAfter("agent-desktop", ["snapshot", "--app", "Brave Browser", "-i"])).toBe(false);
+    expect(releasesKeysAfter("mac-ui", ["tree", "Brave Browser"])).toBe(false);
+    expect(releasesKeysAfter("mac-ui", ["release-keys"])).toBe(false);
+  });
+
+  test("mac-ui.js sets flags on every key event from a private source and releases in a finally", () => {
+    const src = readFileSync(join(import.meta.dir, "..", "..", "bin", "mac-ui.js"), "utf8");
+    // one place builds key events, and it always sets the flags, even none
+    expect(src.match(/CGEventCreateKeyboardEvent\(/g)?.length).toBe(1);
+    expect(src).toContain("CGEventCreateKeyboardEvent(src, code, isDown);\n  $.CGEventSetFlags(ev, flagsMask);");
+    expect(src).toContain("kCGEventSourceStatePrivate");
+    expect(src).toMatch(/finally \{\s*releaseModifiers\(\);/);
+    expect(src).toContain("cmd === 'release-keys'");
   });
 });

@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { chmodSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 
 const SCRIPT = join(import.meta.dir, "..", "..", "bin", "desktop.ts");
 
@@ -15,12 +15,12 @@ beforeEach(() => {
 });
 afterEach(() => rmSync(dir, { recursive: true, force: true }));
 
-const run = async (session: string, args: string[]) => {
+const run = async (session: string, args: string[], path = `${dir}:${process.env.PATH ?? ""}`) => {
   const proc = Bun.spawn({
-    cmd: ["bun", SCRIPT, ...args],
+    cmd: [process.execPath, SCRIPT, ...args],
     stdout: "pipe",
     stderr: "pipe",
-    env: { ...process.env, PATH: `${dir}:${process.env.PATH ?? ""}`, BOT_SESSION_ID: session, JARVIS_DESKTOP_LOCK: join(dir, "lock") },
+    env: { ...process.env, PATH: path, BOT_SESSION_ID: session, JARVIS_DESKTOP_LOCK: join(dir, "lock") },
   });
   const [stdout, stderr, code] = await Promise.all([
     new Response(proc.stdout).text(),
@@ -31,6 +31,13 @@ const run = async (session: string, args: string[]) => {
 };
 
 describe("bin/desktop.ts", () => {
+  test("the key release after an action never fails it, even with no osascript on the host", async () => {
+    // only the fake driver and bun on PATH: no osascript to release keys with
+    const a = await run("s1", ["agent-desktop", "press", "cmd+a"], `${dir}:${dirname(process.execPath)}`);
+    expect(a.code).toBe(0);
+    expect(a.stdout).toContain("ran press cmd+a");
+  });
+
   test("a second session cannot click while the first holds the screen", async () => {
     const a = await run("s1", ["agent-desktop", "click", "@e3"]);
     expect(a.code).toBe(0);

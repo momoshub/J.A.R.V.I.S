@@ -57,6 +57,18 @@ export const isReadOnly = (driver: DesktopDriver, args: readonly string[]): bool
   return READ_ONLY[driver].has(sub);
 };
 
+/**
+ * Whether `desktop.ts` lets go of every modifier key after the command.
+ *
+ * The gap: a Shift posted by one helper and an agent-desktop `press cmd+a`
+ * left a modifier held, so the bot's next keystrokes fired as shortcuts on the
+ * person's Mac - a new Brave window, stray bookmarks, Finder windows. Any
+ * action may press keys, so every one ends with `mac-ui.js release-keys`,
+ * whichever driver ran it. Reading the screen presses nothing.
+ */
+export const releasesKeysAfter = (driver: DesktopDriver, args: readonly string[]): boolean =>
+  !isReadOnly(driver, args) && !(driver === "mac-ui" && args[0] === "release-keys");
+
 const live = (lock: DesktopLock | null, now: number, ttlMs: number): lock is DesktopLock =>
   lock !== null && now - lock.last < ttlMs;
 
