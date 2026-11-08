@@ -14,7 +14,7 @@
 import type { ConnectionHealth } from "../../domain/connectionHealth.ts";
 import { gatewayHealth } from "../../domain/inbox.ts";
 import { envelopeThread, unnotified } from "../../domain/drainNotice.ts";
-import type { InboxRepo, Interrupted } from "../inbox/inboxRepo.ts";
+import type { InboxRepo, InboxRow, Interrupted } from "../inbox/inboxRepo.ts";
 
 /**
  * What Bolt adds to a listener's `context` for a row from the inbox. Named so
@@ -59,6 +59,12 @@ export type InboxReceiverOptions = {
    * Something that cannot be cut (no turn to stop) is left to finish.
    */
   readonly onOverBudget?: (rowId: number) => boolean;
+  /**
+   * While a restart waits, rows this answers true for are not claimed: they
+   * stay pending for the next process (commands, slash commands, buttons -
+   * work that cannot be cut at a budget and picked up again).
+   */
+  readonly waitsForRestart?: (row: InboxRow) => boolean;
 };
 
 export const INBOX_POLL_MS = 100;
@@ -92,7 +98,8 @@ export const createInboxReceiver = (opts: InboxReceiverOptions) => {
   const drain = (): Promise<void>[] => {
     if (!app || paused) return [];
     const target = app;
-    const rows = opts.inbox.claim(opts.batch ?? 20, now());
+    const defer = budgetMs !== undefined ? opts.waitsForRestart : undefined;
+    const rows = opts.inbox.claim(opts.batch ?? 20, now(), defer ? (row) => !defer(row) : undefined);
     const claimedAt = now();
     return rows.map((row) => {
       const flight = { claimedAt, budgeted: budgetMs !== undefined, checked: false, held: false };

@@ -92,7 +92,8 @@ no classes.
   restarts when both pass. With `SELF_PR_AUTHOR`/`SELF_PR_REVIEWER` set, the
   PR is opened as the author and reviewed, approved and merged as the reviewer
   (the approval is fired by `merge-when-green.sh` right before the merge). `restartWhenIdle` then drains: timers that start turns hold, and new
-  messages are still answered, each turn on `RESTART_TURN_BUDGET_MS` (2 min);
+  chat messages are still answered, each turn on `RESTART_TURN_BUDGET_MS` (2 min;
+  commands, slash commands and buttons wait in the inbox instead);
   one past it tells its thread to hold on, is cut and its inbox row stays
   `running` with `cut_at` for the next process. Once the turns from before the
   request have finished the inbox is no longer read, so the wait ends within

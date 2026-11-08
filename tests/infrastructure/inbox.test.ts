@@ -130,6 +130,14 @@ describe("inbox repo", () => {
     expect(inbox.recover(T0 + 10 * 60_000)).toMatchObject({ redelivered: 2, dropped: 0 });
   });
 
+  test("a filtered claim skips rows it turns down and leaves them pending, in order", () => {
+    const inbox = openInbox(":memory:");
+    for (const id of ["a", "b", "c"]) inbox.enqueue({ envelopeId: id, type: "events_api", body: message(`Ev-${id}`) }, T0);
+    const taken = inbox.claim(5, T0, (row) => (row.body as { event_id: string }).event_id !== "Ev-b");
+    expect(taken.map((r) => (r.body as { event_id: string }).event_id)).toEqual(["Ev-a", "Ev-c"]);
+    expect(inbox.claim(5, T0).map((r) => (r.body as { event_id: string }).event_id)).toEqual(["Ev-b"]);
+  });
+
   test("the gateway heartbeat round-trips", () => {
     const inbox = openInbox(":memory:");
     expect(inbox.gateway()).toBeUndefined();
@@ -516,6 +524,35 @@ describe("a restart waiting with turns on a budget", () => {
     h.advance(BUDGET * 5);
     h.receiver.tickNow();
     expect(h.over).toEqual([]);
+  });
+
+  test("rows that cannot be cut wait in the inbox while chat still runs", () => {
+    const inbox = openInbox(":memory:");
+    const app: EventProcessor = { processEvent: () => new Promise<void>(() => undefined) };
+    const receiver = createInboxReceiver({
+      inbox,
+      now: () => T0,
+      log: () => undefined,
+      waitsForRestart: (row) => row.type !== "events_api",
+    });
+    receiver.init(app);
+    inbox.enqueue({ envelopeId: "s1", type: "slash_commands", body: { command: "/bot", trigger_id: "t1" } }, T0);
+    inbox.enqueue({ envelopeId: "e1", type: "events_api", body: message("Ev1") }, T0);
+    // a restart pending: the slash command stays, the chat message runs
+    receiver.budget(BUDGET);
+    expect(receiver.drain()).toHaveLength(1);
+    expect(inbox.counts()).toMatchObject({ pending: 1, running: 1 });
+    // still pending for the next process, and listed once the intake closes
+    expect(inbox.peek(10, T0).map((r) => r.type)).toEqual(["slash_commands"]);
+  });
+
+  test("before a restart the filter is not applied", () => {
+    const inbox = openInbox(":memory:");
+    const app: EventProcessor = { processEvent: async () => undefined };
+    const receiver = createInboxReceiver({ inbox, now: () => T0, log: () => undefined, waitsForRestart: () => true });
+    receiver.init(app);
+    inbox.enqueue({ envelopeId: "s1", type: "slash_commands", body: { command: "/bot" } }, T0);
+    expect(receiver.drain()).toHaveLength(1);
   });
 
   test("once paused nothing new is taken, so the budgeted turns left are the last", () => {

@@ -1,8 +1,11 @@
 import { describe, expect, test } from "bun:test";
 import {
   createRunRegistry,
+  createRestartCutter,
   cutForRestart,
+  drainSettled,
   holdThreads,
+  isRestartCut,
   RESTART_STOPPER,
 } from "../../src/application/runRegistry.ts";
 
@@ -142,5 +145,51 @@ describe("cutting a turn that ran past its restart budget", () => {
       { channelId: "C1", threadTs: "100.1" },
       { channelId: "D1", threadTs: "300.1" },
     ]);
+  });
+});
+
+describe("the restart's wiring", () => {
+  test("a restart cut is told apart from a person pressing stop", () => {
+    const runs = createRunRegistry();
+    const a = runs.track(run({ id: "a" }));
+    const b = runs.track(run({ id: "b" }));
+    runs.stop("a", "U9");
+    runs.stop("b", RESTART_STOPPER);
+    expect(isRestartCut(a.signal)).toBe(false);
+    expect(isRestartCut(b.signal)).toBe(true);
+    expect(isRestartCut(undefined)).toBe(false);
+  });
+
+  test("two rows over budget in one thread tell it to hold on once", () => {
+    const runs = createRunRegistry();
+    runs.track(run({ id: "a", inboxRowId: 1 }));
+    runs.track(run({ id: "b", inboxRowId: 2 }));
+    runs.track(run({ id: "c", inboxRowId: 3, key: "C2:1.1", channelId: "C2", threadTs: "1.1" }));
+    const posts: string[] = [];
+    const cutter = createRestartCutter(runs, (ch, text, ts) => void posts.push(`${ch}/${ts}:${text}`), "hold on");
+    expect(cutter(1)).toBe(true);
+    expect(cutter(2)).toBe(true);
+    expect(cutter(3)).toBe(true);
+    expect(posts).toEqual(["C1/100.1:hold on", "C2/1.1:hold on"]);
+    // nothing running for a row: nothing cut, nothing posted
+    expect(cutter(4)).toBe(false);
+    expect(posts).toHaveLength(2);
+  });
+
+  test("settled waits for every foreground turn from before the restart, queued or running", () => {
+    const runs = createRunRegistry();
+    const DRAIN = 5_000;
+    expect(drainSettled(runs, 0, DRAIN)).toBe(true);
+    // an inbox row claimed before the restart still in flight
+    expect(drainSettled(runs, 1, DRAIN)).toBe(false);
+    // a queued turn from before still counts
+    const queued = runs.track(run({ id: "q", startedAt: DRAIN - 1 }));
+    expect(drainSettled(runs, 0, DRAIN)).toBe(false);
+    queued.done();
+    // a background (workflow) turn never holds it
+    runs.track(run({ id: "w", startedAt: DRAIN - 1, background: true }));
+    // nor does a turn started after the request: that one is on a budget
+    runs.track(run({ id: "n", startedAt: DRAIN + 1 }));
+    expect(drainSettled(runs, 0, DRAIN)).toBe(true);
   });
 });

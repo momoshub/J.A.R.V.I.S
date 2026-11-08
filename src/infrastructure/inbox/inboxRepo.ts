@@ -88,7 +88,12 @@ export type InboxRepo = {
   /** Store an envelope. Returns its id, or undefined when it is a duplicate. */
   enqueue: (e: NewEnvelope, at: number) => number | undefined;
   /** Mark up to `limit` pending rows running, oldest first, and return them. */
-  claim: (limit: number, at: number) => InboxRow[];
+  /**
+   * Take up to `limit` pending rows, oldest first. With `take`, rows it turns
+   * down are skipped and stay pending (a restart waiting: commands wait for
+   * the next process while chat still runs).
+   */
+  claim: (limit: number, at: number, take?: (row: InboxRow) => boolean) => InboxRow[];
   /**
    * What is waiting, WITHOUT claiming it. Used while a restart holds the
    * intake: the rows must stay pending for the next process, but whoever is
@@ -179,8 +184,11 @@ export const openInbox = (path: string): InboxRepo => {
   const markRunning = db.prepare(
     `UPDATE inbox SET state = 'running', attempts = attempts + 1, claimed_at = ? WHERE id = ? AND state = 'pending'`,
   );
-  const claimTx = db.transaction((limit: number, at: number): InboxRow[] => {
-    const rows = pending.all(at, limit) as Row[];
+  /** How far past `limit` a filtered claim looks, so skipped rows cannot starve the rest. */
+  const SKIP_LOOKAHEAD = 200;
+  const claimTx = db.transaction((limit: number, at: number, take?: (row: InboxRow) => boolean): InboxRow[] => {
+    const seen = pending.all(at, take ? limit + SKIP_LOOKAHEAD : limit) as Row[];
+    const rows = take ? seen.filter((r) => take(toRow(r))).slice(0, limit) : seen;
     for (const r of rows) markRunning.run(at, r.id);
     return rows.map((r) => ({ ...toRow(r), state: "running" as const, attempts: r.attempts + 1 }));
   });
@@ -198,7 +206,7 @@ export const openInbox = (path: string): InboxRepo => {
       );
       return res.changes > 0 ? Number(res.lastInsertRowid) : undefined;
     },
-    claim: (limit, at) => claimTx(limit, at),
+    claim: (limit, at, take) => claimTx(limit, at, take),
     // Looks, never claims: the rows must stay pending for the next process.
     peek: (limit, at) => (pending.all(at, limit) as Row[]).map(toRow),
     recordAck: (id, payload, at) => {

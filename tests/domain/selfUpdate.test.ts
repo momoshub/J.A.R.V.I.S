@@ -72,7 +72,7 @@ describe("selfUpdateRules with no skill to read (the full block)", () => {
   test("the restart is deferred, and it is told why that matters", () => {
     expect(rules).toContain("waits a few seconds so your reply lands first");
     expect(rules).toContain("holds until no turn is running in any thread");
-    expect(rules).toContain("New messages are still answered meanwhile, each on a 2-minute budget");
+    expect(rules).toContain("New messages are still answered meanwhile, each on a short budget (`RESTART_TURN_BUDGET_MS`, 2 minutes unless set otherwise)");
     expect(rules).toContain("Once the turns from before the restart finish it takes no new message");
     expect(rules).toContain(`after ${RESTART_MAX_WAIT_MS / 60_000} minutes it restarts anyway`);
     expect(rules).toContain("picked up again by the new process on the same session");

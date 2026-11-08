@@ -49,6 +49,7 @@ import type { SlackAdminPort, SlackMessage } from "./slackAdmin.ts";
 import type { GitHubPort } from "./github.ts";
 import type { DraftReply } from "./draftReply.ts";
 import type { SelfPrAccounts } from "../domain/selfUpdate.ts";
+import { isRestartCut } from "./runRegistry.ts";
 
 export type HandleMessageDeps = {
   users: UserRepo;
@@ -452,6 +453,12 @@ export const handleMessage = async (
     raw = await run({ ...base, messages: cold(), session: { id: sessionId, resume: false, name } });
   }
   const reply = raw.trim();
+
+  // Cut for a restart: what came back is a fragment, and the next process
+  // picks the message up again on this session. Recording the fragment as the
+  // answer, or moving the session past the message, would hand the retry its
+  // own half-reply as the new turn instead of the question.
+  if (isRestartCut(signal)) return { kind: "ignored" };
 
   // Already bound above; this only records that the turn landed and how far the
   // session has now been shown.

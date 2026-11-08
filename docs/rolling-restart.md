@@ -15,11 +15,24 @@ and let launchd start the new build. Two things went wrong:
 
 ## Phase 1 - drain, with a bound (built)
 
-As soon as a restart is asked for, the bot stops taking new work and waits only
-for the turns already running.
+As soon as a restart is asked for, the bot stops starting work of its own and
+waits for the turns already running, while still answering new chat on a
+budget.
 
-- the inbox receiver stops claiming rows (`pauseIntake`). The gateway keeps
-  writing them, so nothing is lost and the next process handles them
+- new chat messages are still claimed and run, each turn on
+  `RESTART_TURN_BUDGET_MS` (2 min by default). One still running past it gets a
+  short "hold on" in its thread (once per thread), its turn is stopped and its
+  row is stamped `cut_at` and left `running`, so the next process picks it up
+  again on the same session. The cut fragment is not stored as an answer, so
+  the retry still sees the question as its new turn
+- commands (typed with the prefix, or a spoken review request), slash commands
+  and buttons are not claimed meanwhile (`waitsForRestart`): they start work
+  that cannot be stopped part way, so they wait in the inbox for the next
+  process
+- once nothing from before the request is still running or in flight, the
+  receiver stops claiming altogether (`pauseIntake`), so the budgeted turns
+  left are the last and the wait ends within one budget. The gateway keeps
+  writing rows, so nothing is lost and the next process handles them
 - timers that start turns hold: watcher, inner child, review inbox. Reminders
   still post, since they start no turn
 - a workflow step that comes due is left on its row (`continue_as`) and
@@ -33,8 +46,13 @@ for the turns already running.
 
 Known limits:
 
-- new messages wait until the restart, up to 15 minutes. That is a delay, not
-  zero downtime
+- chat is answered while the turns from before the restart finish, but a
+  command, a slash command or a button pressed meanwhile waits until the
+  restart, up to 15 minutes. And once the intake closes, everything waits.
+  That is a delay, not zero downtime
+- a budget cut costs the row one of its `MAX_ATTEMPTS` (4), like any cut: a long
+  question caught by several restarts in a row can run out of attempts and be
+  dropped with the "cut off on every attempt" notice
 - turns that are not inbox rows (a watch firing, an inner child fix, a workflow
   step already running) die on a forced exit and are not resumed. launchd kills
   the job's whole process group, so their CLI processes do not linger
