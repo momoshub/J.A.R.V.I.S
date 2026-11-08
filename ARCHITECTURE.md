@@ -39,6 +39,7 @@ no classes.
   |    watcher | reminders | reviewInbox | workflow continues | innerChild  |
   |    orcaQuestions (worker questions -> the thread that started it)      |
   |    offlineAlarm (keeps an "I'm offline" Slack scheduled msg armed)     |
+  |    stuckSweeper (dead Orca workers, quiet own PRs -> owner DM, 15 min)  |
   |                                                                         |
   |  dashboard + JSON API (Bun.serve, loopback), /api/commands/run,         |
   |    /api/github-app/comment                                              |
@@ -88,6 +89,11 @@ no classes.
   `offlineAlarm` keeps an "I'm offline" notice armed as a Slack scheduled
   message ten minutes out (Slack ignores a cancel within ~5 min of due), so Slack posts it by itself when the host loses
   its connection, and edits it to "back online" when it returns.
+  `stuckSweeper` asks Orca every 15 minutes for tasks still `dispatched`
+  whose worker is gone, and `gh` for open PRs on the bot's own repo with no
+  commit, comment or review for 30 minutes, and DMs the owner what is new with
+  the thread whose trace started each (an item is not repeated for 4 hours);
+  `mindful` shows the same two lists on demand.
   None of them hold a session or a queue slot while they wait.
 - **GitHub App.** A loopback listener (`GITHUB_APP_PORT`, reached through
   Tailscale Funnel) verifies each webhook, answers 202 and hands it to
@@ -158,7 +164,7 @@ Orchestrates the domain and depends on **ports**, not concrete adapters.
 - `handleMessage.ts` - the chat flow (access -> remember -> ask model -> remember), applying the role's tool policy
 - `commands.ts`, `commandTickets.ts`, `commandLimits.ts`, `brainRun.ts` - the command registry (configurable prefix + slash, role gates, help), the brain's tickets, allowances and result delivery. The command definitions live in `commands/`, one file per group (`chat`, `schedule`, `people`, `adapter`, `learnings`, `errands`, `review`, `runtime`, `slack`), with `commands/shared.ts` for the deps, the `CommandDef` type and the helpers more than one group uses
 - `threadQueue.ts`, `runRegistry.ts` - one turn per thread, and stopping one
-- `watcher.ts`, `reminders.ts`, `reviewInbox.ts`, `reviewGuard.ts`, `innerChild.ts`, `offlineAlarm.ts`, `orcaQuestions.ts` - the timers (`orcaQuestions` also sits on the tool-trace sink, linking each Orca worker to the thread that started it)
+- `watcher.ts`, `reminders.ts`, `reviewInbox.ts`, `reviewGuard.ts`, `innerChild.ts`, `offlineAlarm.ts`, `orcaQuestions.ts`, `stuckSweeper.ts` - the timers (`orcaQuestions` also sits on the tool-trace sink, linking each Orca worker to the thread that started it)
 - `githubApp.ts` - calls from the GitHub App: dedupe/queue, identity mapping, the turn, the answer back
 - `workflow.ts`, `workflowFront.ts`, `workflowContinue.ts` - long tasks driven from one thread on a durable session
 - `accessRequests.ts` - unknown people ask the owner and admins, who decide with a reaction
