@@ -103,6 +103,7 @@ body {
 .nav-group { color: var(--muted); font-size: 11.5px; font-weight: 500; padding: 14px 12px 4px; }
 .sidebar nav { display: flex; flex-direction: column; gap: 1px; }
 .sidebar nav a {
+  display: flex; align-items: center; gap: 10px;
   color: var(--text); text-decoration: none; padding: 7px 12px; border-radius: var(--radius-sm);
   font-size: 14px; opacity: 0.82; transition: background 0.12s, opacity 0.12s;
 }
@@ -113,14 +114,14 @@ body {
 .side-foot .k:first-child { margin-top: 0; }
 .side-toggle { flex: none; display: grid; place-items: center; width: 30px; height: 30px; padding: 0; background: transparent; color: var(--muted); border-radius: var(--radius-sm); }
 .side-toggle:hover { background: var(--hover); color: var(--text); filter: none; }
-.nav-initial { display: none; }
+.nav-icon { flex: none; opacity: 0.75; }
+.sidebar nav a.active .nav-icon, .sidebar nav a:hover .nav-icon { opacity: 1; color: var(--accent); }
 .app.collapsed .sidebar { padding: 20px 10px; }
 .app.collapsed .brand { flex-direction: column; padding: 4px 0 14px; gap: 12px; }
 .app.collapsed .brand-text, .app.collapsed .nav-group, .app.collapsed .nav-label, .app.collapsed .side-foot { display: none; }
 .app.collapsed .sidebar nav { padding-top: 8px; margin-top: 4px; border-top: 1px solid var(--border); align-items: center; }
 .app.collapsed .sidebar nav:first-of-type { border-top: none; }
 .app.collapsed .sidebar nav a { width: 40px; height: 36px; padding: 0; display: grid; place-items: center; }
-.app.collapsed .nav-initial { display: block; font-family: var(--serif); font-size: 15px; }
 .side-foot code { display: block; font-size: 12px; margin-top: 2px; word-break: break-all; background: none; padding: 0; }
 
 /* main */
@@ -254,9 +255,9 @@ button.link.danger-link { color: var(--danger); }
   .app.collapsed .sidebar { padding: 20px 14px; }
   .app.collapsed .brand { flex-direction: row; padding: 4px 10px 4px; }
   .app.collapsed .brand-text, .app.collapsed .nav-label { display: block; }
-  .app.collapsed .nav-initial { display: none; }
   .app.collapsed .sidebar nav { border-top: none; padding-top: 0; margin-top: 0; }
-  .app.collapsed .sidebar nav a { width: auto; height: auto; padding: 7px 12px; display: block; }
+  .app.collapsed .sidebar nav a { width: auto; height: auto; padding: 7px 12px; display: flex; }
+  .nav-icon { display: none; }
 }
 
 /* architecture */
