@@ -90,10 +90,15 @@ no classes.
   reads (rounds are PR comments, fixes are pushes) and CI (`.github/workflows/ci.yml`) passes, merged only by
   `bin/merge-when-green.sh`. `bin/jarvis-restart.sh` runs typecheck and tests and only
   restarts when both pass. With `SELF_PR_AUTHOR`/`SELF_PR_REVIEWER` set, the
-  PR is opened as the author and reviewed and merged as the reviewer. `restartWhenIdle` then drains: the inbox is no
-  longer read and timers that start turns hold, so it waits only for the turns
-  already running, and anyone writing in meanwhile is told why, what it waits
-  on and the latest it is back. Past 15 minutes it exits anyway and the rows it cut are
+  PR is opened as the author and reviewed, approved and merged as the reviewer
+  (the approval is fired by `merge-when-green.sh` right before the merge). `restartWhenIdle` then drains: timers that start turns hold, and new
+  chat messages are still answered, each turn on `RESTART_TURN_BUDGET_MS` (2 min;
+  commands, slash commands and buttons wait in the inbox instead);
+  one past it tells its thread to hold on, is cut and its inbox row stays
+  `running` with `cut_at` for the next process. Once the turns from before the
+  request have finished the inbox is no longer read, so the wait ends within
+  one budget, and anyone writing in from then on (or whose command was held
+  back before that) is told why, what it waits on and the latest it is back. Past 15 minutes it exits anyway and the rows it cut are
   redelivered to the next process on the same session. Where this goes next is
   in [`docs/rolling-restart.md`](docs/rolling-restart.md).
 
@@ -149,6 +154,7 @@ Orchestrates the domain and depends on **ports**, not concrete adapters.
 - `slackAdmin.ts`, `draftReply.ts` - Console + power tools port, AI reply drafting
 - `dashboard.ts` - the dashboard's use cases (users, roles, memory, identity, commands, usage, modals) over narrow ports, returning an `Outcome` the server maps to a status
 - `rolePolicies.ts` - wraps the allowlist so a switched-off role is off it for every check in the bot; the dashboard alone gets the raw repo
+- `slackDirectory.ts` - the workspace's members (`users.list`, every cursor page) held in memory for the Users page search, refreshed at most every 10 minutes, one sweep shared by concurrent searches, last good copy kept on a failed refresh; the filter itself is `domain/slackMembers.ts`
 - `nameResolver.ts` - cached Slack names (conversations.info / users.info) for the dashboard, so a render never calls Slack per row
 
 Tested with an in-memory SQLite database and a fake `LlmPort`.
@@ -164,12 +170,13 @@ Concrete implementations of the seams and the transports.
 - `slack/adminClient.ts` - `SlackAdminPort` over the Slack Web API; every post and edit carries the signed footer (`by` names the poster), falling back to bare text when Slack refuses the blocks
 - `slack/offlineAlarmClient.ts` - the offline alarm's scheduled-message calls
 - `inbox/inboxRepo.ts` - the inbox queue shared by both processes
-- `llm/claudeCli.ts` - the default `LlmPort`, wraps the local `claude` CLI (`--resume`, `stream-json`, per-call policy -> `--allowedTools`/cwd/timeout, the timeout stopping the whole process tree); `killTree.ts`, `toolTraceLog.ts` support it
+- `llm/claudeCli.ts` - the default `LlmPort`, wraps the local `claude` CLI (`--resume`, `stream-json`, per-call policy -> `--allowedTools`/cwd/timeout, the timeout stopping the whole process tree, `turnEnv` for per-turn environment such as the Orca handle); `killTree.ts`, `toolTraceLog.ts` support it
 - `llm/anthropic.ts` - alternative `LlmPort` backed by the Anthropic API
 - `db/` - `bun:sqlite` client, schema + migrations, one repo per table (users, role policies, messages, sessions, watches, reminders, workflows, usage, turn and command logs, ...), `secretBox.ts` for encrypted tokens
 - `adapter/adapterStore.ts` - the memory adapter in the `adapter_files` table, mirrored to `data/adapter-mirror` so skills can be read by path
 - `github/` - `gh` CLI wrapper and review-request polling; the GitHub App's fetch client (`appClient.ts`, RS256 JWT -> cached installation token), credentials from files (`appCredentials.ts`) and webhook listener (`webhookServer.ts`)
-- `system/` - host probes (system load, Accessibility access, shell checks for watches), and `guideWriter.ts`, which writes the prompt's how-to guides to `data/prompt-guides`
+- `system/` - host probes (system load, Accessibility access, shell checks for watches), `guideWriter.ts`, which writes the prompt's how-to guides to `data/prompt-guides`, and `orcaTerminal.ts`, the bot's own Orca terminal (created once, checked against Orca at most once a minute, re-created when gone) whose handle every spawned turn gets as `ORCA_TERMINAL_HANDLE` so it can open Orca Runs and start workers
+- `db/statsRepo.ts` - read-only day buckets and top-N sums over `messages`, `turn_log`, `llm_usage`, `command_log` and `thread_sessions` for the overview charts (`/api/stats`); `domain/dashboardStats.ts` lays them over the whole window, zeros included
 - `dashboard/server.ts` - `Bun.serve` JSON API under `/api` plus the React SPA built to `web/dist`. HTTP only: parse, call `application/dashboard.ts`, map the outcome. The brain hooks (`/api/commands/run`, `/api/github-app/comment`, `/api/restart`) and the Slack console call their deps directly
 - `web/` - the dashboard front end: React 19 + Vite + React Router 7 (`react-router` package). Its Architecture page draws this document as an interactive diagram from `web/src/systemModel.ts` - change that file with the runtime section above. Layout: `routes/router.tsx` (route table), `pages/` (one module per page with its loader and action), `ui/` (shell, error and banner), `api.ts` (every fetch)
 

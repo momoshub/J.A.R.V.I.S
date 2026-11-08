@@ -124,7 +124,39 @@ export type Message = {
   content: string;
   createdAt: number;
 };
-export type ConversationView = { channel: { id: string; label: string }; messages: Message[] };
+/** One page of a conversation, oldest-first; `nextBefore` fetches the page above it. */
+export type ConversationView = {
+  channel: { id: string; label: string };
+  messages: Message[];
+  total: number;
+  nextBefore?: number;
+};
+/** One page of the conversation list; `nextCursor` fetches the next. */
+export type ChannelPage = { channels: Channel[]; nextCursor?: string };
+
+/** A workspace member from the Users page search. `role` is set when they are already on the list. */
+export type SlackMember = {
+  id: string;
+  handle: string;
+  realName: string;
+  displayName: string;
+  title: string;
+  avatar: string;
+  role?: UserRole;
+};
+
+export type StatsView =
+  | { recording: false; error?: string }
+  | {
+      recording: true;
+      days: number;
+      messages: { date: string; user: number; assistant: number }[];
+      turns: { date: string; ok: number; failed: number }[];
+      spend: { date: string; runs: number; costUsd: number }[];
+      topCommands: { key: string; runs: number; failed: number }[];
+      topUsers: { key: string; label: string; turns: number; commands: number }[];
+      activeThreads: { day: number; week: number; window: number };
+    };
 
 export type SlackConversation = {
   id: string;

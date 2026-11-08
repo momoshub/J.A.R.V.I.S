@@ -47,12 +47,14 @@ Required / notable env (see `.env.example`):
 | `CLAUDE_MODEL_PAL` | model for `pal` chat (default `haiku`) - see [Model per role](#model-per-role) |
 | `CLAUDE_SKIP_PERMISSIONS` | `true` grants full tool access - see the security note (claude-cli) |
 | `CLAUDE_CWD` | working dir for the CLI; blank = neutral temp dir outside this repo |
+| `ORCA_TERMINAL_WORKTREE` | Orca worktree selector the bot opens its own terminal in, handed to every turn as `ORCA_TERMINAL_HANDLE` so it can run `orca orchestration` (default `path:~/Workspaces`; `off` disables). Orca not running = no handle, turns fall back to the Agent tool |
 | `ANTHROPIC_API_KEY` / `ANTHROPIC_MODEL` | required only when `LLM_PROVIDER=anthropic` |
 | `BOT_NAME` | bootstrap bot name for a fresh DB (default `Assistant`) |
 | `BOT_THINKING_LABEL` / `BOT_THINKING_DONE_LABEL` | bootstrap "thinking" step labels |
 | `COMMAND_PREFIX` | message command trigger (default `//bot`; legacy `!` always works) |
 | `SLASH_COMMAND` | Slack slash command to register (default `/bot`) |
 | `OWNER_SLACK_ID` | the owner, cannot be removed |
+| `RESTART_TURN_BUDGET_MS` | while a restart waits, new messages still run, each turn on this budget (default `120000`); past it the thread is told to hold on and the turn is cut, then picked up again on the same session after the restart |
 | `DRAIN_NOTICE_CHANNEL` | channel for the one restart notice listing waiting threads (unset: silent); also where the inner child logs voice drift unless `inner_child_drift_channel` is set |
 | `OFFLINE_ALARM_CHANNEL` | channel told when the host loses its connection, via a Slack scheduled message kept armed; a channel id, not a name (unset: no alarm) |
 | `GITHUB_APP_ID` | GitHub App id (unset: `app.json` beside the private key) - see [Calling it from GitHub](#calling-it-from-github) |
@@ -62,7 +64,7 @@ Required / notable env (see `.env.example`):
 | `GITHUB_APP_SLUG` | app slug, `@<slug>` calls it (default `jarvis-at-acme`) |
 | `GITHUB_APP_ALLOWED_OWNERS` | repo owners the app acts for, comma list (default `acme`) |
 | `GITHUB_APP_LABEL` | label that calls it on an issue/PR (default `jarvis`) |
-| `SELF_PR_AUTHOR` / `SELF_PR_REVIEWER` | gh logins for the bot's own PRs: the author opens the PR and answers reviews, the reviewer posts review comments and merges. Both or neither, and not the same login (otherwise: one account) |
+| `SELF_PR_AUTHOR` / `SELF_PR_REVIEWER` | gh logins for the bot's own PRs: the author opens the PR and answers reviews, the reviewer posts review comments, approves and merges. Both or neither, and not the same login (otherwise: one account) |
 | `DASHBOARD_PORT` | dashboard port (local, loopback-only, no auth) |
 | `DASHBOARD_ALLOWED_ORIGINS` | extra browser origins allowed to POST (proxy/tunnel access) |
 | `DATABASE_PATH` | sqlite file (default `data/bot.db`) |
@@ -831,12 +833,12 @@ A **React 19 + Vite + React Router 7** single-page app (in `web/`, library-mode 
 
 The sidebar collapses to a slim rail of icons, with each page's full name as the tooltip and accessible name (toggle button or Ctrl/Cmd+B, remembered per browser in `localStorage`); on a phone it is a top bar of text links and does not collapse.
 
-- **Overview** - counts for users, conversations, stored turns, learnings, and a tile into each area
-- **Users** - manage the allowlist: add someone, and edit each person's Slack id, Slack name, GitHub logins (the `github_login:` links the review inbox and GitHub App use) and role inline. The owner's id and role are protected; their name and GitHub logins are editable
+- **Overview** - counts for users, conversations, stored turns, learnings, then an Activity section over the last 7/30/90 days (`GET /api/stats?days=`): messages per day, brain runs per day (chat and workflow turns, failures in the tooltip), list-price spend per day, the most-run commands, the most active people (turns plus commands) and how many threads were live today and this week. Hand-drawn SVG charts (no chart library), one series and one axis per chart, a hover tooltip on each, coloured only through the theme variables so dark mode just works. Days are the host's local days, and quiet days are drawn as zeros rather than skipped. Read from `messages`, `turn_log`, `llm_usage`, `command_log` and `thread_sessions` (`db/statsRepo.ts`); stored turns are cleared before a DB commit, so the messages chart only covers what is still stored
+- **Users** - manage the allowlist: add someone by searching the workspace (name, @handle or Slack id - email too once `users:read.email` is granted) and picking them from a dropdown with avatar, name, display name and title, then a role; someone already on the list is marked and adding changes their role. The search is `GET /api/slack/members?q=`, filtered server-side over a `users.list` copy held in memory (every cursor page, deleted accounts and bots left out, refreshed at most every 10 minutes, the last good copy kept when a refresh fails). Pasting a raw `U…` id still works when the directory is unavailable. Then edit each person's Slack id, Slack name, GitHub logins (the `github_login:` links the review inbox and GitHub App use) and role inline. The owner's id and role are protected; their name and GitHub logins are editable
 - **Roles** - switch each role on or off, untick the commands, tools and MCP servers it may not use, assign people to it, and edit the executer tool allow-list (see [Roles & tool access](#roles--tool-access)). The owner role is shown but locked
 - **Memory** - with a memory adapter: teach one fact, edit any adapter file by hand (one whole file per save, checked by the same gate as `adapter refine` and kept as a revision; blank a file to remove it), or revert to an earlier revision. Without an adapter it is the flat **Learnings** list: edit one in place and save, or delete it
 - **Identity** - edit the bot name, "thinking" label, and system prompt (persona), or reset the persona to default
-- **Conversations** - browse the bot's own stored memory (SQLite), read turns, clear a channel. Every channel is shown as name and id (`#team-chat (C0TEAM00001)`, a DM as the person), and every person as name and id - never a bare Slack id, here, in the command log or on Spend. Names come from `conversations.info` / `users.info`, cached in the dashboard process (6 h, failures 10 min) so a page render does not call Slack per row; `conversations.info` needs the `*:read` scopes below
+- **Conversations** - browse the bot's own stored memory (SQLite), read turns, clear a channel. Both lists scroll instead of paging: the channel list loads the next page as you reach the bottom (`GET /api/conversations?cursor=`, cursor `<lastAt>:<channelId>`), and a conversation opens scrolled to its newest turn in reading order, loading older turns as you scroll up while keeping your place (`GET /api/conversation?channel=&before=<message id>`, 50 a page, `nextBefore` until the first turn). Every channel is shown as name and id (`#team-chat (C0TEAM00001)`, a DM as the person), and every person as name and id - never a bare Slack id, here, in the command log or on Spend. Names come from `conversations.info` / `users.info`, cached in the dashboard process (6 h, failures 10 min) so a page render does not call Slack per row; `conversations.info` needs the `*:read` scopes below
 - **Architecture** - how the bot is built, as a system design walkthrough: an interactive diagram of every process, module and store, request flows you can play step by step (the diagram takes the full page width; play/back/next sit in a dock pinned to the bottom of the screen while the diagram is in view, with the current step as a caption - Space plays or pauses, the arrow keys step - and the step list and box inspector are under it) (a mention, a typed command, the brain running a command, a call from GitHub, a polled review run as the `review` command, a watch coming good, a restart that loses nothing), the layers, and the design decisions with their trade-offs. Under it, a static System design section in interview order: requirements, limits and numbers, the data model, the mention as a sequence diagram, deployment, and failure modes. Drawn from `web/src/systemModel.ts` and `web/src/systemDesign.ts`
 - **Console** - a live Slack message manager (the web port of a terminal TUI): pick a channel/DM, read messages and threads, edit or delete the bot's own messages, reply, and generate an AI draft to review before posting. Requires extra Slack scopes (below); missing scopes surface as an in-app error.
 
@@ -849,7 +851,7 @@ bun test           # full suite
 bun run typecheck  # tsc --noEmit
 ```
 
-CI (`.github/workflows/ci.yml`) runs both, plus the dashboard's typecheck and build (`web/`), on every PR and every push to `main`. The repo is private on a free plan, so GitHub cannot require it before a merge: merge with `bin/merge-when-green.sh <pr>`, which waits for the checks and refuses unless they are all green. With `SELF_PR_REVIEWER` set, run it as that account: `GH_TOKEN=$(gh auth token -u <reviewer>) bin/merge-when-green.sh <pr>`.
+CI (`.github/workflows/ci.yml`) runs both, plus the dashboard's typecheck and build (`web/`), on every PR and every push to `main`. The repo is private on a free plan, so GitHub cannot require it before a merge: merge with `bin/merge-when-green.sh <pr>`, which waits for the checks, refuses unless they are all green, and approves the PR as the merging account right before it merges (skipped when that account opened the PR, since GitHub forbids self-approval; a failed approval is no merge). With `SELF_PR_REVIEWER` set, run it as that account: `GH_TOKEN=$(gh auth token -u <reviewer>) bin/merge-when-green.sh <pr>`.
 
 ## Notes
 

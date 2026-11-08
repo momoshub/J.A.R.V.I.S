@@ -8,7 +8,7 @@ import { homedir } from "node:os";
 import { join } from "node:path";
 import { z } from "zod";
 import { parseAllowedOwners } from "../domain/githubApp.ts";
-import { parseSelfPrAccounts, type SelfPrAccounts } from "../domain/selfUpdate.ts";
+import { parseSelfPrAccounts, RESTART_TURN_BUDGET_MS, type SelfPrAccounts } from "../domain/selfUpdate.ts";
 
 /** Where the GitHub App's credentials live by default: outside the repo, never in `.env`. */
 export const GITHUB_APP_DIR = join(homedir(), ".config", "jarvis", "github-app");
@@ -55,6 +55,10 @@ const schema = z
     CLAUDE_SKIP_PERMISSIONS: boolFromString(true),
     CLAUDE_CWD: z.string().optional(),
     CLAUDE_TIMEOUT_MS: z.coerce.number().int().positive().default(120_000),
+    // Orca worktree (selector) the bot opens its own terminal in, the sender its
+    // turns orchestrate from. Orca must know the folder (`orca repo list`).
+    // Blank is `path:~/Workspaces`, `off` turns it off.
+    ORCA_TERMINAL_WORKTREE: z.string().optional(),
 
     // anthropic provider
     ANTHROPIC_API_KEY: z.string().optional(),
@@ -91,6 +95,10 @@ const schema = z
     // Unset: nobody is told. Also the inner child's voice-drift log channel
     // unless the `inner_child_drift_channel` setting names another.
     DRAIN_NOTICE_CHANNEL: z.string().optional(),
+    // While a restart waits, new messages still run, but each turn on this
+    // budget (ms). Past it the thread is told to hold on and the turn is cut,
+    // then picked up again by the next process on the same session.
+    RESTART_TURN_BUDGET_MS: z.coerce.number().int().positive().default(RESTART_TURN_BUDGET_MS),
     // Channel the offline alarm reports to: a notice armed on Slack's side
     // that posts by itself if the host loses its connection, and is edited to
     // "back online" when it returns. Unset: no alarm. An id, not a name: the
@@ -125,7 +133,7 @@ const schema = z
 
     // GitHub accounts for the bot's own PRs (gh CLI logins on this host): the
     // author opens the PR and answers reviews, the reviewer posts the review
-    // comments and merges. Both or neither; unset keeps whatever gh is active.
+    // comments, approves and merges. Both or neither; unset keeps whatever gh is active.
     SELF_PR_AUTHOR: z.string().optional(),
     SELF_PR_REVIEWER: z.string().optional(),
   })
@@ -154,6 +162,8 @@ export type AppConfig = {
   claudeSkipPermissions: boolean;
   claudeCwd?: string;
   claudeTimeoutMs: number;
+  /** Where the bot's own Orca terminal is created; undefined is off. */
+  orcaTerminalWorktree?: string;
   anthropicApiKey?: string;
   anthropicModel: string;
   ownerSlackId: string;
@@ -171,6 +181,8 @@ export type AppConfig = {
   logDir: string;
   /** Channel for the restart notice listing waiting threads; unset is silent. */
   drainNoticeChannel?: string;
+  /** How long a turn started while a restart waits may run before it is cut. */
+  restartTurnBudgetMs: number;
   /** Channel the offline alarm posts to when the host drops off; unset is off. */
   offlineAlarmChannel?: string;
   githubApp: {
@@ -219,6 +231,9 @@ export const loadConfig = (source: Record<string, string | undefined> = process.
     claudeSkipPermissions: env.CLAUDE_SKIP_PERMISSIONS,
     claudeCwd: env.CLAUDE_CWD,
     claudeTimeoutMs: env.CLAUDE_TIMEOUT_MS,
+    ...(env.ORCA_TERMINAL_WORKTREE?.trim() === "off"
+      ? {}
+      : { orcaTerminalWorktree: env.ORCA_TERMINAL_WORKTREE?.trim() || `path:${join(homedir(), "Workspaces")}` }),
     anthropicApiKey: env.ANTHROPIC_API_KEY,
     anthropicModel: env.ANTHROPIC_MODEL,
     ownerSlackId: env.OWNER_SLACK_ID,
@@ -235,6 +250,7 @@ export const loadConfig = (source: Record<string, string | undefined> = process.
     tokenKeyPath: env.TOKEN_KEY_PATH,
     logDir: env.LOG_DIR,
     ...(env.DRAIN_NOTICE_CHANNEL ? { drainNoticeChannel: env.DRAIN_NOTICE_CHANNEL } : {}),
+    restartTurnBudgetMs: env.RESTART_TURN_BUDGET_MS,
     ...(env.OFFLINE_ALARM_CHANNEL ? { offlineAlarmChannel: env.OFFLINE_ALARM_CHANNEL } : {}),
     githubApp: {
       ...(env.GITHUB_APP_ID?.trim() ? { appId: env.GITHUB_APP_ID.trim() } : {}),

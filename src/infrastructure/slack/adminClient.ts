@@ -8,6 +8,7 @@ import { splitForBlocks, toMrkdwn } from "../../domain/slackFormat.ts";
 import { toBlockMessage } from "../../domain/blockKit.ts";
 import { type MessageBlock, visibleText } from "../../domain/slackMessageText.ts";
 import { footerBlock, footerLine, sectionChunks, signedText, SIGNATURES, withFooter } from "../../domain/messageFooter.ts";
+import type { SlackMember } from "../../domain/slackMembers.ts";
 import type {
   SlackAdminPort,
   SlackConversation,
@@ -30,6 +31,28 @@ type RawMessage = {
   blocks?: MessageBlock[];
   files?: { name?: string; mimetype?: string; url_private?: string; size?: number }[];
 };
+
+type RawMember = {
+  id?: string;
+  name?: string;
+  real_name?: string;
+  deleted?: boolean;
+  is_bot?: boolean;
+  is_app_user?: boolean;
+  profile?: { real_name?: string; display_name?: string; title?: string; email?: string; image_48?: string; image_72?: string };
+};
+
+const toMember = (m: RawMember): SlackMember => ({
+  id: m.id ?? "",
+  handle: m.name ?? "",
+  realName: m.profile?.real_name || m.real_name || "",
+  displayName: m.profile?.display_name ?? "",
+  title: m.profile?.title ?? "",
+  email: m.profile?.email ?? "",
+  avatar: m.profile?.image_48 || m.profile?.image_72 || "",
+  deleted: !!m.deleted,
+  isBot: !!m.is_bot || !!m.is_app_user,
+});
 
 const MENTION = (botId: string) => new RegExp(`<@${botId}(?:\\|[^>]+)?>`);
 
@@ -404,6 +427,17 @@ export const createSlackAdmin = (client: WebClient, clock: () => number = Date.n
       } catch {
         return undefined;
       }
+    },
+
+    listMembers: async (cursor) => {
+      const res = (await client.users.list({ limit: 200, ...(cursor ? { cursor } : {}) })) as {
+        members?: RawMember[];
+        response_metadata?: { next_cursor?: string };
+      };
+      return {
+        members: (res.members ?? []).filter((m) => m.id).map(toMember),
+        ...(res.response_metadata?.next_cursor ? { nextCursor: res.response_metadata.next_cursor } : {}),
+      };
     },
 
     resolveNames: async (ids) => {

@@ -9,6 +9,20 @@ const base = {
 };
 
 describe("loadConfig", () => {
+  test("the bot's own Orca terminal defaults to ~/Workspaces, blank included, and can be switched off", () => {
+    expect(loadConfig(base).orcaTerminalWorktree).toMatch(/^path:.*\/Workspaces$/);
+    expect(loadConfig({ ...base, ORCA_TERMINAL_WORKTREE: "path:/srv/work" }).orcaTerminalWorktree).toBe("path:/srv/work");
+    expect(loadConfig({ ...base, ORCA_TERMINAL_WORKTREE: "off" }).orcaTerminalWorktree).toBeUndefined();
+    // a blank line in .env is the default, not off
+    expect(loadConfig({ ...base, ORCA_TERMINAL_WORKTREE: " " }).orcaTerminalWorktree).toMatch(/^path:.*\/Workspaces$/);
+  });
+
+  test("a turn started while a restart waits gets a 2 minute budget by default", () => {
+    expect(loadConfig(base).restartTurnBudgetMs).toBe(120_000);
+    expect(loadConfig({ ...base, RESTART_TURN_BUDGET_MS: "90000" }).restartTurnBudgetMs).toBe(90_000);
+    expect(() => loadConfig({ ...base, RESTART_TURN_BUDGET_MS: "0" })).toThrow();
+  });
+
   test("the offline alarm channel is an id, never a name", () => {
     expect(loadConfig(base).offlineAlarmChannel).toBeUndefined();
     expect(loadConfig({ ...base, OFFLINE_ALARM_CHANNEL: "" }).offlineAlarmChannel).toBeUndefined();

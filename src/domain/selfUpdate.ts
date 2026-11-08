@@ -40,6 +40,21 @@ export const RESTART_POLL_MS = 5_000;
  */
 export const RESTART_MAX_WAIT_MS = 15 * 60_000;
 
+/**
+ * How long a turn that STARTED while a restart waits may run before it is cut.
+ *
+ * Holding every new message until the slowest running turn ended left people
+ * unanswered for up to the full wait. So new messages still run while a
+ * restart waits, but on this budget: most answers fit in it, and one that
+ * does not is told to hold on, cut, and picked up again by the next process
+ * on the same session. Elapsed time is the signal - nothing is classified up
+ * front. Overridable with `RESTART_TURN_BUDGET_MS`.
+ */
+export const RESTART_TURN_BUDGET_MS = 2 * 60_000;
+
+/** What a thread is told when its turn ran past the budget and is cut for the restart. */
+export const RESTART_HOLD_NOTICE = "⏳ đợi em xíu, vài phút em quay lại _(restarting - I will pick this up again in a few minutes)_";
+
 export type IdleRestartDeps = {
   /** True when no turn is running or queued, in any thread. */
   readonly isIdle: () => boolean;
@@ -49,11 +64,22 @@ export type IdleRestartDeps = {
   readonly delayMs?: number;
   readonly pollMs?: number;
   /**
-   * Called once, as soon as the restart is asked for: stop taking new work, so
-   * the wait is for the turns already running and nothing that arrives later.
-   * The gateway keeps queueing meanwhile, so nothing is lost.
+   * Called once, as soon as the restart is asked for. New work still runs
+   * from here on, but each new turn on a budget (`RESTART_TURN_BUDGET_MS`),
+   * so it cannot hold the restart open for long.
    */
   readonly onDrain?: () => void;
+  /**
+   * True once nothing that started BEFORE the restart was asked for is still
+   * running. Without it the intake stays open until the cap.
+   */
+  readonly settled?: () => boolean;
+  /**
+   * Called once, the first time `settled` holds while something still runs:
+   * stop taking new work, so the budgeted turns left are the last ones and
+   * the wait ends within one budget. The gateway keeps queueing meanwhile.
+   */
+  readonly onSettled?: () => void;
   /** Called right before an exit that cuts turns still running, to mark them. */
   readonly onForce?: () => void;
   readonly maxWaitMs?: number;
@@ -64,11 +90,14 @@ export type IdleRestartDeps = {
  * a running turn cuts it, so the exit waits the usual delay for the asker's
  * reply to land, then keeps looking until every turn has finished.
  *
- * Two things keep that wait short and bounded. New work stops at once
- * (`onDrain`): the bot takes no new message while it waits, so a busy thread
- * cannot keep it from ever being idle. And past `maxWaitMs` it exits anyway,
- * after `onForce` marks what it cut - the inbox redelivers those rows to the
- * new process, which picks each one up on the same session.
+ * New messages are still answered while it waits (`onDrain` puts each new
+ * turn on a budget), and three things keep the wait bounded. A new turn past
+ * its budget is cut and picked up again after the restart. Once the turns
+ * from before the request have finished (`settled`), new work stops
+ * (`onSettled`), so a steady trickle of messages cannot keep it from ever
+ * being idle - what is left ends within one budget. And past `maxWaitMs` it
+ * exits anyway, after `onForce` marks what it cut - the inbox redelivers those
+ * rows to the new process, which picks each one up on the same session.
  */
 export const restartWhenIdle = (deps: IdleRestartDeps): void => {
   const poll = deps.pollMs ?? RESTART_POLL_MS;
@@ -76,11 +105,17 @@ export const restartWhenIdle = (deps: IdleRestartDeps): void => {
   const maxWait = deps.maxWaitMs ?? RESTART_MAX_WAIT_MS;
   let waited = 0;
   let logged = false;
+  let closed = false;
   deps.onDrain?.();
   const attempt = (): void => {
     if (deps.isIdle()) {
       deps.exit();
       return;
+    }
+    if (!closed && deps.settled?.()) {
+      closed = true;
+      deps.log?.("restart: the turns from before it have finished, taking no new work until the last ones end");
+      deps.onSettled?.();
     }
     if (waited >= maxWait) {
       deps.log?.(`restart forced: turns still running after ${Math.round(maxWait / 60_000)} min, cutting them to pick up again`);
@@ -89,7 +124,7 @@ export const restartWhenIdle = (deps: IdleRestartDeps): void => {
       return;
     }
     if (!logged) {
-      deps.log?.("restart deferred: turns still running, taking no new work until they finish");
+      deps.log?.("restart deferred: turns still running; new messages still run, each on a short budget");
       logged = true;
     }
     waited += poll;
@@ -112,7 +147,7 @@ export const restartWhenIdle = (deps: IdleRestartDeps): void => {
  * the check on this plan, so `bin/merge-when-green.sh` is the CI gate.
  */
 export const STANDALONE_REVIEW_RULE =
-  "before you merge, a standalone reviewer agent reviews the PR and CI is green - every fix, no exceptions. The reviewer is an Orca worker, never the Agent tool, never a fork and never the session that wrote the code: open a fresh Run with `orca orchestration run-create --objective <short> --json` and start it with `orca orchestration worker-start --run <runId> --spec-file <brief> --task-title <short> --worktree path:<a folder or repo Orca knows, see `orca repo list`> --agent claude --json` (only if `orca status` says the runtime is not reachable or your tools refuse `orca`, use a background Agent tool reviewer on the same PR-comment protocol, and say so). Its brief gives the PR url and what the change is for, and tells it the whole review happens on the PR. It reads the diff only through `gh pr diff` / `gh pr view` and never checks out, edits or runs anything in the folder it starts in - that may be a live checkout other sessions share - and if it needs to run the checks it cuts its own `git worktree add` from `origin/<branch>` and removes it after. It reports correctness bugs, regressions, missing tests and stale docs as one PR comment that starts with `[review round N]` (N from 1) and ends with `VERDICT: clean` or `VERDICT: changes`, then polls the PR every 30s for a `[fix round N]` comment answering that round and re-reviews the head as `[review round N+1]`, even when that fix comment only pushes back or asks and the head did not move - it still counts as a round. It exits when it posts `VERDICT: clean`, after round 3, when the PR is merged or closed, or after 40 minutes with no new `[fix round N]` comment. You never use SendMessage or TaskStop for it. Never end your turn while it is open: wait for its next `[review round N]` comment in a Bash loop (background, or foreground chunks of up to 10 minutes re-run until the deadline) that also stops when `orca orchestration task-list --run <runId> --json` shows the reviewer task completed or failed with no new review comment, and gives up after 30 minutes - a reviewer that died or never answered is a review that is not clean. Fix every real finding on the branch, re-run `bun run typecheck` and `bun test`, push, then post a PR comment that starts with `[fix round N]` (the round you are answering) and says what you changed, finding by finding - push back or ask it the same way. After `[review round 3]` with `VERDICT: changes` the reviewer is gone: post no fix comment and wait for nothing. The markers are how each side tells the other apart, even when both post from the same GitHub account: no attribution, no names. Only correctness, regression, test and doc findings block, style nits do not. At most 3 review rounds: if it is still not clean after the third, or the reviewer died or went silent, do not merge - leave the PR open, link it and say what is still open. Merge only with `bin/merge-when-green.sh <pr>` from the worktree, after the last push, with a Bash timeout of 600000: it waits for CI on that exact commit and refuses on red, exit 3 means CI has not finished so run it again, and red CI is a finding to fix like any other. Never fall back to a bare `gh pr merge`. Say in your reply what the reviewer found. Never merge before a clean review and green CI";
+  "before you merge, a standalone reviewer agent reviews the PR and CI is green - every fix, no exceptions. The reviewer is an Orca worker, never the Agent tool, never a fork and never the session that wrote the code: open a fresh Run with `orca orchestration run-create --objective <short> --json` and start it with `orca orchestration worker-start --run <runId> --spec-file <brief> --task-title <short> --worktree path:<a folder or repo Orca knows, see `orca repo list`> --agent claude --json` (only if `orca status` says the runtime is not reachable, `ORCA_TERMINAL_HANDLE` is unset, `run-create` refuses it as `terminal_handle_stale` or your tools refuse `orca`, use a background Agent tool reviewer on the same PR-comment protocol, and say so). Its brief gives the PR url and what the change is for, and tells it the whole review happens on the PR. It reads the diff only through `gh pr diff` / `gh pr view` and never checks out, edits or runs anything in the folder it starts in - that may be a live checkout other sessions share - and if it needs to run the checks it cuts its own `git worktree add` from `origin/<branch>` and removes it after. It reports correctness bugs, regressions, missing tests and stale docs as one PR comment that starts with `[review round N]` (N from 1) and ends with `VERDICT: clean` or `VERDICT: changes`, then polls the PR every 30s for a `[fix round N]` comment answering that round and re-reviews the head as `[review round N+1]`, even when that fix comment only pushes back or asks and the head did not move - it still counts as a round. It exits when it posts `VERDICT: clean`, after round 3, when the PR is merged or closed, or after 40 minutes with no new `[fix round N]` comment. You never use SendMessage or TaskStop for it. Never end your turn while it is open: wait for its next `[review round N]` comment in a Bash loop (background, or foreground chunks of up to 10 minutes re-run until the deadline) that also stops when `orca orchestration task-list --run <runId> --json` shows the reviewer task completed or failed with no new review comment, and gives up after 30 minutes - a reviewer that died or never answered is a review that is not clean. Fix every real finding on the branch, re-run `bun run typecheck` and `bun test`, push, then post a PR comment that starts with `[fix round N]` (the round you are answering) and says what you changed, finding by finding - push back or ask it the same way. After `[review round 3]` with `VERDICT: changes` the reviewer is gone: post no fix comment and wait for nothing. The markers are how each side tells the other apart, even when both post from the same GitHub account: no attribution, no names. Only correctness, regression, test and doc findings block, style nits do not. At most 3 review rounds: if it is still not clean after the third, or the reviewer died or went silent, do not merge - leave the PR open, link it and say what is still open. Merge only with `bin/merge-when-green.sh <pr>` from the worktree, after the last push, with a Bash timeout of 600000: it waits for CI on that exact commit and refuses on red, then approves the PR as the merging account when that account did not open it (a failed approval is no merge), exit 3 means CI has not finished so run it again, and red CI is a finding to fix like any other. Never fall back to a bare `gh pr merge`. Say in your reply what the reviewer found. Never merge before a clean review and green CI";
 
 /** The two GitHub logins a self-fix PR is split across. */
 export type SelfPrAccounts = { readonly author: string; readonly reviewer: string };
@@ -139,7 +174,7 @@ export const parseSelfPrAccounts = (author?: string, reviewer?: string): SelfPrA
 export const selfPrAccountsRule = (accounts?: SelfPrAccounts): string => {
   if (!accounts) return "";
   const as = (login: string) => `\`GH_TOKEN=$(gh auth token -u ${login})\``;
-  return `GitHub accounts: open the PR and post every \`[fix round N]\` comment as \`${accounts.author}\` (${as(accounts.author)} in front of \`gh pr create\` and \`gh pr comment\`); the reviewer posts every \`[review round N]\` comment as \`${accounts.reviewer}\` (say so in its brief, with ${as(accounts.reviewer)} in front of \`gh pr comment\`); merge as \`${accounts.reviewer}\`: ${as(accounts.reviewer)} in front of \`bin/merge-when-green.sh <pr>\`. Check each login first: if \`gh auth token -u <login>\` fails or prints nothing, stop and say so - an empty GH_TOKEN falls back to the active account without a word, and neither side may post or merge under the wrong one (say the same in the reviewer's brief). Never \`gh auth switch\`: it flips the account under every other session`;
+  return `GitHub accounts: open the PR and post every \`[fix round N]\` comment as \`${accounts.author}\` (${as(accounts.author)} in front of \`gh pr create\` and \`gh pr comment\`); the reviewer posts every \`[review round N]\` comment as \`${accounts.reviewer}\` (say so in its brief, with ${as(accounts.reviewer)} in front of \`gh pr comment\`); merge as \`${accounts.reviewer}\`: ${as(accounts.reviewer)} in front of \`bin/merge-when-green.sh <pr>\`, which approves the PR as \`${accounts.reviewer}\` right before it merges, so the PR shows a real approval. Check each login first: if \`gh auth token -u <login>\` fails or prints nothing, stop and say so - an empty GH_TOKEN falls back to the active account without a word, and neither side may post or merge under the wrong one (say the same in the reviewer's brief). Never \`gh auth switch\`: it flips the account under every other session`;
 };
 
 const fullRules = (repoPath: string, restartScript: string, accounts?: SelfPrAccounts): string => `
@@ -151,7 +186,7 @@ Working on your own source (${repoPath}):
 - a PR description and commits carry no attribution at all: no "Generated with ..." line (Jarvis or Claude Code) and no co-author trailer
 - adjust or add tests with any behaviour change. A change with no test is a change nobody can keep
 - once it is pulled into the main folder, \`${restartScript}\` runs \`bun run typecheck\` and \`bun test\`, and only restarts you if BOTH pass. It will refuse on a red build, which is the point: you would come back into code that does not compile, and \`KeepAlive\` would restart you into it every fifteen seconds until a human walked to the machine
-- the restart waits a few seconds so your reply lands first, then holds until no turn is running in any thread, taking no new message meanwhile (they queue in the inbox, nothing is lost). If turns are still running after ${Math.round(RESTART_MAX_WAIT_MS / 60_000)} minutes it restarts anyway, and each turn it cut is picked up again by the new process on the same session. Say what you changed and that I restart once idle, then expect to be a new process - anything you were part-way through is gone
+- the restart waits a few seconds so your reply lands first, then holds until no turn is running in any thread. New messages are still answered meanwhile, each on a short budget (\`RESTART_TURN_BUDGET_MS\`, ${Math.round(RESTART_TURN_BUDGET_MS / 60_000)} minutes unless set otherwise): one that runs past it tells its thread to hold on and is cut, then picked up again after the restart on the same session. Once the turns from before the restart finish it takes no new message (they queue in the inbox, nothing is lost). If turns are still running after ${Math.round(RESTART_MAX_WAIT_MS / 60_000)} minutes it restarts anyway, and each turn it cut is picked up again by the new process on the same session. Say what you changed and that I restart once idle, then expect to be a new process - anything you were part-way through is gone
 - while I am running, never \`git stash\`, \`checkout\`, \`reset\` or \`rebase\` in a way that rewrites \`data/*.db\`. It swaps the live database file out from under me, SQLite fails with a disk I/O error and I crash mid-turn - yours included. Commit the database with plain \`git add\` + \`git commit\`, and if you must stash, leave it out with \`git stash push -- . ':!data'\`
 - never restart to "see if that fixed it". Run the checks, read what they say, and decide
 - a change left uncommitted in the main folder is not finished: it blocks the next pull and gets swept into someone else's commit`;
