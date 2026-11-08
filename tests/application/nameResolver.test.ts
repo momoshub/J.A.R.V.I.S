@@ -69,4 +69,28 @@ describe("name resolver", () => {
     // No Slack at all: still name + id, never a bare id.
     expect(await createNameResolver({ clock: () => 0 }).userLabels(["U3"])).toEqual({ U3: "unknown (U3)" });
   });
+
+  test("a cold render never has more than the cap of conversation lookups in flight", async () => {
+    let inFlight = 0;
+    let peak = 0;
+    const names = createNameResolver({
+      clock: () => 0,
+      concurrency: 3,
+      lookups: {
+        conversation: async (id) => {
+          inFlight += 1;
+          peak = Math.max(peak, inFlight);
+          await new Promise((r) => setTimeout(r, 1));
+          inFlight -= 1;
+          return { kind: "channel", name: id.toLowerCase() };
+        },
+        users: async () => ({}),
+      },
+    });
+    const ids = Array.from({ length: 10 }, (_, i) => `C${i}`);
+    const labels = await names.conversationLabels(ids);
+    expect(Object.keys(labels)).toHaveLength(10);
+    expect(labels.C7).toBe("#c7 (C7)");
+    expect(peak).toBe(3);
+  });
 });

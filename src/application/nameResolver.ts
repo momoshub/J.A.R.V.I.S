@@ -28,6 +28,13 @@ export type NameResolver = {
 };
 
 export const NAME_TTL_MS = 6 * 3_600_000;
+/**
+ * At most this many `conversations.info` calls at once. A cold first render of
+ * a long Conversations list would otherwise fire one per channel together,
+ * hit Slack's rate limit, and either hang in the client's backoff or cache a
+ * page full of "unknown" for the failure TTL.
+ */
+export const NAME_LOOKUP_CONCURRENCY = 5;
 export const NAME_FAIL_TTL_MS = 10 * 60_000;
 
 type Entry<T> = { readonly value: T; readonly until: number };
@@ -39,7 +46,9 @@ export const createNameResolver = (opts: {
   readonly knownName?: (id: string) => string | undefined;
   readonly ttlMs?: number;
   readonly failTtlMs?: number;
+  readonly concurrency?: number;
 }): NameResolver => {
+  const limit = Math.max(1, opts.concurrency ?? NAME_LOOKUP_CONCURRENCY);
   const ttl = opts.ttlMs ?? NAME_TTL_MS;
   const failTtl = opts.failTtlMs ?? NAME_FAIL_TTL_MS;
   const users = new Map<string, Entry<string>>();
@@ -94,7 +103,11 @@ export const createNameResolver = (opts: {
     },
     conversationLabels: async (ids) => {
       const wanted = [...new Set(ids.filter(Boolean))];
-      const infos = await Promise.all(wanted.map(async (id) => [id, await conversation(id)] as const));
+      const infos: (readonly [string, ConversationInfo | undefined])[] = [];
+      for (let i = 0; i < wanted.length; i += limit) {
+        const batch = wanted.slice(i, i + limit);
+        infos.push(...(await Promise.all(batch.map(async (id) => [id, await conversation(id)] as const))));
+      }
       const partners = infos.map(([, i]) => (i?.kind === "im" ? i.userId : undefined)).filter((u): u is string => !!u);
       const names = partners.length ? await userNames(partners) : {};
       return Object.fromEntries(

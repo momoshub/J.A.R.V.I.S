@@ -62,6 +62,27 @@ describe("watcher", () => {
     expect(calls).toBe(0); // the thing it watches has only just started
   });
 
+  test("a setter who is no longer allowed has the predicate never run, and the watch ends with a line", async () => {
+    add();
+    let calls = 0;
+    turns = [];
+    said = [];
+    const w = createWatcher({
+      watches,
+      clock: () => now,
+      check: async () => ((calls += 1), { code: 0, output: "" }),
+      runTurn: async (r) => void turns.push({ threadTs: r.threadTs, text: r.text, slackUserId: r.slackUserId }),
+      say: async (_c, text) => void said.push(text),
+      mayRun: (id) => id !== "U7",
+    });
+    now += EVERY;
+    await w.tick();
+    expect(calls).toBe(0);
+    expect(turns).toHaveLength(0);
+    expect(said).toEqual(["Stopped waiting: whoever set this watch is no longer allowed to run it."]);
+    expect(watches.waiting()).toHaveLength(0);
+  });
+
   test("not ready yet means ask again later, and no turn", async () => {
     add();
     const w = build(async () => ({ code: 1, output: "in_progress" }));

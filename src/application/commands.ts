@@ -162,6 +162,13 @@ export type CommandDeps = {
    * Absent means none. The owner is never denied anything (`rolePolicy.ts`).
    */
   deniedCommands?: (role: UserRole) => ReadonlySet<string>;
+  /**
+   * The allowlist WITHOUT role policies applied. `users` hides members of a
+   * switched-off role, which is right for every actor check - but the commands
+   * that manage people (add, remove, promote, demote, users, snub) must still
+   * see them as the record they are. Absent: the same as `users`.
+   */
+  rawUsers?: UserRepo;
   /** What each run of the model consumed, for `spend` and the dashboard. */
   usage?: UsageRepo;
   /** How each turn ended, for `mindful` and for continuing a failed thread. */
@@ -506,14 +513,18 @@ const reviewAgentsOf = (deps: CommandDeps): number =>
 const botNameOf = (deps: CommandDeps): string =>
   deps.botInfo?.().botName ?? deps.promptContext?.().botName ?? DEFAULT_BOT_NAME;
 
+/** The allowlist as a record, role policies NOT applied - for targets, never actors. */
+const recordsOf = (deps: CommandDeps): UserRepo => deps.rawUsers ?? deps.users;
+
 const changeRole = (ctx: Context, slackId: string, next: UserRole, requireExisting: boolean): string => {
-  const target = ctx.deps.users.get(slackId);
+  const records = recordsOf(ctx.deps);
+  const target = records.get(slackId);
   if (requireExisting && !target) return "I do not know that user - add them first.";
   const err = validateRoleChange(ctx.actor.role, target?.role ?? "pal", next, slackId === ctx.deps.ownerSlackId);
   if (err) return err;
-  if (target) ctx.deps.users.setRole(slackId, next);
+  if (target) records.setRole(slackId, next);
   else
-    ctx.deps.users.upsert({
+    records.upsert({
       slackId,
       role: next,
       displayName: "",
@@ -783,7 +794,7 @@ export const COMMANDS: readonly CommandDef[] = [
       }
       // Snubbing someone on the allowlist would be a contradiction: they are
       // already in, and the snub only ever answers a REQUEST for access.
-      if (deps.users.get(who)) return `<@${who}> is already on the list - \`${prefix} kick\` is what you want.`;
+      if (recordsOf(deps).get(who)) return `<@${who}> is already on the list - \`${prefix} kick\` is what you want.`;
       if (current.includes(who)) return "they are already snubbed.";
       deps.settings.set(SETTING_KEYS.snubbed, formatSnubbed([...current, who]));
       return `<@${who}> will be turned away without troubling anyone 😏`;
@@ -1155,11 +1166,15 @@ export const COMMANDS: readonly CommandDef[] = [
     // Like spend: the brain reads it and answers, it is not dropped in the thread.
     quiet: true,
     run: ({ deps }) => {
-      const users = deps.users.list();
+      const users = recordsOf(deps).list();
       if (users.length === 0) return "Nobody on the list yet, oddly enough.";
       // Names and ids, never tags: listing everyone must not ping everyone.
+      // A member hidden by the policy is still listed, marked, so it can be fixed.
       return users
-        .map((u) => `- ${u.displayName || "unnamed"} - *${u.role}* \`${u.slackId}\``)
+        .map((u) => {
+          const off = deps.rawUsers && !deps.users.get(u.slackId) ? " (role switched off)" : "";
+          return `- ${u.displayName || "unnamed"} - *${u.role}*${off} \`${u.slackId}\``;
+        })
         .join("\n");
     },
   },
@@ -1183,11 +1198,11 @@ export const COMMANDS: readonly CommandDef[] = [
     run: (ctx) => {
       const slackId = slackIdOf(ctx.args[0]);
       if (!slackId) return `Who? \`${ctx.prefix} remove @user\``;
-      const target = ctx.deps.users.get(slackId);
+      const target = recordsOf(ctx.deps).get(slackId);
       if (!target) return "They are not on the list to begin with.";
       const err = validateRemoval(ctx.actor.role, target.role, slackId === ctx.deps.ownerSlackId);
       if (err) return err;
-      ctx.deps.users.remove(slackId);
+      recordsOf(ctx.deps).remove(slackId);
       return `Access revoked for <@${slackId}>.`;
     },
   },

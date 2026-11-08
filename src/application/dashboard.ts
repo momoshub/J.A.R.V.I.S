@@ -137,8 +137,14 @@ const parseCsv = (v: string | undefined): Set<string> =>
   new Set((v ?? "").split(",").map((s) => s.trim()).filter(Boolean));
 
 const text = (v: unknown): string => String(v ?? "").trim();
-/** A role the deck may hand out. Never `owner`: there is one, and it comes from the environment. */
-const asRole = (v: unknown): UserRole => (v === "admin" || v === "executer" ? v : "pal");
+/**
+ * A role the deck may hand out, or undefined. Never `owner` (there is one, and
+ * it comes from the environment), and never a silent fallback: bad input is
+ * refused, because the fallback would be a demotion nobody asked for.
+ */
+const assignable = (v: unknown): UserRole | undefined =>
+  v === "admin" || v === "executer" || v === "pal" ? v : undefined;
+const BAD_ROLE = "Pick admin, executer or pal";
 const GITHUB_LOGIN = /^[A-Za-z0-9](?:[A-Za-z0-9-]{0,38})$/;
 const gateError = (r: { readonly violations?: readonly string[] }, fallback: string): Refusal =>
   refuse((r.violations ?? [fallback]).join("; "));
@@ -206,10 +212,12 @@ export const createDashboardService = (p: DashboardPorts) => {
     const slackId = text(slackIdIn);
     if (!SLACK_ID.test(slackId)) return refuse("Invalid Slack id");
     if (slackId === p.ownerSlackId) return refuse("The owner record cannot be modified");
+    const next = assignable(role ?? "pal");
+    if (!next) return refuse(BAD_ROLE);
     const existing = p.users.get(slackId);
     p.users.upsert({
       slackId,
-      role: asRole(role),
+      role: next,
       displayName: existing?.displayName ?? "",
       addedBy: BY,
       createdAt: existing?.createdAt ?? p.clock(),
@@ -239,6 +247,8 @@ export const createDashboardService = (p: DashboardPorts) => {
     if (nextId === p.ownerSlackId && !isOwner) return refuse("That is the owner's Slack id");
     if (nextId !== slackId && p.users.get(nextId)) return refuse("Another user already has that Slack id");
     if (body.role !== undefined && isOwner && body.role !== "owner") return refuse("The owner's role cannot be changed");
+    const nextRole = body.role === undefined || isOwner ? undefined : assignable(body.role);
+    if (body.role !== undefined && !isOwner && !nextRole) return refuse(BAD_ROLE);
     const logins =
       body.githubLogins === undefined
         ? undefined
@@ -249,9 +259,10 @@ export const createDashboardService = (p: DashboardPorts) => {
           )];
     const badLogin = logins?.find((l) => !GITHUB_LOGIN.test(l));
     if (badLogin) return refuse(`Not a GitHub login: ${badLogin}`);
+    // A link held by someone no longer on the list is stale, not taken.
     const taken = logins?.find((l) => {
-      const owner = p.settings.get(githubLinkKey(l))?.trim();
-      return owner && owner !== slackId;
+      const holder = p.settings.get(githubLinkKey(l))?.trim();
+      return holder && holder !== slackId && !!p.users.get(holder);
     });
     if (taken) {
       const holder = p.settings.get(githubLinkKey(taken))!.trim();
@@ -272,9 +283,9 @@ export const createDashboardService = (p: DashboardPorts) => {
       }
       for (const l of logins) p.settings.set(githubLinkKey(l), nextId);
     }
-    if (body.role !== undefined && !isOwner) {
+    if (nextRole) {
       const current = p.users.get(nextId);
-      if (current) p.users.upsert({ ...current, role: asRole(body.role) });
+      if (current) p.users.upsert({ ...current, role: nextRole });
     }
     return done(null);
   },
@@ -285,8 +296,9 @@ export const createDashboardService = (p: DashboardPorts) => {
     const existing = p.users.get(slackId);
     if (!existing) return refuse("No such user", 404);
     if (slackId === p.ownerSlackId) return refuse("The owner's role cannot be changed");
-    if (role !== "admin" && role !== "executer" && role !== "pal") return refuse("Pick admin, executer or pal");
-    p.users.upsert({ ...existing, role });
+    const next = assignable(role);
+    if (!next) return refuse(BAD_ROLE);
+    p.users.upsert({ ...existing, role: next });
     return done(null);
   },
 
@@ -294,6 +306,11 @@ export const createDashboardService = (p: DashboardPorts) => {
     const slackId = text(slackIdIn);
     if (slackId === p.ownerSlackId) return refuse("The owner cannot be removed");
     p.users.remove(slackId);
+    // Their GitHub links go too: left behind, they would still map GitHub
+    // calls to an id nobody can see on this page, and block the login's reuse.
+    for (const { key, value } of p.settings.list()) {
+      if (key.startsWith(GITHUB_LINK_PREFIX) && value.trim() === slackId) p.settings.remove(key);
+    }
     return done(null);
   },
 

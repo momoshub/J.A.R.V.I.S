@@ -432,6 +432,7 @@ const main = async () => {
     disabledCommands,
     deniedCommands,
     roleDisabled: disabledRoleOf(userStore, rolePolicies.get),
+    rawUsers: userStore,
     slack: slackAdmin,
     // `review` approves through this directly, before the brain starts.
     github: createGhCli(),
@@ -727,6 +728,8 @@ const main = async () => {
     check: createShellCheck(fullCwd),
     runTurn: deps.runTurn!,
     say: async (channel, text, thread) => void (await slackAdmin.post(channel, text, thread)),
+    // The enforced allowlist: a switched-off role's shell watches stop with it.
+    mayRun: (id) => id === config.ownerSlackId || !!users.get(id),
     log: (msg) => console.error(`[watch] ${msg}`),
     onError: onDbError,
   });

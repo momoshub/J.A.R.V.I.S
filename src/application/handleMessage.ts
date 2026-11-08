@@ -105,6 +105,8 @@ export type HandleMessageDeps = {
    * are told so in one line rather than raised to the owner as a stranger.
    */
   roleDisabled?: (slackId: string) => UserRole | undefined;
+  /** The allowlist without role policies, for the commands that manage people. */
+  rawUsers?: UserRepo;
   /** Slack Web API operations, for the power-tool commands (br, jrp). */
   slack?: SlackAdminPort;
   /** GitHub actions the bot takes itself - the up-front approve in `review`. */

@@ -163,6 +163,21 @@ describe("dispatchCommand", () => {
     expect(await dispatchCommand(deps, actor(), "C1", "ping")).not.toContain("not allowed");
   });
 
+  test("managing a member of a switched-off role sees their real record: remove, add, promote, users", async () => {
+    const base = build();
+    const raw = base.users;
+    raw.upsert({ slackId: "U5", role: "executer", displayName: "Exe", addedBy: "UADM", createdAt: 7 });
+    // U5's role is switched off: the enforced view hides them, the raw one does not.
+    const enforced = { ...raw, get: (id: string) => (id === "U5" ? undefined : raw.get(id)), list: () => raw.list().filter((u) => u.slackId !== "U5") };
+    const deps: CommandDeps = { ...base, users: enforced, rawUsers: raw };
+    expect(await dispatchCommand(deps, actor(), "C1", "users")).toContain("*executer* (role switched off) `U5`");
+    expect(await dispatchCommand(deps, actor(), "C1", "add <@U5> pal")).toContain("is now *pal*");
+    expect(raw.get("U5")).toMatchObject({ role: "pal", addedBy: "UADM", createdAt: 7, displayName: "Exe" });
+    expect(await dispatchCommand(deps, actor(), "C1", "promote <@U5>")).toContain("is now *admin*");
+    expect(await dispatchCommand(deps, actor(), "C1", "remove <@U5>")).toContain("Access revoked");
+    expect(raw.get("U5")).toBeUndefined();
+  });
+
   test("help lists commands available to the role", async () => {
     const deps = build();
     const owner = await dispatchCommand(deps, actor(), "C1", "help");

@@ -79,8 +79,9 @@ describe("dashboard use cases", () => {
     users.set("U1", { slackId: "U1", role: "pal", displayName: "Ann", addedBy: "x", createdAt: 5 });
     expect(app.saveUser(" U1 ", "admin").ok).toBe(true);
     expect(users.get("U1")).toEqual({ slackId: "U1", role: "admin", displayName: "Ann", addedBy: "dashboard", createdAt: 5 });
-    app.saveUser("U2", "owner");
-    expect(users.get("U2")?.role).toBe("pal");
+    // Bad input is refused, never quietly turned into pal.
+    expect(app.saveUser("U2", "owner")).toEqual({ ok: false, error: "Pick admin, executer or pal", status: 400 });
+    expect(users.has("U2")).toBe(false);
   });
 
   test("removeUser never removes the owner", () => {
@@ -305,10 +306,27 @@ describe("dashboard user edits", () => {
     expect(app.updateUser({ slackId: "U1", githubLogins: "bad login!" }).ok).toBe(false);
     const taken = app.updateUser({ slackId: "U1", githubLogins: "bea" });
     expect(taken).toMatchObject({ ok: false, error: "bea is already linked to Bea (U2)" });
+    expect(app.updateUser({ slackId: "U1", role: "owner" })).toMatchObject({ ok: false, error: "Pick admin, executer or pal" });
+    expect(app.updateUser({ slackId: "U1", role: "admn" }).ok).toBe(false);
     expect(app.updateUser({ slackId: OWNER, newSlackId: "U7" }).ok).toBe(false);
     expect(app.updateUser({ slackId: OWNER, role: "pal" }).ok).toBe(false);
     expect(app.updateUser({ slackId: OWNER, displayName: "Kai K", githubLogins: "kai" }).ok).toBe(true);
     expect(app.updateUser({ slackId: "U404", displayName: "x" })).toMatchObject({ ok: false, status: 404 });
+  });
+});
+
+describe("dashboard GitHub links", () => {
+  test("removing a user drops their links, and a link held by a non-member is free to take", () => {
+    const { app, users, settings } = ports();
+    users.set("U1", { slackId: "U1", role: "pal", displayName: "Ann", addedBy: "x", createdAt: 1 });
+    users.set("U2", { slackId: "U2", role: "pal", displayName: "Bea", addedBy: "x", createdAt: 1 });
+    settings.set("github_login:bea", "U2");
+    settings.set("github_login:ghost", "UGONE");
+    expect(app.removeUser("U2").ok).toBe(true);
+    expect(settings.has("github_login:bea")).toBe(false);
+    expect(app.updateUser({ slackId: "U1", githubLogins: "bea, ghost" }).ok).toBe(true);
+    expect(settings.get("github_login:ghost")).toBe("U1");
+    expect(settings.get("github_login:bea")).toBe("U1");
   });
 });
 
