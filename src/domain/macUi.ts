@@ -34,7 +34,7 @@ const agentDesktopRules = (bin?: string, desktop?: string): string => {
   const ad = desktop ? `${desktop} agent-desktop` : bin;
   return `
 - \`${ad}\` (agent-desktop) is the FIRST driver to reach for, the browser included. The browser on this Mac is *Brave Browser* - not Arc, do not open Arc. It returns JSON with a ref per element: \`${ad} snapshot --app <app> -i --compact\`, then \`${ad} click @<ref>\` / \`type @<ref> <text>\` / \`press cmd+c\`, then snapshot again to check. Refs belong to their snapshot - on \`STALE_REF\` take a new one. For a dense app map it first with \`--skeleton\` and drill in with \`--root @<ref>\`. \`${ad} skills get desktop\` has its full rules
-- fall back to \`mac-ui.js\` above only when agent-desktop refuses an app`;
+- fall back to \`mac-ui.js\` above only when agent-desktop refuses an app. A web field that ignores \`type\`, or a control with no ref, is not a refusal: retry with \`--headed\` (real keystrokes and clicks) or \`--interval-ms\` first, and never mix in the \`keys.js\` helper`;
 };
 
 /**
@@ -58,7 +58,7 @@ export const macUiRules = (script?: string, agentDesktop?: string, desktop?: str
 Driving a desktop app (any Mac app, not just a browser):
 - \`${ui} apps\` - what is running
 - \`${ui} tree <app> [--depth N]\` - the live accessibility tree. START HERE: it tells you what is actually on screen and what the things are called
-- \`${ui} find <app> <text> [--role AXButton]\` / \`click\` / \`read\` / \`windows\` / \`close <app> <title>\` / \`type <app> <text>\` / \`key <app> return [--cmd]\` / \`menu <app> <item>\`
+- \`${ui} find <app> <text> [--role AXButton]\` / \`click\` / \`read\` / \`windows\` / \`close <app> <title>\` / \`type <app> <text>\` / \`key <app> return [--cmd]\` / \`menu <app> <item>\` / \`release-keys\` (lets go of a stuck modifier; every action through the wrapper ends with it)
 - it speaks the Accessibility API directly, which you HAVE. Do not reach for AppleScript or \`osascript -e 'tell application ...'\`: those need the Automation permission, which you do NOT have, and they fail with AppleEvent \`-1712\` after a long timeout. If you see -1712, you used the wrong tool - it is not a dialog waiting to be clicked
 - Electron apps (Slack, VS Code, Brave, Discord, Postman) look like empty nested groups to every other tool. This one flips \`AXManualAccessibility\` first, so the real tree appears. The tree fills in asynchronously, so if it looks bare, ask again a second later
 - a click on web content sometimes reports success and does nothing, because the page wants a real pointer event. \`--real\` forces one

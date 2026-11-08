@@ -9,6 +9,8 @@
 //   desktop.ts status                    who holds the screen, as JSON
 //   desktop.ts release                   give the screen back (own lock only)
 //
+// Every action ends with `mac-ui.js release-keys`, so no modifier stays held.
+//
 // Read-only commands (tree, snapshot, screenshot...) skip the lock. A refused
 // action exits 75 (EX_TEMPFAIL) with the holder on stderr.
 //
@@ -23,6 +25,7 @@ import {
   isDesktopDriver,
   isDesktopFree,
   isReadOnly,
+  releasesKeysAfter,
   type DesktopDriver,
   type DesktopLock,
 } from "../src/domain/desktopLock.ts";
@@ -122,4 +125,10 @@ if (!isReadOnly(driver, rest)) {
 }
 
 const proc = Bun.spawn({ cmd: [...driverCmd(driver), ...rest], stdin: "inherit", stdout: "inherit", stderr: "inherit" });
-process.exit(await proc.exited);
+const code = await proc.exited;
+// Even after a failed action: a modifier left down turns every later keystroke
+// into a shortcut on the real screen.
+if (releasesKeysAfter(driver, rest)) {
+  await Bun.spawn({ cmd: [...driverCmd("mac-ui"), "release-keys"], stdout: "ignore", stderr: "ignore" }).exited;
+}
+process.exit(code);
