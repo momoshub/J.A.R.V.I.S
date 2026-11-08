@@ -172,7 +172,30 @@ describe("watcher", () => {
     said = [];
     now += EVERY;
     await w.tick();
+    await Bun.sleep(0); // the turn is not awaited by the tick, its failure lands just after
     expect(said[0]).toContain("could not pick the thread back up");
+  });
+  test("a hand-back that never ends does not hold the other watches", async () => {
+    // #190 fired a turn that ran for half an hour; the tick awaited it, so #191
+    // and every other due watch sat unchecked the whole time.
+    add({ threadTs: "1.1", check: "first" });
+    add({ threadTs: "2.2", check: "second" });
+    const started: string[] = [];
+    const checked: string[] = [];
+    const w = createWatcher({
+      watches,
+      clock: () => now,
+      check: async (cmd) => (checked.push(cmd), { code: cmd === "first" ? 0 : 1, output: "" }),
+      runTurn: (r) => (started.push(r.threadTs), new Promise<void>(() => {})),
+    });
+    now += EVERY;
+    await w.tick();
+    expect(started).toEqual(["1.1"]);
+    expect(checked).toEqual(["first", "second"]);
+    now += EVERY;
+    await w.tick(); // a second tick is not locked out by the turn still running
+    expect(checked).toEqual(["first", "second", "second"]);
+    expect(started).toEqual(["1.1"]); // and the fired one is not fired again
   });
   test("a hand-back resumes the session that set the watch, rules changed or not", async () => {
     add({ check: "true" });
