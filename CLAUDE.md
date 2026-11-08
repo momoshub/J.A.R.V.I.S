@@ -27,7 +27,7 @@ Always run `bun run typecheck` AND `bun test` before considering a change done. 
 - `src/config/env.ts` - zod-validated env, fails fast
 - Composition roots: `src/index.ts` wires the bot, `src/gateway.ts` reads only `SLACK_APP_TOKEN` + the inbox path so a new bot setting can never stop the gateway from starting
 - `web/` - React 19 + Vite + React Router 7 dashboard (`react-router` package, not `react-router-dom`; Claude-style theme, colours only via the CSS variables in `styles.css`; JSON API under `/api`)
-- Full docs: `README.md`, `ARCHITECTURE.md`
+- Full docs: `README.md`, `ARCHITECTURE.md`, and the dashboard's Architecture page (`web/src/systemModel.ts`: boxes, wires, playable request flows). When the runtime shape changes, update that model in the same PR - `tests/web/systemModel.test.ts` fails on a flow naming a missing box or wire, a source path that no longer exists, an unexplained wire, or a wire drawn through a box
 
 ## Conventions
 

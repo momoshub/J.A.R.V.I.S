@@ -34,6 +34,7 @@ import {
 import { ConsolePage } from "./console.tsx";
 import { CommandsPage } from "./commands.tsx";
 import { SpendPage } from "./spend.tsx";
+import { ArchitecturePage } from "./architecture.tsx";
 import "./styles.css";
 
 /** Wrap an action so thrown API errors surface as `{ error }` instead of crashing. */
@@ -66,6 +67,7 @@ const NAV = [
     ],
   },
   { group: "Usage", items: [{ to: "/spend", label: "Spend" }] },
+  { group: "Docs", items: [{ to: "/architecture", label: "Architecture" }] },
 ];
 
 /** A four-point spark, the brand mark. Drawn in currentColor so the theme owns it. */
@@ -150,6 +152,7 @@ function OverviewPage() {
     { to: "/console", t: "Console", d: "Read, reply to and edit Slack messages" },
     { to: "/commands", t: "Commands", d: "Turn commands on or off, see what ran" },
     { to: "/spend", t: "Spend", d: "What the model consumed, by person and command" },
+    { to: "/architecture", t: "Architecture", d: "How it is built - play a request through the system" },
   ];
   return (
     <>
@@ -684,6 +687,10 @@ const router = createBrowserRouter([
           return get<UsageView>(`usage?hours=${encodeURIComponent(hours)}`);
         },
         element: <SpendPage />,
+      },
+      {
+        path: "architecture",
+        element: <ArchitecturePage />,
       },
       {
         path: "conversations/:channel",
