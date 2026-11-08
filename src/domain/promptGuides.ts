@@ -78,7 +78,7 @@ export const guideFile = (guide: PromptGuide): string =>
 export const investigateSummary = (order: readonly string[]): string =>
   order.length === 0
     ? GUIDE_SUMMARIES.investigate
-    : `logs, metrics, traces, RUM - ${order.join(" first, then ")}${order.length > 1 ? " only when the one before has nothing" : ""}, NEVER cloudwatch. Read before any lookup into why something broke`;
+    : `logs, metrics, traces, RUM - ${order.length > 1 ? `${order.join(", then ")}, each only when the one before has nothing` : order[0]}, NEVER cloudwatch. Read before any lookup into why something broke`;
 
 /** A block becomes a guide only when this turn would have rendered it at all. */
 export const asGuide = (slug: GuideSlug, block: string, summary?: string): PromptGuide | undefined =>

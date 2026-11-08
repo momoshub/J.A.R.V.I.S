@@ -48,7 +48,10 @@ const SENTINELS = {
   // so the waiting and desktop blocks render too, and a change to either
   // reopens live threads like any other rule
   canWatch: true,
+  // commands (and the waiting block inside them) only render with a ticket
+  runTicket: "fp",
   macUiScript: "/fp/mac-ui",
+  agentDesktop: "/fp/agent-desktop",
   desktopScript: "/fp/desktop",
 };
 

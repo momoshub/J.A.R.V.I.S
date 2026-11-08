@@ -36,7 +36,33 @@ describe("promptFingerprint", () => {
     expect(seen.base).toBe("persona");
     expect(seen).not.toHaveProperty("participants");
     expect(seen).not.toHaveProperty("reactable");
-    expect(seen).not.toHaveProperty("runTicket");
+    // a fixed stand-in, never a real ticket: it only switches the commands
+    // block on so its rules are hashed
+    expect(seen.runTicket).toBe("fp");
     expect(seen).not.toHaveProperty("channelId");
   });
 });
+
+describe("the fingerprint sees every guide body", () => {
+  test("the sentinel build renders each block that can become a guide", () => {
+    let seen = "";
+    promptFingerprint(((opts: Record<string, unknown>) => {
+      seen = buildSystemPrompt(opts as never);
+      return seen;
+    }) as never, "persona");
+    for (const heading of [
+      "Looking things up when something is wrong",
+      "Someone reporting something broken:",
+      "When you cannot see something:",
+      "Driving a desktop app",
+      "agent-desktop",
+      "A message with several questions in it:",
+      "Interactive Block Kit",
+      "Waiting for something to finish:",
+      "Running my own commands",
+    ]) {
+      expect(seen).toContain(heading);
+    }
+  });
+});
+
