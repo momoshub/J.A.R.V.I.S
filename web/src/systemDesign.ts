@@ -66,13 +66,13 @@ export type Table = { name: string; db: "bot.db" | "inbox.db"; note: string; col
 export type Relation = { from: string; to: string; on: string };
 
 export const TABLES: Table[] = [
-  { name: "allowed_users", db: "bot.db", note: "who may talk to it, and as what", col: 0, row: 0,
+  { name: "allowed_users", db: "bot.db", note: "who may talk to it, and as what", col: 2, row: 0,
     cols: [{ name: "slack_id", key: "pk" }, { name: "role" }, { name: "display_name" }, { name: "added_by" }] },
-  { name: "settings", db: "bot.db", note: "identity and switches, as data", col: 0, row: 1,
+  { name: "settings", db: "bot.db", note: "identity and switches, as data", col: 0, row: 0,
     cols: [{ name: "key", key: "pk" }, { name: "value" }] },
-  { name: "adapter_files", db: "bot.db", note: "memory: policy, notes, skills", col: 0, row: 2,
+  { name: "adapter_files", db: "bot.db", note: "memory: policy, notes, skills", col: 0, row: 1,
     cols: [{ name: "path", key: "pk" }, { name: "content" }] },
-  { name: "adapter_revisions", db: "bot.db", note: "a whole snapshot per change", col: 0, row: 3,
+  { name: "adapter_revisions", db: "bot.db", note: "a whole snapshot per change", col: 0, row: 2,
     cols: [{ name: "id", key: "pk" }, { name: "reason" }, { name: "created_by" }, { name: "files" }] },
   { name: "messages", db: "bot.db", note: "stored turns per thread", col: 1, row: 0,
     cols: [{ name: "id", key: "pk" }, { name: "channel_id", key: "ref" }, { name: "thread_ts", key: "ref" }, { name: "slack_user_id", key: "ref" }, { name: "role" }, { name: "content" }] },
@@ -82,17 +82,17 @@ export const TABLES: Table[] = [
     cols: [{ name: "id", key: "pk" }, { name: "channel_id", key: "ref" }, { name: "thread_ts", key: "ref" }, { name: "session_id" }, { name: "status" }, { name: "steers" }] },
   { name: "watches", db: "bot.db", note: "a shell check polled outside any turn", col: 1, row: 3,
     cols: [{ name: "id", key: "pk" }, { name: "channel_id", key: "ref" }, { name: "thread_ts", key: "ref" }, { name: "check_cmd" }, { name: "next_at" }, { name: "state" }] },
-  { name: "llm_usage", db: "bot.db", note: "what every run cost", col: 2, row: 0,
+  { name: "llm_usage", db: "bot.db", note: "what every run cost", col: 2, row: 1,
     cols: [{ name: "id", key: "pk" }, { name: "slack_user_id", key: "ref" }, { name: "kind" }, { name: "model" }, { name: "cost_usd" }, { name: "duration_ms" }] },
-  { name: "turn_log", db: "bot.db", note: "how each turn ended", col: 2, row: 1,
+  { name: "turn_log", db: "bot.db", note: "how each turn ended", col: 2, row: 2,
     cols: [{ name: "id", key: "pk" }, { name: "channel_id", key: "ref" }, { name: "thread_ts", key: "ref" }, { name: "slack_user_id", key: "ref" }, { name: "outcome" }, { name: "error" }] },
-  { name: "command_log", db: "bot.db", note: "the audit log", col: 2, row: 2,
+  { name: "command_log", db: "bot.db", note: "the audit log", col: 2, row: 3,
     cols: [{ name: "id", key: "pk" }, { name: "slack_user_id", key: "ref" }, { name: "command" }, { name: "args" }, { name: "ok" }] },
-  { name: "reminders", db: "bot.db", note: "a time and a line, no model", col: 2, row: 3,
+  { name: "reminders", db: "bot.db", note: "a time and a line, no model", col: 3, row: 1,
     cols: [{ name: "id", key: "pk" }, { name: "channel_id", key: "ref" }, { name: "thread_ts", key: "ref" }, { name: "due_at" }, { name: "state" }] },
   { name: "inbox", db: "inbox.db", note: "every Slack envelope", col: 3, row: 0,
     cols: [{ name: "id", key: "pk" }, { name: "dedupe_key" }, { name: "type" }, { name: "state" }, { name: "attempts" }, { name: "acked_at" }] },
-  { name: "github_app_deliveries", db: "bot.db", note: "the GitHub App's dedupe and queue", col: 3, row: 1,
+  { name: "github_app_deliveries", db: "bot.db", note: "the GitHub App's dedupe and queue", col: 0, row: 3,
     cols: [{ name: "id", key: "pk" }, { name: "trigger" }, { name: "state" }, { name: "slack_channel" }, { name: "slack_ts" }] },
 ];
 
@@ -101,11 +101,75 @@ export const RELATIONS: Relation[] = [
   { from: "llm_usage", to: "allowed_users", on: "slack_user_id" },
   { from: "command_log", to: "allowed_users", on: "slack_user_id" },
   { from: "thread_sessions", to: "messages", on: "channel_id, thread_ts" },
-  { from: "workflows", to: "thread_sessions", on: "channel_id, thread_ts" },
+  { from: "workflows", to: "messages", on: "channel_id, thread_ts (own durable session_id, not a thread_sessions row)" },
   { from: "watches", to: "messages", on: "channel_id, thread_ts" },
   { from: "turn_log", to: "messages", on: "channel_id, thread_ts" },
   { from: "adapter_revisions", to: "adapter_files", on: "snapshot of every row" },
 ];
+
+/** Data-model layout: tables in a grid of columns, each column stacked top-down. */
+export const ER = { colW: 250, gapX: 60, rowH: 26, headH: 46, gapY: 26, pad: 16 };
+export const tableH = (t: Table) => ER.headH + t.cols.length * ER.rowH + 8;
+
+type Pt = { x: number; y: number };
+export type Box = { x: number; y: number; w: number; h: number };
+
+export const erLayout = (tables: Table[] = TABLES) => {
+  const pos = new Map<string, Box>();
+  const colTop = new Map<number, number>();
+  for (const t of [...tables].sort((a, b) => a.col - b.col || a.row - b.row)) {
+    const y = colTop.get(t.col) ?? ER.pad;
+    const h = tableH(t);
+    pos.set(t.name, { x: ER.pad + t.col * (ER.colW + ER.gapX), y, w: ER.colW, h });
+    colTop.set(t.col, y + h + ER.gapY);
+  }
+  const cols = Math.max(...tables.map((t) => t.col)) + 1;
+  return { pos, w: ER.pad * 2 + cols * ER.colW + (cols - 1) * ER.gapX, h: Math.max(...colTop.values()) - ER.gapY + ER.pad };
+};
+
+/**
+ * A join as a cubic curve between the two tables' header rows. Same column:
+ * loop out on the right edge, each relation a little further out so loops do
+ * not sit on each other. Otherwise leave from the facing sides.
+ */
+export const relationCurve = (a: Box, b: Box, lane = 0): [Pt, Pt, Pt, Pt] => {
+  const ay = a.y + 22;
+  const by = b.y + 22;
+  if (a.x === b.x) {
+    const x = a.x + a.w;
+    const out = 22 + lane * 9;
+    return [{ x, y: ay }, { x: x + out, y: ay }, { x: x + out, y: by }, { x, y: by }];
+  }
+  const ax = a.x < b.x ? a.x + a.w : a.x;
+  const bx = a.x < b.x ? b.x : b.x + b.w;
+  const mid = (ax + bx) / 2;
+  return [{ x: ax, y: ay }, { x: mid, y: ay }, { x: mid, y: by }, { x: bx, y: by }];
+};
+
+export const cubicAt = ([p0, p1, p2, p3]: [Pt, Pt, Pt, Pt], t: number): Pt => {
+  const u = 1 - t;
+  return {
+    x: u * u * u * p0.x + 3 * u * u * t * p1.x + 3 * u * t * t * p2.x + t * t * t * p3.x,
+    y: u * u * u * p0.y + 3 * u * u * t * p1.y + 3 * u * t * t * p2.y + t * t * t * p3.y,
+  };
+};
+
+/** Each relation's curve, with same-column loops given their own lane per column. */
+export const erRelations = () => {
+  const { pos } = erLayout();
+  const lanes = new Map<number, number>();
+  return RELATIONS.flatMap((r) => {
+    const a = pos.get(r.from);
+    const b = pos.get(r.to);
+    if (!a || !b) return [];
+    let lane = 0;
+    if (a.x === b.x) {
+      lane = lanes.get(a.x) ?? 0;
+      lanes.set(a.x, lane + 1);
+    }
+    return [{ rel: r, curve: relationCurve(a, b, lane) }];
+  });
+};
 
 export type Participant = { id: string; label: string; sub: string };
 export type SeqMessage = { from: string; to: string; label: string; kind: "call" | "reply" | "async" };
@@ -144,12 +208,12 @@ export const DEPLOY: { w: number; h: number; boxes: DeployBox[]; links: DeployLi
   h: 520,
   boxes: [
     { id: "host", label: "host Mac", sub: "launchd, KeepAlive", x: 20, y: 20, w: 660, h: 480, kind: "zone" },
-    { id: "gw", label: "gateway agent", sub: "bun src/gateway.ts - never restarts", x: 40, y: 60, w: 260, h: 56, kind: "agent" },
+    { id: "gw", label: "gateway agent", sub: "bun src/gateway.ts - not restarted on deploy", x: 40, y: 60, w: 260, h: 56, kind: "agent" },
     { id: "bot", label: "bot agent", sub: "bun src/index.ts - restarts on deploy", x: 40, y: 200, w: 260, h: 56, kind: "agent" },
     { id: "cli", label: "claude -p", sub: "one child process per turn", x: 40, y: 390, w: 260, h: 56, kind: "agent" },
-    { id: "p2002", label: ":2002 loopback", sub: "dashboard + /api", x: 520, y: 190, w: 140, h: 46, kind: "port" },
-    { id: "p2003", label: ":2003 loopback", sub: "GitHub webhook", x: 520, y: 270, w: 140, h: 46, kind: "port" },
-    { id: "inboxdb", label: "data/inbox.db", sub: "gitignored, WAL", x: 340, y: 128, w: 140, h: 46, kind: "file" },
+    { id: "p2002", label: ":2001 loopback", sub: "DASHBOARD_PORT", x: 520, y: 190, w: 140, h: 46, kind: "port" },
+    { id: "p2003", label: ":2003 loopback", sub: "GITHUB_APP_PORT", x: 520, y: 270, w: 140, h: 46, kind: "port" },
+    { id: "inboxdb", label: "data/inbox.db", sub: "gitignored, WAL", x: 340, y: 106, w: 140, h: 46, kind: "file" },
     { id: "botdb", label: "data/<bot>.db", sub: "committed", x: 340, y: 300, w: 140, h: 46, kind: "file" },
     { id: "funnel", label: "Tailscale Funnel", sub: "https://<host>/github", x: 520, y: 350, w: 140, h: 56, kind: "agent" },
     { id: "slack", label: "Slack", sub: "WSS + Web API", x: 760, y: 60, w: 200, h: 56, kind: "external" },
@@ -159,9 +223,11 @@ export const DEPLOY: { w: number; h: number; boxes: DeployBox[]; links: DeployLi
   links: [
     { from: "gw", to: "slack", label: "Socket Mode" },
     { from: "gw", to: "inboxdb", label: "write" },
-    { from: "bot", to: "inboxdb", label: "read" },
-    { from: "bot", to: "p2002", label: "serves" },
-    { from: "bot", to: "p2003", label: "listens" },
+    { from: "bot", to: "inboxdb", label: "claim / ack / done" },
+    { from: "bot", to: "slack", label: "Web API" },
+    { from: "bot", to: "github", label: "API" },
+    { from: "bot", to: "p2002", label: "dashboard + /api" },
+    { from: "bot", to: "p2003", label: "webhook listener" },
     { from: "bot", to: "botdb", label: "" },
     { from: "bot", to: "cli", label: "spawn" },
     { from: "cli", to: "anthropic", label: "" },

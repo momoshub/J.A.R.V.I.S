@@ -1,34 +1,18 @@
 import {
   DEPLOY,
+  ER,
+  erLayout,
+  erRelations,
   FAILURES,
   LIMITS,
-  RELATIONS,
   REQUIREMENTS,
   SEQUENCE,
   TABLES,
   fmtLimit,
   type DeployBox,
-  type Table,
 } from "../systemDesign.ts";
 
 /* ---------- data model ---------- */
-
-const ER = { colW: 250, gapX: 40, rowH: 26, headH: 46, gapY: 26, pad: 16 };
-const tableH = (t: Table) => ER.headH + t.cols.length * ER.rowH + 8;
-
-/** Tables sit in a grid of columns; each column stacks its tables top-down. */
-const erLayout = () => {
-  const pos = new Map<string, { x: number; y: number; h: number }>();
-  const colTop = new Map<number, number>();
-  for (const t of [...TABLES].sort((a, b) => a.col - b.col || a.row - b.row)) {
-    const y = colTop.get(t.col) ?? ER.pad;
-    const h = tableH(t);
-    pos.set(t.name, { x: ER.pad + t.col * (ER.colW + ER.gapX), y, h });
-    colTop.set(t.col, y + h + ER.gapY);
-  }
-  const cols = Math.max(...TABLES.map((t) => t.col)) + 1;
-  return { pos, w: ER.pad * 2 + cols * ER.colW + (cols - 1) * ER.gapX, h: Math.max(...colTop.values()) - ER.gapY + ER.pad };
-};
 
 function DataModel() {
   const { pos, w, h } = erLayout();
@@ -39,27 +23,12 @@ function DataModel() {
           <path d="M0,0 L10,5 L0,10 z" className="sd-arrow" />
         </marker>
       </defs>
-      {RELATIONS.map((r) => {
-        const a = pos.get(r.from);
-        const b = pos.get(r.to);
-        if (!a || !b) return null;
-        const sameCol = a.x === b.x;
-        // Same column: loop out on the right. Otherwise leave from the facing side.
-        const ax = sameCol ? a.x + ER.colW : a.x < b.x ? a.x + ER.colW : a.x;
-        const bx = sameCol ? b.x + ER.colW : a.x < b.x ? b.x : b.x + ER.colW;
-        const ay = a.y + 22;
-        const by = b.y + 22;
-        const bulge = sameCol ? 34 : (bx - ax) / 2;
-        const d = sameCol
-          ? `M${ax},${ay} C${ax + bulge},${ay} ${bx + bulge},${by} ${bx},${by}`
-          : `M${ax},${ay} C${ax + bulge},${ay} ${bx - bulge},${by} ${bx},${by}`;
-        return (
-          <g key={`${r.from}-${r.to}`} className="sd-rel">
-            <path d={d} markerEnd="url(#er-arrow)" />
-            <title>{`${r.from} -> ${r.to} on ${r.on}`}</title>
-          </g>
-        );
-      })}
+      {erRelations().map(({ rel, curve: [p0, p1, p2, p3] }) => (
+        <g key={`${rel.from}-${rel.to}`} className="sd-rel">
+          <path d={`M${p0.x},${p0.y} C${p1.x},${p1.y} ${p2.x},${p2.y} ${p3.x},${p3.y}`} markerEnd="url(#er-arrow)" />
+          <title>{`${rel.from} -> ${rel.to} on ${rel.on}`}</title>
+        </g>
+      ))}
       {TABLES.map((t) => {
         const p = pos.get(t.name);
         if (!p) return null;
@@ -244,7 +213,7 @@ export function SystemDesignSections() {
       <h3 className="sd-h" id="data-model">3. Data model</h3>
       <p className="muted">
         SQLite, no foreign keys: rows meet on shared keys, mostly the thread (<code>channel_id</code>, <code>thread_ts</code>)
-        and the person (<code>slack_user_id</code>). The inbox is its own file, written by the gateway. Hover a line for the join.
+        and the person (<code>slack_user_id</code>). The inbox is its own file, written by the gateway and claimed by the bot. Hover a line for the join.
       </p>
       <div className="card sd-stage"><DataModel /></div>
 

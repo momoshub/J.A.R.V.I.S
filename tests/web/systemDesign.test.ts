@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
-import { DEPLOY, LIMITS, RELATIONS, SEQUENCE, TABLES, fmtLimit } from "../../web/src/systemDesign.ts";
+import { DEPLOY, LIMITS, RELATIONS, SEQUENCE, TABLES, cubicAt, erLayout, erRelations, fmtLimit } from "../../web/src/systemDesign.ts";
 
 const root = join(import.meta.dir, "..", "..");
 const read = (p: string) => readFileSync(join(root, p), "utf8");
@@ -13,7 +13,8 @@ const columnsIn = (src: string): Map<string, Set<string>> => {
     const cols = new Set(
       m[2]!.split("\n").map((l) => l.trim().split(/\s+/)[0] ?? "").filter((w) => /^[a-z_]+$/.test(w)),
     );
-    out.set(m[1]!.replace(/_v2$/, ""), new Set([...(out.get(m[1]!) ?? []), ...cols]));
+    const name = m[1]!.replace(/_v2$/, "");
+    out.set(name, new Set([...(out.get(name) ?? []), ...cols]));
   }
   for (const m of src.matchAll(/ALTER TABLE (\w+) ADD COLUMN (\w+)/g)) {
     out.get(m[1]!)?.add(m[2]!);
@@ -41,6 +42,36 @@ describe("data model diagram", () => {
     expect(RELATIONS.filter((r) => !names.has(r.from) || !names.has(r.to))).toEqual([]);
     const cells = TABLES.map((t) => `${t.col},${t.row}`);
     expect(new Set(cells).size).toBe(cells.length);
+  });
+});
+
+describe("data model layout", () => {
+  test("no join line is drawn behind a table it does not join", () => {
+    const { pos } = erLayout();
+    const crossings: string[] = [];
+    for (const { rel, curve } of erRelations()) {
+      for (const [name, box] of pos) {
+        if (name === rel.from || name === rel.to) continue;
+        for (let i = 2; i < 99; i++) {
+          const p = cubicAt(curve, i / 100);
+          if (p.x > box.x + 1 && p.x < box.x + box.w - 1 && p.y > box.y + 1 && p.y < box.y + box.h - 1) {
+            crossings.push(`${rel.from}>${rel.to} behind ${name}`);
+            break;
+          }
+        }
+      }
+    }
+    expect(crossings).toEqual([]);
+  });
+});
+
+describe("ports drawn match the config defaults", () => {
+  test("dashboard and GitHub App ports", () => {
+    const env = read("src/config/env.ts");
+    const port = (name: string) => env.match(new RegExp(`${name}: z\\.coerce\\.number\\(\\)[^\\n]*default\\((\\d+)\\)`))?.[1];
+    const labels = DEPLOY.boxes.map((b) => b.label).join(" ");
+    expect(labels).toContain(`:${port("DASHBOARD_PORT")} loopback`);
+    expect(labels).toContain(`:${port("GITHUB_APP_PORT")} loopback`);
   });
 });
 
