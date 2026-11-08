@@ -109,6 +109,7 @@ Every command has two interfaces - use whichever you like. Both triggers are con
 | `model [role\|here\|#channel] [name\|default]` | anyone (setting: admins) | show the brain; admins pin a model per role or channel |
 | `logsource [grafana,datadog\|default]` | anyone (setting: admins) | where it looks for logs - see [Investigating](#investigating) |
 | `forget` | anyone | wipe the bot's memory of this channel |
+| `sys` (alias `vitals`) | admins | how the host, the bot and Orca are doing, as Block Kit: a verdict header, cpu/memory/swap/disk/host/bot/turns fields, the last hour's trend, then Orca's runtime, active runs, workers by status and a table of live workers (one "unreachable" line when Orca is down or slow). The message text keeps the plain report as the fallback |
 | `users` | admins | list the allowlist |
 | `add @user [pal\|executer\|admin]` | admins (admin role: owner only) | grant access |
 | `remove @user` | admins (admins: owner only) | revoke access |

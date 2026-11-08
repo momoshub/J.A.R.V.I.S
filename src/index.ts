@@ -64,6 +64,7 @@ import { NO_TOOLS } from "./domain/toolPolicy.ts";
 import { createReminderSender } from "./application/reminders.ts";
 import { createShellCheck } from "./infrastructure/system/shellCheck.ts";
 import { createOrcaCli, createOrcaTerminal } from "./infrastructure/system/orcaTerminal.ts";
+import { createOrcaProbe } from "./infrastructure/system/orcaProbe.ts";
 
 import { createWorkflowRepo } from "./infrastructure/db/workflowRepo.ts";
 import { resumeContinues } from "./application/workflowContinue.ts";
@@ -516,6 +517,8 @@ const main = async () => {
     backgroundAgents: createBackgroundAgents({ traceDir: join(config.logDir, "threads"), claudeBin: config.claudeBin }),
     reviewGuard: createReviewGuard(clock),
     system,
+    // Orca for `sys`: runtime, Runs and live workers, bounded and never throwing.
+    orca: createOrcaProbe({ run: createOrcaCli() }),
     threadSessionsOn: () => settings.get(SETTING_KEYS.threadSessions)?.trim().toLowerCase() !== "off",
     // A stranger is put to the owner for a ✅ / ❌ rather than refused outright.
     accessRequests,

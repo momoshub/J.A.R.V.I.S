@@ -550,8 +550,9 @@ export const createHandler =
         const rich = toBlockMessage(result.text, toMrkdwn);
         const extra = { thread_ts: msg.threadTs };
         // A refused signed post still gets the words out, bare.
-        const bare = () => msg.say({ text: toMrkdwn(result.text), ...extra });
-        const plain = () => msg.say({ ...signedText(toMrkdwn(result.text), footer), ...extra }).catch(bare);
+        const words = rich?.plain ?? toMrkdwn(result.text);
+        const bare = () => msg.say({ text: words, ...extra });
+        const plain = () => msg.say({ ...signedText(words, footer), ...extra }).catch(bare);
         if (rich) await msg.say({ ...rich, blocks: withFooter(rich.blocks, footer), ...extra }).catch(plain);
         else await plain();
       }

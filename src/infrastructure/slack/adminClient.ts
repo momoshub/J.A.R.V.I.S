@@ -273,13 +273,14 @@ export const createSlackAdmin = (client: WebClient, clock: () => number = Date.n
     post: async (channel, text, threadTs, by, usage) => {
       const thread = threadTs ? { thread_ts: threadTs } : {};
       const line = footer(by, usage);
-      const body = toMrkdwn(text);
+      const rich = toBlockMessage(text, toMrkdwn);
+      // A Block Kit reply that carries its own words falls back to those, not its JSON.
+      const body = rich?.plain ?? toMrkdwn(text);
       // Signed in a markdown block, which Slack never folds behind "Show
       // more"; refused, the same as sections; refused again, the words bare.
       const bare = () => client.chat.postMessage({ channel, text: body, ...thread });
       const sections = () => client.chat.postMessage({ channel, ...signedSections(body, line), ...thread }).catch(bare);
       const plain = () => client.chat.postMessage({ channel, ...signedText(body, line), ...thread }).catch(sections);
-      const rich = toBlockMessage(text, toMrkdwn);
       // A block Slack refuses falls back to the plain post rather than losing the message.
       const posted = (await (rich
         ? client.chat.postMessage({ channel, ...rich, blocks: withFooter(rich.blocks, line), ...thread }).catch(plain)
