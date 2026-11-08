@@ -18,6 +18,7 @@ const NAV: { group: string; items: { to: string; label: string; icon: NavIconNam
     group: "Configure",
     items: [
       { to: "/users", label: "Users", icon: "users" },
+      { to: "/roles", label: "Roles", icon: "roles" },
       { to: "/learnings", label: "Memory", icon: "memory" },
       { to: "/identity", label: "Identity", icon: "identity" },
       { to: "/commands", label: "Commands", icon: "commands" },

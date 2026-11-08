@@ -52,7 +52,8 @@ export function SpendPage() {
   }
 
   const t = data.totals;
-  const name = (id: string) => (id ? (data.names[id] ?? id) : "unattributed");
+  // `names` holds "Name (U0…)" for every row; the fallback still never shows a bare id.
+  const name = (id: string) => (id ? (data.names[id] ?? `unknown (${id})`) : "unattributed");
 
   return (
     <>

@@ -174,6 +174,16 @@ a { color: var(--link); text-underline-offset: 2px; }
 /* forms */
 form.row, div.row { display: flex; gap: 10px; margin: 16px 0; flex-wrap: wrap; align-items: center; }
 form.stack { display: flex; flex-direction: column; gap: 16px; margin: 12px 0; }
+/* Roles page: a role card, its checkbox groups, and inline user edits. */
+.card-body { padding: 4px 18px 16px; }
+.card-body h3 { font-size: 13px; font-weight: 500; color: var(--muted); margin: 16px 0 8px; }
+.checks { display: flex; flex-wrap: wrap; gap: 6px 16px; }
+label.check { flex-direction: row; align-items: center; gap: 6px; font-size: 13px; }
+label.check input { width: auto; margin: 0; }
+.role-head { display: flex; align-items: center; gap: 10px; justify-content: space-between; flex-wrap: wrap; }
+.members { display: flex; flex-wrap: wrap; gap: 6px; margin: 4px 0 0; }
+.off { opacity: 0.6; }
+td input, td select { min-width: 0; width: 100%; }
 .grid2 { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 14px; }
 label { display: flex; flex-direction: column; gap: 6px; }
 label > span { color: var(--muted); font-size: 13px; }

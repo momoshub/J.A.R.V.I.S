@@ -92,6 +92,8 @@ export const TABLES: Table[] = [
     cols: [{ name: "id", key: "pk" }, { name: "channel_id", key: "ref" }, { name: "thread_ts", key: "ref" }, { name: "due_at" }, { name: "state" }] },
   { name: "inbox", db: "inbox.db", note: "every Slack envelope", col: 3, row: 0,
     cols: [{ name: "id", key: "pk" }, { name: "dedupe_key" }, { name: "type" }, { name: "state" }, { name: "attempts" }, { name: "acked_at" }] },
+  { name: "role_policies", db: "bot.db", note: "per role: on/off and what it is denied", col: 3, row: 2,
+    cols: [{ name: "role", key: "pk" }, { name: "enabled" }, { name: "denied_commands" }, { name: "denied_tools" }, { name: "denied_mcp_servers" }] },
   { name: "github_app_deliveries", db: "bot.db", note: "the GitHub App's dedupe and queue", col: 0, row: 3,
     cols: [{ name: "id", key: "pk" }, { name: "trigger" }, { name: "state" }, { name: "slack_channel" }, { name: "slack_ts" }] },
 ];
@@ -100,6 +102,7 @@ export const RELATIONS: Relation[] = [
   { from: "messages", to: "allowed_users", on: "slack_user_id" },
   { from: "llm_usage", to: "allowed_users", on: "slack_user_id" },
   { from: "command_log", to: "allowed_users", on: "slack_user_id" },
+  { from: "role_policies", to: "allowed_users", on: "role" },
   { from: "thread_sessions", to: "messages", on: "channel_id, thread_ts" },
   { from: "workflows", to: "messages", on: "channel_id, thread_ts (own durable session_id, not a thread_sessions row)" },
   { from: "watches", to: "messages", on: "channel_id, thread_ts" },

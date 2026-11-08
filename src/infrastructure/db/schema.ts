@@ -95,11 +95,37 @@ export const migrate = (db: Database): void => {
   migrateWorkflowFront(db);
   migrateAdapterFiles(db);
   migrateGithubApp(db);
+  migrateRolePolicies(db);
   migrateDriftEvents(db);
 };
 
 /**
- * Migration v24: voice drift the inner child steered.
+ * Migration v24: per-role policy edited from the dashboard.
+ *
+ * One row per role that has been edited; a role with no row is on and denies
+ * nothing beyond what the code already denies it. The lists are JSON arrays.
+ * The owner's row, should one ever be written, is ignored by the domain.
+ */
+const migrateRolePolicies = (db: Database): void => {
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS role_policies (
+      role               TEXT PRIMARY KEY,
+      enabled            INTEGER NOT NULL DEFAULT 1,
+      denied_commands    TEXT NOT NULL DEFAULT '[]',
+      denied_tools       TEXT NOT NULL DEFAULT '[]',
+      denied_mcp_servers TEXT NOT NULL DEFAULT '[]',
+      updated_by         TEXT NOT NULL DEFAULT '',
+      updated_at         INTEGER NOT NULL DEFAULT 0
+    );
+  `);
+  const { user_version } = db.query<{ user_version: number }, []>("PRAGMA user_version").get() ?? {
+    user_version: 0,
+  };
+  if (user_version < 24) db.exec("PRAGMA user_version = 24;");
+};
+
+/**
+ * Migration v25: voice drift the inner child steered.
  *
  * One row per drifted reply, UNIQUE on (channel, reply key) so the same reply
  * is nudged at most once. The reply key is the Slack ts of the drifted reply
@@ -134,7 +160,7 @@ const migrateDriftEvents = (db: Database): void => {
   const { user_version } = db.query<{ user_version: number }, []>("PRAGMA user_version").get() ?? {
     user_version: 0,
   };
-  if (user_version < 24) db.exec("PRAGMA user_version = 24;");
+  if (user_version < 25) db.exec("PRAGMA user_version = 25;");
 };
 
 /**

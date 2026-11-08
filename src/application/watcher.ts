@@ -52,6 +52,12 @@ export type WatcherDeps = {
   }) => Promise<void>;
   /** Say something in the thread without spending a turn. */
   say?: (channelId: string, text: string, threadTs: string) => Promise<void>;
+  /**
+   * Whether whoever set the watch may still have it run. A predicate is a
+   * shell command run as the bot, so a person whose role was switched off (or
+   * who was removed) must not keep one ticking. Absent means always.
+   */
+  mayRun?: (slackUserId: string) => boolean;
   log?: (msg: string) => void;
   /**
    * A tick that cannot even read what is due. Handed over, never thrown: the
@@ -112,6 +118,19 @@ export const createWatcher = (deps: WatcherDeps): Watcher => {
   const one = async (w: Watch): Promise<void> => {
     const now = deps.clock();
     const waited = now - w.createdAt;
+
+    // Checked before the predicate runs, never after: the predicate is the
+    // authority. Settled quietly with one line - no hand-back turn, which the
+    // same person could not run anyway.
+    if (deps.mayRun && !deps.mayRun(w.slackUserId)) {
+      deps.watches.settle(w.id, "failed", now, "setter no longer allowed");
+      log(`watch ${w.id} stopped: ${w.slackUserId} is no longer allowed to run it`);
+      await (
+        deps.say?.(w.channelId, `Stopped waiting: whoever set this watch is no longer allowed to run it.`, w.threadTs) ??
+        Promise.resolve()
+      ).catch(() => {});
+      return;
+    }
 
     // A watch with no predicate is a plain timer: the deadline IS the event.
     if (!w.check.trim()) {

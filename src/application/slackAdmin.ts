@@ -5,6 +5,7 @@
  * Concrete implementation lives in infrastructure and wraps the Slack Web API
  * with the bot token; use cases and the dashboard depend only on this shape.
  */
+import type { ConversationInfo } from "../domain/slackNames.ts";
 
 export type SlackConversation = {
   id: string;
@@ -167,4 +168,9 @@ export type SlackAdminPort = {
   botUserId: () => Promise<string | undefined>;
   /** Resolve Slack display names for a set of user ids (cached, best-effort). */
   resolveNames: (ids: readonly string[]) => Promise<Record<string, string>>;
+  /**
+   * One conversation's kind and name (`conversations.info`), uncached - the
+   * dashboard's name resolver caches. Undefined when Slack will not say.
+   */
+  conversationInfo?: (id: string) => Promise<ConversationInfo | undefined>;
 };

@@ -8,6 +8,7 @@ import { Layout } from "../ui/layout.tsx";
 import { ErrorView } from "../ui/feedback.tsx";
 import * as overview from "../pages/overview.tsx";
 import * as users from "../pages/users.tsx";
+import * as roles from "../pages/roles.tsx";
 import * as memory from "../pages/memory.tsx";
 import * as identity from "../pages/identity.tsx";
 import * as conversations from "../pages/conversations.tsx";
@@ -32,6 +33,7 @@ export const router = createBrowserRouter([
     children: [
       { index: true, loader: overview.loader, element: <overview.OverviewPage /> },
       { path: "users", loader: users.loader, action: users.action, element: <users.UsersPage /> },
+      { path: "roles", loader: roles.loader, action: roles.action, element: <roles.RolesPage /> },
       { path: "learnings", loader: memory.loader, action: memory.action, element: <memory.LearningsPage /> },
       { path: "identity", loader: identity.loader, action: identity.action, element: <identity.IdentityPage /> },
       {
