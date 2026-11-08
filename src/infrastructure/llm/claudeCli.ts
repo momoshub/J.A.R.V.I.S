@@ -48,6 +48,11 @@ export type ClaudeCliConfig = {
   onUsage?: UsageSink;
   /** Told every tool call and result in full, for the per-thread debug log. */
   onToolTrace?: ToolTraceSink;
+  /**
+   * Extra environment for every spawned turn, asked fresh each time. Carries the
+   * bot's own Orca terminal handle; an undefined value removes an inherited one.
+   */
+  turnEnv?: () => Promise<Record<string, string | undefined>>;
 };
 
 /** A tool_result's content as text: a string, or the text parts of a block list. */
@@ -231,6 +236,7 @@ const spawnClaude = (
   signal?: AbortSignal,
   runTicket?: string,
   session?: LlmSession,
+  extraEnv: Record<string, string | undefined> = {},
 ) => {
   const proc = Bun.spawn({
     cmd: [config.binPath ?? "claude", ...args],
@@ -249,6 +255,7 @@ const spawnClaude = (
     // session, and an inherited id from a parent turn must not leak into it.
     env: {
       ...hostLoginEnv(oauthToken, useHostLogin),
+      ...extraEnv,
       ...(runTicket ? { JARVIS_RUN_TICKET: runTicket } : {}),
       BOT_SESSION_ID: session?.id,
     },
@@ -290,6 +297,15 @@ const hostLoginEnv = (oauthToken?: string, useHostLogin?: boolean): Record<strin
 };
 
 export const createClaudeCliLlm = (config: ClaudeCliConfig = {}): LlmPort => {
+  // Whatever goes wrong asking for it, the turn still runs - just without it.
+  const turnEnv = async (): Promise<Record<string, string | undefined>> => {
+    try {
+      return config.turnEnv ? await config.turnEnv() : {};
+    } catch {
+      return {};
+    }
+  };
+
   const report = (
     result: Record<string, unknown>,
     oauthToken: string | undefined,
@@ -308,7 +324,7 @@ export const createClaudeCliLlm = (config: ClaudeCliConfig = {}): LlmPort => {
   };
 
   const completeOneShot = async ({ system, messages, assistantName, policy, session, oauthToken, useHostLogin, signal, runTicket, bill }: LlmCompleteParams) => {
-    const proc = spawnClaude(config, [...buildArgs(config, false, policy, session), "--append-system-prompt", system], renderPrompt(messages, assistantName), policy, oauthToken, useHostLogin, signal, runTicket, session);
+    const proc = spawnClaude(config, [...buildArgs(config, false, policy, session), "--append-system-prompt", system], renderPrompt(messages, assistantName), policy, oauthToken, useHostLogin, signal, runTicket, session, await turnEnv());
     const [stdout, stderr, exitCode] = await Promise.all([
       new Response(proc.stdout).text(),
       new Response(proc.stderr).text(),
@@ -337,7 +353,7 @@ export const createClaudeCliLlm = (config: ClaudeCliConfig = {}): LlmPort => {
    * record of what it ran.
    */
   const runStreaming = async ({ system, messages, assistantName, policy, session, oauthToken, useHostLogin, signal, runTicket, bill }: LlmCompleteParams, sink: LlmStreamSink) => {
-    const proc = spawnClaude(config, [...buildArgs(config, true, policy, session), "--append-system-prompt", system], renderPrompt(messages, assistantName), policy, oauthToken, useHostLogin, signal, runTicket, session);
+    const proc = spawnClaude(config, [...buildArgs(config, true, policy, session), "--append-system-prompt", system], renderPrompt(messages, assistantName), policy, oauthToken, useHostLogin, signal, runTicket, session, await turnEnv());
     const stderrPromise = new Response(proc.stderr).text();
 
     /**

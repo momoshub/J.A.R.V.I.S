@@ -117,6 +117,8 @@ describe("selfUpdateRules with no skill to read (the full block)", () => {
     expect(STANDALONE_REVIEW_RULE).toContain("never checks out, edits or runs anything in the folder it starts in");
     // the same fallback as every other Orca worker
     expect(STANDALONE_REVIEW_RULE).toContain("or your tools refuse `orca`");
+    // with no handle of its own Orca refuses run-create, so that falls back too
+    expect(STANDALONE_REVIEW_RULE).toContain("`ORCA_TERMINAL_HANDLE` is unset, `run-create` refuses it as `terminal_handle_stale`");
     // CI is part of the gate, through the helper that refuses on red
     expect(STANDALONE_REVIEW_RULE).toContain("Merge only with `bin/merge-when-green.sh <pr>`");
     expect(STANDALONE_REVIEW_RULE).toContain("Never merge before a clean review and green CI");
