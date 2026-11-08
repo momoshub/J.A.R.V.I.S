@@ -77,6 +77,8 @@ describe("prompt and notice", () => {
     expect(p).toContain("run the done check at the start of the next step");
     expect(p).toContain("never with a watch");
     expect(p).toContain("foreground loop of up to 5 minutes");
+    // the self-fix reviewer is waited on the same way, never in a loop that dies with the step
+    expect(p).toContain("The same holds for the reviewer on your own fix");
   });
 
   test("the paused notice says how to resume", () => {

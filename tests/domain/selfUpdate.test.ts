@@ -98,8 +98,18 @@ describe("selfUpdateRules with no skill to read (the full block)", () => {
     expect(STANDALONE_REVIEW_RULE.indexOf("post a PR comment that starts with `[fix round N]`")).toBeGreaterThan(
       STANDALONE_REVIEW_RULE.indexOf("push, then"),
     );
-    // the worker ends itself, so nothing is left running after the merge
+    // the worker ends itself, so nothing is left running after the merge or
+    // when the writer stops without another fix round
     expect(STANDALONE_REVIEW_RULE).toContain("when the PR is merged or closed");
+    expect(STANDALONE_REVIEW_RULE).toContain("after 40 minutes with no new `[fix round N]` comment");
+    // and the writer never waits forever on a reviewer that died
+    expect(STANDALONE_REVIEW_RULE).toContain("shows the reviewer task completed or failed with no new review comment");
+    expect(STANDALONE_REVIEW_RULE).toContain("gives up after 30 minutes");
+    expect(STANDALONE_REVIEW_RULE).toContain("or the reviewer died or went silent, do not merge");
+    // the reviewer never touches the shared checkout it is started in
+    expect(STANDALONE_REVIEW_RULE).toContain("never checks out, edits or runs anything in the folder it starts in");
+    // the same fallback as every other Orca worker
+    expect(STANDALONE_REVIEW_RULE).toContain("or your tools refuse `orca`");
     // CI is part of the gate, through the helper that refuses on red
     expect(STANDALONE_REVIEW_RULE).toContain("Merge only with `bin/merge-when-green.sh <pr>`");
     expect(STANDALONE_REVIEW_RULE).toContain("Never merge before a clean review and green CI");
