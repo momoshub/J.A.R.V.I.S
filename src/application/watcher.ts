@@ -74,29 +74,38 @@ export const createWatcher = (deps: WatcherDeps): Watcher => {
   // of it: two ticks would run the same due watch twice and fire it twice.
   let running = false;
 
-  const finish = async (w: Watch, state: WatchState, text: string, error?: string): Promise<void> => {
+  // The row is settled before the turn starts, so the turn itself is never
+  // awaited: a hand-back can run for half an hour, and a tick held on it left
+  // every other due watch unchecked for just as long (#190 held #191 that way).
+  const finish = (w: Watch, state: WatchState, text: string, error?: string): void => {
     deps.watches.settle(w.id, state, deps.clock(), error);
-    try {
-      await deps.runTurn({
-        channelId: w.channelId,
-        threadTs: w.threadTs,
-        slackUserId: w.slackUserId,
-        text,
-        // The session that set the watch holds the job; a restart in between
-        // (shipping a feature, say) must not hand it to a cold turn.
-        keepSession: true,
-        // The bot's own note to itself: queued behind a running turn, it must
-        // not tell the person "yours is next" about a message they never sent.
-        unprompted: true,
-      });
-    } catch (e) {
-      // The turn is the point of the watch, so losing it is worth a word in
-      // the thread rather than only a line in the log.
+    // The turn is the point of the watch, so losing it is worth a word in
+    // the thread rather than only a line in the log.
+    const lost = (e: unknown): Promise<void> => {
       const msg = e instanceof Error ? e.message : String(e);
       log(`watch ${w.id} could not start its turn: ${msg}`);
-      await deps
-        .say?.(w.channelId, `I finished waiting but could not pick the thread back up: ${msg}`, w.threadTs)
-        .catch(() => {});
+      return (
+        deps.say?.(w.channelId, `I finished waiting but could not pick the thread back up: ${msg}`, w.threadTs) ??
+        Promise.resolve()
+      ).catch(() => {});
+    };
+    try {
+      void deps
+        .runTurn({
+          channelId: w.channelId,
+          threadTs: w.threadTs,
+          slackUserId: w.slackUserId,
+          text,
+          // The session that set the watch holds the job; a restart in between
+          // (shipping a feature, say) must not hand it to a cold turn.
+          keepSession: true,
+          // The bot's own note to itself: queued behind a running turn, it must
+          // not tell the person "yours is next" about a message they never sent.
+          unprompted: true,
+        })
+        .catch(lost);
+    } catch (e) {
+      void lost(e);
     }
   };
 
@@ -106,7 +115,7 @@ export const createWatcher = (deps: WatcherDeps): Watcher => {
 
     // A watch with no predicate is a plain timer: the deadline IS the event.
     if (!w.check.trim()) {
-      if (now >= w.deadlineAt) await finish(w, "fired", readyMessage(w.note, waited));
+      if (now >= w.deadlineAt) finish(w, "fired", readyMessage(w.note, waited));
       else deps.watches.reschedule(w.id, Math.min(now + w.everyMs, w.deadlineAt), now);
       return;
     }
@@ -117,7 +126,7 @@ export const createWatcher = (deps: WatcherDeps): Watcher => {
       const errors = w.errors + 1;
       deps.watches.reschedule(w.id, now + w.everyMs, now, res.error);
       if (errors >= MAX_CONSECUTIVE_ERRORS) {
-        await finish(
+        finish(
           w,
           "failed",
           gaveUpMessage(w.note, waited, `the check kept failing to run (${res.error})`),
@@ -128,12 +137,12 @@ export const createWatcher = (deps: WatcherDeps): Watcher => {
     }
 
     if (res.code === 0) {
-      await finish(w, "fired", readyMessage(w.note, waited, res.output));
+      finish(w, "fired", readyMessage(w.note, waited, res.output));
       return;
     }
 
     if (now >= w.deadlineAt) {
-      await finish(w, "expired", gaveUpMessage(w.note, waited, "it never became ready"));
+      finish(w, "expired", gaveUpMessage(w.note, waited, "it never became ready"));
       return;
     }
     // Not ready, not out of time: ask again later. A non-zero exit is the
