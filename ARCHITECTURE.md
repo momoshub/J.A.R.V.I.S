@@ -139,6 +139,7 @@ Orchestrates the domain and depends on **ports**, not concrete adapters.
 - `accessRequests.ts` - unknown people ask the owner and admins, who decide with a reaction
 - `adapterMemory.ts`, `botProfile.ts`, `claudeTokens.ts` - memory, instance identity and CLI tokens
 - `slackAdmin.ts`, `draftReply.ts` - Console + power tools port, AI reply drafting
+- `dashboard.ts` - the dashboard's use cases (users, memory, identity, commands, usage, modals) over narrow ports, returning an `Outcome` the server maps to a status
 
 Tested with an in-memory SQLite database and a fake `LlmPort`.
 
@@ -159,8 +160,8 @@ Concrete implementations of the seams and the transports.
 - `adapter/adapterStore.ts` - the memory adapter in the `adapter_files` table, mirrored to `data/adapter-mirror` so skills can be read by path
 - `github/` - `gh` CLI wrapper and review-request polling; the GitHub App's fetch client (`appClient.ts`, RS256 JWT -> cached installation token), credentials from files (`appCredentials.ts`) and webhook listener (`webhookServer.ts`)
 - `system/` - host probes (system load, Accessibility access, shell checks for watches), and `guideWriter.ts`, which writes the prompt's how-to guides to `data/prompt-guides`
-- `dashboard/server.ts` - `Bun.serve` JSON API under `/api` plus the React SPA built to `web/dist`
-- `web/` - the dashboard front end: React 19 + Vite + React Router 7 (`react-router` package). Its Architecture page draws this document as an interactive diagram from `web/src/systemModel.ts` - change that file with the runtime section above
+- `dashboard/server.ts` - `Bun.serve` JSON API under `/api` plus the React SPA built to `web/dist`. HTTP only: parse, call `application/dashboard.ts`, map the outcome. The brain hooks (`/api/commands/run`, `/api/github-app/comment`, `/api/restart`) and the Slack console call their deps directly
+- `web/` - the dashboard front end: React 19 + Vite + React Router 7 (`react-router` package). Its Architecture page draws this document as an interactive diagram from `web/src/systemModel.ts` - change that file with the runtime section above. Layout: `routes/router.tsx` (route table), `pages/` (one module per page with its loader and action), `ui/` (shell, error and banner), `api.ts` (every fetch)
 
 ### `src/config`
 

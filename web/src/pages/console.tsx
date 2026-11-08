@@ -5,7 +5,7 @@ import {
   post,
   type SlackConversation,
   type SlackMessage,
-} from "./api.ts";
+} from "../api.ts";
 
 type Mode = "all" | "own" | "mentions";
 type Editing = { ts: string; text: string } | null;

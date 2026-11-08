@@ -1,11 +1,27 @@
 import { Form, useLoaderData, useRouteLoaderData } from "react-router";
-import { fmtTime, type Bootstrap, type CommandInfo, type CommandLogEntry } from "./api.ts";
+import { fmtTime, get, post, type Bootstrap, type CommandInfo, type CommandLogEntry } from "../api.ts";
+import { guard } from "../routes/guard.ts";
 
 type Data = { commands: CommandInfo[]; disabled: string[]; log: CommandLogEntry[] };
 
 /**
  * Commands - manage the registry (enable/disable) and browse the execution log.
  */
+export const loader = async () => {
+  const [c, log] = await Promise.all([
+    get<{ commands: unknown[]; disabled: string[] }>("commands"),
+    get<unknown[]>("command-log"),
+  ]);
+  return { commands: c.commands, disabled: c.disabled, log };
+};
+
+export const action = guard(async ({ request }) => {
+  const fd = await request.formData();
+  if (fd.get("intent") === "clear") await post("command-log/clear", {});
+  else await post("commands/toggle", { name: fd.get("name"), enabled: fd.get("enabled") === "true" });
+  return { ok: true };
+});
+
 export function CommandsPage() {
   const { commands, disabled, log } = useLoaderData() as Data;
   const boot = useRouteLoaderData("root") as Bootstrap;

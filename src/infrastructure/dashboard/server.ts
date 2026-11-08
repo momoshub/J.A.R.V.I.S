@@ -9,13 +9,10 @@
 import { join, normalize } from "node:path";
 import { describeConnection, isListening, type ConnectionHealth } from "../../domain/connectionHealth.ts";
 import { describeUiAccess, type UiAccess } from "../../domain/uiAccess.ts";
-import type { UserRole } from "../../domain/types.ts";
-import { DEFAULT_PERSONALITY } from "../../domain/personality.ts";
 import type { BotProfile } from "../../application/botProfile.ts";
 import type { SlackAdminPort } from "../../application/slackAdmin.ts";
 import type { DraftReply } from "../../application/draftReply.ts";
-import { listCommandInfo } from "../../application/commands.ts";
-import { PAL_TOOLS } from "../../domain/toolPolicy.ts";
+import { createDashboardService, type MemoryAdapterPort, type Outcome } from "../../application/dashboard.ts";
 import type { Clock } from "../../application/ports.ts";
 import type { CommandLogRepo } from "../db/commandLogRepo.ts";
 import type { UsageRepo } from "../db/usageRepo.ts";
@@ -23,8 +20,7 @@ import type { MessageRepo } from "../db/messageRepo.ts";
 import type { UserRepo } from "../db/userRepo.ts";
 import type { LearningsRepo } from "../db/learningsRepo.ts";
 import type { KitViewRepo } from "../db/kitViewRepo.ts";
-import { KIT_MODAL_PREFIX, viewProblem, type KitView } from "../../domain/kitEvents.ts";
-import { SETTING_KEYS, type SettingsRepo } from "../db/settingsRepo.ts";
+import type { SettingsRepo } from "../db/settingsRepo.ts";
 
 export type DashboardConfig = {
   port: number;
@@ -50,41 +46,7 @@ export type DashboardDeps = {
    * old table. `status`, `view` and `files` back the memory page, and `edit`
    * is its hand editor.
    */
-  adapter?: {
-    readonly status: () => string;
-    /** Everything the memory page renders. */
-    readonly view: () => {
-      readonly policy: string;
-      readonly notes: string;
-      readonly skills: readonly { readonly name: string; readonly description: string }[];
-      readonly people: readonly string[];
-      readonly channels: readonly string[];
-      readonly revisions: readonly {
-        readonly id: number;
-        readonly createdAt: number;
-        readonly createdBy: string;
-        readonly reason: string;
-      }[];
-      readonly items: number;
-    };
-    readonly remember: (
-      content: string,
-      by: string,
-    ) => { readonly ok: boolean; readonly violations?: readonly string[]; readonly warnings?: readonly string[] };
-    readonly revert: (
-      id: number,
-      by: string,
-    ) => { readonly ok: boolean; readonly violations?: readonly string[] };
-    /** Every file the adapter holds, for the hand editor. */
-    readonly files: () => readonly { readonly path: string; readonly content: string }[];
-    /** Rewrite one file by hand (blank removes it), gated and recorded as a revision. */
-    readonly edit: (
-      path: string,
-      content: string,
-      by: string,
-      base?: string,
-    ) => { readonly ok: boolean; readonly violations?: readonly string[]; readonly warnings?: readonly string[] };
-  };
+  adapter?: MemoryAdapterPort;
   settings: SettingsRepo;
   clock: Clock;
   /** Current bot identity, for the header and identity editor. */
@@ -145,12 +107,6 @@ export type RunCommandRequest = {
   line: string;
 };
 
-const parseCsv = (v: string | undefined): Set<string> =>
-  new Set((v ?? "").split(",").map((s) => s.trim()).filter(Boolean));
-
-const SLACK_ID = /^[UW][A-Z0-9]+$/;
-const CONVERSATION_LIMIT = 200;
-
 const LOOPBACK_HOSTS = new Set(["localhost", "127.0.0.1", "::1", "[::1]"]);
 
 /**
@@ -168,8 +124,6 @@ const originAllowed = (req: Request, url: URL, allowed: readonly string[]): bool
     return false;
   }
 };
-
-const asRole = (v: unknown): UserRole => (v === "admin" ? "admin" : "pal");
 
 const CONTENT_TYPES: Record<string, string> = {
   ".html": "text/html; charset=utf-8",
@@ -230,7 +184,28 @@ export const createDashboard = (config: DashboardConfig, deps: DashboardDeps) =>
     return new Response("Dashboard build missing. Run `bun run build:web`.", { status: 500 });
   };
 
+  const app = createDashboardService({
+    ownerSlackId: config.ownerSlackId,
+    clock: deps.clock,
+    profile: deps.profile,
+    users: deps.users,
+    messages: deps.messages,
+    learnings: deps.learnings,
+    settings: deps.settings,
+    adapter: deps.adapter,
+    commandLog: deps.commandLog,
+    usage: deps.usage,
+    kitViews: deps.kitViews,
+    resolveNames: deps.slack ? (ids) => deps.slack!.resolveNames([...ids]) : undefined,
+  });
+
+  /** A use case's outcome as a response: its value merged into `{ ok: true }`, or its refusal. */
+  const reply = <T>(o: Outcome<T>): Response =>
+    o.ok ? Response.json({ ok: true, ...(o.value ?? {}) }) : jsonError(o.error, o.status);
+  const ok = (): Response => Response.json({ ok: true });
+
   const api = async (req: Request, url: URL): Promise<Response> => {
+    const q = (name: string) => url.searchParams.get(name);
     if (req.method === "GET") {
       switch (url.pathname) {
         case "/api/bootstrap":
@@ -242,102 +217,42 @@ export const createDashboard = (config: DashboardConfig, deps: DashboardDeps) =>
             slashCommand: config.slashCommand,
           });
         case "/api/overview":
-          return Response.json({
-            users: deps.users.list().length,
-            conversations: deps.messages.channels().length,
-            messages: deps.messages.count(),
-            // With an adapter the old table is empty by design, so count what
-            // memory actually holds rather than reporting a truthful zero.
-            learnings: deps.adapter ? deps.adapter.view().items : deps.learnings.list().length,
-            memory: !!deps.adapter,
-          });
-        case "/api/users": {
-          const users = deps.users.list();
-          // Dual display: fill in a Slack-resolved name where we have no stored one.
-          const missing = users.filter((u) => !u.displayName).map((u) => u.slackId);
-          const resolved: Record<string, string> =
-            missing.length && deps.slack ? await deps.slack.resolveNames(missing).catch(() => ({})) : {};
-          return Response.json(
-            users.map((u) => ({ ...u, name: u.displayName || resolved[u.slackId] || "" })),
-          );
-        }
+          return Response.json(app.overview());
+        case "/api/users":
+          return Response.json(await app.listUsers());
         case "/api/roles":
-          return Response.json({
-            executerTools: deps.settings.get(SETTING_KEYS.executerTools) ?? "",
-            palTools: PAL_TOOLS,
-          });
+          return Response.json(app.roles());
         case "/api/learnings":
-          return Response.json(deps.learnings.list());
-        case "/api/adapter/files":
-          return deps.adapter ? Response.json(deps.adapter.files()) : jsonError("No memory adapter is configured", 404);
+          return Response.json(app.learnings());
+        case "/api/adapter/files": {
+          const files = app.adapterFiles();
+          return files.ok ? Response.json(files.value) : jsonError(files.error, files.status);
+        }
         case "/api/adapter":
-          // Hand edits go through `/api/adapter/file`, one whole file at a
-          // time, through the same gate as refine and recorded as a revision.
-          // What stays gone is the old grid of text boxes writing straight
-          // into a list nothing checked.
-          return deps.adapter
-            ? Response.json({ configured: true, status: deps.adapter.status(), ...deps.adapter.view() })
-            : Response.json({ configured: false });
-        case "/api/identity": {
-          const override = deps.settings.get(SETTING_KEYS.systemPrompt);
-          const p = deps.profile();
-          return Response.json({
-            name: p.name,
-            thinkingLabel: p.thinkingLabel,
-            thinkingDoneLabel: p.thinkingDoneLabel,
-            persona: override ?? DEFAULT_PERSONALITY,
-            usingDefault: override === undefined,
-            defaultPersona: DEFAULT_PERSONALITY,
-          });
-        }
+          return Response.json(app.adapterView());
+        case "/api/identity":
+          return Response.json(app.identity());
         case "/api/commands":
-          return Response.json({
-            commands: listCommandInfo(),
-            disabled: [...parseCsv(deps.settings.get(SETTING_KEYS.disabledCommands))],
-          });
+          return Response.json(app.commands());
         case "/api/command-log":
-          return Response.json(deps.commandLog?.recent(200) ?? []);
-        case "/api/usage": {
-          // One window per request: the page asks for the one it is showing,
-          // rather than the server guessing and the two disagreeing.
-          if (!deps.usage) return Response.json({ recording: false });
-          const hours = Number(url.searchParams.get("hours") ?? "24");
-          const windowMs = (Number.isFinite(hours) && hours > 0 ? Math.min(hours, 24 * 365) : 24) * 3_600_000;
-          const since = deps.clock() - windowMs;
-          const names = Object.fromEntries(
-            deps.users.list().map((u) => [u.slackId, u.displayName || u.slackId]),
-          );
-          return Response.json({
-            recording: true,
-            windowMs,
-            totals: deps.usage.totals(since),
-            byUser: deps.usage.byUser(since, 25),
-            byKind: deps.usage.byKind(since, 25),
-            names,
-          });
-        }
+          return Response.json(app.commandLog());
+        case "/api/usage":
+          return Response.json(app.usage(q("hours")));
         case "/api/conversations":
-          return Response.json(deps.messages.channels());
-        case "/api/conversation": {
-          const channel = url.searchParams.get("channel") ?? "";
-          return Response.json(
-            channel ? deps.messages.recentForChannel(channel, CONVERSATION_LIMIT) : [],
-          );
-        }
+          return Response.json(app.conversations());
+        case "/api/conversation":
+          return Response.json(app.conversation(q("channel") ?? ""));
         // --- Slack console (live Slack Web API) ---
         case "/api/slack/conversations":
           return slackGuard(() => deps.slack!.listConversations());
         case "/api/slack/history": {
-          const channel = url.searchParams.get("channel") ?? "";
-          const limit = Math.min(100, Math.max(1, Number(url.searchParams.get("limit")) || 30));
-          const cursor = url.searchParams.get("cursor") || undefined;
+          const channel = q("channel") ?? "";
+          const limit = Math.min(100, Math.max(1, Number(q("limit")) || 30));
+          const cursor = q("cursor") || undefined;
           return slackGuard(() => deps.slack!.history(channel, limit, cursor));
         }
-        case "/api/slack/thread": {
-          const channel = url.searchParams.get("channel") ?? "";
-          const ts = url.searchParams.get("ts") ?? "";
-          return slackGuard(() => deps.slack!.replies(channel, ts));
-        }
+        case "/api/slack/thread":
+          return slackGuard(() => deps.slack!.replies(q("channel") ?? "", q("ts") ?? ""));
       }
       return jsonError("Not found", 404);
     }
@@ -354,117 +269,45 @@ export const createDashboard = (config: DashboardConfig, deps: DashboardDeps) =>
       const body = (await req.json().catch(() => ({}))) as Record<string, unknown>;
 
       switch (url.pathname) {
-        case "/api/users": {
-          const slackId = String(body.slackId ?? "").trim();
-          if (!SLACK_ID.test(slackId)) return jsonError("Invalid Slack id");
-          if (slackId === config.ownerSlackId) return jsonError("The owner record cannot be modified");
-          const existing = deps.users.get(slackId);
-          deps.users.upsert({
-            slackId,
-            role: asRole(body.role),
-            displayName: existing?.displayName ?? "",
-            addedBy: "dashboard",
-            createdAt: existing?.createdAt ?? deps.clock(),
-          });
-          return Response.json({ ok: true });
-        }
-        case "/api/users/remove": {
-          const slackId = String(body.slackId ?? "").trim();
-          if (slackId === config.ownerSlackId) return jsonError("The owner cannot be removed");
-          deps.users.remove(slackId);
-          return Response.json({ ok: true });
-        }
-        case "/api/kit/views": {
-          // The brain cannot open a modal from a turn, so it stores one here
-          // and posts a button naming it. Shape is checked now, not on click,
-          // where a bad view could only fail silently in front of someone.
-          if (!deps.kitViews) return jsonError("Modals are not wired up", 503);
-          const problem = viewProblem(body.view);
-          if (problem) return jsonError(problem);
-          const id = deps.kitViews.save(body.view as KitView, deps.clock());
-          return Response.json({ ok: true, id, action_id: `${KIT_MODAL_PREFIX}${id}` });
-        }
-        case "/api/learnings": {
-          const content = String(body.content ?? "").trim();
-          if (!content) return jsonError("Empty learning");
-          // This is the endpoint the brain curls when it decides to keep
-          // something, so it has to reach whichever memory is live.
-          if (deps.adapter) {
-            const result = deps.adapter.remember(content, "dashboard");
-            if (!result.ok) return jsonError((result.violations ?? ["Could not save that"]).join("; "));
-            return Response.json({ ok: true, warnings: result.warnings ?? [] });
-          }
-          deps.learnings.add(content, "dashboard", deps.clock());
-          return Response.json({ ok: true });
-        }
-        case "/api/learnings/update": {
-          const id = Number(body.id);
-          const content = String(body.content ?? "").trim();
-          if (!Number.isInteger(id)) return jsonError("A learning id is required");
-          if (!content) return jsonError("Empty learning");
-          deps.learnings.update(id, content);
-          return Response.json({ ok: true });
-        }
-        case "/api/adapter/revert": {
-          if (!deps.adapter) return jsonError("No memory adapter is configured");
-          const id = Number(body.id);
-          if (!Number.isInteger(id)) return jsonError("A revision id is required");
-          const result = deps.adapter.revert(id, "dashboard");
-          if (!result.ok) return jsonError((result.violations ?? ["Could not revert"]).join("; "));
-          return Response.json({ ok: true });
-        }
-        case "/api/adapter/file": {
-          if (!deps.adapter) return jsonError("No memory adapter is configured");
-          const path = String(body.path ?? "").trim();
-          if (!path) return jsonError("A file path is required");
-          if (typeof body.content !== "string") return jsonError("content is required (blank removes the file)");
-          // `base` is what the editor was opened on, so a save cannot undo a
-          // change that landed while the page sat open.
-          const base = typeof body.base === "string" ? body.base : undefined;
-          const result = deps.adapter.edit(path, body.content, "dashboard", base);
-          if (!result.ok) return jsonError((result.violations ?? ["Could not save that"]).join("; "));
-          return Response.json({ ok: true, warnings: result.warnings ?? [] });
-        }
-        case "/api/learnings/remove": {
-          const id = Number(body.id);
-          if (!Number.isInteger(id)) return jsonError("Invalid id");
-          deps.learnings.remove(id);
-          return Response.json({ ok: true });
-        }
-        case "/api/identity": {
-          const name = String(body.name ?? "").trim();
-          if (!name) return jsonError("Bot name is required");
-          deps.settings.set(SETTING_KEYS.botName, name);
-          const setOrClear = (key: string, value: unknown) => {
-            const v = String(value ?? "").trim();
-            if (v) deps.settings.set(key, v);
-            else deps.settings.remove(key);
-          };
-          setOrClear(SETTING_KEYS.thinkingLabel, body.thinkingLabel);
-          setOrClear(SETTING_KEYS.thinkingDoneLabel, body.thinkingDoneLabel);
-          const prompt = String(body.prompt ?? "").trim();
-          if (prompt) deps.settings.set(SETTING_KEYS.systemPrompt, prompt);
-          return Response.json({ ok: true });
-        }
-        case "/api/prompt/reset": {
-          deps.settings.remove(SETTING_KEYS.systemPrompt);
-          return Response.json({ ok: true });
-        }
-        case "/api/conversation/clear": {
-          const channel = String(body.channel ?? "").trim();
-          if (channel) deps.messages.clearChannel(channel);
-          return Response.json({ ok: true });
-        }
+        case "/api/users":
+          return reply(app.saveUser(body.slackId, body.role));
+        case "/api/users/remove":
+          return reply(app.removeUser(body.slackId));
+        case "/api/roles":
+          app.setExecuterTools(body.executerTools);
+          return ok();
+        case "/api/kit/views":
+          return reply(app.saveKitView(body.view));
+        case "/api/learnings":
+          return reply(app.teach(body.content));
+        case "/api/learnings/update":
+          return reply(app.updateLearning(body.id, body.content));
+        case "/api/learnings/remove":
+          return reply(app.removeLearning(body.id));
+        case "/api/adapter/revert":
+          return reply(app.revertAdapter(body.id));
+        case "/api/adapter/file":
+          return reply(app.editAdapterFile(body.path, body.content, body.base));
+        case "/api/identity":
+          return reply(app.saveIdentity({
+            name: body.name,
+            thinkingLabel: body.thinkingLabel,
+            thinkingDoneLabel: body.thinkingDoneLabel,
+            prompt: body.prompt,
+          }));
+        case "/api/prompt/reset":
+          app.resetPrompt();
+          return ok();
+        case "/api/conversation/clear":
+          app.clearConversation(body.channel);
+          return ok();
+        case "/api/commands/toggle":
+          return reply(app.toggleCommand(body.name, body.enabled));
+        case "/api/command-log/clear":
+          app.clearCommandLog();
+          return ok();
 
-        case "/api/commands/toggle": {
-          const name = String(body.name ?? "").trim();
-          if (!name) return jsonError("Command name required");
-          const disabled = parseCsv(deps.settings.get(SETTING_KEYS.disabledCommands));
-          if (body.enabled === false) disabled.add(name);
-          else disabled.delete(name);
-          deps.settings.set(SETTING_KEYS.disabledCommands, [...disabled].join(","));
-          return Response.json({ ok: true });
-        }
+        // --- Hooks other processes call: the brain's helpers and the restart script ---
         case "/api/commands/run": {
           if (!deps.runCommand) return jsonError("Command running is not configured", 503);
           const ticket = String(body.ticket ?? "").trim();
@@ -499,16 +342,6 @@ export const createDashboard = (config: DashboardConfig, deps: DashboardDeps) =>
           const reason = String(body.reason ?? "requested over the local API").slice(0, 200);
           deps.requestRestart(reason);
           return Response.json({ ok: true, restarting: true });
-        }
-
-        case "/api/command-log/clear":
-          deps.commandLog?.clear();
-          return Response.json({ ok: true });
-
-        case "/api/roles": {
-          // Assign the executer role's tool allow-list (comma/newline separated).
-          deps.settings.set(SETTING_KEYS.executerTools, String(body.executerTools ?? "").trim());
-          return Response.json({ ok: true });
         }
 
         // --- Slack console mutations ---
