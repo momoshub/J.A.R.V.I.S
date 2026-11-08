@@ -21,9 +21,10 @@
  * How far ahead the notice is armed: the most an outage goes unreported.
  * Must stay well over 5 minutes: in prod Slack posted notices it had answered
  * ok to deleting once they were within a few minutes of due (observed, not
- * documented). A 3-minute lead meant every cancel was ignored and a notice
- * posted every minute while online. So in practice ~5 minutes without a
- * successful tick fires it, not the full lead.
+ * documented: at least ~2 min, ~5 assumed). A 3-minute lead meant every
+ * cancel was ignored and a notice posted every minute while online. It still
+ * posts at the full lead, but after ~5 minutes without a successful tick it
+ * can no longer be cancelled.
  */
 export const OFFLINE_ALARM_LEAD_MS = 600_000;
 /** How often it is re-armed. Well under the lead, so one slow tick is not an alarm. */
