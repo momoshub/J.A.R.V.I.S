@@ -38,7 +38,9 @@ const ports = (over: Partial<DashboardPorts> = {}) => {
     messages: {
       channels: () => [{ channelId: "C1" }],
       count: () => 3,
-      recentForChannel: (c, limit) => [{ slackUserId: `U-${c}-${limit}`, content: "hi" }],
+      channelsPage: () => ({ channels: [{ channelId: "C1" }] }),
+      pageForChannel: (c, _before, limit) => ({ messages: [{ slackUserId: `U-${c}-${limit}`, content: "hi" }] }),
+      countForChannel: () => 1,
       clearChannel: (c) => cleared.push(c),
     },
     learnings: {
@@ -169,12 +171,14 @@ describe("dashboard use cases", () => {
     expect(app.commands().disabled).toEqual(["review"]);
   });
 
-  test("conversations clamp to a limit and ignore a blank channel on clear", async () => {
+  test("conversations page with a clamped size and ignore a blank channel on clear", async () => {
     const { app, cleared } = ports();
     expect((await app.conversation("")).messages).toEqual([]);
     expect((await app.conversation("C1")).messages).toEqual([
-      { slackUserId: "U-C1-200", content: "hi", userLabel: "unknown (U-C1-200)" },
+      { slackUserId: "U-C1-50", content: "hi", userLabel: "unknown (U-C1-50)" },
     ]);
+    expect((await app.conversation("C1", null, "9999")).messages[0]?.slackUserId).toBe("U-C1-200");
+    expect((await app.conversation("C1", "abc", "nope")).messages[0]?.slackUserId).toBe("U-C1-50");
     app.clearConversation("  ");
     app.clearConversation(" C1 ");
     expect(cleared).toEqual(["C1"]);
@@ -345,16 +349,20 @@ describe("dashboard names", () => {
       messages: {
         channels: () => [{ channelId: "C1" }, { channelId: "D1" }],
         count: () => 0,
-        recentForChannel: () => [
-          { slackUserId: "U2", content: "ask <@U3|old> about it" },
-          { slackUserId: "U3", content: "ok" },
-        ],
+        channelsPage: () => ({ channels: [{ channelId: "C1" }, { channelId: "D1" }] }),
+        pageForChannel: () => ({
+          messages: [
+            { slackUserId: "U2", content: "ask <@U3|old> about it" },
+            { slackUserId: "U3", content: "ok" },
+          ],
+        }),
+        countForChannel: () => 2,
         clearChannel: () => undefined,
       },
       commandLog: { recent: () => [{ slackUserId: "U2", channelId: "D1" }], clear: () => undefined },
       usage: { totals: () => ({}), byUser: () => [{ key: "U2" }], byKind: () => [] },
     });
-    expect((await app.conversations()).map((c) => c.label)).toEqual(["#team-chat (C1)", "@Bea (D1)"]);
+    expect((await app.conversations()).channels.map((c) => c.label)).toEqual(["#team-chat (C1)", "@Bea (D1)"]);
     const convo = await app.conversation("C1");
     expect(convo.channel.label).toBe("#team-chat (C1)");
     expect(convo.messages.map((m) => m.userLabel)).toEqual(["Bea (U2)", "unknown (U3)"]);
@@ -363,5 +371,107 @@ describe("dashboard names", () => {
       { slackUserId: "U2", channelId: "D1", userLabel: "Bea (U2)", channelLabel: "@Bea (D1)" },
     ]);
     expect(await app.usage("1")).toMatchObject({ names: { U2: "Bea (U2)" } });
+  });
+});
+
+describe("conversation cursors", () => {
+  test("passes the cursor through and returns the next one", async () => {
+    const seen: unknown[] = [];
+    const { app } = ports({
+      messages: {
+        channels: () => [],
+        count: () => 0,
+        channelsPage: (cursor, limit) => {
+          seen.push(["channels", cursor, limit]);
+          return { channels: [{ channelId: "C1" }], nextCursor: "5:C1" };
+        },
+        pageForChannel: (c, before, limit) => {
+          seen.push(["page", c, before, limit]);
+          return { messages: [{ slackUserId: "U1", content: "x" }], nextBefore: 7 };
+        },
+        countForChannel: () => 42,
+        clearChannel: () => undefined,
+      },
+    });
+    expect(await app.conversations("9:C2", "10")).toMatchObject({ nextCursor: "5:C1", channels: [{ channelId: "C1" }] });
+    expect(await app.conversation("C1", "12", null)).toMatchObject({ nextBefore: 7, total: 42 });
+    expect(seen).toEqual([["channels", "9:C2", 10], ["page", "C1", 12, 50]]);
+  });
+});
+
+describe("searching the Slack directory", () => {
+  const member = (id: string, realName: string) => ({
+    id, handle: realName.toLowerCase(), realName, displayName: "", title: "Engineer", email: "", avatar: "a.png",
+    deleted: false, isBot: false,
+  });
+
+  test("refuses without a directory, so the page falls back to a pasted id", async () => {
+    const { app } = ports();
+    expect(await app.searchMembers("an")).toMatchObject({ ok: false, status: 503 });
+  });
+
+  test("marks people already on the list with their role", async () => {
+    const { app, users } = ports({
+      directory: { search: async () => [member("U1", "Ann"), member("U2", "Bea")] },
+    });
+    users.set("U2", { slackId: "U2", role: "admin", displayName: "Bea", addedBy: "x", createdAt: 1 });
+    const out = await app.searchMembers(" a ");
+    expect(out.ok && out.value.members).toEqual([
+      { id: "U1", handle: "ann", realName: "Ann", displayName: "", title: "Engineer", avatar: "a.png", role: undefined },
+      { id: "U2", handle: "bea", realName: "Bea", displayName: "", title: "Engineer", avatar: "a.png", role: "admin" },
+    ]);
+  });
+
+  test("a directory that cannot be read is a 502, not an empty list", async () => {
+    const { app } = ports({ directory: { search: async () => Promise.reject(new Error("missing_scope")) } });
+    expect(await app.searchMembers("a")).toMatchObject({ ok: false, status: 502, error: expect.stringContaining("missing_scope") });
+  });
+
+  test("adding a picked person stores their name, but never overwrites one", () => {
+    const { app, users } = ports();
+    expect(app.saveUser("U5", "pal", "Cleo").ok).toBe(true);
+    expect(users.get("U5")?.displayName).toBe("Cleo");
+    app.saveUser("U5", "admin", "Someone Else");
+    expect(users.get("U5")).toMatchObject({ displayName: "Cleo", role: "admin" });
+  });
+});
+
+describe("overview stats", () => {
+  test("not recording without a stats store", async () => {
+    expect(await ports().app.stats(null)).toEqual({ recording: false });
+  });
+
+  test("fills every day, names the busiest people, counts live threads", async () => {
+    const DAY = 86_400_000;
+    const now = 20 * DAY + 3_600_000;
+    const sinces: number[] = [];
+    const { app } = ports({
+      clock: () => now,
+      timezoneOffset: () => 0,
+      names: createNameResolver({ clock: () => now, knownName: (id) => (id === "U1" ? "Ann" : undefined) }),
+      stats: {
+        messagesPerDay: (since) => {
+          sinces.push(since);
+          return [{ day: 20, user: 2, assistant: 3 }];
+        },
+        turnsPerDay: () => [{ day: 19, ok: 4, failed: 1 }],
+        spendPerDay: () => [],
+        topCommands: () => [{ key: "review", runs: 3, failed: 1 }],
+        topUsers: () => [{ key: "U1", turns: 5, commands: 2 }],
+        activeThreads: (since) => (since === now - DAY ? 1 : since === now - 7 * DAY ? 4 : 6),
+      },
+    });
+    const out = await app.stats("3");
+    if (!out.recording) throw new Error("expected stats");
+    expect(sinces).toEqual([18 * DAY]);
+    expect(out.messages).toEqual([
+      { date: "1970-01-19", user: 0, assistant: 0 },
+      { date: "1970-01-20", user: 0, assistant: 0 },
+      { date: "1970-01-21", user: 2, assistant: 3 },
+    ]);
+    expect(out.turns.map((d) => d.ok)).toEqual([0, 4, 0]);
+    expect(out.spend.every((d) => d.runs === 0 && d.costUsd === 0)).toBe(true);
+    expect(out.topUsers).toEqual([{ key: "U1", turns: 5, commands: 2, label: "Ann (U1)" }]);
+    expect(out.activeThreads).toEqual({ day: 1, week: 4, window: 6 });
   });
 });

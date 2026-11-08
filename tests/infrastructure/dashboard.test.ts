@@ -454,3 +454,76 @@ describe("editing memory files by hand", () => {
     expect((await dash.handle(postJson("/api/adapter/file", { path: "a.md", content: "x" }))).status).toBe(400);
   });
 });
+
+describe("paging, stats and the Slack directory over HTTP", () => {
+  test("a conversation pages upwards through before/nextBefore", async () => {
+    const { dash, messages } = build();
+    for (let i = 1; i <= 5; i++) messages.append({ channelId: "C1", slackUserId: "U1", role: "user", content: `m${i}` }, i);
+    const first = (await (await dash.handle(api(`/api/conversation?channel=C1&limit=3`))).json()) as {
+      messages: { content: string }[];
+      nextBefore?: number;
+      total: number;
+    };
+    expect(first.messages.map((m) => m.content)).toEqual(["m3", "m4", "m5"]);
+    expect(first.total).toBe(5);
+    const older = (await (await dash.handle(api(`/api/conversation?channel=C1&limit=3&before=${first.nextBefore}`))).json()) as {
+      messages: { content: string }[];
+      nextBefore?: number;
+    };
+    expect(older.messages.map((m) => m.content)).toEqual(["m1", "m2"]);
+    expect(older.nextBefore).toBeUndefined();
+  });
+
+  test("the conversation list pages with a cursor", async () => {
+    const { dash, messages } = build();
+    for (let i = 1; i <= 3; i++) messages.append({ channelId: `C${i}`, slackUserId: "U1", role: "user", content: "x" }, i);
+    const page = (await (await dash.handle(api(`/api/conversations?limit=2`))).json()) as {
+      channels: { channelId: string }[];
+      nextCursor?: string;
+    };
+    expect(page.channels.map((c) => c.channelId)).toEqual(["C3", "C2"]);
+    const next = (await (await dash.handle(api(`/api/conversations?limit=2&cursor=${page.nextCursor}`))).json()) as {
+      channels: { channelId: string }[];
+      nextCursor?: string;
+    };
+    expect(next.channels.map((c) => c.channelId)).toEqual(["C1"]);
+    expect(next.nextCursor).toBeUndefined();
+  });
+
+  test("stats say they are not recording without a store, and chart the window with one", async () => {
+    expect(await (await build().dash.handle(api(`/api/stats`))).json()).toEqual({ recording: false });
+    const db = openDatabase(":memory:");
+    const { createStatsRepo } = await import("../../src/infrastructure/db/statsRepo.ts");
+    const { dash } = build({ stats: createStatsRepo(db), timezoneOffset: () => 0 });
+    const out = (await (await dash.handle(api(`/api/stats?days=7`))).json()) as { recording: boolean; messages: unknown[] };
+    expect(out.recording).toBe(true);
+    expect(out.messages).toHaveLength(7);
+  });
+
+  test("member search goes through the Slack port, and refuses without one", async () => {
+    expect((await build().dash.handle(api(`/api/slack/members?q=an`))).status).toBe(503);
+    const slack = {
+      listMembers: async () => ({
+        members: [
+          { id: "U5", handle: "ann", realName: "Ann", displayName: "annie", title: "PM", email: "", avatar: "", deleted: false, isBot: false },
+          { id: "B1", handle: "annbot", realName: "Ann Bot", displayName: "", title: "", email: "", avatar: "", deleted: false, isBot: true },
+        ],
+      }),
+    } as unknown as NonNullable<DashboardDeps["slack"]>;
+    const res = await build({ slack }).dash.handle(api(`/api/slack/members?q=ann`));
+    expect(await res.json()).toEqual({
+      members: [{ id: "U5", handle: "ann", realName: "Ann", displayName: "annie", title: "PM", avatar: "" }],
+    });
+  });
+
+  test("adding a picked person keeps the name shown", async () => {
+    const { dash, users } = build();
+    await dash.handle(postJson(`/api/users`, { slackId: "U321", role: "pal", displayName: "Picked Name" }));
+    expect(users.get("U321")?.displayName).toBe("Picked Name");
+  });
+
+  test("avatars from Slack's CDN are allowed by the CSP", async () => {
+    const res = await build().dash.handle(api(`/api/overview`));
+    expect(res.headers.get("content-security-policy")).toContain("img-src 'self' data: https://*.slack-edge.com");
+  });
+});

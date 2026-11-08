@@ -6,6 +6,7 @@
  * with the bot token; use cases and the dashboard depend only on this shape.
  */
 import type { ConversationInfo } from "../domain/slackNames.ts";
+import type { MemberPage } from "./slackDirectory.ts";
 
 export type SlackConversation = {
   id: string;
@@ -173,4 +174,6 @@ export type SlackAdminPort = {
    * dashboard's name resolver caches. Undefined when Slack will not say.
    */
   conversationInfo?: (id: string) => Promise<ConversationInfo | undefined>;
+  /** One page of the workspace's members (`users.list`), deleted and bot accounts included. */
+  listMembers?: (cursor?: string) => Promise<MemberPage>;
 };
