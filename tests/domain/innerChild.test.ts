@@ -9,6 +9,7 @@ import {
   parseFindings,
   readOutcome,
   triageMessage,
+  triageSystem,
 } from "../../src/domain/innerChild.ts";
 
 const item = (over: Record<string, unknown> = {}) => ({
@@ -124,5 +125,14 @@ describe("messages", () => {
 
   test("the triage is told what is already known", () => {
     expect(triageMessage([], ["a: b"])).toContain("- a: b");
+  });
+});
+
+describe("triageSystem", () => {
+  test("still drops a one-off slip as a self-fix issue, and asks for language drift separately", () => {
+    const p = triageSystem("Bot");
+    expect(p).toContain("a one-off model slip with no code cause");
+    expect(p).toContain('{"drift":"language","turn":N');
+    expect(p).toContain("never reported as one above");
   });
 });

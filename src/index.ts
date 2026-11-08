@@ -53,7 +53,9 @@ import { createGithubAppClient } from "./infrastructure/github/appClient.ts";
 import { loadGithubAppCredentials, webhookSecretOf } from "./infrastructure/github/appCredentials.ts";
 import { startWebhookServer } from "./infrastructure/github/webhookServer.ts";
 import { createGithubAppRepo } from "./infrastructure/db/githubAppRepo.ts";
-import { createInnerChild } from "./application/innerChild.ts";
+import { createInnerChild, steerViaRespond } from "./application/innerChild.ts";
+import { decideAccess } from "./domain/access.ts";
+import { createDriftRepo } from "./infrastructure/db/driftRepo.ts";
 import { createSelfIssueRepo } from "./infrastructure/db/selfIssueRepo.ts";
 import { NO_TOOLS } from "./domain/toolPolicy.ts";
 import { createReminderSender } from "./application/reminders.ts";
@@ -877,6 +879,37 @@ const main = async () => {
       if (result.kind === "ignored") return "";
       if (result.text.trim()) await slackAdmin.post(channelId, result.text, threadTs);
       return result.text;
+    },
+    // Voice drift: a nudge run in the drifted thread as whoever that turn
+    // answered (their role, their session), never posted there. Only its
+    // reply is, unless it is a silence note.
+    drift: {
+      events: createDriftRepo(db),
+      logChannel: () => {
+        const v = settings.get(SETTING_KEYS.innerChildDriftChannel)?.trim() ?? "";
+        if (v.toLowerCase() === "off") return "";
+        return v || config.drainNoticeChannel || "";
+      },
+      replies: (channel, threadTs) => slackAdmin.replies(channel, threadTs),
+      workflowActive: (channel, threadTs) => !!workflows.activeFor(channel, threadTs),
+      steer: steerViaRespond({
+        run: ({ channelId, threadTs, slackUserId, text }) =>
+          respond(deps, {
+            channelId,
+            slackUserId,
+            text,
+            threadTs,
+            messageTs: syntheticTs(clock()),
+            viaSlash: false,
+            following: false,
+            keepSession: true,
+            unprompted: true,
+          }),
+        post: (channel, text, threadTs) => slackAdmin.post(channel, text, threadTs),
+        workflowActive: (channel, threadTs) => !!workflows.activeFor(channel, threadTs),
+        allowed: (id) => decideAccess(id, config.ownerSlackId, users.get).allowed,
+      }),
+      activity: (event, data) => activity.event(event, data),
     },
     log: (msg) => console.error(`[inner-child] ${msg}`),
   });

@@ -88,7 +88,8 @@ const schema = z
     // Folder for the activity/error logs (one JSON line per event).
     LOG_DIR: z.string().default("logs"),
     // Channel that gets the one restart notice listing the waiting threads.
-    // Unset: nobody is told.
+    // Unset: nobody is told. Also the inner child's voice-drift log channel
+    // unless the `inner_child_drift_channel` setting names another.
     DRAIN_NOTICE_CHANNEL: z.string().optional(),
     // Channel the offline alarm reports to: a notice armed on Slack's side
     // that posts by itself if the host loses its connection, and is edited to
