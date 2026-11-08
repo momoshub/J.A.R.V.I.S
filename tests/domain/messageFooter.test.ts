@@ -6,7 +6,9 @@ import {
   footerLine,
   offsetLabel,
   restamp,
+  MARKDOWN_LIMIT,
   sectionChunks,
+  signedSections,
   signedText,
   SIGNATURES,
   updatedStamp,
@@ -83,17 +85,48 @@ describe("blocks", () => {
     expect(out.at(-1)).toMatchObject({ block_id: FOOTER_BLOCK_ID });
   });
 
-  test("a plain post becomes sections plus the footer, keeping its text fallback", () => {
+  test("a plain post becomes a markdown block plus the footer, keeping its text fallback", () => {
     const msg = signedText("hello *there*", line);
     expect(msg.text).toBe("hello *there*");
-    expect(msg.blocks).toEqual([{ type: "section", text: { type: "mrkdwn", text: "hello *there*" } }, footerBlock(line)]);
+    expect(msg.blocks).toEqual([{ type: "markdown", text: "hello *there*" }, footerBlock(line)]);
   });
 
-  test("a long plain post is split so every section stays under Slack's 3000", () => {
-    const msg = signedText(`${"a ".repeat(2000)}\n${"b ".repeat(2000)}`, line);
-    const sections = msg.blocks.slice(0, -1) as unknown as { text: { text: string } }[];
+  test("a long plain post stays one markdown block, so Slack does not fold it behind Show more", () => {
+    const long = `${"a ".repeat(2000)}\n${"b ".repeat(2000)}`;
+    const msg = signedText(long, line);
+    expect(msg.blocks).toEqual([{ type: "markdown", text: long }, footerBlock(line)]);
+  });
+
+  test("blank text posts just the footer, with a non-empty fallback", () => {
+    expect(signedText("", line)).toEqual({ text: " ", blocks: [footerBlock(line)] });
+  });
+
+  test("text past Slack's markdown cap carries on in sections, nothing lost", () => {
+    const para = `${"w ".repeat(1000)}\n`;
+    const huge = para.repeat(9).trimEnd(); // ~18k: over the 12k markdown cap
+    const msg = signedText(huge, line);
+    const [head, ...rest] = msg.blocks.slice(0, -1) as unknown as ({ type: "markdown"; text: string } | { type: "section"; text: { text: string } })[];
+    expect(head?.type).toBe("markdown");
+    expect((head as { text: string }).text.length).toBeLessThanOrEqual(MARKDOWN_LIMIT);
+    expect(rest.length).toBeGreaterThan(1);
+    for (const b of rest) {
+      expect(b.type).toBe("section");
+      expect((b as { text: { text: string } }).text.text.length).toBeLessThanOrEqual(SECTION_LIMIT);
+    }
+    const all = [(head as { text: string }).text, ...rest.map((b) => (b as { text: { text: string } }).text.text)];
+    expect(all.join("\n")).toBe(huge);
+    expect(msg.blocks.filter((b) => b.type === "markdown")).toHaveLength(1);
+    expect(msg.blocks.at(-1)).toMatchObject({ block_id: FOOTER_BLOCK_ID });
+  });
+
+  test("signedSections: a long post split so every section stays under Slack's 3000", () => {
+    const msg = signedSections(`${"a ".repeat(2000)}\n${"b ".repeat(2000)}`, line);
+    const sections = msg.blocks.slice(0, -1) as unknown as { type: string; text: { text: string } }[];
     expect(sections.length).toBeGreaterThan(2);
-    for (const s of sections) expect(s.text.text.length).toBeLessThanOrEqual(SECTION_LIMIT);
+    for (const s of sections) {
+      expect(s.type).toBe("section");
+      expect(s.text.text.length).toBeLessThanOrEqual(SECTION_LIMIT);
+    }
     expect(sections.map((s) => s.text.text).join("")).toBe(`${"a ".repeat(2000)}${"b ".repeat(2000)}`);
     expect(msg.blocks.at(-1)).toMatchObject({ block_id: FOOTER_BLOCK_ID });
   });

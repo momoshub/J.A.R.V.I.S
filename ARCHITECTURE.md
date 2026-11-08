@@ -133,7 +133,7 @@ No I/O, no frameworks. Just data shapes and functions of their inputs.
 - `githubApp.ts` - webhook signature, owner allowlist, trigger detection and what the GitHub App says
 - `*Prompt.ts` - prompts for the preset tasks (review, ticket, investigate, read, note, workflow, ...)
 - `blockKit.ts`, `kitEvents.ts`, `slackFormat.ts`, `slackLinks.ts` - Slack formatting, Block Kit and links
-- `usageFooter.ts`, `collapseSteps.ts`, `messageFooter.ts` - the one grey line under a message: who wrote it (Jarvis, inner child Jarvis, watch, reminder, ...), what the turn cost, the step summary, and when it was last updated (restamped on every edit); `sectionChunks` cuts plain text into sections Slack accepts, hard-splitting long lines and keeping code fences closed
+- `usageFooter.ts`, `collapseSteps.ts`, `messageFooter.ts` - the one grey line under a message: who wrote it (Jarvis, inner child Jarvis, watch, reminder, ...), what the turn cost, the step summary, and when it was last updated (restamped on every edit); `signedText` posts plain text as one `markdown` block (never folded behind "Show more", unlike a long section) up to Slack's 12k markdown cap, and `sectionChunks` cuts the rest (and the `signedSections` fallback) into sections Slack accepts, hard-splitting long lines and keeping code fences closed
 
 Fully unit tested, no mocks needed.
 

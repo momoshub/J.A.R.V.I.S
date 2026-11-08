@@ -7,7 +7,7 @@ import { WebClient } from "@slack/web-api";
 import { splitForBlocks, toMrkdwn } from "../../domain/slackFormat.ts";
 import { toBlockMessage } from "../../domain/blockKit.ts";
 import { type MessageBlock, visibleText } from "../../domain/slackMessageText.ts";
-import { footerBlock, footerLine, sectionChunks, signedText, SIGNATURES, withFooter } from "../../domain/messageFooter.ts";
+import { footerBlock, footerLine, sectionChunks, signedSections, signedText, SIGNATURES, withFooter } from "../../domain/messageFooter.ts";
 import type { SlackMember } from "../../domain/slackMembers.ts";
 import type {
   SlackAdminPort,
@@ -269,9 +269,11 @@ export const createSlackAdmin = (client: WebClient, clock: () => number = Date.n
       const thread = threadTs ? { thread_ts: threadTs } : {};
       const line = footer(by);
       const body = toMrkdwn(text);
-      // Signed as sections; a refusal of those still gets the words out bare.
+      // Signed in a markdown block, which Slack never folds behind "Show
+      // more"; refused, the same as sections; refused again, the words bare.
       const bare = () => client.chat.postMessage({ channel, text: body, ...thread });
-      const plain = () => client.chat.postMessage({ channel, ...signedText(body, line), ...thread }).catch(bare);
+      const sections = () => client.chat.postMessage({ channel, ...signedSections(body, line), ...thread }).catch(bare);
+      const plain = () => client.chat.postMessage({ channel, ...signedText(body, line), ...thread }).catch(sections);
       const rich = toBlockMessage(text, toMrkdwn);
       // A block Slack refuses falls back to the plain post rather than losing the message.
       const posted = (await (rich
