@@ -15,7 +15,7 @@ import { PAL_TOOLS } from "../domain/toolPolicy.ts";
 import { tokenFor, type ClaudeTokenPort } from "./claudeTokens.ts";
 import type { AllowedUser, UserRole, Workflow } from "../domain/types.ts";
 import type { ToolPolicy } from "../domain/toolPolicy.ts";
-import type { Clock, LlmPort, LlmStreamSink } from "./ports.ts";
+import type { Clock, LlmPort, LlmStreamSink, LlmUsage } from "./ports.ts";
 import type { WorkflowRepo } from "../infrastructure/db/workflowRepo.ts";
 
 /** A workflow turn can run long - it is a real task, not a chat reply. */
@@ -45,6 +45,8 @@ const botNameOf = (deps: WorkflowDeps): string => deps.botInfo?.().botName ?? "A
 export type WorkflowTurn = {
   readonly text: string;
   readonly wantsContinue: boolean;
+  /** What the step cost, when the model reported it - for the reply's footer. */
+  readonly usage?: LlmUsage;
 };
 
 /**
@@ -85,6 +87,7 @@ export const runWorkflowTurn = async (
   if (!deps.llm) return { text: "My brain is not wired up right now.", wantsContinue: false };
   const name = botNameOf(deps);
   const base = deps.toolPolicy?.(actor.role, workflow.channelId) ?? { skipPermissions: true };
+  let usage: LlmUsage | undefined;
   const params = {
     system: workflowPrompt(name, workflow.task),
     // Only the new message: the session is holding the rest of the conversation.
@@ -95,6 +98,9 @@ export const runWorkflowTurn = async (
     oauthToken: tokenFor(deps, actor),
     signal,
     bill: { actor: actor.slackId, kind: WORKER_BILL_KIND, channel: workflow.channelId, threadTs: workflow.threadTs },
+    onUsage: (u: LlmUsage) => {
+      usage = u;
+    },
   };
 
   const raw =
@@ -105,7 +111,11 @@ export const runWorkflowTurn = async (
   // The front reads these to say where the work is.
   if (text) deps.workflows?.recordWorkerReply(workflow.id, text, deps.clock());
   // A step that only said "carry on" has nothing for the thread to read.
-  return { text: text || (wantsContinue ? "" : "(nothing came back from that turn)"), wantsContinue };
+  return {
+    text: text || (wantsContinue ? "" : "(nothing came back from that turn)"),
+    wantsContinue,
+    ...(usage ? { usage } : {}),
+  };
 };
 
 /** Billing kind of a front turn - also what keeps it out of the worker's digest. */
@@ -115,6 +125,8 @@ export const FRONT_BILL_KIND = "workflow-front";
 export type FrontTurn = {
   readonly text: string;
   readonly steers: readonly string[];
+  /** What the turn cost, when the model reported it - for the reply's footer. */
+  readonly usage?: LlmUsage;
 };
 
 /**
@@ -136,6 +148,7 @@ export const runFrontTurn = async (
   const name = botNameOf(deps);
   const base = deps.toolPolicy?.(actor.role, workflow.channelId) ?? { skipPermissions: true };
   const sessionId = workflow.frontSessionId ?? (deps.newSessionId ?? (() => crypto.randomUUID()))();
+  let usage: LlmUsage | undefined;
   const params = {
     system: frontPrompt(name, workflow.task),
     messages: [{ role: "user" as const, content: frontMessage(digest, message), speakerId: actor.slackId }],
@@ -146,6 +159,9 @@ export const runFrontTurn = async (
     oauthToken: tokenFor(deps, actor),
     signal,
     bill: { actor: actor.slackId, kind: FRONT_BILL_KIND, channel: workflow.channelId, threadTs: workflow.threadTs },
+    onUsage: (u: LlmUsage) => {
+      usage = u;
+    },
   };
   const raw =
     sink && deps.llm.stream
@@ -153,5 +169,5 @@ export const runFrontTurn = async (
       : await deps.llm.complete(params);
   if (workflow.frontSessionId === undefined) deps.workflows?.setFrontSession(workflow.id, sessionId);
   const { text, steers } = parseSteers(raw);
-  return { text: text || (steers.length > 0 ? "Passed that on." : "(nothing came back)"), steers };
+  return { text: text || (steers.length > 0 ? "Passed that on." : "(nothing came back)"), steers, ...(usage ? { usage } : {}) };
 };

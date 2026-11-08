@@ -6,6 +6,7 @@
  * with the bot token; use cases and the dashboard depend only on this shape.
  */
 import type { ConversationInfo } from "../domain/slackNames.ts";
+import type { FooterUsage } from "../domain/usageFooter.ts";
 import type { MemberPage } from "./slackDirectory.ts";
 
 export type SlackConversation = {
@@ -125,9 +126,11 @@ export type SlackAdminPort = {
   unbroadcast?: (channel: string, ts: string) => Promise<void>;
   /**
    * Post a message, optionally into a thread. Returns where it landed when the
-   * transport knows, so a temporary notice can be taken down again.
+   * transport knows, so a temporary notice can be taken down again. `usage`,
+   * when a turn reported it, goes into the footer as the same usage line a
+   * live-streamed reply carries (domain/usageFooter.ts).
    */
-  post: (channel: string, text: string, threadTs?: string, by?: string) => Promise<PostedRef | void>;
+  post: (channel: string, text: string, threadTs?: string, by?: string, usage?: FooterUsage) => Promise<PostedRef | void>;
   /**
    * Open (or reuse) a DM with a user and post there. Returns where it landed,
    * so a message can later be found again - matching a reaction to it, say.

@@ -2,6 +2,7 @@ import { describe, expect, test } from "bun:test";
 import type { WebClient } from "@slack/web-api";
 import { createSlackAdmin } from "../../src/infrastructure/slack/adminClient.ts";
 import { FOOTER_BLOCK_ID, footerLine } from "../../src/domain/messageFooter.ts";
+import { usageFooter } from "../../src/domain/usageFooter.ts";
 
 const NOW = 1_794_123_692_000;
 
@@ -45,6 +46,24 @@ describe("every message the admin client writes is signed", () => {
     await admin.postDm("U1", "hi", "inner child Jarvis");
     expect(signedBy(calls[0]?.[1])).toStartWith("reminder · updated ");
     expect(signedBy(calls[1]?.[1])).toStartWith("inner child Jarvis · updated ");
+  });
+
+  test("a turn's usage goes into the footer, in the live reply's format", async () => {
+    const { calls, admin } = fake();
+    const usage = {
+      model: "claude-opus-5-5",
+      inputTokens: 95_900,
+      outputTokens: 10_600,
+      cacheReadTokens: 1_600_000,
+      cacheWriteTokens: 20_400,
+      costUsd: 1.3,
+      durationMs: 196_000,
+    };
+    await admin.post("D1", "done", "100.1", undefined, usage);
+    await admin.post("D1", "done", "100.1", "workflow worker", usage);
+    expect(signedBy(calls[0]?.[1])).toBe(footerLine("Jarvis", NOW, usageFooter(usage)));
+    expect(signedBy(calls[0]?.[1])).toStartWith("Jarvis · claude-opus-5-5 · in 95.9k · out 10.6k · cache 1.62M · $1.30 · 3m 16s · updated ");
+    expect(signedBy(calls[1]?.[1])).toStartWith("workflow worker · claude-opus-5-5 · ");
   });
 
   test("a Block Kit post keeps its blocks and gains the footer", async () => {

@@ -462,7 +462,14 @@ const main = async () => {
       // A turn nobody watched live can still answer with a note about not
       // answering; posted, it reads as the whole reply.
       if (result.kind !== "ignored" && result.text.trim() && !isSilenceNote(result.text)) {
-        await slackAdmin.post(channelId, result.text, threadTs, result.kind === "reply" ? result.by : undefined);
+        // Signed with what the turn cost, as a reply streamed live would be.
+        await slackAdmin.post(
+          channelId,
+          result.text,
+          threadTs,
+          result.kind === "reply" ? result.by : undefined,
+          result.kind === "reply" ? result.usage : undefined,
+        );
       }
     },
     disabledCommands,
