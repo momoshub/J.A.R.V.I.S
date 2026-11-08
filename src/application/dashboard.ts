@@ -10,6 +10,19 @@
 import type { AllowedUser, UserRole } from "../domain/types.ts";
 import { DEFAULT_PERSONALITY } from "../domain/personality.ts";
 import { PAL_TOOLS } from "../domain/toolPolicy.ts";
+import { GITHUB_LINK_PREFIX, githubLinkKey } from "../domain/reviewInbox.ts";
+import {
+  CORE_TOOLS,
+  ROLES,
+  UNDENIABLE_COMMANDS,
+  defaultRolePolicy,
+  effectivePolicy,
+  knownMcpServers,
+  parseRolePolicy,
+  type RolePolicy,
+} from "../domain/rolePolicy.ts";
+import { labelMentions, mentionedIds, userLabel } from "../domain/slackNames.ts";
+import type { NameResolver } from "./nameResolver.ts";
 import { KIT_MODAL_PREFIX, viewProblem, type KitView } from "../domain/kitEvents.ts";
 import { SETTING_KEYS } from "../infrastructure/db/settingsRepo.ts";
 import { listCommandInfo } from "./commands.ts";
@@ -62,16 +75,22 @@ export type DashboardPorts = {
   readonly ownerSlackId: string;
   readonly clock: Clock;
   readonly profile: () => BotProfile;
+  /** The RAW allowlist: the dashboard must see and edit members of a switched-off role too. */
   readonly users: {
     readonly get: (slackId: string) => AllowedUser | undefined;
     readonly list: () => readonly AllowedUser[];
     readonly upsert: (user: AllowedUser) => unknown;
+    readonly setDisplayName: (slackId: string, displayName: string) => void;
+    readonly rename: (from: string, to: string) => boolean;
     readonly remove: (slackId: string) => void;
   };
   readonly messages: {
-    readonly channels: () => readonly unknown[];
+    readonly channels: () => readonly { readonly channelId: string }[];
     readonly count: () => number;
-    readonly recentForChannel: (channelId: string, limit: number) => readonly unknown[];
+    readonly recentForChannel: (
+      channelId: string,
+      limit: number,
+    ) => readonly { readonly slackUserId: string; readonly content: string }[];
     readonly clearChannel: (channelId: string) => unknown;
   };
   readonly learnings: {
@@ -84,12 +103,23 @@ export type DashboardPorts = {
     readonly get: (key: string) => string | undefined;
     readonly set: (key: string, value: string) => void;
     readonly remove: (key: string) => void;
+    readonly list: () => readonly { readonly key: string; readonly value: string }[];
   };
+  /** Per-role policy - the same rows the bot enforces from. Absent: roles read as defaults and cannot be edited. */
+  readonly rolePolicies?: {
+    readonly list: () => readonly RolePolicy[];
+    readonly save: (policy: RolePolicy, by: string, at: number) => void;
+  };
+  /** Cached Slack names for channels and people, so no page shows a bare id. */
+  readonly names?: NameResolver;
   readonly adapter?: MemoryAdapterPort;
-  readonly commandLog?: { readonly recent: (limit: number) => readonly unknown[]; readonly clear: () => unknown };
+  readonly commandLog?: {
+    readonly recent: (limit: number) => readonly { readonly slackUserId: string; readonly channelId: string }[];
+    readonly clear: () => unknown;
+  };
   readonly usage?: {
     readonly totals: (since: number) => unknown;
-    readonly byUser: (since: number, limit?: number) => readonly unknown[];
+    readonly byUser: (since: number, limit?: number) => readonly { readonly key: string }[];
     readonly byKind: (since: number, limit?: number) => readonly unknown[];
   };
   readonly kitViews?: { readonly save: (view: KitView, at: number) => string };
@@ -107,7 +137,15 @@ const parseCsv = (v: string | undefined): Set<string> =>
   new Set((v ?? "").split(",").map((s) => s.trim()).filter(Boolean));
 
 const text = (v: unknown): string => String(v ?? "").trim();
-const asRole = (v: unknown): UserRole => (v === "admin" ? "admin" : "pal");
+/**
+ * A role the deck may hand out, or undefined. Never `owner` (there is one, and
+ * it comes from the environment), and never a silent fallback: bad input is
+ * refused, because the fallback would be a demotion nobody asked for.
+ */
+const assignable = (v: unknown): UserRole | undefined =>
+  v === "admin" || v === "executer" || v === "pal" ? v : undefined;
+const BAD_ROLE = "Pick admin, executer or pal";
+const GITHUB_LOGIN = /^[A-Za-z0-9](?:[A-Za-z0-9-]{0,38})$/;
 const gateError = (r: { readonly violations?: readonly string[] }, fallback: string): Refusal =>
   refuse((r.violations ?? [fallback]).join("; "));
 
@@ -117,7 +155,35 @@ export const usageWindowMs = (hours: string | null): number => {
   return (Number.isFinite(h) && h > 0 ? Math.min(h, 24 * 365) : 24) * 3_600_000;
 };
 
-export const createDashboardService = (p: DashboardPorts) => ({
+const RANK: Record<UserRole, number> = { pal: 0, executer: 1, admin: 2, owner: 3 };
+
+export const createDashboardService = (p: DashboardPorts) => {
+  const rolePolicies = (): readonly RolePolicy[] => p.rolePolicies?.list() ?? ROLES.map(defaultRolePolicy);
+
+  /** Slack id -> its GitHub logins, from the `github_login:` links the review inbox and GitHub App use. */
+  const githubLogins = (): Map<string, string[]> => {
+    const out = new Map<string, string[]>();
+    for (const { key, value } of p.settings.list()) {
+      if (!key.startsWith(GITHUB_LINK_PREFIX)) continue;
+      const id = value.trim();
+      out.set(id, [...(out.get(id) ?? []), key.slice(GITHUB_LINK_PREFIX.length)]);
+    }
+    return out;
+  };
+
+  const storedName = (id: string): string | undefined => p.users.get(id)?.displayName || undefined;
+  const userLabels = async (ids: readonly string[]): Promise<Record<string, string>> => {
+    const wanted = [...new Set(ids.filter(Boolean))];
+    if (p.names) return p.names.userLabels(wanted);
+    return Object.fromEntries(wanted.map((id) => [id, userLabel(id, storedName(id))]));
+  };
+  const conversationLabels = async (ids: readonly string[]): Promise<Record<string, string>> => {
+    const wanted = [...new Set(ids.filter(Boolean))];
+    if (p.names) return p.names.conversationLabels(wanted);
+    return Object.fromEntries(wanted.map((id) => [id, `unknown (${id})`]));
+  };
+
+  return {
   overview: () => ({
     users: p.users.list().length,
     conversations: p.messages.channels().length,
@@ -128,23 +194,30 @@ export const createDashboardService = (p: DashboardPorts) => ({
     memory: !!p.adapter,
   }),
 
-  /** Users with a display name, filled from Slack where none is stored. */
+  /** Users with a display name, filled from Slack where none is stored, and their GitHub logins. */
   listUsers: async () => {
     const users = p.users.list();
     const missing = users.filter((u) => !u.displayName).map((u) => u.slackId);
     const resolved: Record<string, string> =
       missing.length && p.resolveNames ? await p.resolveNames(missing).catch(() => ({})) : {};
-    return users.map((u) => ({ ...u, name: u.displayName || resolved[u.slackId] || "" }));
+    const logins = githubLogins();
+    return users.map((u) => ({
+      ...u,
+      name: u.displayName || resolved[u.slackId] || "",
+      githubLogins: logins.get(u.slackId) ?? [],
+    }));
   },
 
   saveUser: (slackIdIn: unknown, role: unknown): Outcome<null> => {
     const slackId = text(slackIdIn);
     if (!SLACK_ID.test(slackId)) return refuse("Invalid Slack id");
     if (slackId === p.ownerSlackId) return refuse("The owner record cannot be modified");
+    const next = assignable(role ?? "pal");
+    if (!next) return refuse(BAD_ROLE);
     const existing = p.users.get(slackId);
     p.users.upsert({
       slackId,
-      role: asRole(role),
+      role: next,
       displayName: existing?.displayName ?? "",
       addedBy: BY,
       createdAt: existing?.createdAt ?? p.clock(),
@@ -152,14 +225,137 @@ export const createDashboardService = (p: DashboardPorts) => ({
     return done(null);
   },
 
+  /**
+   * Edit one user: a corrected Slack id, the name shown for them, the GitHub
+   * logins that are theirs, and their role. The owner keeps their id (it comes
+   * from the environment) and their role; name and GitHub are theirs to edit.
+   */
+  updateUser: (body: {
+    readonly slackId: unknown;
+    readonly newSlackId?: unknown;
+    readonly displayName?: unknown;
+    readonly githubLogins?: unknown;
+    readonly role?: unknown;
+  }): Outcome<null> => {
+    const slackId = text(body.slackId);
+    const existing = p.users.get(slackId);
+    if (!existing) return refuse("No such user", 404);
+    const isOwner = slackId === p.ownerSlackId;
+    const nextId = body.newSlackId === undefined ? slackId : text(body.newSlackId);
+    if (!SLACK_ID.test(nextId)) return refuse("Invalid Slack id");
+    if (isOwner && nextId !== slackId) return refuse("The owner's Slack id comes from the environment");
+    if (nextId === p.ownerSlackId && !isOwner) return refuse("That is the owner's Slack id");
+    if (nextId !== slackId && p.users.get(nextId)) return refuse("Another user already has that Slack id");
+    if (body.role !== undefined && isOwner && body.role !== "owner") return refuse("The owner's role cannot be changed");
+    const nextRole = body.role === undefined || isOwner ? undefined : assignable(body.role);
+    if (body.role !== undefined && !isOwner && !nextRole) return refuse(BAD_ROLE);
+    const logins =
+      body.githubLogins === undefined
+        ? undefined
+        : [...new Set(
+            (Array.isArray(body.githubLogins) ? body.githubLogins : String(body.githubLogins ?? "").split(/[,\s]+/))
+              .map((l) => String(l ?? "").trim().replace(/^@/, "").toLowerCase())
+              .filter(Boolean),
+          )];
+    const badLogin = logins?.find((l) => !GITHUB_LOGIN.test(l));
+    if (badLogin) return refuse(`Not a GitHub login: ${badLogin}`);
+    // A link held by someone no longer on the list is stale, not taken.
+    const taken = logins?.find((l) => {
+      const holder = p.settings.get(githubLinkKey(l))?.trim();
+      return holder && holder !== slackId && !!p.users.get(holder);
+    });
+    if (taken) {
+      const holder = p.settings.get(githubLinkKey(taken))!.trim();
+      return refuse(`${taken} is already linked to ${userLabel(holder, p.users.get(holder)?.displayName)}`);
+    }
+
+    // Everything checked; now write, id first so the rest lands on the new row.
+    if (nextId !== slackId) {
+      if (!p.users.rename(slackId, nextId)) return refuse("Another user already has that Slack id");
+      for (const { key, value } of p.settings.list()) {
+        if (key.startsWith(GITHUB_LINK_PREFIX) && value.trim() === slackId) p.settings.set(key, nextId);
+      }
+    }
+    if (body.displayName !== undefined) p.users.setDisplayName(nextId, text(body.displayName));
+    if (logins) {
+      for (const { key, value } of p.settings.list()) {
+        if (key.startsWith(GITHUB_LINK_PREFIX) && value.trim() === nextId) p.settings.remove(key);
+      }
+      for (const l of logins) p.settings.set(githubLinkKey(l), nextId);
+    }
+    if (nextRole) {
+      const current = p.users.get(nextId);
+      if (current) p.users.upsert({ ...current, role: nextRole });
+    }
+    return done(null);
+  },
+
+  /** Put an existing user in a role, from the Roles page. */
+  assignRole: (slackIdIn: unknown, role: unknown): Outcome<null> => {
+    const slackId = text(slackIdIn);
+    const existing = p.users.get(slackId);
+    if (!existing) return refuse("No such user", 404);
+    if (slackId === p.ownerSlackId) return refuse("The owner's role cannot be changed");
+    const next = assignable(role);
+    if (!next) return refuse(BAD_ROLE);
+    p.users.upsert({ ...existing, role: next });
+    return done(null);
+  },
+
   removeUser: (slackIdIn: unknown): Outcome<null> => {
     const slackId = text(slackIdIn);
     if (slackId === p.ownerSlackId) return refuse("The owner cannot be removed");
     p.users.remove(slackId);
+    // Their GitHub links go too: left behind, they would still map GitHub
+    // calls to an id nobody can see on this page, and block the login's reuse.
+    for (const { key, value } of p.settings.list()) {
+      if (key.startsWith(GITHUB_LINK_PREFIX) && value.trim() === slackId) p.settings.remove(key);
+    }
     return done(null);
   },
 
-  roles: () => ({ executerTools: p.settings.get(SETTING_KEYS.executerTools) ?? "", palTools: PAL_TOOLS }),
+  /**
+   * Every role with its policy and members, plus what can be denied. Commands
+   * are offered per role only up to its rank: a role cannot be granted past a
+   * command's `minRole`, so there is nothing to tick above it.
+   */
+  roles: () => {
+    const policies = rolePolicies();
+    const users = p.users.list();
+    const commands = listCommandInfo();
+    return {
+      roles: policies.map((policy) => ({
+        ...effectivePolicy(policy),
+        locked: policy.role === "owner",
+        members: users
+          .filter((u) => u.role === policy.role || (policy.role === "owner" && u.slackId === p.ownerSlackId))
+          .map((u) => ({ slackId: u.slackId, name: u.displayName })),
+        commands: commands
+          .filter((c) => RANK[policy.role] >= RANK[c.minRole] && !UNDENIABLE_COMMANDS.includes(c.name))
+          .map((c) => c.name),
+      })),
+      tools: CORE_TOOLS,
+      mcpServers: knownMcpServers(policies),
+      editable: !!p.rolePolicies,
+      executerTools: p.settings.get(SETTING_KEYS.executerTools) ?? "",
+      palTools: PAL_TOOLS,
+    };
+  },
+
+  /** Switch a role on or off and set what it is denied. The owner role is never restricted. */
+  saveRolePolicy: (body: {
+    readonly role: unknown;
+    readonly enabled: unknown;
+    readonly deniedCommands: unknown;
+    readonly deniedTools: unknown;
+    readonly deniedMcpServers: unknown;
+  }): Outcome<null> => {
+    if (!p.rolePolicies) return refuse("Role policies are not wired up", 503);
+    const parsed = parseRolePolicy(body, listCommandInfo().map((c) => c.name));
+    if (!parsed.ok) return refuse(parsed.error);
+    p.rolePolicies.save(parsed.policy, BY, p.clock());
+    return done(null);
+  },
 
   /** The executer role's tool allow-list, comma or newline separated. */
   setExecuterTools: (tools: unknown) => p.settings.set(SETTING_KEYS.executerTools, text(tools)),
@@ -263,9 +459,29 @@ export const createDashboardService = (p: DashboardPorts) => ({
 
   resetPrompt: () => p.settings.remove(SETTING_KEYS.systemPrompt),
 
-  conversations: () => p.messages.channels(),
+  /** Stored conversations, each named: `#channel (C…)`, a DM as the person. */
+  conversations: async () => {
+    const channels = p.messages.channels();
+    const labels = await conversationLabels(channels.map((c) => c.channelId));
+    return channels.map((c) => ({ ...c, label: labels[c.channelId] }));
+  },
 
-  conversation: (channel: string) => (channel ? p.messages.recentForChannel(channel, CONVERSATION_LIMIT) : []),
+  /** One conversation's turns, every author - and everyone mentioned - named as well as id'd. */
+  conversation: async (channel: string) => {
+    const messages = channel ? p.messages.recentForChannel(channel, CONVERSATION_LIMIT) : [];
+    const [labels, people] = await Promise.all([
+      conversationLabels(channel ? [channel] : []),
+      userLabels(messages.flatMap((m) => [m.slackUserId, ...mentionedIds(m.content)])),
+    ]);
+    return {
+      channel: { id: channel, label: labels[channel] ?? `unknown (${channel})` },
+      messages: messages.map((m) => ({
+        ...m,
+        content: labelMentions(m.content, people),
+        userLabel: people[m.slackUserId] ?? userLabel(m.slackUserId),
+      })),
+    };
+  },
 
   clearConversation: (channelIn: unknown) => {
     const channel = text(channelIn);
@@ -287,23 +503,36 @@ export const createDashboardService = (p: DashboardPorts) => ({
     return done(null);
   },
 
-  commandLog: () => p.commandLog?.recent(COMMAND_LOG_LIMIT) ?? [],
+  commandLog: async () => {
+    const entries = p.commandLog?.recent(COMMAND_LOG_LIMIT) ?? [];
+    const [people, places] = await Promise.all([
+      userLabels(entries.map((e) => e.slackUserId)),
+      conversationLabels(entries.map((e) => e.channelId)),
+    ]);
+    return entries.map((e) => ({
+      ...e,
+      userLabel: people[e.slackUserId] ?? userLabel(e.slackUserId),
+      channelLabel: e.channelId ? places[e.channelId] ?? `unknown (${e.channelId})` : "",
+    }));
+  },
 
   clearCommandLog: () => {
     p.commandLog?.clear();
   },
 
   /** One window per request: the page asks for the one it shows, so the two never disagree. */
-  usage: (hours: string | null) => {
+  usage: async (hours: string | null) => {
     if (!p.usage) return { recording: false };
     const windowMs = usageWindowMs(hours);
     const since = p.clock() - windowMs;
-    const names = Object.fromEntries(p.users.list().map((u) => [u.slackId, u.displayName || u.slackId]));
+    const byUser = p.usage.byUser(since, 25);
+    // Name + id for every row, allowlisted or not: a spend table of bare ids says nothing.
+    const names = await userLabels(byUser.map((r) => r.key));
     return {
       recording: true,
       windowMs,
       totals: p.usage.totals(since),
-      byUser: p.usage.byUser(since, 25),
+      byUser,
       byKind: p.usage.byKind(since, 25),
       names,
     };
@@ -321,6 +550,7 @@ export const createDashboardService = (p: DashboardPorts) => ({
     const id = p.kitViews.save(view as KitView, p.clock());
     return done({ id, action_id: `${KIT_MODAL_PREFIX}${id}` });
   },
-});
+  };
+};
 
 export type DashboardService = ReturnType<typeof createDashboardService>;

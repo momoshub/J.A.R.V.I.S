@@ -88,14 +88,15 @@ export function CommandsPage() {
       <div className="card table">
         <table>
           <thead>
-            <tr><th>when</th><th>who</th><th>command</th><th>args</th><th>ok</th></tr>
+            <tr><th>when</th><th>who</th><th>where</th><th>command</th><th>args</th><th>ok</th></tr>
           </thead>
           <tbody>
-            {log.length === 0 && <tr><td colSpan={5} className="muted">No commands run yet.</td></tr>}
+            {log.length === 0 && <tr><td colSpan={6} className="muted">No commands run yet.</td></tr>}
             {log.map((e) => (
               <tr key={e.id}>
                 <td className="muted">{fmtTime(e.createdAt)}</td>
-                <td><code>{e.slackUserId}</code></td>
+                <td>{e.userLabel}</td>
+                <td className="muted">{e.channelLabel || "-"}</td>
                 <td><code>{e.command}</code></td>
                 <td className="muted">{e.args || "-"}</td>
                 <td>{e.ok ? "✅" : <span className="badge member" title={e.result}>failed</span>}</td>

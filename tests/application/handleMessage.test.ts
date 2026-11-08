@@ -75,6 +75,22 @@ describe("handleMessage", () => {
     expect(deps.messages.count()).toBe(0);
   });
 
+  test("a member of a switched-off role is told so and stores nothing, without an access request", async () => {
+    const deps = build(fakeLlm("nope"));
+    deps.users.upsert({ slackId: "Upal", role: "pal", displayName: "P", addedBy: "x", createdAt: 1 });
+    const raw = deps.users;
+    const res = await handleMessage(
+      {
+        ...deps,
+        users: { ...raw, get: (id) => (id === "Upal" ? undefined : raw.get(id)) },
+        roleDisabled: (id) => (id === "Upal" ? "pal" : undefined),
+      },
+      { channelId: "C1", slackUserId: "Upal", text: "hello" },
+    );
+    expect(res).toEqual({ kind: "denied", text: expect.stringContaining("pal role is switched off") });
+    expect(deps.messages.count()).toBe(0);
+  });
+
   test("owner is auto-provisioned and gets a reply", async () => {
     const deps = build(fakeLlm("At your service."));
     const res = await handleMessage(deps, {

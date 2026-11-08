@@ -87,6 +87,9 @@ import { createGhCli } from "./infrastructure/github/ghCli.ts";
 import { createDraftReply } from "./application/draftReply.ts";
 import { syntheticTs } from "./domain/slackLinks.ts";
 import { toolPolicyFor } from "./domain/toolPolicy.ts";
+import { effectivePolicy, policyDisallow } from "./domain/rolePolicy.ts";
+import { disabledRoleOf, enforceRolePolicies } from "./application/rolePolicies.ts";
+import { createRolePolicyRepo } from "./infrastructure/db/rolePolicyRepo.ts";
 import { logSourceOrder } from "./domain/investigation.ts";
 import { createDashboard } from "./infrastructure/dashboard/server.ts";
 import { runForBrain } from "./application/brainRun.ts";
@@ -144,7 +147,11 @@ const main = async () => {
   const config = loadConfig();
 
   const db = openDatabase(config.databasePath);
-  const users = createUserRepo(db);
+  // The bot reads its allowlist through the role policies, so a switched-off
+  // role grants nothing anywhere; the dashboard alone gets the raw store.
+  const userStore = createUserRepo(db);
+  const rolePolicies = createRolePolicyRepo(db);
+  const users = enforceRolePolicies(userStore, rolePolicies.get);
   const messages = createMessageRepo(db);
   const learnings = createLearningsRepo(db);
   // Memory as a checked, versioned adapter in the database, mirrored to disk.
@@ -212,7 +219,11 @@ const main = async () => {
         .filter(Boolean),
     );
 
-  seedOwner(users, config.ownerSlackId, clock);
+  /** Commands each role's dashboard policy denies, read per call so a save needs no restart. */
+  const deniedCommands = (role: Parameters<typeof rolePolicies.get>[0]): ReadonlySet<string> =>
+    new Set(effectivePolicy(rolePolicies.get(role)).deniedCommands);
+
+  seedOwner(userStore, config.ownerSlackId, clock);
 
   // The bot's identity lives in the DB; env values only bootstrap a fresh clone.
   const profile = () =>
@@ -289,6 +300,8 @@ const main = async () => {
         .split(/[,\n]/)
         .map((s) => s.trim())
         .filter(Boolean),
+      // The role's dashboard policy: denied tools and MCP servers, read per turn.
+      roleDisallow: policyDisallow(rolePolicies.get(role)),
     });
 
   // Every finished run is recorded: who asked, what for, what it consumed.
@@ -417,6 +430,9 @@ const main = async () => {
       }
     },
     disabledCommands,
+    deniedCommands,
+    roleDisabled: disabledRoleOf(userStore, rolePolicies.get),
+    rawUsers: userStore,
     slack: slackAdmin,
     // `review` approves through this directly, before the brain starts.
     github: createGhCli(),
@@ -552,7 +568,8 @@ const main = async () => {
       // for it has landed, and held until no turn is running anywhere.
       requestRestart,
       uiAccess: uiAccess.read,
-      users,
+      users: userStore,
+      rolePolicies,
       messages,
       learnings,
       kitViews,
@@ -711,6 +728,8 @@ const main = async () => {
     check: createShellCheck(fullCwd),
     runTurn: deps.runTurn!,
     say: async (channel, text, thread) => void (await slackAdmin.post(channel, text, thread)),
+    // The enforced allowlist: a switched-off role's shell watches stop with it.
+    mayRun: (id) => id === config.ownerSlackId || !!users.get(id),
     log: (msg) => console.error(`[watch] ${msg}`),
     onError: onDbError,
   });

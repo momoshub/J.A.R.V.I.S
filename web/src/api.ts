@@ -64,6 +64,30 @@ export type AllowedUser = {
   displayName: string;
   addedBy: string;
   createdAt: number;
+  /** GitHub logins linked to this person (the `github_login:` settings). */
+  githubLogins: string[];
+};
+
+/** One role as the Roles page edits it. Denials only: a policy never grants past the code's ceilings. */
+export type RoleView = {
+  role: UserRole;
+  enabled: boolean;
+  /** The owner role: always on, never restricted, not editable. */
+  locked: boolean;
+  deniedCommands: string[];
+  deniedTools: string[];
+  deniedMcpServers: string[];
+  members: { slackId: string; name: string }[];
+  /** Commands within this role's rank - the ones there is anything to deny. */
+  commands: string[];
+};
+export type RolesView = {
+  roles: RoleView[];
+  tools: string[];
+  mcpServers: string[];
+  editable: boolean;
+  executerTools: string;
+  palTools: string[];
 };
 export type Learning = { id: number; content: string; createdBy: string; createdAt: number };
 
@@ -88,15 +112,19 @@ export type Identity = {
   usingDefault: boolean;
   defaultPersona: string;
 };
-export type Channel = { channelId: string; count: number; lastAt: number };
+/** `label` is always name + id: `#team-chat (C0…)`, a DM as `@Person (D0…)`. */
+export type Channel = { channelId: string; count: number; lastAt: number; label: string };
 export type Message = {
   id: number;
   channelId: string;
   slackUserId: string;
+  /** `Name (U0…)` - never a bare id. */
+  userLabel: string;
   role: "user" | "assistant";
   content: string;
   createdAt: number;
 };
+export type ConversationView = { channel: { id: string; label: string }; messages: Message[] };
 
 export type SlackConversation = {
   id: string;
@@ -125,6 +153,10 @@ export type CommandInfo = {
 export type CommandLogEntry = {
   id: number;
   slackUserId: string;
+  /** `Name (U0…)`. */
+  userLabel: string;
+  /** `#channel (C0…)`, or "" when it ran outside a conversation. */
+  channelLabel: string;
   command: string;
   args: string;
   channelId: string;

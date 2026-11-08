@@ -29,6 +29,8 @@ export type UserRepo = {
   upsert: (user: AllowedUser) => AllowedUser;
   setRole: (slackId: string, role: UserRole) => void;
   setDisplayName: (slackId: string, displayName: string) => void;
+  /** Move a record to a corrected Slack id. False when the new id is already taken. */
+  rename: (from: string, to: string) => boolean;
   remove: (slackId: string) => void;
 };
 
@@ -53,6 +55,7 @@ export const createUserRepo = (db: DbClient): UserRepo => {
     "UPDATE allowed_users SET display_name = $displayName WHERE slack_id = $slackId",
   );
   const removeStmt = db.query("DELETE FROM allowed_users WHERE slack_id = $slackId");
+  const renameStmt = db.query("UPDATE allowed_users SET slack_id = $to WHERE slack_id = $from");
 
   return {
     get: (slackId) => {
@@ -76,6 +79,12 @@ export const createUserRepo = (db: DbClient): UserRepo => {
     },
     setDisplayName: (slackId, displayName) => {
       setNameStmt.run({ $slackId: slackId, $displayName: displayName });
+    },
+    rename: (from, to) => {
+      if (from === to) return true;
+      if (getStmt.get(to)) return false;
+      renameStmt.run({ $from: from, $to: to });
+      return true;
     },
     remove: (slackId) => {
       removeStmt.run({ $slackId: slackId });

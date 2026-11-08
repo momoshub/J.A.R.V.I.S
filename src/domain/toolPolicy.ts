@@ -302,6 +302,12 @@ export type ToolPolicyOptions = {
    * knows what the work there is worth.
    */
   readonly channelModel?: string;
+  /**
+   * Extra denials from the role's dashboard policy (`domain/rolePolicy.ts`):
+   * tools and whole MCP servers it may not use. Appended to every branch's
+   * `--disallowedTools`, since a denial is the only lever that refuses.
+   */
+  readonly roleDisallow?: readonly string[];
 };
 
 /**
@@ -324,6 +330,14 @@ const modelOf = (role: UserRole, opts: ToolPolicyOptions): string | undefined =>
   opts.channelModel?.trim() || opts.models?.[role];
 
 export const toolPolicyFor = (role: UserRole, opts: ToolPolicyOptions): ToolPolicy => {
+  const base = basePolicyFor(role, opts);
+  const extra = opts.roleDisallow ?? [];
+  return extra.length
+    ? { ...base, disallowedTools: [...new Set([...(base.disallowedTools ?? []), ...extra])] }
+    : base;
+};
+
+const basePolicyFor = (role: UserRole, opts: ToolPolicyOptions): ToolPolicy => {
   switch (role) {
     case "owner":
     case "admin":

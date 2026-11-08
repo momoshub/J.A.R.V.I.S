@@ -11,6 +11,9 @@ import { createWatchRepo } from "../../src/infrastructure/db/watchRepo.ts";
 import { createCommandTickets } from "../../src/application/commandTickets.ts";
 import type { SlackAdminPort } from "../../src/application/slackAdmin.ts";
 import type { LlmPort } from "../../src/application/ports.ts";
+import { createRolePolicyRepo } from "../../src/infrastructure/db/rolePolicyRepo.ts";
+import { defaultRolePolicy } from "../../src/domain/rolePolicy.ts";
+import { disabledRoleOf, enforceRolePolicies } from "../../src/application/rolePolicies.ts";
 
 const OWNER = "U0OWNER0001";
 
@@ -67,6 +70,24 @@ describe("respond", () => {
     const deps = build(llm("x"));
     const res = await respond(deps, { channelId: "C1", slackUserId: "Ux", text: "!users" });
     expect(res.kind).toBe("denied");
+  });
+
+  test("a switched-off role reaches neither commands nor chat, and is told why", async () => {
+    const deps = build(llm("should not run"));
+    const policies = createRolePolicyRepo(openDatabase(":memory:"));
+    deps.users.upsert({ slackId: "Uadm", role: "admin", displayName: "A", addedBy: "x", createdAt: 1 });
+    policies.save({ ...defaultRolePolicy("admin"), enabled: false }, "dashboard", 1);
+    const gated: RespondDeps = {
+      ...deps,
+      users: enforceRolePolicies(deps.users, policies.get),
+      roleDisabled: disabledRoleOf(deps.users, policies.get),
+    };
+    for (const text of ["!whoami", "hello there"]) {
+      const res = await respond(gated, { channelId: "C1", slackUserId: "Uadm", text });
+      expect(res).toEqual({ kind: "denied", text: expect.stringContaining("admin role is switched off") });
+    }
+    // The owner is untouched by any of it.
+    expect((await respond(gated, { channelId: "C1", slackUserId: OWNER, text: "!whoami" })).kind).toBe("reply");
   });
 
   test("asking for a review in words runs the command, not a chat reply", async () => {

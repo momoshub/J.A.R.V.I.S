@@ -6,6 +6,7 @@
  * covered by fast, deterministic tests.
  */
 import { decideAccess } from "../domain/access.ts";
+import { disabledRoleReason } from "../domain/rolePolicy.ts";
 import {
   buildContextWindow,
   cleanInboundText,
@@ -97,6 +98,15 @@ export type HandleMessageDeps = {
   continueTimer?: (fn: () => void, ms: number) => void;
   /** Set of disabled command names (managed from the dashboard). */
   disabledCommands?: () => ReadonlySet<string>;
+  /** Commands each role's dashboard policy denies (see `CommandDeps`). */
+  deniedCommands?: (role: UserRole) => ReadonlySet<string>;
+  /**
+   * The role an allowlisted person holds when that role is switched off. They
+   * are told so in one line rather than raised to the owner as a stranger.
+   */
+  roleDisabled?: (slackId: string) => UserRole | undefined;
+  /** The allowlist without role policies, for the commands that manage people. */
+  rawUsers?: UserRepo;
   /** Slack Web API operations, for the power-tool commands (br, jrp). */
   slack?: SlackAdminPort;
   /** GitHub actions the bot takes itself - the up-front approve in `review`. */
@@ -232,6 +242,10 @@ export const handleMessage = async (
     // Following a thread, nobody asked: a stranger chatting there is not a
     // request, and answering each of them is just noise.
     if (inbound.following) return { kind: "ignored" };
+    // On the list, but their role is switched off: say so, do not ask the owner
+    // to let in someone the owner already chose to shut out.
+    const off = deps.roleDisabled?.(inbound.slackUserId);
+    if (off) return { kind: "denied", text: disabledRoleReason(off) };
     // Ask the owner rather than turning them away.
     const asked = await requestAccess(
       deps,

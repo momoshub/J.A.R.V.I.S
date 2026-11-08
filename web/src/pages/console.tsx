@@ -149,7 +149,7 @@ export function ConsolePage() {
     <div className={`msg${m.own ? " own" : ""}`} key={m.ts}>
       <div className="msg-head">
         {marker(m)}
-        <strong>{m.userName}</strong>
+        <strong>{m.userId && m.userName !== m.userId ? `${m.userName} (${m.userId})` : m.userId ? `unknown (${m.userId})` : m.userName}</strong>
         <span className="muted">{fmtSlackTs(m.ts)}</span>
         {!inThread && m.replyCount > 0 && <span className="pill">{m.replyCount} replies</span>}
         <span className="msg-actions">
@@ -188,7 +188,7 @@ export function ConsolePage() {
           <option value="">select a conversation...</option>
           {convoOptions.map((c) => (
             <option key={c.id} value={c.id}>
-              {c.name}{c.lastActive ? ` · ${ago(c.lastActive)}` : ""}
+              {`${c.name} (${c.id})`}{c.lastActive ? ` · ${ago(c.lastActive)}` : ""}
             </option>
           ))}
         </select>
