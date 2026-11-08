@@ -37,6 +37,7 @@ no classes.
   |                                                                         |
   |  timers, outside every turn:                                            |
   |    watcher | reminders | reviewInbox | workflow continues | innerChild  |
+  |    offlineAlarm (keeps an "I'm offline" Slack scheduled msg armed)     |
   |                                                                         |
   |  dashboard + JSON API (Bun.serve, loopback), /api/commands/run,         |
   |    /api/github-app/comment                                              |
@@ -68,7 +69,10 @@ no classes.
   fresh turn when it is ready; `reminders` posts at the time with no model;
   `reviewInbox` polls GitHub for review requests and runs `review` as the
   requester; `workflowContinue` resumes long workflows after a restart;
-  `innerChild` watches the bot's own conversations and queues fixes to itself.
+  `innerChild` watches the bot's own conversations and queues fixes to itself;
+  `offlineAlarm` keeps an "I'm offline" notice armed as a Slack scheduled
+  message a few minutes out, so Slack posts it by itself when the host loses
+  its connection, and edits it to "back online" when it returns.
   None of them hold a session or a queue slot while they wait.
 - **GitHub App.** A loopback listener (`GITHUB_APP_PORT`, reached through
   Tailscale Funnel) verifies each webhook, answers 202 and hands it to
@@ -110,6 +114,7 @@ No I/O, no frameworks. Just data shapes and functions of their inputs.
 - `threadSession.ts`, `agentSession.ts` - one CLI session per thread and when it may be resumed
 - `adapter.ts`, `adapterCheck.ts` - memory as a checked, versioned directory (facts + skills) instead of an ever-growing list
 - `watch.ts`, `reminder.ts`, `selfUpdate.ts`, `runControl.ts` - waits, reminders, draining restart, stopping a turn
+- `offlineAlarm.ts` - the dead man's switch notice and its back-online edit
 - `githubApp.ts` - webhook signature, owner allowlist, trigger detection and what the GitHub App says
 - `*Prompt.ts` - prompts for the preset tasks (review, ticket, investigate, read, note, workflow, ...)
 - `blockKit.ts`, `kitEvents.ts`, `slackFormat.ts`, `slackLinks.ts` - Slack formatting, Block Kit and links
@@ -125,7 +130,7 @@ Orchestrates the domain and depends on **ports**, not concrete adapters.
 - `handleMessage.ts` - the chat flow (access -> remember -> ask model -> remember), applying the role's tool policy
 - `commands.ts`, `commandTickets.ts`, `commandLimits.ts`, `brainRun.ts` - the command registry (configurable prefix + slash, role gates, help), the brain's tickets, allowances and result delivery
 - `threadQueue.ts`, `runRegistry.ts` - one turn per thread, and stopping one
-- `watcher.ts`, `reminders.ts`, `reviewInbox.ts`, `reviewGuard.ts`, `innerChild.ts` - the timers
+- `watcher.ts`, `reminders.ts`, `reviewInbox.ts`, `reviewGuard.ts`, `innerChild.ts`, `offlineAlarm.ts` - the timers
 - `githubApp.ts` - calls from the GitHub App: dedupe/queue, identity mapping, the turn, the answer back
 - `workflow.ts`, `workflowFront.ts`, `workflowContinue.ts` - long tasks driven from one thread on a durable session
 - `accessRequests.ts` - unknown people ask the owner and admins, who decide with a reaction
@@ -143,6 +148,7 @@ Concrete implementations of the seams and the transports.
 - `slack/app.ts` - Bolt listeners + slash commands mapping Slack events to `respond`
 - `slack/stream.ts`, `slack/fences.ts` - bridges the `LlmStreamSink` onto Slack's `chatStream` (text + `task_update` tool cards, Block Kit fences), falling back to a single post
 - `slack/adminClient.ts` - `SlackAdminPort` over the Slack Web API
+- `slack/offlineAlarmClient.ts` - the offline alarm's scheduled-message calls
 - `inbox/inboxRepo.ts` - the inbox queue shared by both processes
 - `llm/claudeCli.ts` - the default `LlmPort`, wraps the local `claude` CLI (`--resume`, `stream-json`, per-call policy -> `--allowedTools`/cwd/timeout, the timeout stopping the whole process tree); `killTree.ts`, `toolTraceLog.ts` support it
 - `llm/anthropic.ts` - alternative `LlmPort` backed by the Anthropic API
