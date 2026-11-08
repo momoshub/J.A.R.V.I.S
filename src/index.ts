@@ -39,6 +39,7 @@ import {
 import { createAdapterRevisionRepo } from "./infrastructure/db/adapterRevisionRepo.ts";
 import { createCommandLogRepo } from "./infrastructure/db/commandLogRepo.ts";
 import { createUsageRepo } from "./infrastructure/db/usageRepo.ts";
+import { createStatsRepo } from "./infrastructure/db/statsRepo.ts";
 import { createTurnLogRepo } from "./infrastructure/db/turnLogRepo.ts";
 import { createWatchRepo } from "./infrastructure/db/watchRepo.ts";
 import { createReminderRepo } from "./infrastructure/db/reminderRepo.ts";
@@ -600,6 +601,7 @@ const main = async () => {
       messages,
       learnings,
       kitViews,
+      stats: createStatsRepo(db),
       adapter: adapterStore.exists()
         ? {
             status: () => adapterStatus(adapterDeps()),

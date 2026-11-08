@@ -22,6 +22,8 @@ import type { LearningsRepo } from "../db/learningsRepo.ts";
 import type { KitViewRepo } from "../db/kitViewRepo.ts";
 import type { SettingsRepo } from "../db/settingsRepo.ts";
 import type { RolePolicyRepo } from "../db/rolePolicyRepo.ts";
+import type { StatsRepo } from "../db/statsRepo.ts";
+import { createSlackDirectory } from "../../application/slackDirectory.ts";
 import { createNameResolver } from "../../application/nameResolver.ts";
 
 export type DashboardConfig = {
@@ -64,6 +66,10 @@ export type DashboardDeps = {
   commandLog?: CommandLogRepo;
   /** What each run of the model consumed, for the spend page. */
   usage?: UsageRepo;
+  /** Activity aggregates for the overview charts. */
+  stats?: StatsRepo;
+  /** The host's timezone offset in minutes (`Date#getTimezoneOffset`); defaults to the process's. */
+  timezoneOffset?: () => number;
   /**
    * Whether the bot can currently hear Slack. Read through a getter because the
    * Slack app is built after this server; "deaf" must be visible from outside
@@ -153,7 +159,7 @@ const SECURITY_HEADERS: Record<string, string> = {
   "X-Frame-Options": "DENY",
   "Content-Security-Policy":
     "default-src 'none'; script-src 'self'; style-src 'self' 'unsafe-inline'; " +
-    "img-src 'self' data:; font-src 'self'; connect-src 'self'; base-uri 'none'; frame-ancestors 'none'",
+    "img-src 'self' data: https://*.slack-edge.com https://secure.gravatar.com; font-src 'self'; connect-src 'self'; base-uri 'none'; frame-ancestors 'none'",
 };
 
 const withHeaders = (res: Response): Response => {
@@ -201,6 +207,13 @@ export const createDashboard = (config: DashboardConfig, deps: DashboardDeps) =>
     commandLog: deps.commandLog,
     usage: deps.usage,
     kitViews: deps.kitViews,
+    stats: deps.stats,
+    timezoneOffset: deps.timezoneOffset ?? (() => new Date(deps.clock()).getTimezoneOffset()),
+    // One copy of the workspace directory per server, refreshed every ten
+    // minutes, so the Users page search is not a `users.list` sweep per key.
+    directory: deps.slack?.listMembers
+      ? createSlackDirectory({ clock: deps.clock, listMembers: deps.slack.listMembers })
+      : undefined,
     resolveNames: deps.slack ? (ids) => deps.slack!.resolveNames([...ids]) : undefined,
     rolePolicies: deps.rolePolicies,
     // One cache for the life of the server, so opening a page never costs a
@@ -257,9 +270,15 @@ export const createDashboard = (config: DashboardConfig, deps: DashboardDeps) =>
         case "/api/usage":
           return Response.json(await app.usage(q("hours")));
         case "/api/conversations":
-          return Response.json(await app.conversations());
+          return Response.json(await app.conversations(q("cursor"), q("limit")));
         case "/api/conversation":
-          return Response.json(await app.conversation(q("channel") ?? ""));
+          return Response.json(await app.conversation(q("channel") ?? "", q("before"), q("limit")));
+        case "/api/stats":
+          return Response.json(await app.stats(q("days")));
+        case "/api/slack/members": {
+          const found = await app.searchMembers(q("q"));
+          return found.ok ? Response.json(found.value) : jsonError(found.error, found.status);
+        }
         // --- Slack console (live Slack Web API) ---
         case "/api/slack/conversations":
           return slackGuard(() => deps.slack!.listConversations());
@@ -288,7 +307,7 @@ export const createDashboard = (config: DashboardConfig, deps: DashboardDeps) =>
 
       switch (url.pathname) {
         case "/api/users":
-          return reply(app.saveUser(body.slackId, body.role));
+          return reply(app.saveUser(body.slackId, body.role, body.displayName));
         case "/api/users/remove":
           return reply(app.removeUser(body.slackId));
         case "/api/users/update":
