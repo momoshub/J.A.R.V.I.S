@@ -26,6 +26,14 @@ describe("slackReadRules", () => {
     expect(slackReadRules("/s.sh")).toContain("Never report a tool you were denied as a permission Slack refused you");
   });
 
+  test("a person is named from the read, never from memory", () => {
+    // the failure this exists for: a thread read showed only U0ALEX00001 and
+    // the bot called Alex Example "Jordan"
+    const r = slackReadRules("/s.sh");
+    expect(r).toContain("`user_name`");
+    expect(r).toContain("`/s.sh user <id>`, never a name from memory");
+  });
+
   test("with no helper wired there is no block at all", () => {
     expect(slackReadRules(undefined)).toBe("");
   });

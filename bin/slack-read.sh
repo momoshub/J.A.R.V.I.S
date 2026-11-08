@@ -25,6 +25,14 @@
 # commands into the channel. The blocks themselves are dropped too: they are the
 # bulk of the payload (a 12-message thread came back at 47KB) and they say
 # nothing the text does not.
+#
+# Every user id is NAMED before it is printed. The raw payload carries only
+# `user: U0ALEX00001` and `<@U0ALEX00001>` in the text, and a model handed that
+# fills in a name from memory: it once told a channel that "Jordan" asked a
+# question Alex Example had asked. Each distinct id is looked up once with
+# users.info, the message gets a `user_name` field and every mention becomes
+# `<@U…:name>`, the same shape inbound mentions already arrive in. An id that
+# cannot be resolved stays as it is, never guessed.
 set -uo pipefail
 
 api() {
@@ -98,9 +106,70 @@ except Exception:
 '
 }
 
+# Every user id in the messages: authors, mentions, reply_users, reactions.
+user_ids() {
+  python3 -c '
+import json, re, sys
+try:
+    d = json.load(sys.stdin)
+except Exception:
+    sys.exit(0)
+seen = []
+def add(u):
+    if isinstance(u, str) and re.fullmatch(r"[UW][A-Z0-9]{2,}", u) and u not in seen:
+        seen.append(u)
+for m in d.get("messages", []):
+    add(m.get("user"))
+    add(m.get("parent_user_id"))
+    for u in m.get("reply_users", []) or []:
+        add(u)
+    for u in re.findall(r"<@([UW][A-Z0-9]+)(?:\|[^>]*)?>", m.get("text", "")):
+        add(u)
+print("\n".join(seen[:100]))
+'
+}
+
+# Look each id up once, then write the names in. Unparseable input, or an id
+# users.info will not answer for, passes through untouched.
+name_users() {
+  local raw; raw=$(cat)
+  local lookups="" id
+  for id in $(printf '%s' "$raw" | user_ids); do
+    lookups+="$id"$'\t'"$(api users.info -d "user=$id" | tr -d '\n')"$'\n'
+  done
+  RAW="$raw" LOOKUPS="$lookups" python3 -c '
+import json, os, re, sys
+raw = os.environ["RAW"]
+names = {}
+for line in os.environ["LOOKUPS"].splitlines():
+    uid, _, body = line.partition("\t")
+    try:
+        u = json.loads(body).get("user") or {}
+    except Exception:
+        continue
+    p = u.get("profile") or {}
+    name = p.get("display_name") or p.get("real_name") or u.get("real_name")
+    if name:
+        names[uid] = name
+try:
+    d = json.loads(raw)
+    def mention(mt):
+        uid = mt.group(1)
+        return "<@%s:%s>" % (uid, names[uid]) if uid in names else mt.group(0)
+    for m in d.get("messages", []):
+        if m.get("user") in names:
+            m["user_name"] = names[m["user"]]
+        if "text" in m:
+            m["text"] = re.sub(r"<@([UW][A-Z0-9]+)(?:\|[^>]*)?>", mention, m["text"])
+    json.dump(d, sys.stdout, ensure_ascii=False)
+except Exception:
+    sys.stdout.write(raw)
+'
+}
+
 case "${1:-}" in
-  history) read_with_join conversations.history -d "channel=${2:?channel}" -d "limit=${3:-20}" ${4:+-d "latest=$4"} ${4:+-d "inclusive=true"} | clean ;;
-  replies) read_with_join conversations.replies -d "channel=${2:?channel}" -d "ts=${3:?thread ts}" -d "limit=${4:-50}" | clean ;;
+  history) read_with_join conversations.history -d "channel=${2:?channel}" -d "limit=${3:-20}" ${4:+-d "latest=$4"} ${4:+-d "inclusive=true"} | clean | name_users ;;
+  replies) read_with_join conversations.replies -d "channel=${2:?channel}" -d "ts=${3:?thread ts}" -d "limit=${4:-50}" | clean | name_users ;;
   info)    api conversations.info -d "channel=${2:?channel}" ;;
   user)    api users.info -d "user=${2:?user id}" ;;
   find)    api conversations.list -d "types=public_channel" -d "limit=1000" -d "exclude_archived=true" ;;
