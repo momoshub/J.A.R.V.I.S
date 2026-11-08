@@ -2,10 +2,11 @@
  * The colour theme: follow the system, or force light or dark.
  *
  * The page only ever reads `<html data-theme="light|dark">`, the RESOLVED
- * value, so the CSS has one dark block. `index.html` resolves it inline before
- * first paint (no light flash on a dark page); this module owns the toggle and
+ * value, so the CSS has one dark block. `public/theme-init.js` resolves it
+ * before first paint (no light flash on a dark page; a file because the CSP
+ * refuses inline scripts); this module owns the toggle and
  * keeps "system" in step with the OS while the page is open. Both use
- * `THEME_KEY` - a test holds `index.html` to it.
+ * `THEME_KEY` - a test holds the init script to it.
  */
 export type ThemePref = "system" | "light" | "dark";
 export type Theme = "light" | "dark";

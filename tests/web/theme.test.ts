@@ -37,9 +37,15 @@ describe("theme preference", () => {
     expect(nextTheme("dark")).toBe("system");
   });
 
-  test("index.html resolves the theme before paint with the same storage key", () => {
-    const html = readFileSync(join(import.meta.dir, "..", "..", "web", "index.html"), "utf8");
-    expect(html).toContain(`localStorage.getItem("${THEME_KEY}")`);
-    expect(html).toContain("dataset.theme");
+  test("the theme is resolved before paint by a file index.html loads, with the same key", () => {
+    const web = join(import.meta.dir, "..", "..", "web");
+    const init = readFileSync(join(web, "public", "theme-init.js"), "utf8");
+    expect(init).toContain(`localStorage.getItem("${THEME_KEY}")`);
+    expect(init).toContain("dataset.theme");
+    const html = readFileSync(join(web, "index.html"), "utf8");
+    expect(html).toContain('<script src="/theme-init.js"></script>');
+    // The dashboard's CSP is script-src 'self': an inline script would never run.
+    expect(html.match(/<script>(?![\s\S]*?<\/script>\s*$)/)).toBeNull();
+    expect(/<script>[\s\S]*?<\/script>/.test(html)).toBe(false);
   });
 });

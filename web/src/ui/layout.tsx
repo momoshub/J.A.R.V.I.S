@@ -137,7 +137,7 @@ export function Layout() {
           </button>
           <button
             type="button"
-            className="side-toggle"
+            className="side-toggle collapse-toggle"
             onClick={() => setCollapsed((c) => !c)}
             aria-expanded={!collapsed}
             aria-label={collapsed ? "Expand sidebar" : "Collapse sidebar"}

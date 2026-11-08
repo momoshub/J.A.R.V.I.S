@@ -5,16 +5,8 @@
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>control deck</title>
     <meta name="theme-color" content="#faf9f5" />
-    <!-- Resolve the theme before first paint; src/ui/theme.ts owns it after load. -->
-    <script>
-      (function () {
-        var pref = "system";
-        try { pref = localStorage.getItem("dashboard.theme") || "system"; } catch (e) {}
-        var dark = pref === "dark" || (pref !== "light" && window.matchMedia("(prefers-color-scheme: dark)").matches);
-        document.documentElement.dataset.theme = dark ? "dark" : "light";
-        document.querySelector('meta[name="theme-color"]').setAttribute("content", dark ? "#262624" : "#faf9f5");
-      })();
-    </script>
+    <!-- Resolve the theme before first paint. A file, not inline: the dashboard's CSP is script-src 'self'. -->
+    <script src="/theme-init.js"></script>
   </head>
   <body>
     <div id="root"></div>
