@@ -107,6 +107,26 @@ describe("watcher", () => {
     expect(watches.get(created.id)?.state).toBe("fired");
   });
 
+  test("a fired watch hands what it printed to onFired, and a throw there does not stop the hand-back", async () => {
+    add();
+    const seen: string[] = [];
+    const w = createWatcher({
+      watches,
+      clock: () => now,
+      check: async () => ({ code: 0, output: "orca worker ctx_a finished: done" }),
+      runTurn: async (r) => void turns.push({ threadTs: r.threadTs, text: r.text, slackUserId: r.slackUserId }),
+      onFired: (out) => {
+        seen.push(out);
+        throw new Error("db locked");
+      },
+    });
+    turns = [];
+    now += EVERY;
+    await w.tick();
+    expect(seen).toEqual(["orca worker ctx_a finished: done"]);
+    expect(turns).toHaveLength(1);
+  });
+
   test("it fires once, not once per tick", async () => {
     add();
     const w = build(async () => ({ code: 0, output: "" }));

@@ -14,9 +14,18 @@
 // parked on a person's answer, only finished or died ends the watch.
 // The reading itself is `orcaWorkerEvent` in src/domain/watch.ts; the hand-back
 // turn reads the printed line back to say which of the three happened.
+// A worker that finished or died also gets `orca worker <id> usage <json>`:
+// the tokens its Claude transcript used, priced (src/domain/workerUsage.ts),
+// which the hand-back names and the watcher stores. Best effort and bounded,
+// so a missing transcript never holds up the hand-back.
 import { orcaWorkerEvent, workerEventLine } from "../src/domain/watch.ts";
+import { workerUsageLine } from "../src/domain/workerUsage.ts";
+import { measureWorker } from "../src/infrastructure/system/workerTranscript.ts";
+import { createOrcaCli } from "../src/infrastructure/system/orcaTerminal.ts";
 
-const TIMEOUT_MS = 20_000;
+const TIMEOUT_MS = 15_000;
+/** The whole usage step; the watcher kills a check at 30s (`CHECK_TIMEOUT_MS`). */
+const USAGE_BUDGET_MS = 10_000;
 
 const id = process.argv[2] ?? "";
 const pastWait = process.argv.slice(3).includes("--past-wait");
@@ -54,4 +63,11 @@ if (ev.kind === "unknown") {
   process.exit(2);
 }
 console.log(workerEventLine(id, ev));
+if (ev.kind !== "waiting") {
+  const usage = await Promise.race([
+    measureWorker(id, { orca: createOrcaCli(orca, USAGE_BUDGET_MS), shown: out }).catch(() => undefined),
+    new Promise<undefined>((r) => setTimeout(() => r(undefined), USAGE_BUDGET_MS)),
+  ]);
+  if (usage && !("error" in usage)) console.log(workerUsageLine(usage));
+}
 process.exit(0);

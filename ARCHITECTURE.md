@@ -70,7 +70,9 @@ no classes.
 - **Timers.** `watcher` polls each due watch's predicate and hands the thread a
   fresh turn when it is ready (`watch worker <dispatchId>` polls an Orca worker
   through `bin/orca-worker-wait.ts` and says whether it finished, died or waits
-  for input); `reminders` posts at the time with no model;
+  for input - a finished or dead worker's hand-back also names the tokens and
+  list-price cost its Claude transcript used, stored in `orca_worker_usage`
+  and readable later with `worker-cost <ctx_...|run_...>`); `reminders` posts at the time with no model;
   `reviewInbox` polls GitHub for review requests and runs `review` as the
   requester; `orcaQuestions` reads the Orca mailbox of every Run a thread
   started a worker in (linked from the turn's tool trace as `worker-start`
@@ -136,6 +138,7 @@ No I/O, no frameworks. Just data shapes and functions of their inputs.
 - `threadSession.ts`, `agentSession.ts` - one CLI session per thread and when it may be resumed
 - `adapter.ts`, `adapterCheck.ts` - memory as a checked, versioned directory (facts + skills) instead of an ever-growing list
 - `watch.ts`, `reminder.ts`, `selfUpdate.ts`, `runControl.ts`, `threadBackground.ts` - waits, reminders, draining restart, stopping a turn and the background agents its thread started
+- `workerUsage.ts` - an Orca worker's tokens summed from its Claude Code transcript (deduped per message) and priced per model (the one price table)
 - `offlineAlarm.ts` - the dead man's switch notice and its back-online edit
 - `innerChild.ts`, `voiceDrift.ts` - the self-review triage, and the cheap voice-drift check, nudge and log lines
 - `githubApp.ts` - webhook signature, owner allowlist, trigger detection and what the GitHub App says
@@ -183,7 +186,7 @@ Concrete implementations of the seams and the transports.
 - `db/` - `bun:sqlite` client, schema + migrations, one repo per table (users, role policies, messages, sessions, watches, reminders, workflows, usage, turn and command logs, Orca worker threads and questions, ...), `secretBox.ts` for encrypted tokens
 - `adapter/adapterStore.ts` - the memory adapter in the `adapter_files` table, mirrored to `data/adapter-mirror` so skills can be read by path
 - `github/` - `gh` CLI wrapper and review-request polling; the GitHub App's fetch client (`appClient.ts`, RS256 JWT -> cached installation token), credentials from files (`appCredentials.ts`) and webhook listener (`webhookServer.ts`)
-- `system/` - host probes (system load, Accessibility access, shell checks for watches), `guideWriter.ts`, which writes the prompt's how-to guides to `data/prompt-guides`, and `orcaTerminal.ts`, the bot's own Orca terminal (created once, checked against Orca at most once a minute, re-created when gone) whose handle every spawned turn gets as `ORCA_TERMINAL_HANDLE` so it can open Orca Runs and start workers
+- `system/` - host probes (system load, Accessibility access, shell checks for watches), `guideWriter.ts`, which writes the prompt's how-to guides to `data/prompt-guides`, and `orcaTerminal.ts`, the bot's own Orca terminal (created once, checked against Orca at most once a minute, re-created when gone) whose handle every spawned turn gets as `ORCA_TERMINAL_HANDLE` so it can open Orca Runs and start workers, and `workerTranscript.ts`, which finds an Orca worker's Claude Code session (one message id from `worker-read --source transcript`, matched to the `uuid` in a `~/.claude/projects` jsonl) and sums what it used
 - `db/statsRepo.ts` - read-only day buckets and top-N sums over `messages`, `turn_log`, `llm_usage`, `command_log` and `thread_sessions` for the overview charts (`/api/stats`); `domain/dashboardStats.ts` lays them over the whole window, zeros included
 - `dashboard/server.ts` - `Bun.serve` JSON API under `/api` plus the React SPA built to `web/dist`. HTTP only: parse, call `application/dashboard.ts`, map the outcome. The brain hooks (`/api/commands/run`, `/api/github-app/comment`, `/api/restart`) and the Slack console call their deps directly
 - `web/` - the dashboard front end: React 19 + Vite + React Router 7 (`react-router` package). Its Architecture page draws this document as an interactive diagram from `web/src/systemModel.ts` - change that file with the runtime section above. Layout: `routes/router.tsx` (route table), `pages/` (one module per page with its loader and action), `ui/` (shell, error and banner), `api.ts` (every fetch)

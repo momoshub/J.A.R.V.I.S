@@ -60,6 +60,12 @@ export type WatcherDeps = {
   mayRun?: (slackUserId: string) => boolean;
   log?: (msg: string) => void;
   /**
+   * What a check printed when its watch fired, for whoever keeps something from
+   * it (`watch worker` prints the worker's usage). Called before the hand-back
+   * starts; a throw here is logged and never stops the hand-back.
+   */
+  onFired?: (output: string) => void;
+  /**
    * A tick that cannot even read what is due. Handed over, never thrown: the
    * tick runs on a bare timer, and a rejection there kills the whole process.
    */
@@ -156,6 +162,11 @@ export const createWatcher = (deps: WatcherDeps): Watcher => {
     }
 
     if (res.code === 0) {
+      try {
+        deps.onFired?.(res.output);
+      } catch (e) {
+        log(`watch ${w.id}: keeping what it printed failed: ${e instanceof Error ? e.message : String(e)}`);
+      }
       finish(w, "fired", readyMessage(w.note, waited, res.output));
       return;
     }

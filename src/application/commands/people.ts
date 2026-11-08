@@ -1,8 +1,9 @@
-/** Who may talk to the bot and what they spend: spend, users, add, remove, promote, demote. */
+/** Who may talk to the bot and what they spend: spend, worker-cost, users, add, remove, promote, demote. */
 
 import { validateRemoval, validateRoleChange } from "../../domain/access.ts";
 import type { UserRole } from "../../domain/types.ts";
 import { spendReport } from "../../domain/spendReport.ts";
+import { workerCostReport } from "../workerCost.ts";
 import { type Context, type CommandDef, slackIdOf, roleOf, parseWindow, recordsOf } from "./shared.ts";
 
 const changeRole = (ctx: Context, slackId: string, next: UserRole, requireExisting: boolean): string => {
@@ -61,6 +62,21 @@ export const PEOPLE_COMMANDS: readonly CommandDef[] = [
         windowMs,
         names,
       );
+    },
+  },
+  {
+    name: "worker-cost",
+    aliases: ["wcost"],
+    // Like spend: what somebody's account was billed at list price.
+    minRole: "admin",
+    usage: "<ctx_...|run_...>",
+    summary: "tokens and list-price cost of an Orca worker (dispatch id) or a whole Run",
+    quiet: true,
+    run: async ({ deps, args, prefix }) => {
+      if (!deps.workerUsage) return "I cannot read Orca workers' usage here.";
+      const target = args[0] ?? "";
+      if (!target) return `\`${prefix} worker-cost <ctx_...|run_...>\``;
+      return workerCostReport(target, deps.workerUsage, deps.clock());
     },
   },
   {
