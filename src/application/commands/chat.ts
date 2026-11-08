@@ -12,6 +12,7 @@ import { btwRules } from "../../domain/btwPrompt.ts";
 import { buildContextWindow } from "../../domain/conversation.ts";
 import { DEFAULT_SNUB_REPLY, formatSnubbed, parseSnubbed } from "../../domain/snub.ts";
 import { modelKey, SETTING_KEYS } from "../../infrastructure/db/settingsRepo.ts";
+import { AGENT_MODEL_KINDS, DEFAULT_AGENT_MODELS, agentModelKindOf, agentModelsOf } from "../../domain/agentModels.ts";
 import { type CommandDef, RANK, roleOf, botNameOf, recordsOf } from "./shared.ts";
 
 /**
@@ -80,8 +81,8 @@ export const CHAT_COMMANDS: readonly CommandDef[] = [
     trivial: true,
     aliases: ["status"],
     minRole: "pal",
-    usage: "[role|here|#channel] [name|default]",
-    summary: "show my brain and model; admins set one per role or channel",
+    usage: "[role|subagent|worker|plan|here|#channel] [name|default]",
+    summary: "show my brain and model; admins set one per role, channel, or for subagents, Orca workers and planning",
     run: (ctx) => {
       const { deps, actor, channelId, args, prefix } = ctx;
       const info = deps.botInfo?.();
@@ -91,31 +92,35 @@ export const CHAT_COMMANDS: readonly CommandDef[] = [
       // What is being set: a role, this channel, or a named one.
       const first = (args[0] ?? "").toLowerCase();
       const role = roleOf(first);
+      const kind = role ? undefined : agentModelKindOf(first);
       const channel =
-        role || !first
+        role || kind || !first
           ? undefined
           : first === "here" || first === "channel"
             ? channelId
             : channelRefOf(args[0]);
-      if (!role && !channel && first) {
-        return `A role or a channel, please: \`${prefix} model <${ROLES.join("|")}|here|#channel> [name|default]\``;
+      if (!role && !kind && !channel && first) {
+        return `A role, an agent kind or a channel, please: \`${prefix} model <${[...ROLES, ...AGENT_MODEL_KINDS].join("|")}|here|#channel> [name|default]\``;
       }
 
-      const key = role ? modelKey(role) : modelKey(`channel:${channel}`);
-      const label = role ? `*${role}*` : `<#${channel}>`;
+      const key = role ? modelKey(role) : kind ? modelKey(kind) : modelKey(`channel:${channel}`);
+      const label = role ? `*${role}*` : kind ? `*${kind}*` : `<#${channel}>`;
 
-      if (!role && !channel) {
+      if (!role && !kind && !channel) {
         const overrides = [
           ...ROLES.map((r) => [`*${r}*`, get(modelKey(r))] as const),
           [`this channel`, get(modelKey(`channel:${channelId}`))] as const,
         ].filter(([, m]) => m);
         const extra = overrides.length ? `\n${overrides.map(([l, m]) => `- ${l}: \`${m}\``).join("\n")}` : "";
-        return `I am *${info.botName}*, running on \`${info.model}\`.${extra}`;
+        const agents = agentModelsOf((k) => get(modelKey(k)));
+        const handoff = AGENT_MODEL_KINDS.map((k) => `${k} \`${agents[k]}\``).join(", ");
+        return `I am *${info.botName}*, running on \`${info.model}\`.${extra}\nHanded-off work: ${handoff}.`;
       }
 
       if (args.length === 1) {
         const own = get(key);
-        return own ? `${label} runs on \`${own}\`.` : `${label} uses the default, \`${info.model}\`.`;
+        const fallback = kind ? DEFAULT_AGENT_MODELS[kind] : info.model;
+        return own ? `${label} runs on \`${own}\`.` : `${label} uses the default, \`${fallback}\`.`;
       }
       if (RANK[actor.role] < RANK.admin) return "Only admins can change a model.";
 
@@ -127,7 +132,7 @@ export const CHAT_COMMANDS: readonly CommandDef[] = [
       // A model name is one token; taking the first word of a sentence would
       // quietly pin something nobody asked for.
       if (args.length > 2 || !/^[\w.:-]+$/.test(name)) {
-        return `Which model? \`${prefix} model ${role ?? "here"} <name|default>\``;
+        return `Which model? \`${prefix} model ${role ?? kind ?? "here"} <name|default>\``;
       }
       deps.settings?.set(key, name);
       return `${label} now runs on \`${name}\`.${channel ? " That beats any role model here." : ""}`;
