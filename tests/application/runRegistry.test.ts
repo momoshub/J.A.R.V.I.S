@@ -7,6 +7,7 @@ import {
   holdThreads,
   isRestartCut,
   RESTART_STOPPER,
+  streamsToClose,
 } from "../../src/application/runRegistry.ts";
 
 const run = (over: Partial<Parameters<ReturnType<typeof createRunRegistry>["track"]>[0]> = {}) => ({
@@ -191,5 +192,45 @@ describe("the restart's wiring", () => {
     // nor does a turn started after the request: that one is on a budget
     runs.track(run({ id: "n", startedAt: DRAIN + 1 }));
     expect(drainSettled(runs, 0, DRAIN)).toBe(true);
+  });
+});
+
+describe("streamsToClose", () => {
+  test("keeps the stream a queued message opened when the running turn is stopped", () => {
+    const runs = createRunRegistry();
+    const first = runs.track(run({ id: "r1", messageTs: "100.1" }));
+    first.running();
+    runs.track(run({ id: "r2", messageTs: "100.2" }));
+    runs.streamOpened("C1", "100.1", "200.1");
+    runs.streamOpened("C1", "100.2", "200.2");
+
+    runs.stopThread("C1:100.1", "U1");
+
+    expect(streamsToClose(runs, ["200.1", "200.2"])).toEqual(["200.1"]);
+  });
+
+  test("closes streams no live turn owns, so a finished session can leave processing", () => {
+    const runs = createRunRegistry();
+    const t = runs.track(run({ id: "r1", messageTs: "100.1" }));
+    runs.streamOpened("C1", "100.1", "200.1");
+    t.done();
+
+    expect(streamsToClose(runs, ["200.1", "200.9"])).toEqual(["200.1", "200.9"]);
+  });
+
+  test("a stream recorded before the turn starts survives running()", () => {
+    const runs = createRunRegistry();
+    const t = runs.track(run({ id: "r1", messageTs: "100.1" }));
+    runs.streamOpened("C1", "100.1", "200.1");
+    t.running();
+
+    expect(runs.byId("r1")?.streams).toEqual(["200.1"]);
+    expect(runs.byId("r1")?.state).toBe("running");
+  });
+
+  test("ignores a stream for a message no turn is tracking", () => {
+    const runs = createRunRegistry();
+    runs.streamOpened("C1", "999.9", "200.1");
+    expect(runs.all()).toEqual([]);
   });
 });
