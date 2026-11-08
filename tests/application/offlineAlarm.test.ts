@@ -42,12 +42,12 @@ describe("offline alarm", () => {
   test("keeps exactly one notice armed, a lead ahead of now", async () => {
     let now = 1_000_000;
     const s = fakeSlack();
-    const alarm = createOfflineAlarm({ channel: "C1", slack: s.slack, clock: () => now, leadMs: 180_000 });
+    const alarm = createOfflineAlarm({ channel: "C1", slack: s.slack, clock: () => now, leadMs: 600_000 });
     await alarm.tick();
     now += 60_000;
     await alarm.tick();
     expect(s.armed).toHaveLength(1);
-    expect(s.armed[0]?.postAt).toBe(Math.floor((now + 180_000) / 1000));
+    expect(s.armed[0]?.postAt).toBe(Math.floor((now + 600_000) / 1000));
   });
 
   test("arms the new one before cancelling the old, so nothing is ever unarmed", async () => {
