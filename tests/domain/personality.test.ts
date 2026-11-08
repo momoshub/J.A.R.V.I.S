@@ -459,8 +459,13 @@ describe("a message with several questions", () => {
     expect(out).toContain("worker-start --run <runId>");
     expect(out).toContain(ORCA_BATCH_CHECK);
     // a worker that stops without reporting leaves its task blocked: that settles the batch, never as a success
-    expect(out).toContain("A `blocked` task is NOT success: its worker stopped without reporting");
-    expect(out).toContain("check the work itself (commits, PR, files), and redo or finish what is missing - never count it done");
+    expect(out).toContain("A `blocked` task is NOT success: its worker either stopped without reporting or is parked on an `ask`");
+    expect(out).toContain("then wait again on the batch check - and never redo its work");
+    // a worker parked on an ask is answered and waited on again, never redone
+    expect(out).toContain("Waiting on an answer (an input/approval attention or a pending question): answer it, or ask the person, then wait again");
+    expect(out).toContain("never redo its work, it resumes once answered");
+    expect(out).toContain("Stopped, exited or abandoned with nothing pending: check the work itself (commits, PR, files) and redo or finish what is missing - never count it done");
+    expect(out).toContain("`orca orchestration worker-list --run <runId> --json`");
     expect(out).toContain("inbox --terminal run:<runId> --full");
     expect(out).toContain("never through the Workflow tool");
     // the self-fix reviewer is an Orca worker too, no Agent-tool exception left

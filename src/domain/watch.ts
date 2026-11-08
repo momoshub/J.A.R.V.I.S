@@ -402,7 +402,7 @@ const BLOCKED_TASK = /^(task_[A-Za-z0-9_-]+) blocked$/gm;
 const blockedTasks = (output: string): string[] => [...output.matchAll(BLOCKED_TASK)].map((m) => m[1] ?? "");
 
 const blockedLead = (tasks: readonly string[]): string =>
-  `Orca shows ${tasks.join(", ")} as BLOCKED: that worker stopped without reporting (it exited, was stopped, or is parked on an \`ask\`). It is NOT done, never count it as a success. For each, read \`orca orchestration worker-show --dispatch <its dispatchId> --json --full\` and its messages in \`orca orchestration inbox\`, answer it if it is waiting, otherwise check the work itself (commits, PR, files) and redo or finish what is missing before the rest of this.`;
+  `Orca shows ${tasks.join(", ")} as BLOCKED: that worker either stopped without reporting or is parked on an \`ask\`. It is NOT done, never count it as a success. For each, read \`orca orchestration worker-show --dispatch <its dispatchId> --json --full\` (\`orca orchestration worker-list --run <runId> --json\` maps a task to its dispatch) and its messages in \`orca orchestration inbox\`. If it is WAITING on an answer (an input/approval attention or a pending question): answer it, or ask the person, then wait again - re-run the batch check, or set \`watch worker <its dispatchId>\` - and do NOT redo its work or carry on with the rest of this until it has finished; it resumes once answered. Only if it STOPPED (stopped, abandoned or ended with nothing pending): check the work itself (commits, PR, files) and redo or finish what is missing, then carry on.`;
 
 /**
  * The line the thread gets when a watch comes good.

@@ -303,9 +303,13 @@ describe("orcaWorkerEvent", () => {
     expect(gone).toEqual({ kind: "died", detail: "ended without reporting (finished_unverified), task left blocked, run run_1" });
     // turn over but the pane still open: just as stuck, nothing will report
     expect(orcaWorkerEvent(full({ outcome: "finished_unverified", liveness: { verdict: "live" } })).kind).toBe("died");
-    // but one that ended its turn on an `ask` is waiting for the answer
+    // but one that ended its turn on an `ask` is waiting for the answer: orcad raises
+    // `input` for its pending question and `approval` for the task's open decision gate
     expect(
-      orcaWorkerEvent(full({ outcome: "finished_unverified", liveness: { verdict: "live" }, attention: { categories: ["guidance"] } })).kind,
+      orcaWorkerEvent(full({ outcome: "finished_unverified", liveness: { verdict: "live" }, attention: { categories: ["input", "approval"] } })).kind,
+    ).toBe("waiting");
+    expect(
+      orcaWorkerEvent(full({ outcome: "finished_unverified", liveness: { verdict: "exited" }, attention: { categories: ["approval"] } })).kind,
     ).toBe("waiting");
   });
 
@@ -390,10 +394,16 @@ describe("the worker hand-back says which of the three happened", () => {
 
   test("a blocked task in the batch check is flagged as not done", () => {
     const m = readyMessage("merge both PRs", 600_000, "task_aa1 blocked\ntask_bb2 failed\ntrue");
-    expect(m).toStartWith("Orca shows task_aa1 as BLOCKED: that worker stopped without reporting");
+    expect(m).toStartWith("Orca shows task_aa1 as BLOCKED: that worker either stopped without reporting or is parked on an `ask`");
     expect(m).toContain("never count it as a success");
     expect(m).toContain("orca orchestration worker-show --dispatch <its dispatchId> --json --full");
-    expect(m).toContain("check the work itself");
+    expect(m).toContain("`orca orchestration worker-list --run <runId> --json` maps a task to its dispatch");
+    // parked on an ask: answer and wait again, never redo it
+    expect(m).toContain("If it is WAITING on an answer");
+    expect(m).toContain("then wait again - re-run the batch check, or set `watch worker <its dispatchId>`");
+    expect(m).toContain("do NOT redo its work or carry on with the rest of this until it has finished");
+    // only a stopped one is checked and redone
+    expect(m).toContain("Only if it STOPPED (stopped, abandoned or ended with nothing pending): check the work itself");
     expect(m).toContain("merge both PRs");
     // every blocked task is named, even past the three lines the tail shows
     const many = readyMessage("go", 60_000, "task_a blocked\ntask_b blocked\ntask_c failed\ntask_d failed\ntrue");
