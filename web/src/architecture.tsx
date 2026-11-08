@@ -61,11 +61,13 @@ const KIND_LABEL: Record<SysNode["kind"], string> = {
 
 function Diagram({
   step,
+  index,
   visited,
   selected,
   onSelect,
 }: {
   step?: FlowStep;
+  index: number;
   visited: Set<string>;
   selected: string;
   onSelect: (id: string) => void;
@@ -73,7 +75,7 @@ function Diagram({
   const live = step && !("at" in step) ? edgeKey(step.from, step.to) : "";
   const focus = new Set<string>(step ? ("at" in step ? [step.at] : [step.from, step.to]) : []);
   return (
-    <svg className="arch-svg" viewBox={`0 0 ${CANVAS.w} ${CANVAS.h}`} role="img" aria-label="System diagram">
+    <svg className="arch-svg" viewBox={`0 0 ${CANVAS.w} ${CANVAS.h}`} role="group" aria-label="System diagram: click a box for details">
       <defs>
         <marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
           <path d="M0,0 L10,5 L0,10 z" className="arch-arrow" />
@@ -95,7 +97,7 @@ function Diagram({
         return (
           <g key={k} className={`arch-edge${on ? " live" : ""}${seen ? " seen" : ""}`}>
             <path id={`w-${k}`} d={d} markerEnd={on ? "url(#arrow-live)" : "url(#arrow)"} />
-            {on && <Packet key={`${k}-${visited.size}`} path={d} />}
+            {on && <Packet key={`${k}-${index}`} path={d} />}
           </g>
         );
       })}
@@ -119,7 +121,13 @@ function Diagram({
           onClick={() => onSelect(n.id)}
           role="button"
           tabIndex={0}
-          onKeyDown={(ev) => (ev.key === "Enter" || ev.key === " ") && onSelect(n.id)}
+          aria-label={`${n.label}, ${n.sub}`}
+          aria-pressed={selected === n.id}
+          onKeyDown={(ev) => {
+            if (ev.key !== "Enter" && ev.key !== " ") return;
+            ev.preventDefault();
+            onSelect(n.id);
+          }}
         >
           <rect width={NODE.w} height={NODE.h} rx={n.kind === "store" ? 16 : 10} />
           <text x={NODE.w / 2} y={21} textAnchor="middle" className="arch-node-title">{n.label}</text>
@@ -187,9 +195,9 @@ export function ArchitecturePage() {
         the boxes. Click any box to see what it does and where it lives.
       </p>
 
-      <div className="seg flows" role="tablist">
+      <div className="seg flows">
         {FLOWS.map((f) => (
-          <button key={f.id} type="button" className={f.id === flowId ? "seg-on" : ""} onClick={() => pick(f.id)}>
+          <button key={f.id} type="button" className={f.id === flowId ? "seg-on" : ""} aria-pressed={f.id === flowId} onClick={() => pick(f.id)}>
             {f.title}
           </button>
         ))}
@@ -197,7 +205,7 @@ export function ArchitecturePage() {
 
       <div className="arch">
         <div className="card arch-stage">
-          <Diagram step={step} visited={visited} selected={selected} onSelect={setSelected} />
+          <Diagram step={step} index={index} visited={visited} selected={selected} onSelect={setSelected} />
           <div className="arch-legend">
             {(Object.keys(KIND_LABEL) as SysNode["kind"][]).map((k) => (
               <span key={k}><i className={`swatch ${k}`} />{KIND_LABEL[k]}</span>
