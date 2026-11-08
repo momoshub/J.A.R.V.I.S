@@ -13,7 +13,7 @@
   --border-strong: #d6d2c4;
   --text: #1f1e1d;
   --muted: #6f6b62;
-  --accent: #c96442;
+  --accent: #b9583a;
   --accent-ink: #ffffff;
   --accent-soft: rgba(201, 100, 66, 0.1);
   --accent-line: rgba(201, 100, 66, 0.32);
@@ -22,7 +22,7 @@
   --code-bg: rgba(31, 30, 29, 0.05);
   --danger: #b4372f;
   --danger-soft: rgba(180, 55, 47, 0.09);
-  --ok: #4a7c59;
+  --ok: #3f6e4d;
   --ok-soft: rgba(74, 124, 89, 0.12);
   --info: #4f6b8a;
   --info-soft: rgba(79, 107, 138, 0.12);
@@ -143,7 +143,7 @@ a { color: var(--link); text-underline-offset: 2px; }
 
 /* badges */
 .badge { display: inline-block; padding: 2px 9px; border-radius: 999px; font-size: 12px; font-weight: 500; line-height: 1.6; }
-.badge.owner, .badge.assistant { background: var(--accent-soft); color: var(--accent); }
+.badge.owner, .badge.assistant { background: var(--accent-soft); color: var(--link); }
 .badge.admin, .badge.user { background: var(--info-soft); color: var(--info); }
 .badge.member, .badge.pal { background: var(--hover); color: var(--muted); box-shadow: inset 0 0 0 1px var(--border); }
 .badge.executer { background: var(--ok-soft); color: var(--ok); }
