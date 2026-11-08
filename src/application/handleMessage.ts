@@ -203,6 +203,8 @@ export type InboundMessage = {
   following?: boolean;
   /** A retry: a restart cut the first attempt at this message off part way. */
   interrupted?: boolean;
+  /** The gateway inbox row this came in on, so a restart can cut its turn. */
+  inboxRowId?: number;
   /**
    * Resume the thread's session even if it was opened under older rules.
    * A watch handing a thread back is finishing work that session started -

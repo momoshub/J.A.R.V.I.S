@@ -15,9 +15,9 @@ import { isSilenceNote } from "./domain/silence.ts";
 import { openDatabase } from "./infrastructure/db/client.ts";
 import { createThreadSessionRepo } from "./infrastructure/db/threadSessionRepo.ts";
 import { createThreadQueue } from "./application/threadQueue.ts";
-import { RESTART_DELAY_MS, RESTART_MAX_WAIT_MS, restartWhenIdle } from "./domain/selfUpdate.ts";
+import { RESTART_DELAY_MS, RESTART_HOLD_NOTICE, RESTART_MAX_WAIT_MS, restartWhenIdle } from "./domain/selfUpdate.ts";
 import { isDbFileSwapped } from "./domain/dbHealth.ts";
-import { createRunRegistry } from "./application/runRegistry.ts";
+import { createRunRegistry, cutForRestart, holdThreads } from "./application/runRegistry.ts";
 import { createSystemProbe, createSystemTracker } from "./infrastructure/system/systemProbe.ts";
 import { createTotpRepo } from "./infrastructure/db/totpRepo.ts";
 import {
@@ -373,7 +373,14 @@ const main = async () => {
   // socket from the moment it does and never trip over the order things are
   // built in.
   let slackApp:
-    | { health: () => ConnectionHealth; inFlight: () => number; pauseIntake: () => void; markCut: () => number }
+    | {
+        health: () => ConnectionHealth;
+        inFlight: () => number;
+        unbudgetedInFlight: () => number;
+        pauseIntake: () => void;
+        budgetIntake: (ms: number) => void;
+        markCut: () => number;
+      }
     | undefined;
   const runs = createRunRegistry();
   // Vitals, sampled on a timer: a snapshot answers "is it bad now", a short
@@ -526,10 +533,12 @@ const main = async () => {
   const uiAccess = createUiAccessProbe();
   // Exit, and let launchd bring us back. Deferred so the reply that asked
   // for it has landed, and held until no turn is running anywhere.
-  // Set once a restart is asked for. From then on no new work starts: the
-  // inbox is not read, timers that start turns hold, and pending workflow
-  // steps stay on their rows for the next process.
+  // Set once a restart is asked for. From then on timers that start turns
+  // hold and pending workflow steps stay on their rows for the next process.
+  // New messages are still read, each on a short budget, until the turns from
+  // before the request have finished; then the inbox is not read either.
   let draining = false;
+  let drainStartedAt = 0;
   // Kept for the notice a waiting thread gets: why, and when it gives up waiting.
   let drainReason = "";
   let drainDeadlineMs = 0;
@@ -539,9 +548,18 @@ const main = async () => {
     if (draining) return;
     draining = true;
     drainReason = reason;
-    drainDeadlineMs = Date.now() + RESTART_DELAY_MS + RESTART_MAX_WAIT_MS;
+    drainStartedAt = Date.now();
+    drainDeadlineMs = drainStartedAt + RESTART_DELAY_MS + RESTART_MAX_WAIT_MS;
     restartWhenIdle({
-      onDrain: () => slackApp?.pauseIntake(),
+      // New messages still run, but each on a budget: past it the thread is
+      // told to hold on and the turn is cut, to be picked up after.
+      onDrain: () => slackApp?.budgetIntake(config.restartTurnBudgetMs),
+      // Once nothing from before the request runs, take no new work, so the
+      // budgeted turns left are the last and the wait ends within a budget.
+      settled: () =>
+        (slackApp?.unbudgetedInFlight() ?? 0) === 0 &&
+        !runs.all().some((r) => !r.background && r.startedAt < drainStartedAt),
+      onSettled: () => slackApp?.pauseIntake(),
       // The rows still running are redelivered by the next process, at once
       // and on the same session, instead of being judged too old to pick up.
       onForce: () => {
@@ -693,6 +711,15 @@ const main = async () => {
         ? createInboxReceiver({
             inbox,
             log: (l) => activity.line(`inbox: ${l}`),
+            // A turn that started while a restart waits ran past its budget:
+            // cut it and tell its thread once; the next process picks it up.
+            onOverBudget: (rowId) => {
+              const cut = cutForRestart(runs, rowId);
+              for (const t of holdThreads(cut)) {
+                void slackAdmin.post(t.channelId, RESTART_HOLD_NOTICE, t.threadTs).catch(() => undefined);
+              }
+              return cut.length > 0;
+            },
             onInterrupted: (row) =>
               tidyInterrupted(slackWeb, row, interruptedNotice(row.outcome, row.retried), (l) => activity.line(`inbox: ${l}`)),
             // Somebody wrote in while a restart holds the intake. Their

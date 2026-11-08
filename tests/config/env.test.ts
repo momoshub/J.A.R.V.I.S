@@ -17,6 +17,12 @@ describe("loadConfig", () => {
     expect(loadConfig({ ...base, ORCA_TERMINAL_WORKTREE: " " }).orcaTerminalWorktree).toMatch(/^path:.*\/Workspaces$/);
   });
 
+  test("a turn started while a restart waits gets a 2 minute budget by default", () => {
+    expect(loadConfig(base).restartTurnBudgetMs).toBe(120_000);
+    expect(loadConfig({ ...base, RESTART_TURN_BUDGET_MS: "90000" }).restartTurnBudgetMs).toBe(90_000);
+    expect(() => loadConfig({ ...base, RESTART_TURN_BUDGET_MS: "0" })).toThrow();
+  });
+
   test("the offline alarm channel is an id, never a name", () => {
     expect(loadConfig(base).offlineAlarmChannel).toBeUndefined();
     expect(loadConfig({ ...base, OFFLINE_ALARM_CHANNEL: "" }).offlineAlarmChannel).toBeUndefined();

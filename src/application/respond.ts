@@ -137,6 +137,7 @@ export const respond = async (
       messageTs: inbound.messageTs,
       startedAt: deps.clock(),
       ...(workflowThread ? { background: true } : {}),
+      ...(inbound.inboxRowId !== undefined ? { inboxRowId: inbound.inboxRowId } : {}),
     });
     // The "still working on ..." notice this message got, if it had to wait.
     let busy: PostedRef | undefined;

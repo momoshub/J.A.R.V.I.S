@@ -113,6 +113,12 @@ export type InboxRepo = {
    * process exits under it, so recovery picks it up again at once.
    */
   markCut: (at: number) => number;
+  /**
+   * Mark ONE running row as cut for the restart: a turn that ran past its
+   * budget while a restart waits. It stays running, so it is not finished
+   * here, and the next process redelivers it like any other cut row.
+   */
+  markCutRow: (id: number, at: number) => boolean;
   /** Delete finished rows past their keep time. */
   prune: (now: number) => number;
   counts: () => Record<InboxState, number>;
@@ -257,6 +263,8 @@ export const openInbox = (path: string): InboxRepo => {
       return { redelivered, deferred, dropped, interrupted };
     },
     markCut: (at) => db.prepare(`UPDATE inbox SET cut_at = ? WHERE state = 'running'`).run(at).changes,
+    markCutRow: (id, at) =>
+      db.prepare(`UPDATE inbox SET cut_at = ? WHERE id = ? AND state = 'running'`).run(at, id).changes > 0,
     prune: (now) =>
       db
         .prepare(`DELETE FROM inbox WHERE state IN ('done', 'failed', 'dropped') AND finished_at < ?`)

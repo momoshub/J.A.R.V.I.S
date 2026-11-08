@@ -210,8 +210,8 @@ export const FLOWS: Flow[] = [
     blurb: "Self-update drains instead of dropping turns.",
     steps: [
       { at: "llm", note: "A merged fix runs bin/jarvis-restart.sh. Typecheck and tests first, or no restart." },
-      { at: "receiver", note: "Draining: the inbox is no longer read, timers that start turns hold." },
-      { at: "queue", note: "Only the turns already running finish. Past 15 minutes it exits anyway." },
+      { at: "receiver", note: "Draining: timers that start turns hold. New messages still run, each on a 2-minute budget; past it the thread hears \"hold on\" and the turn is cut." },
+      { at: "queue", note: "Once the turns from before it finish, the inbox is no longer read. Past 15 minutes it exits anyway." },
       { from: "slack", to: "gateway", note: "Meanwhile people keep writing. The gateway never restarted." },
       { from: "gateway", to: "inbox", note: "Their messages wait as rows. Nothing is lost." },
       { from: "inbox", to: "receiver", note: "The new process reads the backlog. Cut turns resume on the same session." },
@@ -247,7 +247,7 @@ export const DECISIONS: { title: string; body: string; cost: string }[] = [
   },
   {
     title: "Drain, then restart",
-    body: "A restart waits for running turns, holds new ones in the inbox and refuses to start on a red build, so self-fixes cannot crash-loop.",
+    body: "A restart waits for running turns, answers new messages on a short budget meanwhile and refuses to start on a red build, so self-fixes cannot crash-loop.",
     cost: "A restart can take up to 15 minutes to land.",
   },
 ];

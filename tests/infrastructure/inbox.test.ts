@@ -26,6 +26,7 @@ import { createUserRepo } from "../../src/infrastructure/db/userRepo.ts";
 import { createMessageRepo } from "../../src/infrastructure/db/messageRepo.ts";
 import type { LlmPort } from "../../src/application/ports.ts";
 import { createGatewayHandler, type SocketEnvelope } from "../../src/infrastructure/slack/gateway.ts";
+import { createRunRegistry } from "../../src/application/runRegistry.ts";
 
 const T0 = 1_800_000_000_000;
 const message = (eventId: string, text = "hi") => ({
@@ -114,6 +115,19 @@ describe("inbox repo", () => {
     const [again] = inbox.claim(1, cutAt + 6_000);
     expect(again?.attempts).toBe(2);
     expect(inbox.recover(cutAt + 7_000)).toMatchObject({ redelivered: 0, deferred: 1 });
+  });
+
+  test("one turn cut past its budget is marked alone and picked up again at once", () => {
+    const inbox = openInbox(":memory:");
+    inbox.enqueue({ envelopeId: "e1", type: "events_api", body: message("Ev1") }, T0);
+    inbox.enqueue({ envelopeId: "e2", type: "events_api", body: message("Ev2") }, T0);
+    const [first] = inbox.claim(2, T0);
+    expect(inbox.markCutRow(first!.id, T0 + 1_000)).toBe(true);
+    // a row that is not running is left alone
+    expect(inbox.markCutRow(999, T0 + 1_000)).toBe(false);
+    // the restart comes ten minutes later: the cut row is redelivered, the
+    // other running row is judged as usual (also fresh enough here)
+    expect(inbox.recover(T0 + 10 * 60_000)).toMatchObject({ redelivered: 2, dropped: 0 });
   });
 
   test("the gateway heartbeat round-trips", () => {
@@ -405,9 +419,13 @@ describe("a reply cut off by a restart", () => {
       chatStream: () => ({ append: async () => undefined, stop: async () => undefined, ts: "600.1" }),
       chat: { update: async () => ({}) },
     };
+    // the tracked turn knows its row, so a restart's budget can find and cut it
+    const registry = createRunRegistry();
+    const rows: (number | undefined)[] = [];
+    const runs = { ...registry, track: (r: Parameters<typeof registry.track>[0]) => (rows.push(r.inboxRowId), registry.track(r)) };
     const handle = createHandler(
       config,
-      { users, messages: createMessageRepo(db), llm, clock: () => 1, ownerSlackId: "U1" },
+      { users, messages: createMessageRepo(db), llm, clock: () => 1, ownerSlackId: "U1", runs },
       () => undefined,
     );
     const base = { channelId: "D1", userId: "U1", text: "hi", messageTs: "111.1", client, say: async () => ({}) };
@@ -417,8 +435,95 @@ describe("a reply cut off by a restart", () => {
       [7, "D1", "600.1"],
       [8, "D1", "600.1"],
     ]);
+    expect(rows).toEqual([7, 8]);
     expect(systems[0]).not.toContain("handled a SECOND time");
     expect(systems[1]).toContain("handled a SECOND time");
+  });
+});
+
+describe("a restart waiting with turns on a budget", () => {
+  const BUDGET = 120_000;
+  const setup = (cuttable: boolean) => {
+    const inbox = openInbox(":memory:");
+    let now = T0;
+    const releases = new Map<string, () => void>();
+    const app: EventProcessor = {
+      processEvent: (e) =>
+        new Promise<void>((r) => void releases.set((e.body as { event_id: string }).event_id, r)),
+    };
+    const over: number[] = [];
+    const receiver = createInboxReceiver({
+      inbox,
+      now: () => now,
+      log: () => undefined,
+      onOverBudget: (rowId) => {
+        over.push(rowId);
+        return cuttable;
+      },
+    });
+    receiver.init(app);
+    return { inbox, receiver, over, releases, advance: (ms: number) => (now += ms) };
+  };
+
+  test("a new message during restart-pending still runs, on a budget", () => {
+    const h = setup(true);
+    h.inbox.enqueue({ envelopeId: "e1", type: "events_api", body: message("Ev1") }, T0);
+    h.receiver.drain(); // claimed before the restart was asked for
+    h.receiver.budget(BUDGET);
+    h.inbox.enqueue({ envelopeId: "e2", type: "events_api", body: message("Ev2") }, T0);
+    expect(h.receiver.drain()).toHaveLength(1); // not held: it runs
+    expect(h.receiver.inFlight()).toBe(2);
+    expect(h.receiver.unbudgetedInFlight()).toBe(1);
+  });
+
+  test("past its budget the turn is cut once, its row kept running for the next process", async () => {
+    const h = setup(true);
+    h.receiver.budget(BUDGET);
+    const id = h.inbox.enqueue({ envelopeId: "e1", type: "events_api", body: message("Ev1") }, T0)!;
+    const [done] = h.receiver.drain();
+    h.advance(BUDGET - 1);
+    h.receiver.tickNow();
+    expect(h.over).toEqual([]);
+    h.advance(1);
+    h.receiver.tickNow();
+    h.receiver.tickNow();
+    expect(h.over).toEqual([id]); // looked at once
+    // the stopped turn returns; the row is NOT finished, and it is marked cut
+    h.releases.get("Ev1")?.();
+    await done;
+    expect(h.receiver.inFlight()).toBe(0);
+    expect(h.inbox.counts()).toMatchObject({ running: 1, done: 0 });
+    expect(h.inbox.recover(T0 + BUDGET + 60_000)).toMatchObject({ redelivered: 1, dropped: 0 });
+  });
+
+  test("a row with nothing to cut is left to finish normally", async () => {
+    const h = setup(false);
+    h.receiver.budget(BUDGET);
+    h.inbox.enqueue({ envelopeId: "e1", type: "events_api", body: message("Ev1") }, T0);
+    const [done] = h.receiver.drain();
+    h.advance(BUDGET);
+    h.receiver.tickNow();
+    h.releases.get("Ev1")?.();
+    await done;
+    expect(h.inbox.counts()).toMatchObject({ running: 0, done: 1 });
+  });
+
+  test("turns from before the restart are never put on the budget", () => {
+    const h = setup(true);
+    h.inbox.enqueue({ envelopeId: "e1", type: "events_api", body: message("Ev1") }, T0);
+    h.receiver.drain();
+    h.receiver.budget(BUDGET);
+    h.advance(BUDGET * 5);
+    h.receiver.tickNow();
+    expect(h.over).toEqual([]);
+  });
+
+  test("once paused nothing new is taken, so the budgeted turns left are the last", () => {
+    const h = setup(true);
+    h.receiver.budget(BUDGET);
+    h.receiver.pause();
+    h.inbox.enqueue({ envelopeId: "e1", type: "events_api", body: message("Ev1") }, T0);
+    expect(h.receiver.drain()).toEqual([]);
   });
 });
 

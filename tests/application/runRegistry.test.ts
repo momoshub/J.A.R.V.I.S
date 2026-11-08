@@ -1,6 +1,9 @@
 import { describe, expect, test } from "bun:test";
 import {
   createRunRegistry,
+  cutForRestart,
+  holdThreads,
+  RESTART_STOPPER,
 } from "../../src/application/runRegistry.ts";
 
 const run = (over: Partial<Parameters<ReturnType<typeof createRunRegistry>["track"]>[0]> = {}) => ({
@@ -104,5 +107,40 @@ describe("stopping is a request, not an event", () => {
     const h = track(runs, "r4");
     h.done();
     expect(runs.stop("r4", "U1")).toBeUndefined();
+  });
+});
+
+describe("cutting a turn that ran past its restart budget", () => {
+  test("stops every turn its inbox row started, and only those", () => {
+    const runs = createRunRegistry();
+    const mine = runs.track(run({ id: "a", inboxRowId: 7 }));
+    const queued = runs.track(run({ id: "b", inboxRowId: 7, threadTs: "100.1" }));
+    const other = runs.track(run({ id: "c", inboxRowId: 8, key: "C1:200.1", threadTs: "200.1" }));
+    mine.running();
+    const cut = cutForRestart(runs, 7);
+    expect(cut.map((r) => r.id)).toEqual(["a", "b"]);
+    expect(cut[0]?.stoppedBy).toBe(RESTART_STOPPER);
+    expect(mine.signal.aborted).toBe(true);
+    expect(queued.signal.aborted).toBe(true);
+    expect(other.signal.aborted).toBe(false);
+  });
+
+  test("nothing running for the row cuts nothing, so the row is left alone", () => {
+    const runs = createRunRegistry();
+    expect(cutForRestart(runs, 7)).toEqual([]);
+    const t = runs.track(run({ inboxRowId: 7 }));
+    t.done();
+    expect(cutForRestart(runs, 7)).toEqual([]);
+  });
+
+  test("each thread is told once, in the thread even for a top-level message", () => {
+    const runs = createRunRegistry();
+    runs.track(run({ id: "a", inboxRowId: 7 }));
+    runs.track(run({ id: "b", inboxRowId: 7 }));
+    runs.track(run({ id: "c", inboxRowId: 7, key: "D1:300.1", channelId: "D1", threadTs: undefined, messageTs: "300.1" }));
+    expect(holdThreads(cutForRestart(runs, 7))).toEqual([
+      { channelId: "C1", threadTs: "100.1" },
+      { channelId: "D1", threadTs: "300.1" },
+    ]);
   });
 });

@@ -34,6 +34,7 @@ export type Limit = { label: string; value: number; unit: "chars" | "ms" | "coun
 export const LIMITS: Limit[] = [
   { label: "streamed message rollover", value: 11_000, unit: "chars", source: "src/infrastructure/slack/stream.ts:STREAM_CHAR_BUDGET", why: "Slack drops a streamed message at ~12k; roll over before, not after" },
   { label: "restart drain, at most", value: 15 * 60_000, unit: "ms", source: "src/domain/selfUpdate.ts:RESTART_MAX_WAIT_MS", why: "wait for running turns, then exit anyway; cut rows are redelivered" },
+  { label: "turn started while a restart waits", value: 2 * 60_000, unit: "ms", source: "src/domain/selfUpdate.ts:RESTART_TURN_BUDGET_MS", why: "new messages still answered during a drain; past it the turn is cut and resumed after" },
   { label: "inbox delivery attempts", value: 4, unit: "count", source: "src/domain/inbox.ts:MAX_ATTEMPTS", why: "a message that crashes the bot every time must not become a crash loop" },
   { label: "retry delay after a second cut-off", value: 5 * 60_000, unit: "ms", source: "src/domain/inbox.ts:RETRY_DELAY_MS", why: "a repeat cut-off usually means something is still going on" },
   { label: "interactive ack wait", value: 2_500, unit: "ms", source: "src/domain/inbox.ts:ACK_WAIT_MS", why: "under Slack's 3s, so a modal's validation errors still arrive" },

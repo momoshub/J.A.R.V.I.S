@@ -409,6 +409,7 @@ export const createHandler =
           viaSlash: false,
           following: msg.following === true,
           interrupted: (msg.inbox?.attempt ?? 1) > 1,
+          ...(msg.inbox ? { inboxRowId: msg.inbox.rowId } : {}),
         },
         stream?.sink,
       );
@@ -1483,6 +1484,10 @@ export const createSlackApp = (config: SlackAppConfig, deps: Deps) => {
     inFlight: () => config.inbox?.inFlight() ?? 0,
     /** Stop taking envelopes from the inbox, ahead of a restart. No-op on a socket. */
     pauseIntake: (): void => config.inbox?.pause(),
+    /** A restart waits: envelopes taken from now on run on `ms`. No-op on a socket. */
+    budgetIntake: (ms: number): void => config.inbox?.budget(ms),
+    /** Envelopes being handled that were taken before a restart was asked for. */
+    unbudgetedInFlight: () => config.inbox?.unbudgetedInFlight() ?? 0,
     /** Mark the envelopes still running as cut by a planned restart. */
     markCut: (): number => config.inbox?.markCut() ?? 0,
   };

@@ -43,6 +43,12 @@ export type TrackedRun = {
    * waiting for it only buys deafness.
    */
   readonly background?: boolean;
+  /**
+   * The gateway inbox row that started it, if any. A turn started while a
+   * restart waits runs on a budget, and past it the row is cut: this is how
+   * the row finds the turn to stop.
+   */
+  readonly inboxRowId?: number;
   /** Mutable: a stop flips it to `stopping`, which the next press must see. */
   state: RunState;
   /** Set once someone stops it; the Slack id of whoever did. */
@@ -140,3 +146,32 @@ export type RunPressOutcome =
   | { kind: "refused" }
   | { kind: "ignored" };
 
+/** Who a restart's cut is recorded as, in place of a Slack id. */
+export const RESTART_STOPPER = "restart";
+
+/**
+ * Cut the turns an inbox row started, because it ran past its budget while a
+ * restart waits. Returns what was cut, one per run; empty when nothing of it
+ * is still running (it finished, or it was never a tracked turn), in which
+ * case the row is left alone.
+ */
+export const cutForRestart = (runs: RunRegistry, rowId: number): TrackedRun[] =>
+  runs
+    .all()
+    .filter((r) => r.inboxRowId === rowId)
+    .map((r) => runs.stop(r.id, RESTART_STOPPER))
+    .filter((r): r is TrackedRun => r !== undefined);
+
+/**
+ * Where to tell the cut turns to hold on: once per thread, and in the thread
+ * even for a top-level message, whose reply opens one under it.
+ */
+export const holdThreads = (cut: readonly TrackedRun[]): { channelId: string; threadTs?: string }[] => {
+  const seen = new Map<string, { channelId: string; threadTs?: string }>();
+  for (const r of cut) {
+    const threadTs = r.threadTs ?? r.messageTs;
+    const key = `${r.channelId}/${threadTs ?? ""}`;
+    if (!seen.has(key)) seen.set(key, threadTs ? { channelId: r.channelId, threadTs } : { channelId: r.channelId });
+  }
+  return [...seen.values()];
+};

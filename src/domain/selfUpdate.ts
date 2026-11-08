@@ -40,6 +40,21 @@ export const RESTART_POLL_MS = 5_000;
  */
 export const RESTART_MAX_WAIT_MS = 15 * 60_000;
 
+/**
+ * How long a turn that STARTED while a restart waits may run before it is cut.
+ *
+ * Holding every new message until the slowest running turn ended left people
+ * unanswered for up to the full wait. So new messages still run while a
+ * restart waits, but on this budget: most answers fit in it, and one that
+ * does not is told to hold on, cut, and picked up again by the next process
+ * on the same session. Elapsed time is the signal - nothing is classified up
+ * front. Overridable with `RESTART_TURN_BUDGET_MS`.
+ */
+export const RESTART_TURN_BUDGET_MS = 2 * 60_000;
+
+/** What a thread is told when its turn ran past the budget and is cut for the restart. */
+export const RESTART_HOLD_NOTICE = "⏳ đợi em xíu, vài phút em quay lại _(restarting - I will pick this up again in a few minutes)_";
+
 export type IdleRestartDeps = {
   /** True when no turn is running or queued, in any thread. */
   readonly isIdle: () => boolean;
@@ -49,11 +64,22 @@ export type IdleRestartDeps = {
   readonly delayMs?: number;
   readonly pollMs?: number;
   /**
-   * Called once, as soon as the restart is asked for: stop taking new work, so
-   * the wait is for the turns already running and nothing that arrives later.
-   * The gateway keeps queueing meanwhile, so nothing is lost.
+   * Called once, as soon as the restart is asked for. New work still runs
+   * from here on, but each new turn on a budget (`RESTART_TURN_BUDGET_MS`),
+   * so it cannot hold the restart open for long.
    */
   readonly onDrain?: () => void;
+  /**
+   * True once nothing that started BEFORE the restart was asked for is still
+   * running. Without it the intake stays open until the cap.
+   */
+  readonly settled?: () => boolean;
+  /**
+   * Called once, the first time `settled` holds while something still runs:
+   * stop taking new work, so the budgeted turns left are the last ones and
+   * the wait ends within one budget. The gateway keeps queueing meanwhile.
+   */
+  readonly onSettled?: () => void;
   /** Called right before an exit that cuts turns still running, to mark them. */
   readonly onForce?: () => void;
   readonly maxWaitMs?: number;
@@ -64,11 +90,14 @@ export type IdleRestartDeps = {
  * a running turn cuts it, so the exit waits the usual delay for the asker's
  * reply to land, then keeps looking until every turn has finished.
  *
- * Two things keep that wait short and bounded. New work stops at once
- * (`onDrain`): the bot takes no new message while it waits, so a busy thread
- * cannot keep it from ever being idle. And past `maxWaitMs` it exits anyway,
- * after `onForce` marks what it cut - the inbox redelivers those rows to the
- * new process, which picks each one up on the same session.
+ * New messages are still answered while it waits (`onDrain` puts each new
+ * turn on a budget), and three things keep the wait bounded. A new turn past
+ * its budget is cut and picked up again after the restart. Once the turns
+ * from before the request have finished (`settled`), new work stops
+ * (`onSettled`), so a steady trickle of messages cannot keep it from ever
+ * being idle - what is left ends within one budget. And past `maxWaitMs` it
+ * exits anyway, after `onForce` marks what it cut - the inbox redelivers those
+ * rows to the new process, which picks each one up on the same session.
  */
 export const restartWhenIdle = (deps: IdleRestartDeps): void => {
   const poll = deps.pollMs ?? RESTART_POLL_MS;
@@ -76,11 +105,17 @@ export const restartWhenIdle = (deps: IdleRestartDeps): void => {
   const maxWait = deps.maxWaitMs ?? RESTART_MAX_WAIT_MS;
   let waited = 0;
   let logged = false;
+  let closed = false;
   deps.onDrain?.();
   const attempt = (): void => {
     if (deps.isIdle()) {
       deps.exit();
       return;
+    }
+    if (!closed && deps.settled?.()) {
+      closed = true;
+      deps.log?.("restart: the turns from before it have finished, taking no new work until the last ones end");
+      deps.onSettled?.();
     }
     if (waited >= maxWait) {
       deps.log?.(`restart forced: turns still running after ${Math.round(maxWait / 60_000)} min, cutting them to pick up again`);
@@ -89,7 +124,7 @@ export const restartWhenIdle = (deps: IdleRestartDeps): void => {
       return;
     }
     if (!logged) {
-      deps.log?.("restart deferred: turns still running, taking no new work until they finish");
+      deps.log?.("restart deferred: turns still running; new messages still run, each on a short budget");
       logged = true;
     }
     waited += poll;
@@ -151,7 +186,7 @@ Working on your own source (${repoPath}):
 - a PR description and commits carry no attribution at all: no "Generated with ..." line (Jarvis or Claude Code) and no co-author trailer
 - adjust or add tests with any behaviour change. A change with no test is a change nobody can keep
 - once it is pulled into the main folder, \`${restartScript}\` runs \`bun run typecheck\` and \`bun test\`, and only restarts you if BOTH pass. It will refuse on a red build, which is the point: you would come back into code that does not compile, and \`KeepAlive\` would restart you into it every fifteen seconds until a human walked to the machine
-- the restart waits a few seconds so your reply lands first, then holds until no turn is running in any thread, taking no new message meanwhile (they queue in the inbox, nothing is lost). If turns are still running after ${Math.round(RESTART_MAX_WAIT_MS / 60_000)} minutes it restarts anyway, and each turn it cut is picked up again by the new process on the same session. Say what you changed and that I restart once idle, then expect to be a new process - anything you were part-way through is gone
+- the restart waits a few seconds so your reply lands first, then holds until no turn is running in any thread. New messages are still answered meanwhile, each on a ${Math.round(RESTART_TURN_BUDGET_MS / 60_000)}-minute budget: one that runs past it tells its thread to hold on and is cut, then picked up again after the restart on the same session. Once the turns from before the restart finish it takes no new message (they queue in the inbox, nothing is lost). If turns are still running after ${Math.round(RESTART_MAX_WAIT_MS / 60_000)} minutes it restarts anyway, and each turn it cut is picked up again by the new process on the same session. Say what you changed and that I restart once idle, then expect to be a new process - anything you were part-way through is gone
 - while I am running, never \`git stash\`, \`checkout\`, \`reset\` or \`rebase\` in a way that rewrites \`data/*.db\`. It swaps the live database file out from under me, SQLite fails with a disk I/O error and I crash mid-turn - yours included. Commit the database with plain \`git add\` + \`git commit\`, and if you must stash, leave it out with \`git stash push -- . ':!data'\`
 - never restart to "see if that fixed it". Run the checks, read what they say, and decide
 - a change left uncommitted in the main folder is not finished: it blocks the next pull and gets swept into someone else's commit`;
