@@ -806,7 +806,7 @@ describe("dispatchCommand", () => {
     expect(lines[1]).toBe(`🔍 reviewing ${PR}`);
     expect(lines[lines.length - 1]).toBe("the review");
     // the resolved account reaches the prompt, so the brain need not look it up
-    expect(system).toContain("Write it as Kai, an engineer");
+    expect(system).toContain("first person as Kai (posted as kai-at-acme)");
     expect(system).toContain("kai-at-acme");
   });
 

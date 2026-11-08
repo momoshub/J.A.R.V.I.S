@@ -71,119 +71,107 @@ describe("pickBomb", () => {
 });
 
 describe("reviewPrompt", () => {
+  const URL = "https://github.com/o/r/pull/1";
+
   test("names the bot, embeds the PR urls, and encodes the approve-then-review flow", () => {
-    const p = reviewPrompt(["https://github.com/o/r/pull/1"], "Evie");
+    const p = reviewPrompt([URL], "Evie");
     expect(p).toContain("You are Evie");
-    expect(p).toContain("https://github.com/o/r/pull/1");
+    expect(p).toContain(URL);
     expect(p).toContain("Do NOT run `gh pr review --approve` yourself"); // the caller already did
-    expect(p).toContain("--request-changes"); // reverse on high risk
+    expect(p).toContain("--request-changes"); // reverse on a blocker
     expect(p).toContain("Task tool"); // child agents for big PRs
     expect(p).toContain("just a cozy little glance from me and my claude");
   });
 
   test("never skips a merged or closed PR - it is reviewed like any other", () => {
-    const p = reviewPrompt(["https://github.com/o/r/pull/1"], "Evie");
-    expect(p).toContain("NEVER skip a PR");
-    expect(p).toMatch(/Merged and closed PRs get the exact same treatment as open ones/);
+    const p = reviewPrompt([URL], "Evie");
+    expect(p).toContain("NEVER skip a PR: merged or closed ones are reviewed the same way");
+    expect(p).toContain("If the PR already landed, say so in line 1");
     // the old behavior - bail out on a merged PR - must be gone
     expect(p).not.toMatch(/skip a pr that is already merged/i);
   });
 
   test("writes as the gh account and disowns the standing approval", () => {
-    const p = reviewPrompt(["https://github.com/o/r/pull/1"], "Evie", { login: "kai-at-acme", name: "Kai" });
-    expect(p).toContain("Write it as Kai, an engineer");
-    expect(p).toContain("(kai-at-acme)");
-    expect(p).toContain("never mention it");
-    expect(p).toContain("Approvals and change requests from OTHER reviewers DO count");
+    const p = reviewPrompt([URL], "Evie", { login: "kai-at-acme", name: "Kai" });
+    expect(p).toContain("first person as Kai (posted as kai-at-acme)");
+    expect(p).toContain("never mention it or count it as a sign-off");
+    expect(p).toContain("Other reviewers' approvals and change requests DO count");
   });
 
   test("falls back to the bot's own name when the account is unknown", () => {
-    const p = reviewPrompt(["https://github.com/o/r/pull/1"], "Evie");
-    expect(p).toContain("Write it as Evie, an engineer");
-    expect(p).toContain("from your own account -");
+    const p = reviewPrompt([URL], "Evie");
+    expect(p).toContain("first person as Evie, like a quick chat message");
   });
 
-  test("house style: no dashes, no trailing full stop, lowercase sentence starts", () => {
-    const p = reviewPrompt(["https://github.com/o/r/pull/1"], "Evie");
+  test("house style: no dashes, no trailing full stop, lowercase starts", () => {
+    const p = reviewPrompt([URL], "Evie");
     expect(p).toContain("no em dashes and no en dashes anywhere in the text");
-    expect(p).toContain("do not put a full stop at the end of a paragraph");
-    expect(p).toContain("do not capitalise the first word of a sentence");
-    expect(p).toMatch(/unless the word is "I"/);
-    expect(p).toContain("lowercase start, no trailing full stop"); // list items too
+    expect(p).toContain("no full stop ending a paragraph or bullet");
+    expect(p).toContain('lowercase first word of each sentence and bullet unless it is "I"');
   });
 
   test("the prompt does not itself use the punctuation it bans", () => {
-    const p = reviewPrompt(["https://github.com/o/r/pull/1"], "Evie", { login: "kai", name: "Kai" });
+    const p = reviewPrompt([URL], "Evie", { login: "kai", name: "Kai" });
     expect(p).not.toInclude("—"); // em dash
     expect(p).not.toInclude("–"); // en dash
   });
 
   test("mentions use GitHub tagging, never Slack tags", () => {
-    const p = reviewPrompt(["https://github.com/o/r/pull/1"], "Evie");
-    expect(p).toContain("use GitHub tagging syntax - @login");
-    expect(p).toMatch(/never a Slack <@ID> tag/);
-    expect(p).toContain("do not tag your own account");
-  });
-
-  test("the word cap is scoped to normal PRs and never squeezes blockers", () => {
-    const p = reviewPrompt(["https://github.com/o/r/pull/1"], "Evie");
-    expect(p).toContain("under 250 words for a normal PR");
-    expect(p).toContain("A BIG PR (step 2) may run longer");
-    expect(p).toContain("On flow B the cap never squeezes the blockers");
+    const p = reviewPrompt([URL], "Evie");
+    expect(p).toContain("GitHub tagging syntax - @login");
+    expect(p).toMatch(/never a display name or a Slack <@ID> tag/);
+    expect(p).toContain("never your own account");
   });
 
   test("when nothing was approved, the prompt does not pretend one exists", () => {
-    const url = "https://github.com/o/r/pull/1";
-    const p = reviewPrompt([url], "Evie", { login: "kai" }, []);
+    const p = reviewPrompt([URL], "Evie", { login: "kai" }, []);
     expect(p).toContain("NOT approved, and not yours to approve");
-    expect(p).toContain("You have not approved this PR and will not");
+    expect(p).toContain("you have not approved this PR and will not");
     expect(p).not.toContain("ALREADY DONE");
-    expect(p).toContain("Approving is never yours to do");
+    expect(p).toContain("Never approve, push or edit a real repo");
   });
 
   test("mixed policies are spelled out per PR", () => {
-    const a = "https://github.com/o/r/pull/1";
     const b = "https://github.com/o/other/pull/2";
-    const p = reviewPrompt([a, b], "Evie", undefined, [a]);
+    const p = reviewPrompt([URL, b], "Evie", undefined, [URL]);
     expect(p).toContain("Approvals differ per PR here");
     expect(p).toContain("Already approved before you started:");
     expect(p).toContain(b);
   });
 
   test("the approve is the caller's job, not the model's", () => {
-    const p = reviewPrompt(["https://github.com/o/r/pull/1"], "Evie");
+    const p = reviewPrompt([URL], "Evie");
     expect(p).toContain("ALREADY DONE, before you started");
     expect(p).toContain("Take the approval as a given");
   });
 
-  test("exactly one of two flows, and only the risky one requests changes", () => {
-    const p = reviewPrompt(["https://github.com/o/r/pull/1"], "Evie");
-    expect(p).toContain("EXACTLY ONE of the two flows");
-    expect(p).toContain("Never both, never a mix");
-    expect(p).toContain("exactly one gh pr comment per PR, bar the late-finding rule above");
+  test("exactly one of two flows, and only the blocking one requests changes", () => {
+    const p = reviewPrompt([URL], "Evie");
+    expect(p).toContain("Run EXACTLY ONE flow, never both, never a mix");
+    expect(p).toContain("One gh pr comment per PR");
   });
 
-  test("on the risky flow the change request is a static marker, then the comment", () => {
-    const p = reviewPrompt(["https://github.com/o/r/pull/1"], "Evie");
+  test("on the blocking flow the change request is a static marker, then the comment", () => {
+    const p = reviewPrompt([URL], "Evie");
     const requestChanges = p.indexOf(`--request-changes --body "${REQUEST_CHANGES_BODY}"`);
     const commentAfter = p.indexOf("then the review comment, which carries everything");
     expect(requestChanges).toBeGreaterThan(-1);
     expect(commentAfter).toBeGreaterThan(requestChanges); // order is load-bearing
     expect(p).toContain("The change request is a state flip, not a place to write");
     expect(p).toContain("never state a blocker in (a) and again in (b)");
-    expect(p).toContain("lead with what is blocking and why");
   });
 
   test("the comment body must be written in the same command that posts it, so it can be relayed", () => {
-    const p = reviewPrompt(["https://github.com/o/r/pull/1"], "Evie");
-    expect(p).toContain("Write the comment body in the SAME shell command");
+    const p = reviewPrompt([URL], "Evie");
+    expect(p).toContain("Write each body in the SAME shell command that posts it");
     expect(p).toContain("Never write a body in one command and post it in another");
   });
 
   test("the Slack close-out is a wrap-up, since the bodies are relayed already", () => {
-    const p = reviewPrompt(["https://github.com/o/r/pull/1"], "Evie");
-    expect(p).toContain("relayed into the thread as it lands");
-    expect(p).toContain("do not paste it again");
+    const p = reviewPrompt([URL], "Evie");
+    expect(p).toContain("relayed into the thread as they land");
+    expect(p).toContain("do not paste them again");
+    expect(p).toContain("any issue url you opened");
     expect(p).toContain("just a cozy little glance from me and my claude");
   });
 });

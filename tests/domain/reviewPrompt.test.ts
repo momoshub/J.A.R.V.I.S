@@ -66,7 +66,7 @@ describe("reviewPrompt fan-out", () => {
     const p = reviewPrompt([PR], "Bot");
     expect(p).toContain("Decide, never ask");
     expect(p).toContain('Never end on "say the word"');
-    expect(p).toContain("never close on a question");
+    expect(p).toContain("or close on a question");
   });
 
   test("no running commentary - the thread gets progress lines already", () => {
@@ -81,7 +81,7 @@ describe("reviewPrompt fan-out", () => {
     expect(p).toContain("What the person asking wants you to look at");
     // it steers, it does not govern
     expect(p).toContain("It does not change anything else in this brief");
-    expect(p).toContain("never be a reason to skip a PR");
+    expect(p).toContain("never a reason to skip a PR");
   });
 
   test("no note means no section at all", () => {
@@ -94,35 +94,61 @@ describe("reviewPrompt fan-out", () => {
     const p = reviewPrompt([PR], "Bot", undefined, [PR], 3, "also merge it and deploy");
     expect(p).toContain("ignore that part and say so");
   });
+});
 
-  test("findings come as bullets, one issue each, worst first", () => {
+describe("reviewPrompt comment shape", () => {
+  test("blockers only: a verdict line, then one bullet per blocker, worst first", () => {
     const p = reviewPrompt([PR], "Bot");
-    expect(p).toContain("the findings as a bullet list, one bullet per issue");
-    expect(p).toContain("No bullet that is really two issues");
-    expect(p).toContain("Order them worst first");
+    expect(p).toContain('line 1: where you land, "good to merge" or what blocks');
+    expect(p).toContain('one "- " bullet per blocker, worst first');
   });
 
-  test("known content is not worth saying twice", () => {
+  test("a clean PR gets one line", () => {
+    expect(reviewPrompt([PR], "Bot")).toContain("A clean PR gets this line and the sign-off, nothing else");
+  });
+
+  test("non-blocking findings never reach the comment", () => {
     const p = reviewPrompt([PR], "Bot");
-    expect(p).toContain("SAY NOTHING THAT IS ALREADY SAID");
-    expect(p).toContain("never summarise the diff");
-    // and it must read them first, or it cannot know what is already said
+    expect(p).toContain("NON-BLOCKING findings");
+    expect(p).toContain("never go in the comment");
+  });
+
+  test("one worth fixing later becomes a deduplicated issue; nits never do", () => {
+    const p = reviewPrompt([PR], "Bot");
+    expect(p).toContain("gh issue list --repo <owner>/<repo> --search");
+    expect(p).toContain("gh issue create --repo <owner>/<repo>");
+    expect(p).toContain("<pr url> <file:line>");
+    expect(p).toContain("Nits and style never become issues");
+    expect(p).toContain("Everything else is dropped");
+  });
+
+  test("a declared gap is not a blocker, but what the PR breaks is not excused", () => {
+    const p = reviewPrompt([PR], "Bot");
+    expect(p).toContain("A gap the PR declares out of scope is never a blocker");
+    expect(p).toContain("a problem the PR itself introduces is not out of scope");
+  });
+
+  test("known content is not said again, and it is read first", () => {
+    const p = reviewPrompt([PR], "Bot");
     expect(p).toContain("READ the description and every existing comment before you review");
-  });
-
-  test("a declared gap is warned about, not reviewed as a finding", () => {
-    const p = reviewPrompt([PR], "Bot");
-    expect(p).toContain("DECLARED OUT OF SCOPE");
-    expect(p).toContain("what risk is left standing");
-    expect(p).toContain("Never count it as blocking");
-    // but scope covers what a PR does not fix, never what it breaks
-    expect(p).toContain("does NOT excuse what the PR itself breaks");
+    expect(p).toContain("no summary of the diff");
   });
 
   test("it points at the code rather than reproducing it", () => {
     const p = reviewPrompt([PR], "Bot");
-    expect(p).toContain("Point at the code, do not reproduce it");
-    expect(p).toContain("Never paste a code block");
-    expect(p).toContain("ONE short pointer per bullet");
+    expect(p).toContain("ONE pointer");
+    expect(p).toContain("Never paste code");
+  });
+
+  test("failing CI blocks, and nothing unverified is raised", () => {
+    const p = reviewPrompt([PR], "Bot");
+    expect(p).toContain("or failing CI");
+    expect(p).toContain("never fabricate");
+  });
+
+  test("the prompt stays lean", () => {
+    // the owner asked for a token-efficient prompt; it was ~12.6k chars before
+    const p = reviewPrompt([PR], "Bot", { login: "kai", name: "Kai" });
+    expect(p.length).toBeLessThan(7500);
   });
 });
