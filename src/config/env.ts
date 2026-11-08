@@ -125,7 +125,7 @@ const schema = z
 
     // GitHub accounts for the bot's own PRs (gh CLI logins on this host): the
     // author opens the PR and answers reviews, the reviewer posts the review
-    // comments and merges. Both or neither; unset keeps whatever gh is active.
+    // comments, approves and merges. Both or neither; unset keeps whatever gh is active.
     SELF_PR_AUTHOR: z.string().optional(),
     SELF_PR_REVIEWER: z.string().optional(),
   })
