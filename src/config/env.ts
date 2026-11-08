@@ -55,6 +55,10 @@ const schema = z
     CLAUDE_SKIP_PERMISSIONS: boolFromString(true),
     CLAUDE_CWD: z.string().optional(),
     CLAUDE_TIMEOUT_MS: z.coerce.number().int().positive().default(120_000),
+    // Orca worktree (selector) the bot opens its own terminal in, the sender its
+    // turns orchestrate from. Orca must know the folder (`orca repo list`).
+    // Blank is `path:~/Workspaces`, `off` turns it off.
+    ORCA_TERMINAL_WORKTREE: z.string().optional(),
 
     // anthropic provider
     ANTHROPIC_API_KEY: z.string().optional(),
@@ -154,6 +158,8 @@ export type AppConfig = {
   claudeSkipPermissions: boolean;
   claudeCwd?: string;
   claudeTimeoutMs: number;
+  /** Where the bot's own Orca terminal is created; undefined is off. */
+  orcaTerminalWorktree?: string;
   anthropicApiKey?: string;
   anthropicModel: string;
   ownerSlackId: string;
@@ -219,6 +225,9 @@ export const loadConfig = (source: Record<string, string | undefined> = process.
     claudeSkipPermissions: env.CLAUDE_SKIP_PERMISSIONS,
     claudeCwd: env.CLAUDE_CWD,
     claudeTimeoutMs: env.CLAUDE_TIMEOUT_MS,
+    ...(env.ORCA_TERMINAL_WORKTREE?.trim() === "off"
+      ? {}
+      : { orcaTerminalWorktree: env.ORCA_TERMINAL_WORKTREE?.trim() || `path:${join(homedir(), "Workspaces")}` }),
     anthropicApiKey: env.ANTHROPIC_API_KEY,
     anthropicModel: env.ANTHROPIC_MODEL,
     ownerSlackId: env.OWNER_SLACK_ID,

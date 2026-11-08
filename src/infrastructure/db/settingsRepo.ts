@@ -52,6 +52,8 @@ export const SETTING_KEYS = {
   reviewInboxCursor: "review_inbox_cursor",
   /** Channel calls from the GitHub App are posted and run in. Empty falls back to `review_inbox_channel`. */
   githubAppChannel: "github_app_channel",
+  /** The bot's own Orca terminal handle, reused across restarts while Orca keeps it. */
+  orcaTerminalHandle: "orca_terminal_handle",
 } as const;
 
 /** Model override for one role, e.g. `model:pal`. Empty means "use the default". */

@@ -226,6 +226,33 @@ describe("createClaudeCliLlm", () => {
     expect(without).toBe("[]");
   });
 
+  test("every turn carries the bot's own Orca handle, never an inherited one", async () => {
+    // a `claude -p` turn is no Orca pane, so `orca orchestration run-create`
+    // refused it until the bot handed it a terminal of its own.
+    const bin = fakeBin(
+      `#!/usr/bin/env bash\ncat > /dev/null\necho "{\\"type\\":\\"result\\",\\"subtype\\":\\"success\\",\\"is_error\\":false,\\"result\\":\\"[$ORCA_TERMINAL_HANDLE]\\"}"`,
+    );
+    // the pane that started the bot leaves its own handle in the environment
+    process.env.ORCA_TERMINAL_HANDLE = "term_someone-elses-pane";
+    let handle: string | undefined = "term_own";
+    const llm = createClaudeCliLlm({ binPath: bin, turnEnv: async () => ({ ORCA_TERMINAL_HANDLE: handle }) });
+
+    expect(await llm.complete({ system: "s", messages: [{ role: "user", content: "hi" }] })).toBe("[term_own]");
+    // Orca down: no handle at all, not the borrowed one
+    handle = undefined;
+    expect(await llm.complete({ system: "s", messages: [{ role: "user", content: "hi" }] })).toBe("[]");
+
+    delete process.env.ORCA_TERMINAL_HANDLE;
+    // a provider that throws costs the turn its handle, not the turn
+    const broken = createClaudeCliLlm({
+      binPath: bin,
+      turnEnv: async () => {
+        throw new Error("orca exploded");
+      },
+    });
+    expect(await broken.complete({ system: "s", messages: [{ role: "user", content: "hi" }] })).toBe("[]");
+  });
+
   test("a turn is told which session it is, so it never mistakes itself for another writer", async () => {
     // a long turn listing processes found `claude -p --resume <id>` in its own
     // repo, called it a rogue builder, and blocked asking to kill it - itself.
