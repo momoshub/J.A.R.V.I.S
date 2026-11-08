@@ -103,11 +103,12 @@ const holds = async (path: string, needle: string): Promise<boolean> =>
 /** Find the session file holding `messageId`, the worker's own folder first. */
 const findSession = async (projects: string, messageId: string, cwd?: string, since?: number): Promise<string | undefined> => {
   const needle = `"uuid":"${messageId}"`;
-  const own = cwd ? join(projects, projectSlug(cwd)) : undefined;
-  if (own) for (const f of await jsonlIn(own)) if (await holds(f.path, needle)) return f.path;
-  // A file written before the dispatch cannot hold its messages; a minute of
-  // slack covers clocks and Orca's second-resolution timestamps.
+  // A file last written before the dispatch cannot hold its messages; a minute
+  // of slack covers clocks and Orca's second-resolution timestamps. Applied to
+  // the worker's own folder too: a busy one holds hundreds of old transcripts.
   const after = since !== undefined ? since - 60_000 : undefined;
+  const own = cwd ? join(projects, projectSlug(cwd)) : undefined;
+  if (own) for (const f of await jsonlIn(own, after)) if (await holds(f.path, needle)) return f.path;
   const dirs = await readdir(projects).catch(() => [] as string[]);
   const candidates: { path: string; mtime: number }[] = [];
   for (const d of dirs) {

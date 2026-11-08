@@ -81,6 +81,14 @@ describe("resolveWorkerSession", () => {
     expect(r).toMatchObject({ sessionId: "sess-2" });
   });
 
+  test("a file in the worker's own folder last written before the dispatch is not read", async () => {
+    const f = writeSession(projectSlug(CWD), "stale", [assistant("u-5", "msg_5", 1)]);
+    const past = Date.parse("2026-11-01T00:00:00Z") / 1000;
+    utimesSync(f, past, past);
+    const r = await resolveWorkerSession("ctx_1", { orca: fakeOrca({ read: readOut("u-5"), show: showOut() }), projectsDir: dir });
+    expect(r).toHaveProperty("error");
+  });
+
   test("no transcript, or no file holding it, is an error, never a throw", async () => {
     expect(await resolveWorkerSession("ctx_1", { orca: fakeOrca({}), projectsDir: dir })).toHaveProperty("error");
     expect(

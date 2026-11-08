@@ -1,8 +1,10 @@
 import { beforeEach, describe, expect, test } from "bun:test";
 import { openDatabase } from "../../src/infrastructure/db/client.ts";
 import { createWorkerUsageRepo, type WorkerUsageRepo } from "../../src/infrastructure/db/workerUsageRepo.ts";
-import { workerCostReport, type WorkerUsagePort } from "../../src/application/workerCost.ts";
-import { workerUsage, type ModelUsage, type WorkerUsage } from "../../src/domain/workerUsage.ts";
+import { keepWorkerUsage, workerCostReport, type WorkerUsagePort } from "../../src/application/workerCost.ts";
+import { workerUsage, workerUsageLine, type ModelUsage, type WorkerUsage } from "../../src/domain/workerUsage.ts";
+import { dispatchCommand } from "../../src/application/commands.ts";
+import { actor, build } from "./commandsFixture.ts";
 
 const m = (model: string, output: number): ModelUsage => ({ model, messages: 1, input: 0, output, cacheWrite5m: 0, cacheWrite1h: 0, cacheRead: 0 });
 const w = (id: string, output: number, runId = "run_1"): WorkerUsage => ({ ...workerUsage(id, `s-${id}`, [m("claude-haiku-4-5", output)]), runId });
@@ -63,5 +65,32 @@ describe("workerCostReport", () => {
     expect(out).toContain("- ctx_gone: could not tell");
     expect(out).toContain("- ctx_old:");
     expect(await workerCostReport("run_9", port({}), 0)).toBe("I know of no workers in run_9.");
+  });
+});
+
+describe("keepWorkerUsage (the watcher's onFired)", () => {
+  const out = `orca worker ctx_a finished: done\n${workerUsageLine(w("ctx_a", 1_000_000))}`;
+
+  test("stores what a worker watch printed", () => {
+    keepWorkerUsage(repo, "/bin/orca-worker-wait.ts", () => 7)({ check: "'/bun' '/bin/orca-worker-wait.ts' 'ctx_a'" }, out);
+    expect(repo.get("ctx_a")).toMatchObject({ sessionId: "s-ctx_a", runId: "run_1", measuredAt: 7 });
+  });
+
+  test("a shell watch printing the same line writes nothing; no usage line writes nothing", () => {
+    keepWorkerUsage(repo, "/bin/orca-worker-wait.ts", () => 7)({ check: "echo hi" }, out);
+    keepWorkerUsage(repo, "/bin/orca-worker-wait.ts", () => 7)({ check: "/bin/orca-worker-wait.ts ctx_b" }, "orca worker ctx_b died: x");
+    keepWorkerUsage(repo, "", () => 7)({ check: "anything" }, out);
+    expect(repo.get("ctx_a")).toBeUndefined();
+    expect(repo.get("ctx_b")).toBeUndefined();
+  });
+});
+
+describe("the worker-cost command", () => {
+  test("admin only, says so without the port, asks for a target", async () => {
+    const deps = { ...build(), workerUsage: port({ ctx_a: w("ctx_a", 1_000_000) }) };
+    expect(await dispatchCommand(deps, actor({ role: "pal" }), "C1", "worker-cost ctx_a")).not.toContain("$5.00");
+    expect(await dispatchCommand(build(), actor(), "C1", "worker-cost ctx_a")).toContain("cannot read Orca workers");
+    expect(await dispatchCommand(deps, actor(), "C1", "worker-cost")).toContain("worker-cost <ctx_...|run_...>");
+    expect(await dispatchCommand(deps, actor(), "C1", "wcost ctx_a")).toContain("$5.00 at list price");
   });
 });

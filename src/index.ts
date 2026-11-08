@@ -66,7 +66,7 @@ import { createShellCheck } from "./infrastructure/system/shellCheck.ts";
 import { createOrcaCli, createOrcaTerminal } from "./infrastructure/system/orcaTerminal.ts";
 import { measureWorker, runDispatches } from "./infrastructure/system/workerTranscript.ts";
 import { createWorkerUsageRepo } from "./infrastructure/db/workerUsageRepo.ts";
-import { parseWorkerUsageLine } from "./domain/workerUsage.ts";
+import { keepWorkerUsage } from "./application/workerCost.ts";
 
 /** `worker-read` / `worker-show` can be slow on a big transcript; the 5s default is too tight. */
 const WORKER_USAGE_ORCA_TIMEOUT_MS = 15_000;
@@ -829,10 +829,7 @@ const main = async () => {
     mayRun: (id) => id === config.ownerSlackId || !!users.get(id),
     log: (msg) => console.error(`[watch] ${msg}`),
     // A `watch worker` that fired printed the worker's usage; keep it.
-    onFired: (output) => {
-      const usage = parseWorkerUsageLine(output);
-      if (usage) workerUsageRepo.save(usage, clock());
-    },
+    onFired: keepWorkerUsage(workerUsageRepo, orcaWorkerWait[1] ?? "", clock),
     onError: onDbError,
   });
   // A worker's `orca orchestration ask` lands in the bot's own Orca terminal,

@@ -38,8 +38,9 @@ export type ModelPrice = { readonly input: number; readonly output: number; read
  * List prices, USD per million tokens (Anthropic first-party API, cached
  * 2026-09-25 in the claude-api skill). Cache writes are 1.25x input for the
  * 5-minute TTL and 2x for the 1-hour one; reads are 0.1x input unless a model
- * says otherwise. Matched by prefix after any date suffix or `[1m]` tag is
- * dropped, longest prefix first, so `claude-opus-5-5` never matches `claude-opus-5`.
+ * says otherwise. Matched EXACTLY once a date suffix or `[1m]` tag is dropped:
+ * a newer model must never borrow an older one's price (`claude-opus-5-6` is
+ * not `claude-opus-5`), it is named as unpriced until it is added here.
  * Keep this the ONE place prices live.
  */
 export const MODEL_PRICES: Readonly<Record<string, ModelPrice>> = {
@@ -58,7 +59,11 @@ export const MODEL_PRICES: Readonly<Record<string, ModelPrice>> = {
   "claude-haiku-4-5": { input: 1, output: 5, cacheRead: 0.1 },
 };
 
-/** Fast mode is billed at a multiple of the standard price (Opus 5 / 5.5: 2x). */
+/**
+ * Fast mode is billed at a multiple of the standard price (Opus 5 / 5.5: 2x).
+ * A model whose fast multiplier is not known here is unpriced in fast mode,
+ * never priced at the standard rate.
+ */
 export const FAST_MULTIPLIER: Readonly<Record<string, number>> = {
   "claude-opus-5-5": 2,
   "claude-opus-5": 2,
@@ -68,8 +73,6 @@ export const CACHE_WRITE_5M = 1.25;
 export const CACHE_WRITE_1H = 2;
 
 const FAST_TAG = " (fast)";
-const PRICE_KEYS = Object.keys(MODEL_PRICES).sort((a, b) => b.length - a.length);
-
 /** The price-table key for a model id, or undefined when it has no price. */
 export const priceKey = (model: string): string | undefined => {
   const bare = model
@@ -77,7 +80,7 @@ export const priceKey = (model: string): string | undefined => {
     .replace(/\[.*\]$/, "")
     .replace(/-\d{8}$/, "")
     .trim();
-  return PRICE_KEYS.find((k) => bare === k || bare.startsWith(`${k}-`));
+  return Object.hasOwn(MODEL_PRICES, bare) ? bare : undefined;
 };
 
 /** USD for one model's tokens, or undefined when the model has no price. */
@@ -85,7 +88,8 @@ export const priceOf = (u: ModelUsage): number | undefined => {
   const key = priceKey(u.model);
   if (!key) return undefined;
   const p = MODEL_PRICES[key]!;
-  const fast = u.model.endsWith(FAST_TAG) ? (FAST_MULTIPLIER[key] ?? 1) : 1;
+  const fast = u.model.endsWith(FAST_TAG) ? FAST_MULTIPLIER[key] : 1;
+  if (fast === undefined) return undefined;
   const usd =
     u.input * p.input +
     u.output * p.output +

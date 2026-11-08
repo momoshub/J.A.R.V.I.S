@@ -105,6 +105,12 @@ describe("pricing", () => {
     expect(priceKey("gpt-5")).toBeUndefined();
   });
 
+  test("a newer model never borrows an older one's price", () => {
+    expect(priceKey("claude-opus-5-6")).toBeUndefined();
+    expect(priceKey("claude-sonnet-5-7")).toBeUndefined();
+    expect(priceOf({ ...zero, model: "claude-opus-5-6", output: 1_000_000 })).toBeUndefined();
+  });
+
   test("input, output, both cache writes and cache reads are priced separately", () => {
     // Opus 5.5: $4 in, $20 out, $0.20 read; writes 1.25x / 2x input.
     const m = { ...zero, model: "claude-opus-5-5", input: 1_000_000, output: 1_000_000, cacheWrite5m: 1_000_000, cacheWrite1h: 1_000_000, cacheRead: 1_000_000 };
@@ -115,6 +121,14 @@ describe("pricing", () => {
     const base = { ...zero, model: "claude-opus-5-5", output: 1_000_000 };
     expect(priceOf({ ...base, model: "claude-opus-5-5 (fast)" })).toBeCloseTo(2 * priceOf(base)!, 6);
     expect(priceOf({ ...base, model: "mystery-1" })).toBeUndefined();
+  });
+
+  test("fast mode with no known multiplier is unpriced, never standard rate", () => {
+    const fast = { ...zero, model: "claude-opus-4-8 (fast)", output: 1_000_000 };
+    expect(priceOf(fast)).toBeUndefined();
+    const w = workerUsage("ctx_a", "s", [fast, { ...zero, model: "claude-opus-4-8", output: 1_000_000 }]);
+    expect(w.costUsd).toBeCloseTo(25, 6);
+    expect(w.unpriced).toEqual(["claude-opus-4-8 (fast)"]);
   });
 
   test("every price reads 0.025x-0.1x input for cache reads", () => {

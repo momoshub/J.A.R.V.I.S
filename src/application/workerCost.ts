@@ -6,7 +6,14 @@
  * stored one answers instead, and says when it was taken. A Run is every
  * worker `task-list` names, each measured the same way, plus the total.
  */
-import { usageSummary, usd, workerUsage, type ModelUsage, type WorkerUsage } from "../domain/workerUsage.ts";
+import {
+  parseWorkerUsageLine,
+  usageSummary,
+  usd,
+  workerUsage,
+  type ModelUsage,
+  type WorkerUsage,
+} from "../domain/workerUsage.ts";
 import type { WorkerUsageRepo } from "../infrastructure/db/workerUsageRepo.ts";
 
 export type WorkerUsagePort = {
@@ -18,6 +25,8 @@ export type WorkerUsagePort = {
 };
 
 const DISPATCH = /^ctx_[A-Za-z0-9_-]+$/;
+/** Workers of one Run measured at once. */
+export const RUN_CONCURRENCY = 4;
 const RUN = /^run_[A-Za-z0-9_-]+$/;
 
 const ago = (ms: number): string => {
@@ -55,10 +64,15 @@ export const workerCostReport = async (target: string, port: WorkerUsagePort, no
   for (const s of port.repo.inRun(target)) if (!ids.includes(s.dispatchId)) ids.push(s.dispatchId);
   if (ids.length === 0) return `I know of no workers in ${target}.`;
 
+  // A few at a time: each one is up to two Orca calls and a disk scan.
+  const results: Measured[] = [];
+  for (let i = 0; i < ids.length; i += RUN_CONCURRENCY) {
+    results.push(...(await Promise.all(ids.slice(i, i + RUN_CONCURRENCY).map((id) => measureOne(id, port, now)))));
+  }
   const lines: string[] = [];
   const all: ModelUsage[] = [];
-  for (const id of ids) {
-    const m = await measureOne(id, port, now);
+  for (const [i, id] of ids.entries()) {
+    const m = results[i]!;
     if ("error" in m) {
       lines.push(`- ${id}: could not tell (${m.error})`);
       continue;
@@ -92,3 +106,16 @@ export const workerCostReport = async (target: string, port: WorkerUsagePort, no
       : `Run ${target}, ${ids.length} ${ids.length === 1 ? "worker" : "workers"}: ${usd(total.costUsd)} at list price in all - ${usageSummary(total)}.`;
   return [head, ...lines].join("\n");
 };
+
+/**
+ * The watcher's `onFired` hook: store the usage a `watch worker` printed. Only
+ * a watch whose check runs the worker helper counts, so a hand-written shell
+ * watch that happens to print the same line writes nothing.
+ */
+export const keepWorkerUsage =
+  (repo: Pick<WorkerUsageRepo, "save">, helper: string, clock: () => number) =>
+  (watch: { readonly check: string }, output: string): void => {
+    if (!helper || !watch.check.includes(helper)) return;
+    const usage = parseWorkerUsageLine(output);
+    if (usage) repo.save(usage, clock());
+  };
