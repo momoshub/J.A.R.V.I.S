@@ -127,8 +127,11 @@ if (!isReadOnly(driver, rest)) {
 const proc = Bun.spawn({ cmd: [...driverCmd(driver), ...rest], stdin: "inherit", stdout: "inherit", stderr: "inherit" });
 const code = await proc.exited;
 // Even after a failed action: a modifier left down turns every later keystroke
-// into a shortcut on the real screen.
+// into a shortcut on the real screen. Best effort: a host with no osascript
+// (CI, Linux) has no keys to release, and the action's own exit code stands.
 if (releasesKeysAfter(driver, rest)) {
-  await Bun.spawn({ cmd: [...driverCmd("mac-ui"), "release-keys"], stdout: "ignore", stderr: "ignore" }).exited;
+  try {
+    await Bun.spawn({ cmd: [...driverCmd("mac-ui"), "release-keys"], stdout: "ignore", stderr: "ignore" }).exited;
+  } catch {}
 }
 process.exit(code);
