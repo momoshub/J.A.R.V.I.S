@@ -1,5 +1,5 @@
 /**
- * Use cases over the memory adapter: teach, commit, revert, migrate.
+ * Use cases over the memory adapter: teach, edit by hand, commit, revert, migrate.
  *
  * Every write goes through `commit`, and `commit` runs the gate. The one
  * deliberate asymmetry is the always-on budget: a refine pass must come in
@@ -12,6 +12,7 @@ import {
   type Adapter,
   CHANNELS_DIR,
   isBlank,
+  MANIFEST_FILE,
   matchesGlob,
   NOTES_FILE,
   PEOPLE_DIR,
@@ -55,14 +56,14 @@ const alwaysOnOf = (adapter: Adapter): string =>
 /**
  * Check a proposed tree and, if it passes, write it and record a revision.
  *
- * `enforceBudget` is false only for teaching - see the note at the top.
+ * `enforceBudget` is false for everything but a refine pass - teaching, hand
+ * edits, revert and migrate - see the note at the top.
  */
 export const commitAdapter = (
   deps: AdapterDeps,
   files: ReadonlyMap<string, string>,
   opts: { reason: string; actor: string; enforceBudget?: boolean; enforceFixed?: boolean },
 ): CommitResult => {
-  const manifest = deps.store.load().manifest;
   const budget = deps.budget ?? ALWAYS_ON_BUDGET;
 
   // Render the PROPOSAL, not what is live: the budget has to be measured on
@@ -73,6 +74,9 @@ export const commitAdapter = (
   // can lift them. A refine pass is told not to touch these; this is what
   // makes that a rule rather than a request.
   if (opts.enforceFixed) {
+    // Loaded only here: a live manifest that stopped parsing must not stop a
+    // revert or a hand edit from repairing it.
+    const manifest = deps.store.load().manifest;
     const protectedPaths = [...before.keys()].filter(
       (p) => p === "adapter.yaml" || p === "CARD.md" || manifest.fixed.some((f) => matchesGlob(p, f)),
     );
@@ -97,7 +101,10 @@ export const commitAdapter = (
     return { ok: false, violations: [e instanceof Error ? e.message : String(e)] };
   }
 
-  const check: AdapterCheck = checkAdapterFiles(manifest, files, alwaysOnOf(proposed), budget);
+  // Checked against the manifest the proposal carries: a commit that rewrites
+  // the manifest must satisfy its own new limits, or it could narrow them
+  // under files already there and leave every later write refused.
+  const check: AdapterCheck = checkAdapterFiles(proposed.manifest, files, alwaysOnOf(proposed), budget);
   const overBudget = check.violations.filter((v) => v.includes("always-on block"));
   const hard = check.violations.filter((v) => !v.includes("always-on block"));
 
@@ -184,6 +191,68 @@ export const migrateLearnings = (
   // Only once it is safely committed, and never on a refusal.
   if (result.ok) clear?.();
   return result;
+};
+
+/**
+ * The owner rewriting one file by hand, from the dashboard.
+ *
+ * Same gate as any other write, so a hand edit cannot break the manifest's
+ * limits or the format of a skill, and every save is a revision that one
+ * click puts back. Like teaching, it may run over the always-on budget and is
+ * told so: a person fixing a line should not be refused for the size of a
+ * file they did not grow. Blank content removes the file, except the manifest,
+ * which nothing loads without. `base` is the text the editor was opened on:
+ * when given and the stored file no longer matches it (the bot learned
+ * something meanwhile), the save is refused rather than silently undoing that.
+ */
+export const editAdapterFile = (
+  deps: AdapterDeps,
+  path: string,
+  content: string,
+  actor: string,
+  base?: string,
+): CommitResult => {
+  const rel = path.trim();
+  // Canonical paths only. `a/./b` lands on the same mirror file as `a/b` but
+  // is a second row in the store, so what runs and what is listed would part.
+  if (!rel || rel.includes("\\") || rel.split("/").some((part) => part === "" || part === "." || part === "..")) {
+    return { ok: false, violations: [`Not a path inside the adapter: ${path}`] };
+  }
+  const files = new Map(deps.store.files());
+  // Same reason on a case-insensitive disk (the default on macOS): `Run.sh`
+  // beside `run.sh` is two rows and one mirror file.
+  // Every folder on the way counts, not just the whole path: `a/Scripts/x`
+  // beside `a/scripts/y` shares one folder there, and the next sync deletes
+  // whichever name has no exact row.
+  const prefixes = (p: string): string[] => p.split("/").map((_, i, parts) => parts.slice(0, i + 1).join("/"));
+  const known = new Map<string, string>();
+  for (const p of files.keys()) for (const pre of prefixes(p)) known.set(pre.toLowerCase(), pre);
+  // A file already stored under this exact path adds no new row, so an old
+  // clash (from import or another host) can still be fixed or removed here.
+  const clash = files.has(rel)
+    ? undefined
+    : prefixes(rel)
+    .map((pre) => ({ pre, other: known.get(pre.toLowerCase()) }))
+    .find(({ pre, other }) => other !== undefined && other !== pre);
+  if (clash) return { ok: false, violations: [`${clash.pre} clashes with ${clash.other}, which differs only in case`] };
+  // A browser may hand a textarea back with CRLF line ends.
+  const lf = (s: string): string => s.replace(/\r\n/g, "\n");
+  const text = lf(content);
+  // The stored side too: a file imported from disk may still carry CRLF.
+  if (base !== undefined && lf(files.get(rel) ?? "") !== lf(base)) {
+    return { ok: false, violations: [`${rel} changed since it was opened - reload and redo the edit`] };
+  }
+  const blank = text.trim() === "";
+  if (blank && rel === MANIFEST_FILE) return { ok: false, violations: [`${MANIFEST_FILE} cannot be removed`] };
+  if (blank && !files.has(rel)) return { ok: false, violations: [`There is no ${rel} to remove.`] };
+  if (!blank && files.get(rel) !== undefined && lf(files.get(rel) ?? "") === text) return { ok: true, warnings: [] };
+  if (blank) files.delete(rel);
+  else files.set(rel, text);
+  return commitAdapter(deps, files, {
+    reason: `${blank ? "remove" : "edit"} ${rel} by hand`,
+    actor,
+    enforceBudget: false,
+  });
 };
 
 /** Restore a previous revision, recording the restore as a revision of its own. */

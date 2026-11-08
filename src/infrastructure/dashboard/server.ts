@@ -47,11 +47,12 @@ export type DashboardDeps = {
    *
    * `remember` is what the brain's own save endpoint writes through, so a fact
    * it decides to keep mid-conversation lands in the adapter rather than the
-   * old table. `status` backs a read-only view of what it currently holds.
+   * old table. `status`, `view` and `files` back the memory page, and `edit`
+   * is its hand editor.
    */
   adapter?: {
     readonly status: () => string;
-    /** Everything the memory page renders, read-only. */
+    /** Everything the memory page renders. */
     readonly view: () => {
       readonly policy: string;
       readonly notes: string;
@@ -74,6 +75,15 @@ export type DashboardDeps = {
       id: number,
       by: string,
     ) => { readonly ok: boolean; readonly violations?: readonly string[] };
+    /** Every file the adapter holds, for the hand editor. */
+    readonly files: () => readonly { readonly path: string; readonly content: string }[];
+    /** Rewrite one file by hand (blank removes it), gated and recorded as a revision. */
+    readonly edit: (
+      path: string,
+      content: string,
+      by: string,
+      base?: string,
+    ) => { readonly ok: boolean; readonly violations?: readonly string[]; readonly warnings?: readonly string[] };
   };
   settings: SettingsRepo;
   clock: Clock;
@@ -258,11 +268,13 @@ export const createDashboard = (config: DashboardConfig, deps: DashboardDeps) =>
           });
         case "/api/learnings":
           return Response.json(deps.learnings.list());
+        case "/api/adapter/files":
+          return deps.adapter ? Response.json(deps.adapter.files()) : jsonError("No memory adapter is configured", 404);
         case "/api/adapter":
-          // Editing is `adapter refine`, which is gated and recorded as a
-          // revision. A grid of text boxes writing straight into memory is
-          // the thing this whole change exists to remove - so the page shows
-          // what is there, and the two safe actions: teach, and revert.
+          // Hand edits go through `/api/adapter/file`, one whole file at a
+          // time, through the same gate as refine and recorded as a revision.
+          // What stays gone is the old grid of text boxes writing straight
+          // into a list nothing checked.
           return deps.adapter
             ? Response.json({ configured: true, status: deps.adapter.status(), ...deps.adapter.view() })
             : Response.json({ configured: false });
@@ -400,6 +412,18 @@ export const createDashboard = (config: DashboardConfig, deps: DashboardDeps) =>
           const result = deps.adapter.revert(id, "dashboard");
           if (!result.ok) return jsonError((result.violations ?? ["Could not revert"]).join("; "));
           return Response.json({ ok: true });
+        }
+        case "/api/adapter/file": {
+          if (!deps.adapter) return jsonError("No memory adapter is configured");
+          const path = String(body.path ?? "").trim();
+          if (!path) return jsonError("A file path is required");
+          if (typeof body.content !== "string") return jsonError("content is required (blank removes the file)");
+          // `base` is what the editor was opened on, so a save cannot undo a
+          // change that landed while the page sat open.
+          const base = typeof body.base === "string" ? body.base : undefined;
+          const result = deps.adapter.edit(path, body.content, "dashboard", base);
+          if (!result.ok) return jsonError((result.violations ?? ["Could not save that"]).join("; "));
+          return Response.json({ ok: true, warnings: result.warnings ?? [] });
         }
         case "/api/learnings/remove": {
           const id = Number(body.id);

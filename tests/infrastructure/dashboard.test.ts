@@ -393,3 +393,64 @@ describe("storing a modal for a button to open", () => {
     expect(res.status).toBe(503);
   });
 });
+
+describe("editing memory files by hand", () => {
+  const fakeAdapter = () => {
+    const files = new Map([["memory/NOTES.md", "- old\n"]]);
+    const edits: { path: string; content: string; by: string; base?: string }[] = [];
+    const adapter: NonNullable<DashboardDeps["adapter"]> = {
+      status: () => "",
+      view: () => ({ policy: "", notes: "", skills: [], people: [], channels: [], revisions: [], items: 0 }),
+      remember: () => ({ ok: true }),
+      revert: () => ({ ok: true }),
+      files: () => [...files].map(([path, content]) => ({ path, content })),
+      edit: (path, content, by, base) => {
+        if (path.includes("..")) return { ok: false, violations: ["Not a path inside the adapter"] };
+        edits.push({ path, content, by, ...(base === undefined ? {} : { base }) });
+        files.set(path, content);
+        return { ok: true, warnings: ["over budget"] };
+      },
+    };
+    return { adapter, edits };
+  };
+
+  test("lists every file and saves one through the adapter, as the dashboard", async () => {
+    const { adapter, edits } = fakeAdapter();
+    const { dash } = build({ adapter });
+    const listed = await (await dash.handle(api("/api/adapter/files"))).json();
+    expect(listed).toEqual([{ path: "memory/NOTES.md", content: "- old\n" }]);
+
+    const res = await dash.handle(postJson("/api/adapter/file", { path: "memory/NOTES.md", content: "- new" }));
+    expect(res.status).toBe(200);
+    expect(await res.json()).toEqual({ ok: true, warnings: ["over budget"] });
+    expect(edits).toEqual([{ path: "memory/NOTES.md", content: "- new", by: "dashboard" }]);
+
+    await dash.handle(postJson("/api/adapter/file", { path: "memory/NOTES.md", content: "- newer", base: "- new" }));
+    expect(edits[1]).toEqual({ path: "memory/NOTES.md", content: "- newer", by: "dashboard", base: "- new" });
+  });
+
+  test("a refusal from the gate comes back as an error, and a missing path or content is refused", async () => {
+    const { adapter, edits } = fakeAdapter();
+    const { dash } = build({ adapter });
+    expect((await dash.handle(postJson("/api/adapter/file", { path: "../x", content: "y" }))).status).toBe(400);
+    expect((await dash.handle(postJson("/api/adapter/file", { content: "y" }))).status).toBe(400);
+    expect((await dash.handle(postJson("/api/adapter/file", { path: "memory/NOTES.md" }))).status).toBe(400);
+    expect(edits).toHaveLength(0);
+  });
+
+  test("it is a cross-origin-guarded mutation like the rest", async () => {
+    const { adapter, edits } = fakeAdapter();
+    const { dash } = build({ adapter });
+    const res = await dash.handle(
+      postJson("/api/adapter/file", { path: "memory/NOTES.md", content: "x" }, { origin: "https://evil.example" }),
+    );
+    expect(res.status).toBe(403);
+    expect(edits).toHaveLength(0);
+  });
+
+  test("with no adapter there is nothing to edit", async () => {
+    const { dash } = build();
+    expect((await dash.handle(api("/api/adapter/files"))).status).toBe(404);
+    expect((await dash.handle(postJson("/api/adapter/file", { path: "a.md", content: "x" }))).status).toBe(400);
+  });
+});
