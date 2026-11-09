@@ -55,4 +55,53 @@ describe("postedBody", () => {
   test("an approve carrying a body-file does not leak into the comment action", () => {
     expect(postedBody(`gh pr review ${PR} --approve`, "request-changes")).toBeUndefined();
   });
+
+  test("a double-quoted body that spans lines is read whole, not cut at the first newline", () => {
+    const cmd = `gh pr comment ${PR} --body "good to merge\n\n- nothing blocking\n- CI is green"`;
+    expect(postedBody(cmd, "comment")).toBe("good to merge\n\n- nothing blocking\n- CI is green");
+  });
+
+  test("an unterminated quoted body is unreadable, never the first word with its quote", () => {
+    expect(postedBody(`gh pr comment ${PR} --body "good to merge`, "comment")).toBeUndefined();
+  });
+
+  test("a bare word body still works", () => {
+    expect(postedBody(`gh pr comment ${PR} --body lgtm`, "comment")).toBe("lgtm");
+  });
+
+  test("a --body-file comment does not borrow the --body of a later command", () => {
+    const cmd = [
+      "cat > /tmp/c.md <<'EOF'",
+      "the review",
+      "EOF",
+      `gh pr comment ${PR} --body-file /tmp/c.md`,
+      `gh issue create --title t --body "follow-up"`,
+    ].join("\n");
+    expect(postedBody(cmd, "comment")).toBe("the review");
+  });
+
+  test("an unreadable --body never falls through to a later command's --body", () => {
+    const cmd = `gh pr comment ${PR} --body "good \\\nx\ngh issue create --title t --body "follow-up"`;
+    expect(postedBody(cmd, "comment")).not.toBe("follow-up");
+    const open = `gh pr comment ${PR} --body "good\nstuff\ngh issue create --body "follow-up"`;
+    expect(postedBody(open, "comment")).not.toContain("follow-up");
+  });
+
+  test("a backslash-newline inside the quotes is a line continuation", () => {
+    expect(postedBody(`gh pr comment ${PR} --body "a \\\nb"`, "comment")).toBe("a b");
+  });
+
+  test('--body "$(cat <<EOF ... EOF)" relays the heredoc text, quotes and all', () => {
+    const cmd = `gh pr comment ${PR} --body "$(cat <<'EOF'\nreview line\nhe said "ok"\nEOF\n)"`;
+    expect(postedBody(cmd, "comment")).toBe('review line\nhe said "ok"');
+  });
+
+  test("any other substitution in the body is unreadable, not relayed as shell", () => {
+    expect(postedBody(`gh pr comment ${PR} --body "$(date)"`, "comment")).toBeUndefined();
+  });
+
+  test("single-quoted multi-line body and --body= with a multi-line quote", () => {
+    expect(postedBody(`gh pr comment ${PR} --body 'one\ntwo'`, "comment")).toBe("one\ntwo");
+    expect(postedBody(`gh pr comment ${PR} --body="one\ntwo"`, "comment")).toBe("one\ntwo");
+  });
 });
