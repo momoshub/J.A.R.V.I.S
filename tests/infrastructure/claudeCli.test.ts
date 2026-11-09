@@ -5,6 +5,7 @@ import { join } from "node:path";
 import {
   backgroundCutOffNotice,
   createClaudeCliLlm,
+  isReactCall,
   payerOf,
   renderPrompt,
   summarizeTool,
@@ -367,6 +368,21 @@ const STREAM_EVENTS = [
   { type: "result", subtype: "success", is_error: false, result: "Hello world" },
 ];
 
+describe("isReactCall", () => {
+  test("only a Bash call that runs nothing but the react helper counts", () => {
+    const cmd = (command: string) => JSON.stringify({ command });
+    expect(isReactCall("Bash", cmd("/Users/kai/Workspaces/J.A.R.V.I.S./bin/slack-react.sh C1 1.1 fire"))).toBe(true);
+    expect(isReactCall("Bash", cmd("bash bin/slack-react.sh C1 1.1 fire 2>&1"))).toBe(true);
+    expect(isReactCall("Bash", cmd("bin/slack-react.sh C1 1.1 fire && bin/slack-react.sh C1 1.1 eyes"))).toBe(true);
+    expect(isReactCall("Bash", cmd("ls"))).toBe(false);
+    expect(isReactCall("Bash", cmd("bin/slack-react.sh C1 1.1 fire; rm x"))).toBe(false);
+    expect(isReactCall("Bash", cmd("echo slack-react.sh"))).toBe(false);
+    expect(isReactCall("Read", cmd("bin/slack-react.sh C1 1.1 fire"))).toBe(false);
+    expect(isReactCall("Bash", "{broken")).toBe(false);
+    expect(isReactCall("Bash", "")).toBe(false);
+  });
+});
+
 describe("createClaudeCliLlm.stream", () => {
   test("forwards text deltas and tool events and returns the final text", async () => {
     const llm = createClaudeCliLlm({ binPath: fakeStreamBin(STREAM_EVENTS) });
@@ -490,6 +506,71 @@ describe("createClaudeCliLlm.stream", () => {
     });
     expect(deltas.join("")).toBe("here is the answer");
     expect(final).toBe("here is the answer");
+  });
+
+  test("an answer written right before a closing react call is streamed, and survives a later meta line", async () => {
+    // the incident: full Slack answer + slack-react.sh in one message, then a
+    // short meta line after the tool result. The answer was held, the meta line
+    // went out alone.
+    const se = (event: unknown) => ({ type: "stream_event", event });
+    const react = JSON.stringify({ command: "/Users/kai/Workspaces/J.A.R.V.I.S./bin/slack-react.sh C1 1700000000.0001 fire" });
+    const events = [
+      se({ type: "message_start" }),
+      se({ type: "content_block_start", index: 0, content_block: { type: "text" } }),
+      se({ type: "content_block_delta", index: 0, delta: { type: "text_delta", text: "the full answer" } }),
+      se({ type: "content_block_stop", index: 0 }),
+      se({ type: "content_block_start", index: 1, content_block: { type: "tool_use", id: "t1", name: "Bash" } }),
+      se({ type: "content_block_delta", index: 1, delta: { type: "input_json_delta", partial_json: react.slice(0, 20) } }),
+      se({ type: "content_block_delta", index: 1, delta: { type: "input_json_delta", partial_json: react.slice(20) } }),
+      se({ type: "content_block_stop", index: 1 }),
+      se({ type: "message_delta", delta: { stop_reason: "tool_use" } }),
+      se({ type: "message_stop" }),
+      { type: "user", message: { content: [{ type: "tool_result", tool_use_id: "t1", is_error: false }] } },
+      se({ type: "message_start" }),
+      se({ type: "content_block_start", index: 0, content_block: { type: "text" } }),
+      se({ type: "content_block_delta", index: 0, delta: { type: "text_delta", text: "reacted." } }),
+      se({ type: "content_block_stop", index: 0 }),
+      se({ type: "message_delta", delta: { stop_reason: "end_turn" } }),
+      se({ type: "message_stop" }),
+      { type: "result", subtype: "success", result: "reacted." },
+    ];
+    const llm = createClaudeCliLlm({ binPath: fakeStreamBin(events) });
+    const deltas: string[] = [];
+    const final = await llm.stream!({ system: "s", messages: [{ role: "user", content: "hi" }] }, (e) => {
+      if (e.type === "text") deltas.push(e.delta);
+    });
+    expect(deltas.join("")).toBe("the full answer\n\nreacted.");
+    // finalText only holds the last round; the returned text carries the answer too
+    expect(final).toBe("the full answer\n\nreacted.");
+  });
+
+  test("text before a react call that is chained with a real command is still dropped", async () => {
+    const se = (event: unknown) => ({ type: "stream_event", event });
+    const cmd = JSON.stringify({ command: "slack-react.sh C1 1.1 fire && rm -rf /tmp/x" });
+    const events = [
+      se({ type: "message_start" }),
+      se({ type: "content_block_start", index: 0, content_block: { type: "text" } }),
+      se({ type: "content_block_delta", index: 0, delta: { type: "text_delta", text: "let me clean up first" } }),
+      se({ type: "content_block_stop", index: 0 }),
+      se({ type: "content_block_start", index: 1, content_block: { type: "tool_use", id: "t1", name: "Bash" } }),
+      se({ type: "content_block_delta", index: 1, delta: { type: "input_json_delta", partial_json: cmd } }),
+      se({ type: "content_block_stop", index: 1 }),
+      se({ type: "message_delta", delta: { stop_reason: "tool_use" } }),
+      se({ type: "message_stop" }),
+      { type: "user", message: { content: [{ type: "tool_result", tool_use_id: "t1", is_error: false }] } },
+      se({ type: "message_start" }),
+      se({ type: "content_block_start", index: 0, content_block: { type: "text" } }),
+      se({ type: "content_block_delta", index: 0, delta: { type: "text_delta", text: "done" } }),
+      se({ type: "content_block_stop", index: 0 }),
+      se({ type: "message_delta", delta: { stop_reason: "end_turn" } }),
+      se({ type: "message_stop" }),
+    ];
+    const llm = createClaudeCliLlm({ binPath: fakeStreamBin(events) });
+    const deltas: string[] = [];
+    await llm.stream!({ system: "s", messages: [{ role: "user", content: "hi" }] }, (e) => {
+      if (e.type === "text") deltas.push(e.delta);
+    });
+    expect(deltas).toEqual(["done"]);
   });
 
   test("a run killed after it spoke is reported as aborted, not as an answer", async () => {

@@ -111,6 +111,30 @@ export const renderPrompt = (
 const truncate = (s: string, n: number): string => (s.length > n ? `${s.slice(0, n - 3)}...` : s);
 
 /**
+ * True for a Bash call that does nothing but run the react helper
+ * (`.../bin/slack-react.sh <channel> <ts> <emoji>`), possibly chained with
+ * `&&` / `;` / newlines. The model reacts to close a thread right after writing
+ * its answer in the same message, so such a message's text is the answer, not
+ * self-talk. Anything else (another tool, a chained real command, unreadable
+ * input) is not a react call.
+ */
+export const isReactCall = (name: string, inputJson: string): boolean => {
+  if (name !== "Bash") return false;
+  let command: unknown;
+  try {
+    command = (JSON.parse(inputJson) as Record<string, unknown>).command;
+  } catch {
+    return false;
+  }
+  if (typeof command !== "string") return false;
+  const segments = command
+    .split(/&&|\|\||;|\n/)
+    .map((x) => x.trim())
+    .filter(Boolean);
+  return segments.length > 0 && segments.every((x) => /^(?:\w+=\S*\s+)*(?:bash\s+)?\S*slack-react\.sh(?:\s|$)/.test(x));
+};
+
+/**
  * Turn a tool_use name + accumulated input JSON into a short card title/details.
  *
  * `command` carries the Bash command in full: the card text is clipped for Slack,
@@ -418,21 +442,48 @@ export const createClaudeCliLlm = (config: ClaudeCliConfig = {}): LlmPort => {
     // if a tool call followed. `held` keeps the last dropped piece, in case the
     // turn then ends with nothing to say: an answer written before a closing
     // tool call is still the answer.
+    //
+    // One tool call does not make the text self-talk: a message whose only
+    // calls are `slack-react.sh` (the closing 🔥 on the thread) wrote the
+    // ANSWER and then reacted. The command arrives through input_json_delta,
+    // after the block started, so that is decided when the message ends.
     let pending: string[] = [];
     let held = "";
+    // Text set aside at the first tool_use of the message, decided at its end.
+    let candidate: string[] = [];
+    // The tool calls of the message in flight (the json fills in as it streams).
+    let messageTools: { name: string; json: string }[] = [];
+    // Answers streamed because they preceded a react call. The result event
+    // carries only the last round's text, so these are added back to the
+    // finished text below.
+    const reactAnswers: string[] = [];
+    const streamOut = (parts: string[]): string => {
+      const text = parts.join("");
+      if (!text.trim()) return "";
+      for (const d of parts) emit({ type: "text", delta: d });
+      streamedText += text;
+      held = "";
+      return text;
+    };
     const flush = (): void => {
-      const text = pending.join("");
-      if (text.trim()) {
-        for (const d of pending) emit({ type: "text", delta: d });
-        streamedText += text;
-        held = "";
-      }
+      streamOut(pending);
       pending = [];
     };
-    const drop = (): void => {
-      const text = pending.join("");
-      if (text.trim()) held = text;
+    // The message ended on a tool call: its text is the answer when every call
+    // was a react, self-talk otherwise.
+    const settleToolMessage = (): void => {
+      const parts = [...candidate, ...pending];
+      candidate = [];
       pending = [];
+      const calls = messageTools;
+      messageTools = [];
+      if (calls.length > 0 && calls.every((t) => isReactCall(t.name, t.json))) {
+        const text = streamOut(parts);
+        if (text) reactAnswers.push(text);
+        return;
+      }
+      const text = parts.join("");
+      if (text.trim()) held = text;
     };
     let resultEvent: Record<string, unknown> | undefined;
     // The background tasks the CLI says are still running, as of its latest
@@ -453,13 +504,18 @@ export const createClaudeCliLlm = (config: ClaudeCliConfig = {}): LlmPort => {
             // and the message reads as one mangled line.
             pending.push(sofar.endsWith("\n") ? "\n" : "\n\n");
           }
-          if (block.type === "tool_use") drop();
+          if (block.type === "tool_use") {
+            candidate.push(...pending);
+            pending = [];
+          }
           if (block.type === "tool_use" && typeof index === "number") {
-            toolByIndex.set(index, {
+            const tb = {
               id: (block.id as string) ?? `t${index}`,
               name: (block.name as string) ?? "tool",
               json: "",
-            });
+            };
+            toolByIndex.set(index, tb);
+            messageTools.push(tb);
           }
         } else if (ev.type === "content_block_delta") {
           const delta = (ev.delta ?? {}) as Record<string, unknown>;
@@ -471,8 +527,11 @@ export const createClaudeCliLlm = (config: ClaudeCliConfig = {}): LlmPort => {
           }
         } else if (ev.type === "message_delta") {
           const stop = ((ev.delta ?? {}) as Record<string, unknown>).stop_reason;
-          if (stop === "tool_use") drop();
+          if (stop === "tool_use") settleToolMessage();
           else if (typeof stop === "string") flush();
+        } else if (ev.type === "message_start") {
+          candidate = [];
+          messageTools = [];
         } else if (ev.type === "message_stop") {
           flush();
         } else if (ev.type === "content_block_stop" && typeof index === "number") {
@@ -593,7 +652,10 @@ export const createClaudeCliLlm = (config: ClaudeCliConfig = {}): LlmPort => {
     }
 
     const exitCode = await proc.exited;
-    const finished = (finalText || streamedText).trim();
+    // finalText is the last round's text only; an answer streamed before a
+    // react call belongs in front of it.
+    const lead = reactAnswers.map((t) => t.trim()).filter((t) => t && !finalText.includes(t));
+    const finished = (finalText ? [...lead, finalText].join("\n\n") : streamedText).trim();
     return { exitCode, finished, finalText, resultEvent, stderr: stderrPromise, emit, backgroundTasks };
   };
 
