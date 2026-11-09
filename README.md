@@ -500,7 +500,10 @@ An always-on part that reads the bot's own finished turns every ten minutes.
 Set `inner_child_channel` (a setting) to turn it on, `inner_child=off` to pause.
 
 - **Defects in the bot itself** are filed and fixed by the bot in that channel,
-  announced before and after, at most four fixes a day.
+  announced before and after, at most four fixes a day. At most 10 are open
+  (queued or being fixed) at once; while the queue is full, triage files
+  nothing new and logs it. A queued issue nobody got to in 7 days is closed
+  with state `stale` (the row is kept, its fingerprint still dedupes).
 - **Voice drift** - a final reply that starts a paragraph with a capital (`I`
   and acronyms excepted), uses an em/en dash, a semicolon, an arrow, a markdown
   heading or `**bold**`, or answers in a different language from the thread -

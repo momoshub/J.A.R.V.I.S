@@ -4,7 +4,11 @@
 import type { DbClient } from "./client.ts";
 import type { Finding, Severity } from "../../domain/innerChild.ts";
 
-export type SelfIssueState = "queued" | "fixing" | "fixed" | "not_fixed" | "failed";
+/**
+ * `stale` is an issue closed unfixed by `pruneStale`: it sat queued past the
+ * age limit. The row stays (its fingerprint still dedupes), only the state says why.
+ */
+export type SelfIssueState = "queued" | "fixing" | "fixed" | "not_fixed" | "failed" | "stale";
 
 export type SelfIssue = {
   readonly id: number;
@@ -39,7 +43,7 @@ type Row = {
 };
 
 const asState = (v: string): SelfIssueState =>
-  v === "fixing" || v === "fixed" || v === "not_fixed" || v === "failed" ? v : "queued";
+  v === "fixing" || v === "fixed" || v === "not_fixed" || v === "failed" || v === "stale" ? v : "queued";
 
 const toIssue = (r: Row): SelfIssue => ({
   id: r.id,
@@ -69,6 +73,13 @@ export type SelfIssueRepo = {
   fixing: () => SelfIssue[];
   /** How many fixes started since `since`, for the daily cap. */
   startedSince: (since: number) => number;
+  /** Issues still open: queued or being fixed. What the open cap counts. */
+  openCount: () => number;
+  /**
+   * Close queued issues whose last activity is before `before` as `stale`,
+   * newest state change = `now`. Never touches one being fixed. Returns them.
+   */
+  pruneStale: (before: number, now: number) => SelfIssue[];
   /** The newest issues, so the triage is told what is already known. */
   recentTitles: (limit: number) => string[];
   /** Threads the inner child runs fixes in, so it never triages its own work. */
@@ -94,6 +105,13 @@ export const createSelfIssueRepo = (db: DbClient): SelfIssueRepo => {
   const sinceStmt = db.query<{ n: number }, [number]>(
     "SELECT COUNT(*) AS n FROM self_issues WHERE started_at > 0 AND started_at >= ?",
   );
+  const openStmt = db.query<{ n: number }, []>(
+    "SELECT COUNT(*) AS n FROM self_issues WHERE state IN ('queued', 'fixing')",
+  );
+  const pruneStmt = db.query<Row, [number, number]>(
+    `UPDATE self_issues SET state = 'stale', updated_at = ?
+      WHERE state = 'queued' AND updated_at < ? RETURNING *`,
+  );
   const titlesStmt = db.query<{ title: string; fingerprint: string }, [number]>(
     "SELECT title, fingerprint FROM self_issues ORDER BY id DESC LIMIT ?",
   );
@@ -117,6 +135,8 @@ export const createSelfIssueRepo = (db: DbClient): SelfIssueRepo => {
     settle: (id, state, now) => void settleStmt.run(state, now, id),
     fixing: () => fixingStmt.all().map(toIssue),
     startedSince: (since) => sinceStmt.get(since)?.n ?? 0,
+    openCount: () => openStmt.get()?.n ?? 0,
+    pruneStale: (before, now) => pruneStmt.all(now, before).map(toIssue),
     recentTitles: (limit) => titlesStmt.all(Math.max(1, limit)).map((r) => `${r.fingerprint}: ${r.title}`),
     isFixThread: (channel, threadTs) => !!threadTs && (fixThreadStmt.get(channel, threadTs)?.n ?? 0) > 0,
     get: (id) => {
