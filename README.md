@@ -121,7 +121,7 @@ Every command has two interfaces - use whichever you like. Both triggers are con
 | `token [remove\|who]` (alias `claude-token`) | anyone | add, replace or forget your own Claude Code token - see [Your own Claude token](#your-own-claude-token) |
 | `session [reset\|on\|off]` (alias `sess`) | anyone (on/off: admins) | the CLI session this thread is talking to - see [One session per thread](#one-session-per-thread) |
 | `ticket <what is wrong>` (aliases `bug`, `raise`) | anyone | raise a properly written, correctly routed ticket - see [Raising a ticket](#raising-a-ticket) |
-| `review <pr-url\|help\|prompt> [--policy first\|after] [what to look at]` (alias `rv`) | pal+ | review a PR: read it first, post a blockers-only comment on GitHub *and* back in the thread; request changes on a blocker, open a GitHub issue for a non-blocking finding worth fixing later (big PRs are cloned + reviewed by child agents). Runs full-access. |
+| `review <pr-url\|help\|prompt> [--policy first\|after] [what to look at]` (alias `rv`) | pal+ | review a PR: read it first, post a blockers-only comment on GitHub *and* back in the thread; request changes on a blocker, non-blocking findings are dropped (big PRs are cloned + reviewed by child agents). Runs full-access. |
 | `bomb [categories] [count] <message-link>` (alias `br`) | admins | reaction-bomb a message. Combine categories with commas and set a count: `bomb money,face,negative 9 <link>`. Up to 23; `bomb help` lists every category |
 | `reply <message-link>` (alias `jrp`) | admins | draft and post an AI reply to a message |
 | `rm-msg <message-link>` (aliases `rmmsg`, `unsend`) | admins | delete a message the bot posted (a bot token cannot delete anyone else's) |
@@ -243,6 +243,12 @@ runs full-access whoever asked and wherever it is asked, so a pal's review in a
 cheap channel is still done properly.
 
 ### Handed-off work: subagents, Orca workers, planning
+
+An owner turn picks the run mode by the job's weight: light work (a few edits,
+a TODO comment, one lookup) stays inline, short or side-by-side work that ends
+inside the turn goes to the Agent tool, and anything that opens a PR, waits on
+CI or a reviewer, or outlives the turn goes to an Orca worker. Other roles have
+only the Agent tool.
 
 What a turn hands off runs on its own model, whatever the turn itself is on - an
 owner turn talks on Opus, but its helpers do not:
@@ -500,7 +506,10 @@ An always-on part that reads the bot's own finished turns every ten minutes.
 Set `inner_child_channel` (a setting) to turn it on, `inner_child=off` to pause.
 
 - **Defects in the bot itself** are filed and fixed by the bot in that channel,
-  announced before and after, at most four fixes a day.
+  announced before and after, at most four fixes a day. At most 10 are open
+  (queued or being fixed) at once; while the queue is full, triage files
+  nothing new and logs it. A queued issue nobody got to in 7 days is closed
+  with state `stale` (the row is kept, its fingerprint still dedupes).
 - **Voice drift** - a final reply that starts a paragraph with a capital (`I`
   and acronyms excepted), uses an em/en dash, a semicolon, an arrow, a markdown
   heading or `**bold**`, or answers in a different language from the thread -
@@ -721,7 +730,30 @@ bin/github-app.sh pr-close|pr-reopen <owner/repo> <n>
 bin/github-app.sh pr-merge <owner/repo> <n> [--method merge|squash|rebase]
 bin/github-app.sh labels-add|labels-remove <owner/repo> <n> <label>...
 bin/github-app.sh reviewers-request <owner/repo> <n> <login|team:slug>...
+bin/github-app.sh git <owner/repo> <local-repo-dir> -- <git args>...
+bin/github-app.sh push <owner/repo> <local-repo-dir> <branch> [--force-with-lease]
 ```
+
+`git` runs `git -C <dir> <args>` **as the app**: commits and cherry-picks are
+committed by `jarvis-at-acme[bot]` (`<id>+jarvis-at-acme[bot]@users.noreply.github.com`,
+no GPG signing; the id is looked up once with `GET /users/<slug>[bot]`), and
+anything that talks to github.com (fetch, pull, push, ls-remote; an ssh remote
+is read as https) carries a fresh installation token. `push` pushes one branch
+to the remote of `<dir>` that points at `<owner/repo>`. The token is a one-shot
+credential: the bot hands it back for the `git-auth` action (same ticket, same
+admin/owner gate, same command log row, no token in the log) and the helper puts
+it in that one git process's environment as `http.extraheader` through
+`GIT_CONFIG_*` - never in a remote url, `.git/config`, argv or any file. A
+cherry-picked commit keeps its original author unless you pass `--reset-author`.
+
+```
+bin/github-app.sh git acme/acme-be ~/Workspaces/be -- commit -m "fix: x"
+bin/github-app.sh push acme/acme-be ~/Workspaces/be fix/x
+```
+
+In the `acme` org, every PR is committed and opened as the app
+(`git` + `push` + `pr-create` above); review comments and the merge are done as
+`kai-at-acme`.
 
 It only acts on owners in `GITHUB_APP_ALLOWED_OWNERS`. It posts to `/api/github-app/action` with the turn's ticket (from
 `JARVIS_RUN_TICKET`, never an argument); the bot resolves it to the person the
@@ -813,11 +845,8 @@ matters. A clean PR gets that one line and the sign-off.
 
 Blocking means a security hole, data loss, a breaking change, a correctness bug
 that would ship, missing or failing tests on a critical path, or failing CI.
-Everything else - design, cleanups, style, nits - is never posted. A
-non-blocking finding that is a real risk worth fixing later becomes one short
-GitHub issue on the PR's repo (PR link, `file:line`, why), after checking for a
-duplicate; nits and style never become issues, the rest is dropped. Each issue
-is announced in the thread by title and its url is in the wrap-up.
+Everything else - design, cleanups, style, nits - is never posted, and never
+becomes a GitHub issue either: it is dropped.
 
 It reads the description and the existing comments **before** reviewing, so
 nothing already said is said again. A gap the description declares out of scope
@@ -955,10 +984,21 @@ Identity and learnings are stored in the DB and applied on the next reply - no r
 ```bash
 bun test           # full suite
 bun run typecheck  # tsc --noEmit
-bun run test:e2e   # opt-in, real Slack (see below)
+bun run test:e2e   # opt-in, real Slack: every e2e/*.e2e.ts (see below)
 ```
 
-### End-to-end test against real Slack (opt-in)
+### End-to-end tests against real Slack (opt-in)
+
+`bun run test:e2e` runs every file in `e2e/`. Each posts under its own root message in the test channel and deletes everything it posted:
+
+| File | What it proves |
+| --- | --- |
+| `slackBlockKit.e2e.ts` | Block Kit replies (below) |
+| `slackStream.e2e.ts` | the real `createSlackStream` over `chat.startStream`/`appendStream`/`stopStream`, text fed in small deltas, ends as ONE message with the full text, in the thread |
+| `slackUpload.e2e.ts` | `bin/slack-upload.sh` (`files.getUploadURLExternal` + `files.completeUploadExternal` with `thread_ts`) lands the file in the thread, not at the channel root; the file is deleted afterwards |
+| `slackWatch.e2e.ts` | a real `createWatcher` + `createShellCheck` + `watchRepo`: a watch stays quiet while its shell check exits non-zero, then fires once on exit 0 and hands back into the watched thread |
+
+A new e2e file goes in `e2e/`, imports `./support.ts` (env gate, root message, cleanup) and is added to the `test:e2e` script; `*.e2e.ts` is not picked up by `bun test`, so it never runs there or in CI.
 
 `e2e/slackBlockKit.e2e.ts` drives a reply with Block Kit through the real stream code path (`createHandler` -> `createSlackStream` -> `chat.startStream`/`appendStream`/`stopStream`, the tidy-up rewrite and the plain-post fallbacks; only the model is scripted) and reads the thread back with `conversations.replies`. Per reply it asserts exactly one bot message, a `table` block where the reply had one, and no literal ```` ```blockkit ```` in the text or blocks. The cases: a table with an empty header cell (the bug that split a reply in two and lost the table), a plain-text reply, and a block Slack refuses (`alert`), which must degrade to its words.
 

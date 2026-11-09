@@ -21,13 +21,19 @@ const setup = (role: UserRole | undefined, opts: { fail?: Error } = {}) => {
         if (opts.fail) throw opts.fail;
         return 7;
       },
+      installationToken: async (inst) => `tok-${inst}`,
       request: async (inst, method, path, body) => {
+        if (path.startsWith("users/")) {
+          calls.push(`${inst} ${method} ${path}`);
+          return { id: 1234 };
+        }
         calls.push(`${inst} ${method} ${path} ${JSON.stringify(body ?? null)}`);
         return { html_url: "https://github.com/o/r/pull/9", number: 9 };
       },
     },
     audit: { add: (entry, at) => void audit.push({ entry, at }) },
     allowedOwners: ["o"],
+    slug: "jarvis-at-acme",
   });
   return { actions, audit, calls, installs };
 };
@@ -132,5 +138,33 @@ describe("github app actions: behaviour", () => {
     await expect(actions.run({ ticket: "good", ...create })).rejects.toThrow("404: Not Found");
     expect(audit[0]?.entry).toMatchObject({ ok: false });
     expect(audit[0]?.entry.result).toContain("404");
+  });
+});
+
+describe("github app actions: git-auth", () => {
+  test("hands back the token and the bot identity, looked up once, and audits without the token", async () => {
+    const { actions, audit, calls } = setup("admin");
+    const out = await actions.run({ ticket: "good", action: "git-auth", repo: "o/r" });
+    expect(out.github).toEqual({
+      token: "tok-7",
+      name: "jarvis-at-acme[bot]",
+      email: "1234+jarvis-at-acme[bot]@users.noreply.github.com",
+    });
+    await actions.run({ ticket: "good", action: "git-auth", repo: "o/r" });
+    expect(calls).toEqual(["7 GET users/jarvis-at-acme%5Bbot%5D"]);
+    expect(audit.map((a) => a.entry.args)).toEqual(["git-auth o/r", "git-auth o/r"]);
+    expect(JSON.stringify(audit)).not.toContain("tok-7");
+  });
+
+  test.each(["executer", "pal"] as const)("%s is refused and gets no token", async (role) => {
+    const { actions, installs } = setup(role);
+    await expect(actions.run({ ticket: "good", action: "git-auth", repo: "o/r" })).rejects.toThrow("admin role");
+    expect(installs).toEqual([]);
+  });
+
+  test("an owner outside the allowlist gets no token", async () => {
+    const { actions, installs } = setup("owner");
+    await expect(actions.run({ ticket: "good", action: "git-auth", repo: "stranger/r" })).rejects.toThrow("GITHUB_APP_ALLOWED_OWNERS");
+    expect(installs).toEqual([]);
   });
 });

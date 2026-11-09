@@ -7,6 +7,8 @@
  * tool calls shown as a task timeline; otherwise it posts once. No business
  * logic lives here.
  */
+// TODO(split): big file, deliberately not refactored in one go. Rule: split the part you
+//   touch into its own module; the markers below name where each section should go.
 import { App } from "@slack/bolt";
 import type { WebClient } from "@slack/web-api";
 import { respond, type RespondDeps } from "../../application/respond.ts";
@@ -351,6 +353,7 @@ export type Incoming = {
  * Build the transport-agnostic message handler. Exported so it can be tested
  * with fake clients/streamers without standing up a real Slack connection.
  */
+// TODO(split): move createHandler (message intake) to src/infrastructure/slack/handler.ts
 export const createHandler =
   (config: SlackAppConfig, deps: Deps, log: (msg: string) => void) => {
   // Cache resolved display names across messages for this connection.
@@ -617,6 +620,7 @@ const dropQuiet = async (msg: Incoming, parts: readonly { ts: string }[], log: (
  * error after three seconds - and handed to the thread as a turn from
  * whoever pressed, so their role decides what it may do, as if they typed.
  */
+// TODO(split): move createKitListeners and retireOpenKit to src/infrastructure/slack/kitListeners.ts
 export const createKitListeners = (
   kitViews: Deps["kitViews"],
   handle: (msg: Incoming) => Promise<void>,
@@ -981,6 +985,7 @@ export const createSlackApp = (config: SlackAppConfig, deps: Deps) => {
   app.action({ action_id: APPROVE_ACTION }, onApprovalButton as never);
   app.action({ action_id: REJECT_ACTION }, onApprovalButton as never);
 
+  // TODO(split): move tokenModal/totpModal to src/infrastructure/slack/credentialModals.ts
   // A token never travels as a Slack message: the button opens a modal, and a
   // modal's input is not posted, not searchable, and not in the bot's memory.
   const tokenModal = (metadata: string) => ({
@@ -1149,6 +1154,7 @@ export const createSlackApp = (config: SlackAppConfig, deps: Deps) => {
    * command's own role gate still decides. A button is never a way to run
    * something you could not have typed.
    */
+  // TODO(split): move menuModal, runFromMenu and onMenuPress to src/infrastructure/slack/menuHandlers.ts
   const menuModal = (command: string, usage: string, summary: string, metadata: string, confirmOnly = false) => ({
     type: "modal" as const,
     callback_id: MENU_VIEW,
@@ -1301,6 +1307,7 @@ export const createSlackApp = (config: SlackAppConfig, deps: Deps) => {
     );
   }) as never);
 
+  // TODO(split): move reaction handlers to src/infrastructure/slack/reactionHandlers.ts
   // The owner reacting on an access-request notice decides it; the owner
   // reacting on one of the bot's messages moves or deletes it.
   app.event("reaction_added", async ({ event }) => {
@@ -1364,6 +1371,7 @@ export const createSlackApp = (config: SlackAppConfig, deps: Deps) => {
    * one-on-one within seconds.
    */
   type ThreadInfo = { author?: string; participants: string[]; at: number };
+  // TODO(split): move threadInfo and autoFollow to src/infrastructure/slack/threadFollow.ts
   const threadInfos = new Map<string, ThreadInfo>();
   const THREAD_INFO_TTL_MS = 30_000;
   const threadInfo = async (client: SlackClient, channel: string, threadTs: string): Promise<ThreadInfo> => {
@@ -1482,6 +1490,7 @@ export const createSlackApp = (config: SlackAppConfig, deps: Deps) => {
     });
   });
 
+  // TODO(split): move slash command registration to src/infrastructure/slack/slashCommands.ts
   // Slash commands, all routed through the same command registry as the message
   // prefix. Register each in the Slack app config. The configured slash command is
   // the general dispatcher; /rv, /br, /jrp are shortcuts to those commands.

@@ -22,6 +22,7 @@ export type GithubActionDeps = {
   users: { get: (slackId: string) => AllowedUser | undefined };
   github: {
     installationOfRepo: (repo: string) => Promise<number>;
+    installationToken: (installationId: number) => Promise<string>;
     request: (installationId: number, method: string, path: string, body?: unknown) => Promise<unknown>;
   };
   audit: Pick<CommandLogRepo, "add">;
@@ -31,9 +32,14 @@ export type GithubActionDeps = {
    * webhook listens to.
    */
   allowedOwners: readonly string[];
+  /** The app's slug (`GITHUB_APP_SLUG`); its commit identity is `<slug>[bot]`. */
+  slug: string;
 };
 
 export type GithubActionResult = { url?: string; number?: number; github: unknown };
+
+/** What a local `git` needs to act as the app on one repo (action `git-auth`). */
+export type GitAuth = { token: string; name: string; email: string };
 
 export type GithubActions = {
   run: (req: { ticket: string } & ActionRequest) => Promise<GithubActionResult>;
@@ -60,48 +66,70 @@ const describe = (req: ActionRequest): string =>
     .filter((x) => x !== undefined && x !== "" && x !== null && x !== false)
     .join(" ");
 
-export const createGithubActions = (deps: GithubActionDeps): GithubActions => ({
-  run: async ({ ticket, ...req }) => {
-    if (!ticket.trim()) throw new Error("no ticket - acting as the app only works from inside a turn");
-    const ctx = deps.resolve(ticket);
-    const user = deps.users.get(ctx.actor);
-    const log = (ok: boolean, result: string): void =>
-      deps.audit.add(
-        {
-          slackUserId: ctx.actor,
-          command: "github-app",
-          args: `${String(req.action)} ${describe(req)}`.trim(),
-          channelId: ctx.channel,
-          ok,
-          result: result.slice(0, 300),
-        },
-        deps.clock(),
-      );
-    const refuse = (message: string): never => {
-      log(false, message);
-      throw new Error(message);
-    };
-
-    if (!user) refuse("whoever asked is not on the access list");
-    if (user && !mayActAsApp(user.role)) refuse(DENIED_MESSAGE);
-    const plan = planAction(req);
-    if (!plan.ok) return refuse(plan.error);
-    const owner = plan.repo.split("/")[0] ?? "";
-    if (!isAllowedOwner(owner, deps.allowedOwners)) {
-      return refuse(`${owner} is not in GITHUB_APP_ALLOWED_OWNERS, so the app will not act there`);
+export const createGithubActions = (deps: GithubActionDeps): GithubActions => {
+  // The bot's numeric user id never changes, so look it up once per slug.
+  let botId: number | undefined;
+  const botName = `${deps.slug}[bot]`;
+  const gitAuth = async (installation: number): Promise<GitAuth> => {
+    if (botId === undefined) {
+      const out = (await deps.github.request(installation, "GET", `users/${encodeURIComponent(botName)}`)) as
+        | { id?: unknown }
+        | undefined;
+      if (typeof out?.id !== "number") throw new Error(`GitHub returned no user id for ${botName}`);
+      botId = out.id;
     }
+    return { token: await deps.github.installationToken(installation), name: botName, email: `${botId}+${botName}@users.noreply.github.com` };
+  };
 
-    try {
-      const installation = await deps.github.installationOfRepo(plan.repo);
-      const outs: unknown[] = [];
-      for (const c of plan.calls) outs.push(await deps.github.request(installation, c.method, c.path, c.body));
-      const out = outs.length === 1 ? outs[0] : outs;
-      const summary = summarize(out);
-      log(true, summary.url ?? `${plan.action} ok`);
-      return { ...summary, github: out ?? null };
-    } catch (e) {
-      log(false, errText(e));
-      throw e;
-    }
-  },
-});
+  return {
+    run: async ({ ticket, ...req }) => {
+      if (!ticket.trim()) throw new Error("no ticket - acting as the app only works from inside a turn");
+      const ctx = deps.resolve(ticket);
+      const user = deps.users.get(ctx.actor);
+      const log = (ok: boolean, result: string): void =>
+        deps.audit.add(
+          {
+            slackUserId: ctx.actor,
+            command: "github-app",
+            args: `${String(req.action)} ${describe(req)}`.trim(),
+            channelId: ctx.channel,
+            ok,
+            result: result.slice(0, 300),
+          },
+          deps.clock(),
+        );
+      const refuse = (message: string): never => {
+        log(false, message);
+        throw new Error(message);
+      };
+
+      if (!user) refuse("whoever asked is not on the access list");
+      if (user && !mayActAsApp(user.role)) refuse(DENIED_MESSAGE);
+      const plan = planAction(req);
+      if (!plan.ok) return refuse(plan.error);
+      const owner = plan.repo.split("/")[0] ?? "";
+      if (!isAllowedOwner(owner, deps.allowedOwners)) {
+        return refuse(`${owner} is not in GITHUB_APP_ALLOWED_OWNERS, so the app will not act there`);
+      }
+
+      try {
+        const installation = await deps.github.installationOfRepo(plan.repo);
+        if (plan.action === "git-auth") {
+          // The token goes back to the helper only; the audit row never has it.
+          const auth = await gitAuth(installation);
+          log(true, `git-auth ${plan.repo}`);
+          return { github: auth };
+        }
+        const outs: unknown[] = [];
+        for (const c of plan.calls) outs.push(await deps.github.request(installation, c.method, c.path, c.body));
+        const out = outs.length === 1 ? outs[0] : outs;
+        const summary = summarize(out);
+        log(true, summary.url ?? `${plan.action} ok`);
+        return { ...summary, github: out ?? null };
+      } catch (e) {
+        log(false, errText(e));
+        throw e;
+      }
+    },
+  };
+};

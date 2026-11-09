@@ -68,6 +68,9 @@ const build = (over: Partial<InnerChildDeps> = {}) =>
     ...over,
   });
 
+const file = (fingerprint: string, at: number) =>
+  issues.file({ ...finding({ fingerprint }), severity: "bug" }, at);
+
 const addTurn = (over: Partial<Parameters<TurnLogRepo["add"]>[0]> = {}) =>
   turns.add({
     runId: "r",
@@ -204,6 +207,69 @@ describe("inner child", () => {
     await settle();
     expect(fixes).toHaveLength(1);
     expect(issues.nextQueued()?.fingerprint).toBe("b");
+  });
+
+  test("triage files only up to the open cap and says so when it is full", async () => {
+    cursor = now - 100;
+    addTurn();
+    const logs: string[] = [];
+    const child = build({ maxOpenIssues: 2, maxFixesPerDay: 0, log: (m) => logs.push(m) });
+    triageAnswer = JSON.stringify([finding(), finding({ fingerprint: "b" }), finding({ fingerprint: "c" })]);
+    await child.tick();
+    expect(issues.openCount()).toBe(2);
+    expect(issues.get(3)).toBeUndefined();
+
+    now += 2000;
+    addTurn();
+    triageAnswer = JSON.stringify([finding({ fingerprint: "d" })]);
+    await child.tick();
+    expect(issues.openCount()).toBe(2);
+    expect(issues.get(3)).toBeUndefined();
+    expect(logs.some((l) => l.includes("queue full") && l.includes("filing nothing"))).toBe(true);
+  });
+
+  test("an issue being fixed counts as open, a finished one frees its place", async () => {
+    cursor = now - 100;
+    addTurn();
+    file("x", now);
+    issues.startFix(1, "CFIX", "7.0", now);
+    file("y", now);
+    expect(issues.openCount()).toBe(2);
+    issues.settle(1, "fixed", now);
+    expect(issues.openCount()).toBe(1);
+
+    triageAnswer = JSON.stringify([finding({ fingerprint: "a" }), finding({ fingerprint: "b" })]);
+    await build({ maxOpenIssues: 2, maxFixesPerDay: 0 }).tick();
+    expect(issues.openCount()).toBe(2);
+  });
+
+  test("a queued issue past the age limit is closed as stale, kept, and frees room", async () => {
+    const day = 24 * 60 * 60 * 1000;
+    const logs: string[] = [];
+    const child = build({ staleAfterMs: 7 * day, maxFixesPerDay: 0, log: (m) => logs.push(m) });
+    // The first tick after a boot writes off any fix still marked running.
+    await child.tick();
+    file("old", now - 8 * day);
+    file("new", now - day);
+    file("busy", now);
+    issues.startFix(3, "CFIX", "7.0", now);
+    await child.tick();
+
+    expect(issues.get(1)?.state).toBe("stale");
+    expect(issues.get(1)?.updatedAt).toBe(now);
+    expect(issues.get(2)?.state).toBe("queued");
+    expect(issues.get(3)?.state).toBe("fixing");
+    expect(issues.openCount()).toBe(2);
+    expect(logs).toContain("closed 1 stale issue(s): #1");
+    // The fingerprint stays on file, so the same defect is not refiled as new.
+    expect(file("old", now)).toBeUndefined();
+  });
+
+  test("pruning when nothing is stale does nothing", async () => {
+    file("a", now);
+    await build({ maxFixesPerDay: 0 }).tick();
+    expect(issues.get(1)?.state).toBe("queued");
+    expect(issues.get(1)?.updatedAt).toBe(now);
   });
 
   test("its own fix threads are never triaged", async () => {
