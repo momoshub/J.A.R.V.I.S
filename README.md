@@ -720,12 +720,9 @@ Bots, the app itself included, never trigger it.
 
 `@bot review <pr-url>` runs the review command, the same as typing it with the
 prefix. It has to be a mention carrying a real pull request url and actually say
-"review" - anything vaguer stays a conversation, because a review spends the
-asker's own credential rather than being free.
-
-This matters beyond convenience: only the command can offer the box that takes a
-Claude token, so a spoken request used to get a description of the token instead
-of the button that accepts one.
+"review" - anything vaguer stays a conversation, because a review is a long,
+expensive run (on the asker's own Claude token when one is on file, on the bot's
+otherwise), not a chat reply.
 
 Flags carry through (`@bot review <url> --policy after`); the rest of the
 sentence does not. "can you please" is not guidance, and guessing which half of
@@ -735,9 +732,11 @@ prefix, the free text is the steering note.
 ## Your own Claude token
 
 `review` runs the Claude Code CLI, and the CLI bills whoever's token it is
-holding. Running every review on the bot's credential puts the whole team's
-usage on one account, so a review runs on **the caller's own token** instead,
-and refuses to start without one.
+holding. A token is **optional**: a review runs on **the caller's own token** when
+they have one on file (the usage lands on them), and on the bot's own credential
+otherwise, so a pal or an executer with none still gets their review. The review's
+GitHub side is the same either way - comments and approvals are the bot's `gh`
+account, which a Claude token never touches.
 
 Mint one with the Claude Code CLI:
 
@@ -746,34 +745,24 @@ claude setup-token
 ```
 
 It opens a browser, logs you in, and prints a token starting with
-`sk-ant-oat01-`. Paste it into the box the bot opens - the button on its "I need
-your token" message, or `/<slash> token` any time. **Never type a token as a
+`sk-ant-oat01-`. Paste it into the box the bot opens with `/<slash> token`. **Never type a token as a
 Slack message**: the bot only ever accepts one through a modal, whose input is
 not a message, is not in anyone's history or search, and never reaches the bot's
 own conversation memory. A token pasted into a channel should be treated as
 burned and rotated.
 
-Submitting a token also resumes whatever it interrupted - the button carries the
-command, so the review you asked for runs the moment the token lands.
-
-**You are asked once.** The full walkthrough goes out one time per person; a
-later review with still no token gets a single line pointing back at the box
-rather than the whole thing again. Adding (or removing) a token resets that, so
-someone who clears theirs gets a proper ask next time.
-
-There is **no fallback to the bot's own credential** for a review. No token, no
-review - and when a caller's token is in play it *replaces* the bot's in the
-child process rather than being added alongside it, so the bot's token is not in
-that environment at all, including for anything the run spawns in turn.
+When a caller's token is in play it *replaces* the bot's in the child process
+rather than being added alongside it, so the bot's token is not in that
+environment at all, including for anything the run spawns in turn.
 
 Once a token is on file it is used for **every** CLI turn that person drives:
 their chat, their commands, their workflow sessions. Everyone else keeps running
 on the bot's own credential, so nobody is locked out of chat by a credential they
-never set up. Only `review` insists.
+never set up. That includes `review`.
 
 ```
 /<slash> token           add or replace yours (opens the box)
-/<slash> token remove    forget it; your next review will ask again
+/<slash> token remove    forget it; your next review runs on mine
 /<slash> token who       admins: who has given me one (never the token itself)
 ```
 
@@ -810,7 +799,7 @@ actual system prompt it runs on, which is no secret - it is in this repository.
 
 Both exist because the question used to cost a review: asked to explain itself,
 the bot ran `review help`, took the word "help" as a target, and spent minutes
-reviewing a pull request by that name on the asker's own credential. An argument
+reviewing a pull request by that name. An argument
 now has to look like a pull request - a url, `owner/repo#123`, or a bare number -
 before anything expensive starts.
 
