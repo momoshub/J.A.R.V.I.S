@@ -28,6 +28,10 @@ describe("planAction request shapes", () => {
     ]);
     expect(ok({ action: "pr-create", repo, head: "fix/x", base: "master", title: "T" })[0]?.body).toMatchObject({ draft: false, body: "" });
   });
+  test("git-auth is a plan with no REST call, and needs a valid repo", () => {
+    expect(ok({ action: "git-auth", repo })).toEqual([]);
+    expect(err({ action: "git-auth", repo: "nope" })).toContain("owner/name");
+  });
   test("comment", () => {
     expect(ok({ action: "comment", repo, number: 5, body: "hi" })).toEqual([
       { method: "POST", path: `repos/${repo}/issues/5/comments`, body: { body: "hi" } },

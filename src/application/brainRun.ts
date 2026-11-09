@@ -13,6 +13,7 @@
  */
 
 import { readableText } from "../domain/blockKit.ts";
+import { logAndIgnore } from "./ignoredError.ts";
 
 export type BrainRunOutcome = {
   result: string;
@@ -61,7 +62,7 @@ export const runForBrain = async (deps: BrainRunDeps): Promise<BrainRunOutcome> 
     .catch((e: unknown) => {
       deps.onLateError(e);
       const why = (e instanceof Error ? e.message : String(e)).slice(0, 300);
-      return deps.post(`⚠️ that one stopped without a result - ${why}`).catch(() => undefined);
+      return deps.post(`⚠️ that one stopped without a result - ${why}`).catch(logAndIgnore("brain run stopped notice"));
     });
   return { result: STARTED_MESSAGE, posted: true };
 };

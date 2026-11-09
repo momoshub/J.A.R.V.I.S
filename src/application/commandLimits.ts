@@ -15,6 +15,7 @@ import type { CommandLogRepo } from "../infrastructure/db/commandLogRepo.ts";
 import type { CommandApprovalRepo } from "../infrastructure/db/commandApprovalRepo.ts";
 import type { UserRepo } from "../infrastructure/db/userRepo.ts";
 import type { SettingsRepo } from "../infrastructure/db/settingsRepo.ts";
+import { logAndIgnore } from "./ignoredError.ts";
 
 /** Commands a limited role may run per window, unless given their own. */
 export const PAL_COMMAND_LIMIT = 10;
@@ -175,7 +176,7 @@ export const decideCommandApproval = async (
   if (!approve) {
     await deps.slack
       .post(held.channelId, `<@${held.slackUserId}> that one was not approved.`, held.threadTs || undefined)
-      .catch(() => undefined);
+      .catch(logAndIgnore("command limit not-approved notice"));
     return { kind: "rejected", requester: held.slackUserId };
   }
 
@@ -188,7 +189,7 @@ export const decideCommandApproval = async (
     threadTs: held.threadTs || undefined,
   });
   if (result.trim()) {
-    await deps.slack.post(held.channelId, result, held.threadTs || undefined).catch(() => undefined);
+    await deps.slack.post(held.channelId, result, held.threadTs || undefined).catch(logAndIgnore("command limit result post"));
   }
   return { kind: "approved", result, line: held.line, requester: held.slackUserId };
 };

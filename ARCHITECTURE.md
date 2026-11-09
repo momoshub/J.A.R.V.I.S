@@ -57,8 +57,9 @@ no classes.
   `TOKEN_DATABASE_PATH` point outside the checkout, because a git operation that
   replaces a file under an open SQLite handle crashes the bot. A path may be moved
   once with `DATABASE_MIGRATE_FROM` / `TOKEN_DATABASE_MIGRATE_FROM`:
-  `adoptDatabase` (`infrastructure/db/location.ts`) fills a missing destination
-  with a `VACUUM INTO` snapshot at boot and never overwrites. `bin/db-backup.ts`
+  `adoptDatabase` (`infrastructure/db/location.ts`) fills a missing (or empty) destination
+  with a `VACUUM INTO` snapshot at boot, never overwrites a database with tables,
+  and fails closed (throws) when the source is configured but missing. `bin/db-backup.ts`
   is the backup (snapshots into `DATABASE_BACKUP_DIR`, optionally committed to a
   repo of its own).
 - **Gateway / bot split.** `src/gateway.ts` only holds the Slack socket and
@@ -116,7 +117,10 @@ no classes.
   on (PRs, comments, reviews, labels, merge) through `bin/github-app.sh` ->
   `/api/github-app/action`: the ticket resolves to the Slack user, the role is
   checked in `githubAppActions`, the installation is looked up per repo, and
-  every call lands in the command log.
+  every call lands in the command log. The same helper's `git` / `push` run a
+  local git as the app: it asks the bot for the `git-auth` action (installation
+  token + `<slug>[bot]` identity) and gives that one git process the token in its
+  environment (`GIT_CONFIG_*` `http.extraheader`), never in a url or a file.
 - **Self-update.** A fix lands through a PR that CI (`.github/workflows/ci.yml`)
   passes, merged only by `bin/merge-when-green.sh` (exit 4 at once on a PR that
   conflicts with its base, which GitHub never runs CI on). When it touches runtime code

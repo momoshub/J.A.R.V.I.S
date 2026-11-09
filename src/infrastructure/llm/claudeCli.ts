@@ -28,6 +28,7 @@ import type { PromptMessage } from "../../domain/types.ts";
 import type { ToolPolicy } from "../../domain/toolPolicy.ts";
 import { isNoiseTool, redactPaths, redactSecrets } from "../../domain/toolVisibility.ts";
 import { stopProcess } from "./killTree.ts";
+import { ignoreQuietly } from "../../application/ignoredError.ts";
 
 export type ClaudeCliConfig = {
   /** Path or name of the claude binary. Default "claude". */
@@ -387,7 +388,7 @@ export const createClaudeCliLlm = (config: ClaudeCliConfig = {}): LlmPort => {
     const emit = (ev: Parameters<LlmStreamSink>[0]): void => {
       try {
         const r = sink(ev) as unknown;
-        if (r && typeof (r as Promise<void>).catch === "function") (r as Promise<void>).catch(() => {});
+        if (r && typeof (r as Promise<void>).catch === "function") (r as Promise<void>).catch(ignoreQuietly("llm stream sink"));
       } catch {
         // the transport's problem, not the run's
       }

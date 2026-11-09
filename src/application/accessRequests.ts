@@ -16,6 +16,7 @@ import { SETTING_KEYS, type SettingsRepo } from "../infrastructure/db/settingsRe
 import type { SlackAdminPort } from "./slackAdmin.ts";
 import type { AccessRequestRepo } from "../infrastructure/db/accessRequestRepo.ts";
 import type { UserRepo } from "../infrastructure/db/userRepo.ts";
+import { logAndIgnore } from "./ignoredError.ts";
 
 /** Reactions the owner uses to decide. Aliases included - people reach for whichever. */
 export const APPROVE_REACTIONS = ["white_check_mark", "heavy_check_mark", "ballot_box_with_check", "+1"];
@@ -118,7 +119,7 @@ export const requestAccess = async (
   // notice and a reaction on any one of them resolves the request.
   let raised = 0;
   for (const id of decidersOf(deps)) {
-    const notice = await deps.slack.postDm(id, text).catch(() => undefined);
+    const notice = await deps.slack.postDm(id, text).catch(logAndIgnore("access request DM to decider"));
     if (!notice) continue;
     raised += 1;
     deps.accessRequests.addNotice(request.id, notice.channel, notice.ts);
@@ -191,7 +192,7 @@ export const decideAccessRequest = async (
           ? `✅ <@${request.slackUserId}> was added as *${GRANTED_ROLE}* by <@${event.slackUserId}>.`
           : `❌ <@${request.slackUserId}> was declined by <@${event.slackUserId}>.`,
       )
-      .catch(() => undefined);
+      .catch(logAndIgnore("access request decision notice"));
   }
 
   const toThem = approve
@@ -199,6 +200,6 @@ export const decideAccessRequest = async (
     : `<@${request.slackUserId}> sorry, the owner said no this time.`;
   await deps.slack
     .post(request.channelId, toThem, request.threadTs || undefined)
-    .catch(() => undefined);
+    .catch(logAndIgnore("access request reply to requester"));
   return { kind: approve ? "approved" : "rejected", request };
 };

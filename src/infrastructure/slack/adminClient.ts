@@ -15,6 +15,7 @@ import type {
   SlackConversation,
   SlackMessage,
 } from "../../application/slackAdmin.ts";
+import { ignoreQuietly, logAndIgnore } from "../../application/ignoredError.ts";
 
 type RawMessage = {
   ts?: string;
@@ -246,8 +247,8 @@ export const createSlackAdmin = (client: WebClient, clock: () => number = Date.n
           messages?: RawMessage[];
         }).messages ?? [];
       const found =
-        (await fromReplies().catch(() => [])).find((m) => m.ts === ts) ??
-        (await fromHistory().catch(() => [])).find((m) => m.ts === ts);
+        (await fromReplies().catch(ignoreQuietly("slack thread replies", [] as RawMessage[]))).find((m) => m.ts === ts) ??
+        (await fromHistory().catch(logAndIgnore("slack channel history", [] as RawMessage[]))).find((m) => m.ts === ts);
       if (!found?.ts) return undefined;
       return {
         ts: found.ts,

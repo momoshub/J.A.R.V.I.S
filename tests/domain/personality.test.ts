@@ -146,6 +146,14 @@ describe("buildSystemPrompt", () => {
     runTicket: "tkt123",
   };
 
+  test("names the GitHub App helper's git and push actions only when it is wired", () => {
+    const p = buildSystemPrompt({ ...runOpts, githubAppScript: "/x/bin/github-app.sh" });
+    expect(p).toContain("/x/bin/github-app.sh <action> <owner/repo>");
+    expect(p).toContain("git <owner/repo> <dir> -- <git args>");
+    expect(p).toContain("push <owner/repo> <dir> <branch> [--force-with-lease]");
+    expect(buildSystemPrompt(runOpts)).not.toContain("github-app.sh");
+  });
+
   test("offers to run a real command when a chat request is one", () => {
     const p = buildSystemPrompt(runOpts);
     expect(p).toContain("Running my own commands");
@@ -444,9 +452,14 @@ describe("a message with several questions", () => {
     expect(out).toContain("background agents");
   });
 
-  test("background agents run as Orca workers, with the Agent tool only as a fallback", () => {
+  test("run mode is picked by weight: inline, Agent tool, or an Orca worker, Agent tool as Orca fallback", () => {
     const out = buildSystemPrompt({ learnings: [], orca: true });
-    expect(out).toContain("Background agents always run as Orca workers, never the Agent tool");
+    expect(out).toContain("Pick the run mode by the job's weight, never by habit");
+    // light work stays inline or on the Agent tool, heavy work goes to Orca
+    expect(out).toContain("inline, no agent: a few edits or commands");
+    expect(out).toContain("Agent tool, foreground: a short read-only search");
+    expect(out).toContain("Agent tool, `run_in_background: true`: light parts");
+    expect(out).toContain("Orca worker: anything heavier - opens a PR, waits on CI or a reviewer");
     expect(out).toContain("orca orchestration worker-start");
     expect(out).toContain("Orca still cannot wake you");
     // a worker's question comes back as a turn, answered with reply
@@ -456,7 +469,7 @@ describe("a message with several questions", () => {
     expect(out).toContain("`ORCA_TERMINAL_HANDLE` in your environment is the bot's own Orca terminal");
     expect(out).toContain("never pass another pane's handle");
     expect(out).toContain("`ORCA_TERMINAL_HANDLE` is unset, `run-create` refuses it as `terminal_handle_stale`");
-    expect(out).toContain("Fall back to the Agent tool");
+    expect(out).toContain("falls back to the Agent tool only when");
     expect(out).toContain("orca orchestration run-create");
     expect(out).toContain("worker-start --run <runId>");
     // workers run on the worker model, even when the turn itself is on Opus
@@ -499,7 +512,7 @@ describe("a message with several questions", () => {
       expect(out).toContain("Never run `orca`, by name or by path");
       expect(out).toContain("They need no watch of their own");
       // nothing that tells the turn to start a worker, wait on one or reach the Orca CLI
-      expect(out).not.toContain("Background agents always run as Orca workers");
+      expect(out).not.toContain("Pick the run mode by the job's weight");
       expect(out).not.toContain("orca orchestration");
       expect(out).not.toContain("worker-start");
       expect(out).not.toContain("watch worker <dispatchId>");
@@ -510,16 +523,17 @@ describe("a message with several questions", () => {
     }
     // the owner keeps the Orca wording
     const owner = buildSystemPrompt({ ...opts, orca: true });
-    expect(owner).toContain("Background agents always run as Orca workers, never the Agent tool");
+    expect(owner).toContain("Pick the run mode by the job's weight, never by habit");
     expect(owner).not.toContain("Never run `orca`, by name or by path");
   });
 
   test("the guide index and the guide body are role aware", () => {
     const base = { learnings: [], guideDir: "/g", commandPrefix: "//bot", runScript: "/r.sh", runUrl: "http://x", runTicket: "t", canWatch: true };
     const owner = buildSystemPromptParts({ ...base, orca: true });
-    expect(owner.prompt).toContain("run in parallel as Orca workers");
+    expect(owner.prompt).toContain("the run mode picked by weight");
+    expect(owner.prompt).toContain("outlives the turn as Orca workers");
     expect(owner.prompt).toContain("`watch worker <dispatchId>` after every Orca worker you start");
-    expect(owner.guides.find((g) => g.slug === "parallel")?.body).toContain("Background agents always run as Orca workers");
+    expect(owner.guides.find((g) => g.slug === "parallel")?.body).toContain("Pick the run mode by the job's weight");
     const admin = buildSystemPromptParts({ ...base, orca: false });
     expect(admin.prompt).toContain("as Agent tool agents (`run_in_background: true`) in your own process");
     expect(admin.prompt).not.toContain("Orca workers");

@@ -23,6 +23,7 @@ import { postedBody } from "../../domain/ghCommand.ts";
 import { tokenFor } from "../claudeTokens.ts";
 import { authorReviewPolicyKey, reviewPolicyKey, SETTING_KEYS } from "../../infrastructure/db/settingsRepo.ts";
 import { type CommandDeps, PR_URL, type CommandDef, RANK, askForToken, reviewAgentsOf, botNameOf } from "./shared.ts";
+import { logAndIgnore } from "../ignoredError.ts";
 
 /** Ceiling for a relayed GitHub body in one Slack message. */
 const RELAYED_BODY_CHARS = 3000;
@@ -119,7 +120,7 @@ export const REVIEW_COMMANDS: readonly CommandDef[] = [
     ownHelp: true,
     minRole: "pal",
     usage: "<pr-url> [pr-url...] [--policy first|after] [what to look at]",
-    summary: "review a PR: blockers-only comment on GitHub and here, an issue for what can wait",
+    summary: "review a PR: blockers-only comment on GitHub and here",
     run: async (ctx) => {
       const { deps, actor, args, prefix, reply, channelId } = ctx;
       if (args.length === 0) return `Which PR? \`${prefix} review <pr-url>\``;
@@ -217,7 +218,7 @@ export const REVIEW_COMMANDS: readonly CommandDef[] = [
         }
         const link =
           holder.threadTs && deps.slack?.permalink
-            ? await deps.slack.permalink(holder.channelId, holder.threadTs).catch(() => undefined)
+            ? await deps.slack.permalink(holder.channelId, holder.threadTs).catch(logAndIgnore("review permalink"))
             : undefined;
         const where = link ? `<${link}|in this thread>` : `in <#${holder.channelId}>`;
         busy.push(`👯 ${url} ${holder.doneAt === undefined ? "is already being reviewed" : "was just reviewed"} ${where}`);
@@ -312,13 +313,6 @@ export const REVIEW_COMMANDS: readonly CommandDef[] = [
               // twice, which reads as the same thing posted again.
               const what = comments++ === 0 ? "posted the review" : "posted a follow-up";
               announce(`📝 ${what}${on}${body ? `\n\n${clip(body)}` : ""}`);
-            }
-            // A non-blocking finding worth fixing later goes to an issue, never
-            // the comment, and nothing else relays it - so say it here, by title.
-            if (/gh issue create\b/.test(t)) {
-              const title = ran.match(/--title[= ](?:"([^"]*)"|'([^']*)')/);
-              const named = title ? `: ${title[1] ?? title[2]}` : "";
-              announce(`📌 opened a follow-up issue${on}${named}`);
             }
           });
         } else {

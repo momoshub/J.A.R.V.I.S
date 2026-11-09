@@ -3,9 +3,8 @@
  *
  * A preset, tightly-scoped task with FULL tools (gh read+write, git, shell, the
  * Task tool for child agents). The comment carries blockers only: a clean PR
- * gets one line, a non-blocking finding is never posted and, when it is worth
- * fixing later, becomes a GitHub issue instead (the owner's call - long
- * comments buried the one point that mattered). Kept terse on purpose: every
+ * gets one line and a non-blocking finding is never posted (the owner's call -
+ * long comments buried the one point that mattered). Kept terse on purpose: every
  * word here is paid for on every review.
  *
  * Merged and closed PRs are reviewed too - GitHub accepts comments on them and
@@ -97,7 +96,7 @@ export const reviewPrompt = (
   return `You are ${botName}, doing a real code review on ${many ? "these GitHub pull requests" : "this GitHub pull request"} and acting on it:
 ${prUrls.join("\n")}
 
-Tools: gh (read and write), git, a shell, the Task tool for child agents. Your directory is a scratch workspace you may clone into. Take only the actions below: comment, request changes, open a follow-up issue. Never approve, push or edit a real repo.
+Tools: gh (read and write), git, a shell, the Task tool for child agents. Your directory is a scratch workspace you may clone into. Take only the actions below: comment, request changes. Never open an issue. Never approve, push or edit a real repo.
 
 Work quietly: every action already posts its own progress line, so no running commentary, no "waiting on the agents". The only text before the close-out is one optional line when a big-PR checkout starts, saying how many agents review it.
 
@@ -128,7 +127,7 @@ For EACH PR, in order:
    One gh pr comment per PR. LATE FINDING (a child agent reporting after the comment is up): verify it; if blocking, run (a) unless the PR already carries it and post ONE short follow-up comment with just that finding. Never hold a verified blocker back. Otherwise step 4 applies.
    Write each body in the SAME shell command that posts it (heredoc to a file then --body-file, or inline --body). Never write a body in one command and post it in another: the posting command is what gets relayed to Slack.
 
-4. NON-BLOCKING findings (design, cleanups, style, nits, gaps the description defers) never go in the comment. One that is a real risk worth fixing later becomes ONE short issue on the PR's repo: check \`gh issue list --repo <owner>/<repo> --search "<keywords>"\` for a duplicate, then \`gh issue create --repo <owner>/<repo> --title "<short>" --body "<pr url> <file:line>: <why, one or two lines>"\`. Nits and style never become issues. Everything else is dropped. A gap the PR declares out of scope is never a blocker, but a problem the PR itself introduces is not out of scope.
+4. NON-BLOCKING findings (design, cleanups, style, nits, gaps the description defers) never go in the comment and never become an issue: they are dropped. A gap the PR declares out of scope is never a blocker, but a problem the PR itself introduces is not out of scope.
 
 5. The comment, first person as ${who}${reviewer?.login ? ` (posted as ${reviewer.login})` : ""}, like a quick chat message:
    - line 1: where you land, "good to merge" or what blocks. A clean PR gets this line and the sign-off, nothing else
@@ -141,7 +140,7 @@ For EACH PR, in order:
 6. Close out in Slack, which renders differently from GitHub:
 
 ${SLACK_FORMAT}
- Posted bodies are relayed into the thread as they land: do not paste them again. Final reply, four lines at most: per PR the url, what you did (approved / requested changes / commented), open, merged or closed, the headline blocker if any, and any issue url you opened. Never re-argue a finding, explain your process or close on a question. End with exactly: just a cozy little glance from me and my claude ;))`;
+ Posted bodies are relayed into the thread as they land: do not paste them again. Final reply, four lines at most: per PR the url, what you did (approved / requested changes / commented), open, merged or closed, and the headline blocker if any. Never re-argue a finding, explain your process or close on a question. End with exactly: just a cozy little glance from me and my claude ;))`;
 };
 
 /**
@@ -172,7 +171,7 @@ export const reviewHelp = (
     "    - nothing blocking: one short comment, done",
     "    - something blocking: request changes with a fixed marker, then one comment carrying the blockers",
     "*4.* the comment carries blockers only: one line saying where I land, then one short bullet per blocker. a clean PR gets just that line and the sign-off",
-    "*5.* non-blocking findings are never posted. one worth fixing later becomes a GitHub issue on the repo, nits are dropped",
+    "*5.* non-blocking findings are never posted, and never become an issue",
     "*6.* a short wrap-up lands back in the thread with what I did and the headline blocker",
     "",
     "*approval* only after a clean review by default; a repo can opt in to up front, reversed if I find a blocker. `--policy first|after` changes it for one run",

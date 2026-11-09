@@ -53,6 +53,7 @@ import type { GitHubPort } from "./github.ts";
 import type { DraftReply } from "./draftReply.ts";
 import type { SelfPrAccounts } from "../domain/selfUpdate.ts";
 import { isRestartCut } from "./runRegistry.ts";
+import { logAndIgnore } from "./ignoredError.ts";
 
 export type HandleMessageDeps = {
   users: UserRepo;
@@ -320,7 +321,7 @@ export const handleMessage = async (
   );
 
   // Its own id, so a mention of itself is recognised as itself.
-  const botUserId = await deps.slack?.botUserId().catch(() => undefined);
+  const botUserId = await deps.slack?.botUserId().catch(logAndIgnore("bot user id lookup"));
   // Minted once for this turn. It reaches the CLI through its environment, not
   // its prompt: a thread's session remembers every prompt it was ever handed,
   // and a remembered ticket is both dead and somebody else's.

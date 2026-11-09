@@ -31,6 +31,7 @@ import type { Clock } from "./ports.ts";
 import type { SlackDirectory } from "./slackDirectory.ts";
 import type { StatsRepo } from "../infrastructure/db/statsRepo.ts";
 import { fillDays, offsetMsOf, statsDays, windowStart } from "../domain/dashboardStats.ts";
+import { logAndIgnore } from "./ignoredError.ts";
 
 /** A refused use case: what to tell the caller, and the HTTP-ish status it maps to. */
 export type Refusal = { readonly ok: false; readonly error: string; readonly status: number };
@@ -233,7 +234,7 @@ export const createDashboardService = (p: DashboardPorts) => {
     const users = p.users.list();
     const missing = users.filter((u) => !u.displayName).map((u) => u.slackId);
     const resolved: Record<string, string> =
-      missing.length && p.resolveNames ? await p.resolveNames(missing).catch(() => ({})) : {};
+      missing.length && p.resolveNames ? await p.resolveNames(missing).catch(logAndIgnore("dashboard resolve names", {} as Record<string, string>)) : {};
     const logins = githubLogins();
     return users.map((u) => ({
       ...u,

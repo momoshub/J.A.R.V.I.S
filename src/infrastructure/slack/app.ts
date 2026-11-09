@@ -7,6 +7,8 @@
  * tool calls shown as a task timeline; otherwise it posts once. No business
  * logic lives here.
  */
+// TODO(split): big file, deliberately not refactored in one go. Rule: split the part you
+//   touch into its own module; the markers below name where each section should go.
 import { App } from "@slack/bolt";
 import type { WebClient } from "@slack/web-api";
 import { respond, type RespondDeps } from "../../application/respond.ts";
@@ -104,6 +106,7 @@ import {
   type ConnectionHealth,
   type ConnectionState,
 } from "../../domain/connectionHealth.ts";
+import { ignoreQuietly, logAndIgnore } from "../../application/ignoredError.ts";
 
 /** Messages longer than this get a "thinking" step before content streams. */
 
@@ -350,6 +353,7 @@ export type Incoming = {
  * Build the transport-agnostic message handler. Exported so it can be tested
  * with fake clients/streamers without standing up a real Slack connection.
  */
+// TODO(split): move createHandler (message intake) to src/infrastructure/slack/handler.ts
 export const createHandler =
   (config: SlackAppConfig, deps: Deps, log: (msg: string) => void) => {
   // Cache resolved display names across messages for this connection.
@@ -436,7 +440,7 @@ export const createHandler =
         // no longer existed - which is where a busy thread collected a row of
         // placeholder cards that never completed.
         const { emptyTs } = (await stream?.abandon()) ?? {};
-        if (emptyTs) await deps.slack?.remove(msg.channelId, emptyTs).catch(() => undefined);
+        if (emptyTs) await deps.slack?.remove(msg.channelId, emptyTs).catch(ignoreQuietly("remove empty placeholder"));
         // A stopped turn that only got as far as its tool cards has no answer
         // to keep, and a message of cards with no words reads as a blank reply.
         await dropQuiet(msg, stream?.parts.filter((p) => p.ts !== emptyTs && isQuiet(p.text)) ?? [], log);
@@ -583,7 +587,7 @@ export const createHandler =
       log(`respond failed: ${err instanceof Error ? err.message : String(err)}`);
       // Not `started`: an armed-but-unfired placeholder is the exact case that
       // leaves a stray card behind, and only finishing cancels its timer.
-      if (stream) await stream.finish().catch(() => undefined);
+      if (stream) await stream.finish().catch(ignoreQuietly("finish stream after failure"));
       await dropQuiet(msg, stream?.parts.filter((p) => isQuiet(p.text)) ?? [], log);
       // A turn reaped for running long is not a bug, and saying "I hit an error"
       // invites the same question again rather than a narrower one.
@@ -593,7 +597,7 @@ export const createHandler =
       await msg
         .say({ ...signedText(text, footerLine(SIGNATURES.jarvis, deps.clock())), thread_ts: msg.threadTs })
         .catch(() => msg.say({ text, thread_ts: msg.threadTs }))
-        .catch(() => undefined);
+        .catch(logAndIgnore("error reply to thread"));
     }
   };
 };
@@ -616,6 +620,7 @@ const dropQuiet = async (msg: Incoming, parts: readonly { ts: string }[], log: (
  * error after three seconds - and handed to the thread as a turn from
  * whoever pressed, so their role decides what it may do, as if they typed.
  */
+// TODO(split): move createKitListeners and retireOpenKit to src/infrastructure/slack/kitListeners.ts
 export const createKitListeners = (
   kitViews: Deps["kitViews"],
   handle: (msg: Incoming) => Promise<void>,
@@ -920,7 +925,7 @@ export const createSlackApp = (config: SlackAppConfig, deps: Deps) => {
   // The real WebClient is a superset of the minimal SlackClient seam.
   const asClient = (client: WebClient) => client as unknown as SlackClient;
   const retireOnReply = async (client: unknown, m: Parameters<typeof retireOpenKit>[2]) =>
-    retireOpenKit(client, await deps.slack?.botUserId().catch(() => undefined), m, log);
+    retireOpenKit(client, await deps.slack?.botUserId().catch(ignoreQuietly("bot user id lookup")), m, log);
 
   // @-mentions in channels -> reply in the same thread.
   app.event("app_mention", async ({ event, client, say, context }) => {
@@ -971,7 +976,7 @@ export const createSlackApp = (config: SlackAppConfig, deps: Deps) => {
             ? `❌ rejected <@${outcome.requester}>'s command`
             : undefined;
       if (settled && body.channel?.id && body.message?.ts) {
-        await deps.slack?.settleInteractive(body.channel.id, body.message.ts, settled).catch(() => undefined);
+        await deps.slack?.settleInteractive(body.channel.id, body.message.ts, settled).catch(logAndIgnore("settle interactive message"));
       }
     } catch (err) {
       log(`command approval failed: ${err instanceof Error ? err.message : String(err)}`);
@@ -980,6 +985,7 @@ export const createSlackApp = (config: SlackAppConfig, deps: Deps) => {
   app.action({ action_id: APPROVE_ACTION }, onApprovalButton as never);
   app.action({ action_id: REJECT_ACTION }, onApprovalButton as never);
 
+  // TODO(split): move tokenModal/totpModal to src/infrastructure/slack/credentialModals.ts
   // A token never travels as a Slack message: the button opens a modal, and a
   // modal's input is not posted, not searchable, and not in the bot's memory.
   const tokenModal = (metadata: string) => ({
@@ -1148,6 +1154,7 @@ export const createSlackApp = (config: SlackAppConfig, deps: Deps) => {
    * command's own role gate still decides. A button is never a way to run
    * something you could not have typed.
    */
+  // TODO(split): move menuModal, runFromMenu and onMenuPress to src/infrastructure/slack/menuHandlers.ts
   const menuModal = (command: string, usage: string, summary: string, metadata: string, confirmOnly = false) => ({
     type: "modal" as const,
     callback_id: MENU_VIEW,
@@ -1189,7 +1196,7 @@ export const createSlackApp = (config: SlackAppConfig, deps: Deps) => {
       if (text.trim()) await reply(text);
     } catch (err) {
       log(`menu command failed: ${err instanceof Error ? err.message : String(err)}`);
-      await reply("that one did not go through - try typing it").catch(() => undefined);
+      await reply("that one did not go through - try typing it").catch(logAndIgnore("menu command failure reply"));
     }
   };
 
@@ -1287,19 +1294,20 @@ export const createSlackApp = (config: SlackAppConfig, deps: Deps) => {
     // was actually stopped (a press with nothing running has nothing to say).
     const logChannel = deps.stopLogChannel?.() ?? "";
     if (stopped && logChannel) {
-      const link = await deps.slack?.permalink?.(plan.channel, plan.threadTs).catch(() => undefined);
+      const link = await deps.slack?.permalink?.(plan.channel, plan.threadTs).catch(logAndIgnore("stop log permalink"));
       await deps.slack
         ?.post(
           logChannel,
           sessionStoppedLog(stopped, { by: plan.by, channel: plan.channel, threadTs: plan.threadTs, ...(link ? { link } : {}) }, Date.now(), forHowLong),
         )
-        .catch(() => undefined);
+        .catch(logAndIgnore("stop log post"));
     }
     log(
       `agent session stop by ${plan.by}: ${stopped ? `stopped ${stopped.id}` : "nothing running"}, ${closed}/${streams.length} streams closed (${plan.streams.length - streams.length} kept)`,
     );
   }) as never);
 
+  // TODO(split): move reaction handlers to src/infrastructure/slack/reactionHandlers.ts
   // The owner reacting on an access-request notice decides it; the owner
   // reacting on one of the bot's messages moves or deletes it.
   app.event("reaction_added", async ({ event }) => {
@@ -1363,6 +1371,7 @@ export const createSlackApp = (config: SlackAppConfig, deps: Deps) => {
    * one-on-one within seconds.
    */
   type ThreadInfo = { author?: string; participants: string[]; at: number };
+  // TODO(split): move threadInfo and autoFollow to src/infrastructure/slack/threadFollow.ts
   const threadInfos = new Map<string, ThreadInfo>();
   const THREAD_INFO_TTL_MS = 30_000;
   const threadInfo = async (client: SlackClient, channel: string, threadTs: string): Promise<ThreadInfo> => {
@@ -1404,7 +1413,7 @@ export const createSlackApp = (config: SlackAppConfig, deps: Deps) => {
     const follows = deps.follows;
     if (!follows || channel.startsWith("D")) return;
     if (follows.isFollowed(channel, threadTs) || follows.isOptedOut(channel, threadTs)) return;
-    const me = await deps.slack?.botUserId().catch(() => undefined);
+    const me = await deps.slack?.botUserId().catch(ignoreQuietly("bot user id lookup"));
     if (!me) return;
     const info = await threadInfo(client, channel, threadTs);
     if (!startsAutoFollow({ participants: info.participants, author, botUserId: me })) return;
@@ -1424,7 +1433,7 @@ export const createSlackApp = (config: SlackAppConfig, deps: Deps) => {
       // it. Or somebody ASKED it to, with `follow`, which is how a thread
       // started by a person gets the same treatment. Or it is just it and
       // one person talking, who should not have to tag it on every line.
-      const me = await deps.slack?.botUserId().catch(() => undefined);
+      const me = await deps.slack?.botUserId().catch(ignoreQuietly("bot user id lookup"));
       if (!couldFollowThread(m, me)) return;
       if (!me) {
         log(`follow skip channel=${m.channel} thread=${m.thread_ts} user=${m.user}: bot id unknown`);
@@ -1481,6 +1490,7 @@ export const createSlackApp = (config: SlackAppConfig, deps: Deps) => {
     });
   });
 
+  // TODO(split): move slash command registration to src/infrastructure/slack/slashCommands.ts
   // Slash commands, all routed through the same command registry as the message
   // prefix. Register each in the Slack app config. The configured slash command is
   // the general dispatcher; /rv, /br, /jrp are shortcuts to those commands.

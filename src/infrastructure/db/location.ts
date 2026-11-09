@@ -7,10 +7,10 @@
  * `TOKEN_DATABASE_PATH`), and an instance moves over without a manual copy:
  * `adoptDatabase` fills a missing destination from the old file on first boot.
  *
- * Nothing here ever deletes or overwrites a database.
+ * Nothing here ever deletes or overwrites a database that holds tables.
  */
 import { Database } from "bun:sqlite";
-import { chmodSync, copyFileSync, existsSync, mkdirSync, renameSync, rmSync } from "node:fs";
+import { chmodSync, copyFileSync, existsSync, mkdirSync, renameSync, rmSync, statSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, isAbsolute, join, resolve } from "node:path";
 import { expandHome } from "../../domain/dbPath.ts";
@@ -72,22 +72,80 @@ const vacuumInto = (src: string, out: string, readonly: boolean): void => {
 };
 
 export type AdoptResult =
-  /** `to` was missing and has been filled from `from`. */
+  /** `to` was missing (or an empty shell) and has been filled from `from`. */
   | "migrated"
-  /** `to` already exists: left exactly as it is. */
+  /** `to` already holds tables: left exactly as it is. */
   | "present"
-  /** No `from` configured, or both name the same file, or `from` is not there. */
+  /** No `from` configured (or it names the same file) and `to` is missing: the bot starts a fresh database. */
   | "nothing-to-adopt";
 
+export type AdoptOptions = {
+  /** File mode for the new database (0o600 for credentials). */
+  mode?: number;
+  /** Receives the resolved absolute `to` / `from` and the outcome, on every call. */
+  log?: (line: string) => void;
+  /** What a relative `from` resolves against; the checkout by default, never the cwd. */
+  root?: string;
+};
+
+/** The repo checkout: where a relative `DATABASE_MIGRATE_FROM` (`data/jarvis.db`) has always pointed. */
+const CHECKOUT_ROOT = resolve(import.meta.dir, "..", "..", "..");
+
+/** Does the database file hold at least one table? Throws if it is not a database at all. */
+const hasTables = (path: string): boolean => {
+  const db = new Database(path);
+  try {
+    const row = db.query<{ n: number }, []>("SELECT count(*) AS n FROM sqlite_master WHERE type = 'table'").get();
+    return (row?.n ?? 0) > 0;
+  } finally {
+    db.close();
+  }
+};
+
+/** A file that is absent, 0 bytes, or a database without tables carries nothing worth keeping. */
+const isEmptyShell = (path: string): boolean => {
+  if (!existsSync(path)) return true;
+  if (statSync(path).size === 0 && !(existsSync(`${path}-wal`) && statSync(`${path}-wal`).size > 0)) return true;
+  return !hasTables(path);
+};
+
 /**
- * One-time move of a database to a new path: when `to` does not exist and
- * `from` does, `to` becomes a snapshot of `from`. `from` is only read, and is
- * left in place.
+ * One-time move of a database to a new path: when `to` is absent or an empty
+ * shell (0 bytes, no tables) and `from` holds a database, `to` becomes a
+ * snapshot of `from`. `from` is only read, and is left in place. A `to` with
+ * tables is never touched.
+ *
+ * Fails closed: with `from` configured and `to` unusable, a `from` that is
+ * missing or empty THROWS, because falling through would let the caller create
+ * a brand-new empty database where the real one was meant to be adopted (a typo,
+ * a relative path under another cwd), and every later boot would then see it as
+ * "present". A relative `from` resolves against `root` (the checkout), not the cwd. With `log`, the
+ * resolved absolute paths and the outcome are reported on every call.
  */
-export const adoptDatabase = (to: string, from: string | undefined, mode?: number): AdoptResult => {
+export const adoptDatabase = (
+  to: string,
+  from: string | undefined,
+  { mode, log, root = CHECKOUT_ROOT }: AdoptOptions = {},
+): AdoptResult => {
   if (to === ":memory:") return "nothing-to-adopt";
-  if (existsSync(to)) return "present";
-  if (!from || resolve(from) === resolve(to) || !existsSync(from)) return "nothing-to-adopt";
-  snapshotDatabase(from, to, mode);
-  return "migrated";
+  const absTo = resolve(to);
+  const absFrom = from && resolveDbPath(from, root) !== absTo ? resolveDbPath(from, root) : undefined;
+  const done = (result: AdoptResult): AdoptResult => {
+    log?.(`[db] to=${absTo} from=${absFrom ?? "(none)"} -> ${result}`);
+    return result;
+  };
+  const toEmpty = isEmptyShell(absTo);
+  if (!toEmpty) return done("present");
+  if (!absFrom) return done("nothing-to-adopt");
+  if (!existsSync(absFrom) || isEmptyShell(absFrom)) {
+    log?.(`[db] to=${absTo} from=${absFrom} -> refusing to start`);
+    throw new Error(
+      `database migration source ${absFrom} is missing or holds no tables, and the destination ${absTo} ` +
+        `${existsSync(absTo) ? "is empty" : "does not exist"}: refusing to start on an empty database. ` +
+        "Fix DATABASE_MIGRATE_FROM (a relative path resolves against the checkout), or unset it to start fresh.",
+    );
+  }
+  if (existsSync(absTo)) for (const f of [absTo, `${absTo}-wal`, `${absTo}-shm`]) rmSync(f, { force: true });
+  snapshotDatabase(absFrom, absTo, mode);
+  return done("migrated");
 };
