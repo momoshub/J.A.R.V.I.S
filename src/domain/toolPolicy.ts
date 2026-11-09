@@ -153,6 +153,32 @@ export const EXECUTER_DB_SERVERS: readonly string[] = [
 ];
 
 /**
+ * The Notion MCP server configured on the host (`claude mcp add --transport
+ * http notion https://mcp.notion.com/mcp`, then authenticated once).
+ *
+ * The claude.ai Notion CONNECTOR cannot reach a chat turn - its authorisation
+ * lives on the account, and a `claude setup-token` credential carries none. A
+ * server registered in the host's own MCP config is the same kind of thing as
+ * the database servers above: a configured server the turn loads on whatever
+ * credential it holds, so a chat turn gets the whole toolset (search, fetch,
+ * create and update pages INCLUDING properties such as Status, comments).
+ *
+ * It writes under the host's Notion identity, exactly like `note`, so it is
+ * gated by the same floor (`note_min_role`, default admin) rather than being
+ * open to every role: below the floor it is denied by name, at or above it a
+ * sandboxed role gets it pre-approved.
+ */
+export const NOTION_MCP_SERVER = "mcp__notion";
+
+const ROLE_RANK: Record<UserRole, number> = { pal: 0, executer: 1, admin: 2, owner: 3 };
+
+/** The default floor of `note`: it writes with the host's Notion identity. */
+export const DEFAULT_NOTION_FLOOR: UserRole = "admin";
+
+export const mayUseNotion = (role: UserRole, floor: UserRole = DEFAULT_NOTION_FLOOR): boolean =>
+  ROLE_RANK[role] >= ROLE_RANK[floor];
+
+/**
  * Tools a side question may use: none.
  *
  * It has to be a DENY list. `--allowedTools` pre-approves what is on it and
@@ -176,6 +202,7 @@ export const NO_TOOLS: readonly string[] = [
   "WebFetch", "WebSearch",
   // A side question running a production query is the opposite of an aside.
   ...DB_MCP_SERVERS,
+  NOTION_MCP_SERVER,
 ];
 
 /**
@@ -334,6 +361,11 @@ export type ToolPolicyOptions = {
    * `--disallowedTools`, since a denial is the only lever that refuses.
    */
   readonly roleDisallow?: readonly string[];
+  /**
+   * Lowest role that may use the host's Notion MCP server (`note`'s floor).
+   * Absent means the default, admin.
+   */
+  readonly notionFloor?: UserRole;
 };
 
 /**
@@ -357,11 +389,19 @@ const modelOf = (role: UserRole, opts: ToolPolicyOptions): string | undefined =>
 
 export const toolPolicyFor = (role: UserRole, opts: ToolPolicyOptions): ToolPolicy => {
   const base = basePolicyFor(role, opts);
-  const extra = opts.roleDisallow ?? [];
+  // Below the floor the server is denied by name (an allow-list never refuses).
+  const extra = [
+    ...(opts.roleDisallow ?? []),
+    ...(mayUseNotion(role, opts.notionFloor) ? [] : [NOTION_MCP_SERVER]),
+  ];
   return extra.length
     ? { ...base, disallowedTools: [...new Set([...(base.disallowedTools ?? []), ...extra])] }
     : base;
 };
+
+/** Pre-approval for a sandboxed role at or above the Notion floor. */
+const notionAllow = (role: UserRole, opts: ToolPolicyOptions): readonly string[] =>
+  mayUseNotion(role, opts.notionFloor) ? [NOTION_MCP_SERVER] : [];
 
 const basePolicyFor = (role: UserRole, opts: ToolPolicyOptions): ToolPolicy => {
   switch (role) {
@@ -385,6 +425,7 @@ const basePolicyFor = (role: UserRole, opts: ToolPolicyOptions): ToolPolicy => {
             ...EXECUTER_DB_SERVERS,
             ...EXECUTER_CODE_TOOLS,
             ...executerBrowserTools(opts),
+            ...notionAllow(role, opts),
           ],
           opts,
         ),
@@ -396,7 +437,7 @@ const basePolicyFor = (role: UserRole, opts: ToolPolicyOptions): ToolPolicy => {
       return {
         skipPermissions: false,
         cwd: opts.sandboxCwd,
-        allowedTools: withHelpers(PAL_TOOLS, opts),
+        allowedTools: withHelpers([...PAL_TOOLS, ...notionAllow(role, opts)], opts),
         disallowedTools: SANDBOX_DISALLOW,
         model: modelOf("pal", opts),
       };

@@ -51,6 +51,13 @@ describe("credentialGapRules", () => {
     expect(r).toContain('"I cannot write to Notion" is simply wrong');
   });
 
+  test("Notion is reachable directly, and the prompt no longer says a chat turn has no Notion", () => {
+    expect(r).toContain("mcp__notion__notion-update-page");
+    expect(r).toContain("note access <role>");
+    expect(r).not.toContain("no Notion, no Datadog");
+    expect(r).not.toContain("has no connectors at all");
+  });
+
   test("a genuine dead end is still a real answer", () => {
     expect(r).toContain("THAT is a real answer");
   });

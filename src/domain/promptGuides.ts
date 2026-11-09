@@ -40,7 +40,7 @@ export const GUIDE_SUMMARIES: Readonly<Record<GuideSlug, string>> = {
   tickets:
     "a NEW report of the product misbehaving is raised as a ticket with the `ticket` command, after searching the tracker for a duplicate. Read before raising one",
   "credential-gap":
-    "a 403, \"private\", an empty page or a missing `mcp__` tool means the wrong credential for this turn, not impossible: run the host command that has it (`read`, `investigate`, `ticket`, `note`) yourself, never hunt for keys. Read when something will not open",
+    "a 403, \"private\", an empty page or a missing `mcp__` tool means the wrong credential for this turn, not impossible: run the host command that has it (`read`, `investigate`, `ticket`, `note`) yourself, never hunt for keys. Notion is the exception: its `mcp__notion__notion-*` tools load straight into a turn (search, fetch, create/update pages and properties, comments), role-gated like `note`. Read when something will not open",
   desktop:
     "driving a Mac app or Brave on the real screen - only through the desktop helper, never osascript, one session at a time. Read before touching the screen",
   parallel:
