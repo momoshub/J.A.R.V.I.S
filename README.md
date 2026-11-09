@@ -295,7 +295,10 @@ Every chat turn, for every role, can also look in Datadog itself: the host runs
 a Datadog MCP server (`claude mcp add --scope user --transport http datadog
 https://mcp.datadoghq.com/v1/mcp`, authenticated once with OAuth in a browser;
 the claude.ai Datadog connector cannot reach a chat turn, which runs on a
-`claude setup-token` credential). Only the read tools are exposed - logs, RUM,
+`claude setup-token` credential). Until that OAuth is done the server is listed in
+`UNAUTHENTICATED_MCP_SERVERS` (`src/infrastructure/llm/mcpConfig.ts`) and no bot turn loads it:
+an unauthenticated server makes the CLI inject a needs-authentication notice that the model
+copies into its reply. Remove it from that list once authenticated. Only the read tools are exposed - logs, RUM,
 spans, metrics, monitors, incidents, dashboards; anything that edits a notebook
 or dashboard, and `execute_code`, is denied. `investigate` stays the route for a
 full investigation on the host login, and the fallback when that server's login
