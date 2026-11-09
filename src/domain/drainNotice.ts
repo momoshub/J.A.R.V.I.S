@@ -64,18 +64,37 @@ export const drainNotice = (info?: DrainInfo, waiting: readonly string[] = []): 
  *
  * Only message events have a thread worth answering in: an interactive press
  * or a slash command is its own thing, and a notice about a restart posted
- * into one would land where nobody is looking.
+ * into one would land where nobody is looking. And only those the bot would
+ * answer (`couldBeForBot`): a channel post nobody tagged it in is somebody
+ * else's conversation, and listing it named a thread it was never asked into.
  *
  * `threadTs` is the thread a reply would land in: the parent for a reply, the
  * message itself for a top-level one, so every waiting thread has a link.
  */
 const ASKING_SUBTYPES: ReadonlySet<string> = new Set(["file_share", "thread_broadcast"]);
 
+/**
+ * Whether the bot could answer this event at all. The message listener answers
+ * DMs and follows thread replies, nothing else: a top-level channel post only
+ * reaches it through its own `app_mention` copy, when it is tagged. So a post
+ * to a user group that merely looks like a review ask ("review and approve" and
+ * a PR link) is not for it, and holding or listing it named a thread it was
+ * never in. A thread reply stays in: whether the thread is followed takes a
+ * Slack call, and holding one too many costs a short wait, not a wrong review.
+ */
+const couldBeForBot = (event: Record<string, unknown>): boolean => {
+  if (event.type === "app_mention") return true;
+  const channel = typeof event.channel === "string" ? event.channel : "";
+  if (event.channel_type === "im" || channel.startsWith("D")) return true;
+  return typeof event.thread_ts === "string" && event.thread_ts !== event.ts;
+};
+
 export const envelopeThread = (
   body: Record<string, unknown>,
 ): { channel: string; threadTs?: string } | undefined => {
   const event = body.event as Record<string, unknown> | undefined;
-  if (!event || event.type !== "message") return undefined;
+  if (!event || (event.type !== "message" && event.type !== "app_mention")) return undefined;
+  if (!couldBeForBot(event)) return undefined;
   // The bot's own messages are not somebody waiting for an answer.
   if (event.bot_id || event.subtype === "bot_message") return undefined;
   // An edit or a delete is not somebody asking either. A message_changed
@@ -113,7 +132,8 @@ export const unnotified = (
  * session. A command (typed with a prefix, or a spoken review request), a
  * slash command or a button starts work that cannot be stopped part way, so
  * it would hold the restart open until the cap and then run a second time.
- * Those wait in the inbox, as every row did before budgets existed.
+ * Those wait in the inbox, as every row did before budgets existed. A message
+ * the bot would not answer anyway (`couldBeForBot`) waits for nothing.
  */
 export const waitsForRestart = (
   type: string,
@@ -123,6 +143,7 @@ export const waitsForRestart = (
   if (type !== "events_api") return true;
   const event = body.event as Record<string, unknown> | undefined;
   if (!event || (event.type !== "message" && event.type !== "app_mention")) return false;
+  if (!couldBeForBot(event)) return false;
   const text = typeof event.text === "string" ? event.text : "";
   const bare = text.replace(/^(\s*<@[^>]+>)+\s*/, "").trimStart().toLowerCase();
   if (commandPrefixes.some((p) => p.trim() && bare.startsWith(p.trim().toLowerCase()))) return true;
