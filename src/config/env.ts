@@ -7,6 +7,7 @@
 import { homedir } from "node:os";
 import { join } from "node:path";
 import { z } from "zod";
+import { expandHome } from "../domain/dbPath.ts";
 import { parseAllowedOwners } from "../domain/githubApp.ts";
 import { parseSelfPrAccounts, RESTART_TURN_BUDGET_MS, type SelfPrAccounts } from "../domain/selfUpdate.ts";
 
@@ -70,7 +71,13 @@ const schema = z
     // for when you reach it through a proxy/tunnel/port-forward. Loopback origins
     // are always allowed.
     DASHBOARD_ALLOWED_ORIGINS: z.string().optional(),
+    // The live database. Keep it OUTSIDE the git checkout (`~/` works): a stash,
+    // checkout, reset or rebase there swaps the file under the open handle.
     DATABASE_PATH: z.string().default("data/bot.db"),
+    // One-time move: when DATABASE_PATH does not exist yet and this file does,
+    // the first boot fills it with a consistent snapshot of this one. The old
+    // file is only read, never changed or deleted. Unset: no migration.
+    DATABASE_MIGRATE_FROM: z.string().optional(),
     // Where the memory adapter is mirrored on disk. The adapter itself lives in
     // the database (`adapter_files`); this directory is re-rendered from it on
     // every write so skills and their scripts can be read by path. Never edit
@@ -88,6 +95,8 @@ const schema = z
     // gets committed, and are encrypted under a key kept beside it. Both paths
     // are gitignored; set them elsewhere if the data directory is shared.
     TOKEN_DATABASE_PATH: z.string().default("data/tokens.db"),
+    // Same one-time move as DATABASE_MIGRATE_FROM, for the token database.
+    TOKEN_DATABASE_MIGRATE_FROM: z.string().optional(),
     TOKEN_KEY_PATH: z.string().default("data/tokens.key"),
     // Folder for the activity/error logs (one JSON line per event).
     LOG_DIR: z.string().default("logs"),
@@ -170,6 +179,8 @@ export type AppConfig = {
   dashboardPort: number;
   dashboardAllowedOrigins: string[];
   databasePath: string;
+  /** Old location of the database, copied from once when `databasePath` is missing. */
+  databaseMigrateFrom?: string;
   /** Mirror directory of the memory adapter, rendered from the database. */
   adapterPath: string;
   /** Bytes of the adapter allowed to load into every prompt. */
@@ -177,6 +188,8 @@ export type AppConfig = {
   /** Commands one turn may trigger through the run helper. */
   commandTicketUses: number;
   tokenDatabasePath: string;
+  /** Old location of the token database, copied from once when `tokenDatabasePath` is missing. */
+  tokenDatabaseMigrateFrom?: string;
   tokenKeyPath: string;
   logDir: string;
   /** Channel for the restart notice listing waiting threads; unset is silent. */
@@ -242,11 +255,15 @@ export const loadConfig = (source: Record<string, string | undefined> = process.
       .split(",")
       .map((o) => o.trim())
       .filter(Boolean),
-    databasePath: env.DATABASE_PATH,
+    databasePath: expandHome(env.DATABASE_PATH.trim()),
+    ...(env.DATABASE_MIGRATE_FROM?.trim() ? { databaseMigrateFrom: expandHome(env.DATABASE_MIGRATE_FROM.trim()) } : {}),
     adapterPath: env.ADAPTER_PATH,
     adapterBudget: env.ADAPTER_BUDGET,
     commandTicketUses: env.COMMAND_TICKET_USES,
-    tokenDatabasePath: env.TOKEN_DATABASE_PATH,
+    tokenDatabasePath: expandHome(env.TOKEN_DATABASE_PATH.trim()),
+    ...(env.TOKEN_DATABASE_MIGRATE_FROM?.trim()
+      ? { tokenDatabaseMigrateFrom: expandHome(env.TOKEN_DATABASE_MIGRATE_FROM.trim()) }
+      : {}),
     tokenKeyPath: env.TOKEN_KEY_PATH,
     logDir: env.LOG_DIR,
     ...(env.DRAIN_NOTICE_CHANNEL ? { drainNoticeChannel: env.DRAIN_NOTICE_CHANNEL } : {}),

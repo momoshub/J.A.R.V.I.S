@@ -15,6 +15,7 @@ import { tmpdir } from "node:os";
 import { loadConfig, modelLabel, type AppConfig } from "./config/env.ts";
 import { isSilenceNote } from "./domain/silence.ts";
 import { openDatabase } from "./infrastructure/db/client.ts";
+import { adoptDatabase } from "./infrastructure/db/location.ts";
 import { createThreadSessionRepo } from "./infrastructure/db/threadSessionRepo.ts";
 import { createThreadQueue } from "./application/threadQueue.ts";
 import { RESTART_DELAY_MS, RESTART_HOLD_NOTICE, RESTART_MAX_WAIT_MS, restartWhenIdle } from "./domain/selfUpdate.ts";
@@ -181,6 +182,9 @@ const WATCH_TICK_MS = 10_000;
 const main = async () => {
   const config = loadConfig();
 
+  // A moved database is filled from its old place once, before anything opens it.
+  // With a source configured, a missing one throws rather than start empty.
+  adoptDatabase(config.databasePath, config.databaseMigrateFrom, { log: console.log });
   // TODO(split): move db + repository construction to src/infrastructure/persistence/buildRepos.ts (returns the repo bag)
   const db = openDatabase(config.databasePath);
   // The bot reads its allowlist through the role policies, so a switched-off
@@ -214,6 +218,7 @@ const main = async () => {
   const settings = createSettingsRepo(db);
   // Separate database on purpose: the main one is committed, and user tokens
   // must never be able to reach git. Encrypted under a key kept beside it.
+  adoptDatabase(config.tokenDatabasePath, config.tokenDatabaseMigrateFrom, { mode: 0o600, log: console.log });
   const tokenDb = openTokenDatabase(config.tokenDatabasePath);
   const tokenKey = loadOrCreateKey(config.tokenKeyPath);
   const claudeTokens = createClaudeTokenRepo(tokenDb, tokenKey);

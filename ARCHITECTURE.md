@@ -47,11 +47,21 @@ no classes.
   +-------------------------------------------------------------------------+
             |                                   |
             v                                   v
-   data/<bot>.db, data/tokens.db,        bin/ helpers the brain calls
-   data/adapter-mirror/ (from DB),      (slack-read, slack-react, run, ...)
+   DATABASE_PATH, TOKEN_DATABASE_PATH    bin/ helpers the brain calls
+   (outside the checkout, ~/.jarvis),   (slack-read, slack-react, run, ...)
+   data/adapter-mirror/ (from DB),      bin/db-backup.ts -> DATABASE_BACKUP_DIR
    data/prompt-guides/ (from code)
 ```
 
+- **The live databases are outside git.** `DATABASE_PATH` and
+  `TOKEN_DATABASE_PATH` point outside the checkout, because a git operation that
+  replaces a file under an open SQLite handle crashes the bot. A path may be moved
+  once with `DATABASE_MIGRATE_FROM` / `TOKEN_DATABASE_MIGRATE_FROM`:
+  `adoptDatabase` (`infrastructure/db/location.ts`) fills a missing (or empty) destination
+  with a `VACUUM INTO` snapshot at boot, never overwrites a database with tables,
+  and fails closed (throws) when the source is configured but missing. `bin/db-backup.ts`
+  is the backup (snapshots into `DATABASE_BACKUP_DIR`, optionally committed to a
+  repo of its own).
 - **Gateway / bot split.** `src/gateway.ts` only holds the Slack socket and
   writes every envelope to `data/inbox.db`. The bot reads it through
   `inboxReceiver`, a Bolt receiver, so every listener in `app.ts` runs exactly

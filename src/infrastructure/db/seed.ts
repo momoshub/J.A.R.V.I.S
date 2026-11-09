@@ -25,6 +25,8 @@ if (import.meta.main) {
   const { openDatabase } = await import("./client.ts");
   const { createUserRepo } = await import("./userRepo.ts");
   const config = loadConfig();
+  const { adoptDatabase } = await import("./location.ts");
+  adoptDatabase(config.databasePath, config.databaseMigrateFrom, { log: console.log });
   const db = openDatabase(config.databasePath);
   seedOwner(createUserRepo(db), config.ownerSlackId, () => Date.now());
   console.log(`Seeded owner ${config.ownerSlackId} into ${config.databasePath}`);

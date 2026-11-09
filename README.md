@@ -2,7 +2,7 @@
 
 A configurable Slack agent bot. Its "brain" is your local **Claude Code CLI** (with full tool access) or the **Anthropic API**. It has SQLite memory, an allowlist, live streaming replies with a tool-call timeline, and an admin dashboard.
 
-The codebase is generic - the bot's identity (name, persona, labels) lives in the database and is edited from the dashboard, so the same code runs any bot. The committed `data/ev.db` carries one example instance ("Evie").
+The codebase is generic - the bot's identity (name, persona, labels) lives in the database and is edited from the dashboard, so the same code runs any bot. `data/ev.db` is a leftover example instance ("Evie") that nothing reads.
 
 ## ⚠️ Security - read this first
 
@@ -67,9 +67,18 @@ Required / notable env (see `.env.example`):
 | `SELF_PR_AUTHOR` / `SELF_PR_REVIEWER` | gh logins for the bot's own PRs: the author opens the PR and answers reviews, the reviewer posts review comments, approves and merges. Both or neither, and not the same login (otherwise: one account) |
 | `DASHBOARD_PORT` | dashboard port (local, loopback-only, no auth) |
 | `DASHBOARD_ALLOWED_ORIGINS` | extra browser origins allowed to POST (proxy/tunnel access) |
-| `DATABASE_PATH` | sqlite file (default `data/bot.db`) |
+| `DATABASE_PATH` | the live sqlite file (default `data/bot.db`). Put it **outside the git checkout**, `~/` works, e.g. `~/.jarvis/data/bot.db` - see [Where the database lives](#where-the-database-lives) |
+| `DATABASE_MIGRATE_FROM` | one-time move: when `DATABASE_PATH` does not exist and this file does, the first boot fills it with a consistent snapshot of this one (the old file is only read). Unset: nothing |
+| `TOKEN_DATABASE_PATH` / `TOKEN_DATABASE_MIGRATE_FROM` | the same pair for the token database (default `data/tokens.db`) |
+| `DATABASE_BACKUP_DIR` | where `bin/db-backup.ts` writes snapshots (default `~/.jarvis/backups`) |
 
 Env values for identity only **bootstrap a fresh database**. Once set, the DB values (edited from the dashboard) take precedence, so the code stays generic.
+
+### Where the database lives
+
+The live SQLite files must not sit in the git checkout: a `git stash`, `checkout`, `reset` or `rebase` there replaces the file under the open handle and the bot dies with a SQLite disk I/O error. Point `DATABASE_PATH` and `TOKEN_DATABASE_PATH` at a folder outside the repo (`~/.jarvis/data/`). To move an existing instance without copying by hand, also set `DATABASE_MIGRATE_FROM=data/<old>.db` (and `TOKEN_DATABASE_MIGRATE_FROM=data/tokens.db`): on boot, a missing (or 0-byte / table-less) destination is filled once with a consistent snapshot of the old file (`VACUUM INTO`, so the WAL is included and a running writer is fine). A relative source resolves against the checkout, not the working directory, and the resolved `to`/`from` are logged on every boot. If the source is configured but missing, the bot refuses to start rather than create an empty database. A destination that has tables is never touched, so the lines can stay in `.env`. The old file is only read, never changed or deleted.
+
+Backups: `bun bin/db-backup.ts [--keep N] [--commit]` writes a consistent snapshot of both databases to `DATABASE_BACKUP_DIR` (default `~/.jarvis/backups`, `<name>-<UTC stamp>.db`, newest 14 kept per database). To keep the old "the database is in git" property, make that folder a private git repository of its own and use `--commit`: the history lives in git, and the live file never does. Run it from cron or launchd, e.g. every 6 hours: `0 */6 * * * cd /path/to/repo && bun bin/db-backup.ts --commit`. The token database is ciphertext; its key (`TOKEN_KEY_PATH`) is not backed up, so keep a copy of it somewhere safe.
 
 ## Run
 
@@ -832,9 +841,9 @@ never set up. Only `review` insists.
 
 Tokens live in their own database (`TOKEN_DATABASE_PATH`, default
 `data/tokens.db`), encrypted with AES-256-GCM under a key in `TOKEN_KEY_PATH`
-(default `data/tokens.key`). The database is committed like the main one; **the
-key is gitignored**, so what lands in git is ciphertext and a copy taken from
-anywhere but the host opens nothing.
+(default `data/tokens.key`). Keep the database outside the checkout like the main
+one; **the key is gitignored**, so a backup of it is ciphertext and a copy taken
+from anywhere but the host opens nothing.
 
 ## What a review comment looks like
 
@@ -1022,4 +1031,4 @@ CI (`.github/workflows/ci.yml`) runs both, plus the dashboard's typecheck and bu
 ## Notes
 
 - Architecture is documented in [ARCHITECTURE.md](./ARCHITECTURE.md).
-- The runtime database (`data/ev.db`) is committed and holds this instance's identity/allowlist. Conversation content is not committed (the messages table is cleared before commit). WAL sidecars are gitignored and flushed on clean shutdown.
+- The runtime database (`DATABASE_PATH`) holds this instance's identity/allowlist and lives outside the git checkout (see [Where the database lives](#where-the-database-lives)); `bin/db-backup.ts` is the backup. WAL sidecars are gitignored and flushed on clean shutdown.

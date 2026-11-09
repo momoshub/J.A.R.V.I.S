@@ -41,6 +41,26 @@ describe("loadConfig", () => {
     expect(c.slashCommand).toBe("/bot");
   });
 
+  test("database paths may live outside the checkout (~ expands) and name where to migrate from", () => {
+    const c = loadConfig(base);
+    expect(c.databaseMigrateFrom).toBeUndefined();
+    expect(c.tokenDatabaseMigrateFrom).toBeUndefined();
+    const o = loadConfig({
+      ...base,
+      DATABASE_PATH: "~/.jarvis/data/jarvis.db",
+      DATABASE_MIGRATE_FROM: "data/jarvis.db",
+      TOKEN_DATABASE_PATH: "/srv/jarvis/tokens.db",
+      TOKEN_DATABASE_MIGRATE_FROM: " data/tokens.db ",
+    });
+    expect(o.databasePath).toMatch(/^\/.*\/\.jarvis\/data\/jarvis\.db$/);
+    expect(o.databasePath.startsWith("~")).toBe(false);
+    expect(o.databaseMigrateFrom).toBe("data/jarvis.db");
+    expect(o.tokenDatabasePath).toBe("/srv/jarvis/tokens.db");
+    expect(o.tokenDatabaseMigrateFrom).toBe("data/tokens.db");
+    // a blank line in .env is unset, not a path
+    expect(loadConfig({ ...base, DATABASE_MIGRATE_FROM: " " }).databaseMigrateFrom).toBeUndefined();
+  });
+
   test("GitHub App defaults keep every secret in files outside the repo", () => {
     const g = loadConfig(base).githubApp;
     expect(g.port).toBe(2003);

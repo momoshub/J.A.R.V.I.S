@@ -9,14 +9,15 @@ web/dist/
 .env
 .env.local
 
-# sqlite database is committed to git (per request). its transient WAL sidecars
-# are not - they are flushed into the .db on a clean shutdown.
+# the live sqlite databases belong OUTSIDE the checkout (DATABASE_PATH, see
+# README "Where the database lives"). The data/*.db files still tracked here are
+# legacy copies, kept until every instance has moved. WAL sidecars are never
+# committed - they are flushed into the .db on a clean shutdown.
 data/*.db-shm
 data/*.db-wal
 
-# the key that opens the token database. the database itself is committed like
-# the main one, but it holds ciphertext - this file is what makes it readable,
-# so it stays on the host and out of git.
+# the key that opens the token database. the database holds ciphertext - this
+# file is what makes it readable, so it stays on the host and out of git.
 data/tokens.key
 
 # bun
