@@ -53,6 +53,26 @@ describe("dashboard static + api", () => {
     expect(asked).toEqual(["picked up a fix"]);
   });
 
+  test("the github-app action endpoint needs a ticket, passes the rest on and reports refusals", async () => {
+    const seen: Record<string, unknown>[] = [];
+    const d = build({
+      githubAction: async (req) => {
+        seen.push(req);
+        if (req.ticket === "pal") throw new Error("needs the admin role");
+        return { url: "https://github.com/o/r/pull/1", number: 1 };
+      },
+    });
+    expect((await d.dash.handle(postJson("/api/github-app/action", { action: "pr-close", repo: "o/r", number: 1 }))).status).toBe(400);
+    expect(seen).toEqual([]);
+    const ok = await d.dash.handle(postJson("/api/github-app/action", { ticket: "t1", action: "pr-close", repo: "o/r", number: 1 }));
+    expect(await ok.json()).toMatchObject({ ok: true, number: 1 });
+    expect(seen[0]).toMatchObject({ ticket: "t1", action: "pr-close" });
+    const denied = await d.dash.handle(postJson("/api/github-app/action", { ticket: "pal", action: "pr-close" }));
+    expect(denied.status).toBe(500);
+    expect(((await denied.json()) as { error: string }).error).toContain("admin role");
+    expect((await build().dash.handle(postJson("/api/github-app/action", { ticket: "t" }))).status).toBe(503);
+  });
+
   test("without self-restart wired, it refuses rather than pretending", async () => {
     const res = await build().dash.handle(postJson("/api/restart", {}));
     expect(res.status).toBe(503);

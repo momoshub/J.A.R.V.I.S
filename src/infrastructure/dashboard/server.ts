@@ -93,6 +93,12 @@ export type DashboardDeps = {
    * `runCommand`: the thread it resolves to decides which issue may be written.
    */
   githubComment?: (req: { ticket: string; repo: string; number: number; body: string }) => Promise<{ url?: string }>;
+  /**
+   * Act on GitHub as the app (create/edit/close/merge a PR, review, label,
+   * request reviewers). Ticketed; the bot requires the admin role of whoever
+   * the ticket resolves to. Returns GitHub's JSON.
+   */
+  githubAction?: (req: { ticket: string } & Record<string, unknown>) => Promise<Record<string, unknown>>;
   /** Modals the brain stores for a `jv:modal:<id>` button to open on click. */
   kitViews?: KitViewRepo;
   /**
@@ -385,6 +391,16 @@ export const createDashboard = (config: DashboardConfig, deps: DashboardDeps) =>
           }
           try {
             return Response.json({ ok: true, ...(await deps.githubComment({ ticket, repo, number, body: text })) });
+          } catch (e) {
+            return jsonError(e instanceof Error ? e.message : String(e), 500);
+          }
+        }
+        case "/api/github-app/action": {
+          if (!deps.githubAction) return jsonError("The GitHub App is not configured", 503);
+          const ticket = String(body.ticket ?? "").trim();
+          if (!ticket) return jsonError("ticket is required");
+          try {
+            return Response.json({ ok: true, ...(await deps.githubAction({ ...body, ticket })) });
           } catch (e) {
             return jsonError(e instanceof Error ? e.message : String(e), 500);
           }

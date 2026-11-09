@@ -193,6 +193,8 @@ export type HandleMessageDeps = {
   kitUrl?: string;
   /** Absolute path of the command helper, granted to every role. */
   runScript?: string;
+  /** Absolute path of the GitHub App action helper (admin-gated by the bot). */
+  githubAppScript?: string;
   /** Mints the per-turn ticket that decides who a triggered command runs as. */
   commandTickets?: CommandTickets;
   /** Configured message command prefix + slash name, for the command layer. */
@@ -374,6 +376,7 @@ export const handleMessage = async (
     // runs, so asking in words can never do more than typing it would.
     runUrl: deps.runUrl,
     runScript: deps.runScript,
+    githubAppScript: deps.githubAppScript,
     // Offered to everyone too: a press runs as whoever pressed it, under
     // their own role, so a button can do no more than typing would.
     kitUrl: deps.kitUrl,

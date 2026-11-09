@@ -355,6 +355,12 @@ export type ToolPolicyOptions = {
    * with that turn's ticket.
    */
   readonly githubCommentScript?: string;
+  /**
+   * Absolute path of the GitHub App action helper. Granted to every role like
+   * the others: the bot checks the admin role of the turn's ticket holder
+   * before it does anything, so the grant itself carries no authority.
+   */
+  readonly githubAppScript?: string;
   /** Absolute path of the Slack file downloader. Reading what people share is
    * table stakes, so every role gets it - it can only reach files.slack.com. */
   readonly fileScript?: string;
@@ -418,6 +424,7 @@ const withHelpers = (tools: readonly string[], opts: ToolPolicyOptions): readonl
   ...(opts.grafanaGetScript ? [`Bash(${opts.grafanaGetScript}:*)`] : []),
   ...(opts.slackReadScript ? [`Bash(${opts.slackReadScript}:*)`] : []),
   ...(opts.githubCommentScript ? [`Bash(${opts.githubCommentScript}:*)`] : []),
+  ...(opts.githubAppScript ? [`Bash(${opts.githubAppScript}:*)`] : []),
 ];
 
 /** Channel beats role beats the adapter default. */
