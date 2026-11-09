@@ -48,7 +48,7 @@ export const GUIDE_SUMMARIES: Readonly<Record<GuideSlug, string>> = {
   "block-kit":
     "a question with a fixed set of answers is asked with `jv:` buttons, never lettered options in text. Read before posting buttons, selects or a modal, or when a turn starts with [block kit event]",
   waiting:
-    "you cannot wait - never say you will do something once X finishes, set a `watch` instead (`watch worker <dispatchId>` after every Orca worker you start); `tell` steers another thread. Read for the watch and tell syntax",
+    "you cannot wait - never say you will do something once X finishes, set a `watch` instead (`watch worker <dispatchId>` after every Orca worker you start); `tell` steers another thread without posting anything in Slack. Read for the watch and tell syntax",
 };
 
 /**
@@ -59,7 +59,7 @@ export const AGENT_GUIDE_SUMMARIES: Readonly<Record<"parallel" | "waiting", stri
   parallel:
     "a message with several independent asks is split and run in parallel as Agent tool agents (`run_in_background: true`) in your own process, each answer posted as it lands, never `orca` - it is the owner's. Read before spawning any background agent",
   waiting:
-    "you cannot wait - never say you will do something once X finishes, set a `watch` instead; `tell` steers another thread. Read for the watch and tell syntax",
+    "you cannot wait - never say you will do something once X finishes, set a `watch` instead; `tell` steers another thread without posting anything in Slack. Read for the watch and tell syntax",
 };
 
 /** Order the index lists them in. */

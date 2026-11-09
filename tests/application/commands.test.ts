@@ -1051,27 +1051,28 @@ describe("dispatchCommand", () => {
     expect(await dispatchCommand(build(), actor(), "C1", `jrp ${LINK}`)).toContain("cannot start a turn");
   });
 
-  test("tell hands the message to that thread's session as a turn, and shows it there", async () => {
-    const ran: { channelId: string; threadTs: string; slackUserId: string; text: string; keepSession?: boolean }[] = [];
+  test("tell hands the message to that thread's session as an internal steer, posting nothing in Slack", async () => {
+    const ran: { channelId: string; threadTs: string; slackUserId: string; text: string; keepSession?: boolean; unprompted?: boolean }[] = [];
     const deps = { ...build(), runTurn: async (r: (typeof ran)[number]) => void ran.push(r) };
     const out = await dispatchCommand(deps, actor(), "C1", `tell ${LINK} reset main and open a PR for phase 0`, {
       threadTs: "1700000000.000001",
     });
     expect(out).toContain("sent");
     expect(ran).toHaveLength(1);
-    // verbatim, as the person who sent it, into the thread's own session
     expect(ran[0]).toMatchObject({
       channelId: "C0TEST00001",
       threadTs: "1787122692.303399",
       slackUserId: OWNER,
-      text: "reset main and open a PR for phase 0",
       keepSession: true,
+      unprompted: true,
     });
-    // the thread sees what it was told and by whom, so its answer has a question above it
-    expect(slackCalls.posts).toHaveLength(1);
-    expect(slackCalls.posts[0]).toMatchObject({ channel: "C0TEST00001", threadTs: "1787122692.303399" });
-    expect(slackCalls.posts[0]?.text).toContain("reset main and open a PR for phase 0");
-    expect(slackCalls.posts[0]?.text).toContain(`<@${OWNER}>`);
+    // marked as an internal steer, carrying the message, and telling the session not to ack it
+    expect(ran[0]?.text).toContain("[tell from another thread]");
+    expect(ran[0]?.text).toContain("reset main and open a PR for phase 0");
+    expect(ran[0]?.text).toContain("Do NOT acknowledge");
+    expect(ran[0]?.text).toContain("NO_REPLY");
+    // nothing is posted in the target thread
+    expect(slackCalls.posts).toHaveLength(0);
   });
 
   test("tell into a workflow thread goes straight to the worker, posting nothing there", async () => {

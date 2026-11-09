@@ -430,6 +430,7 @@ describe("steering another thread", () => {
   test("the tell command is offered alongside watch, and never to a role that cannot run it", () => {
     const admin = buildSystemPrompt({ commandPrefix: "//bot", runScript: "/r.sh", runUrl: "http://x", runTicket: "t", canWatch: true });
     expect(admin).toContain("`//bot tell <thread-link> <message>`");
+    expect(admin).toContain("posts nothing in Slack");
     expect(admin).toContain("Never ask someone to copy a message");
     const pal = buildSystemPrompt({ commandPrefix: "//bot", runScript: "/r.sh", runUrl: "http://x", runTicket: "t", canWatch: false });
     expect(pal).not.toContain("tell <thread-link>");

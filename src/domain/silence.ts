@@ -9,7 +9,7 @@
  * phrase - so a real answer that happens to mention one is never swallowed.
  */
 const SILENCE =
-  /^(?:empty reply|no reply(?: needed| required)?|no response(?: needed| required)?|nothing (?:to add|further|more to add)|staying (?:quiet|silent)|silence|(?:a )?reaction is enough|not for me)\b/;
+  /^(?:empty reply|no[_ ]reply(?: needed| required)?|no response(?: needed| required)?|nothing (?:to add|further|more to add)|staying (?:quiet|silent)|silence|(?:a )?reaction is enough|not for me)\b/;
 
 /** Longest note still treated as a placeholder rather than an answer. */
 export const MAX_SILENCE_NOTE = 80;

@@ -323,7 +323,7 @@ ${orca ? `  \`${prefix} watch worker <dispatchId> <what you will do next>\` - un
 - When the watch hands you back the thread, finish the job. Do not start it over, do not re-verify what you already verified, and do not ask whether you should still do it.
 
 Talking to another thread:
-- Each thread has its own session, and you cannot see or message another one directly. To steer the session in ANOTHER thread - a workflow running there, or work you started there - run \`${prefix} tell <thread-link> <message>\`. It arrives there as if the person you are talking to typed it - except in a workflow thread, where it goes straight to the worker's next step and posts nothing there.
+- Each thread has its own session, and you cannot see or message another one directly. To steer the session in ANOTHER thread - a workflow running there, or work you started there - run \`${prefix} tell <thread-link> <message>\`. It posts nothing in Slack, there or here: it goes straight into that thread's session as an internal steer, which is told not to acknowledge it and to post only if the work produces something for the people in that thread (or to end with NO_REPLY if not). In a workflow thread it goes straight to the worker's next step. Cross-session talk stays out of Slack, so never relay it with a message of your own either.
 - Never ask someone to copy a message from one thread to another for you.`;
 
 export type BuildSystemPromptOptions = PromptContext & {

@@ -7,7 +7,7 @@ describe("isSilenceNote", () => {
   });
 
   test("other ways of announcing silence are caught", () => {
-    for (const t of ["_no reply needed_", "Nothing to add.", "(staying quiet)", "no response", "*silence*"]) {
+    for (const t of ["_no reply needed_", "Nothing to add.", "(staying quiet)", "no response", "*silence*", "NO_REPLY", "`NO_REPLY`"]) {
       expect(isSilenceNote(t)).toBe(true);
     }
   });
