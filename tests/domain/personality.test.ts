@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test";
-import { buildSystemPrompt, DEFAULT_PERSONALITY, ORCA_BATCH_CHECK } from "../../src/domain/personality.ts";
+import { buildSystemPrompt, buildSystemPromptParts, DEFAULT_PERSONALITY, ORCA_BATCH_CHECK } from "../../src/domain/personality.ts";
+import { AGENT_GUIDE_SUMMARIES, guideFile, type PromptGuide } from "../../src/domain/promptGuides.ts";
 
 describe("buildSystemPrompt", () => {
   test("falls back to the default personality", () => {
@@ -443,7 +444,7 @@ describe("a message with several questions", () => {
   });
 
   test("background agents run as Orca workers, with the Agent tool only as a fallback", () => {
-    const out = buildSystemPrompt({ learnings: [] });
+    const out = buildSystemPrompt({ learnings: [], orca: true });
     expect(out).toContain("Background agents always run as Orca workers, never the Agent tool");
     expect(out).toContain("orca orchestration worker-start");
     expect(out).toContain("Orca still cannot wake you");
@@ -477,14 +478,72 @@ describe("a message with several questions", () => {
 
   test("every worker started is followed by a watch worker, when a watch can be set", () => {
     const opts = { learnings: [], commandPrefix: "//bot", runScript: "/r.sh", runUrl: "http://x", runTicket: "t" };
-    const admin = buildSystemPrompt({ ...opts, canWatch: true });
+    const admin = buildSystemPrompt({ ...opts, canWatch: true, orca: true });
     expect(admin).toContain("Every `worker-start` is followed, in the same turn, by `//bot watch worker <dispatchId>");
     expect(admin).toContain("That is how you wait on a worker");
     expect(admin).toContain("finishes, dies (stopped without reporting counts as died) or stands waiting for input");
     expect(admin).toContain("The task-list check above is only for the batch as a whole, never instead of these");
     expect(admin).toContain("`//bot watch worker <dispatchId> <what you will do next>`");
     // no watch to set, no rule pointing at one
-    expect(buildSystemPrompt({ ...opts, canWatch: false })).not.toContain("watch worker");
+    expect(buildSystemPrompt({ ...opts, canWatch: false, orca: true })).not.toContain("watch worker");
+  });
+
+  test("below owner the guide says Agent tool, never orca, and no watch worker", () => {
+    const opts = { learnings: [], commandPrefix: "//bot", runScript: "/r.sh", runUrl: "http://x", runTicket: "t", canWatch: true };
+    for (const orca of [false, undefined]) {
+      const out = buildSystemPrompt({ ...opts, orca });
+      expect(out).toContain("A message with several questions in it:");
+      expect(out).toContain("Background agents run through the Agent tool in your own process, never through Orca");
+      expect(out).toContain("`run_in_background: true`");
+      expect(out).toContain("Never run `orca`, by name or by path");
+      expect(out).toContain("They need no watch of their own");
+      // nothing that tells the turn to start a worker, wait on one or reach the Orca CLI
+      expect(out).not.toContain("Background agents always run as Orca workers");
+      expect(out).not.toContain("orca orchestration");
+      expect(out).not.toContain("worker-start");
+      expect(out).not.toContain("watch worker <dispatchId>");
+      expect(out).not.toContain("worker-cost");
+      expect(out).not.toContain("BOT_WORKER_MODEL");
+      // a normal watch still applies where it does
+      expect(out).toContain("`//bot watch pr <pr-url> <what you will do next>`");
+    }
+    // the owner keeps the Orca wording
+    const owner = buildSystemPrompt({ ...opts, orca: true });
+    expect(owner).toContain("Background agents always run as Orca workers, never the Agent tool");
+    expect(owner).not.toContain("Never run `orca`, by name or by path");
+  });
+
+  test("the guide index and the guide body are role aware", () => {
+    const base = { learnings: [], guideDir: "/g", commandPrefix: "//bot", runScript: "/r.sh", runUrl: "http://x", runTicket: "t", canWatch: true };
+    const owner = buildSystemPromptParts({ ...base, orca: true });
+    expect(owner.prompt).toContain("run in parallel as Orca workers");
+    expect(owner.prompt).toContain("`watch worker <dispatchId>` after every Orca worker you start");
+    expect(owner.guides.find((g) => g.slug === "parallel")?.body).toContain("Background agents always run as Orca workers");
+    const admin = buildSystemPromptParts({ ...base, orca: false });
+    expect(admin.prompt).toContain("as Agent tool agents (`run_in_background: true`) in your own process");
+    expect(admin.prompt).not.toContain("Orca workers");
+    expect(admin.prompt).not.toContain("watch worker");
+    const parallel = admin.guides.find((g) => g.slug === "parallel");
+    expect(parallel?.body).toContain("Never run `orca`");
+    expect(parallel?.body).not.toContain("watch worker");
+    expect(parallel?.summary).toBe(AGENT_GUIDE_SUMMARIES.parallel);
+    const waiting = admin.guides.find((g) => g.slug === "waiting");
+    expect(waiting?.body).toContain("`//bot watch pr <pr-url>");
+    expect(waiting?.body).not.toContain("watch worker");
+    // the two variants never share a guide file
+    expect(guideFile(parallel as PromptGuide)).not.toBe(guideFile(owner.guides.find((g) => g.slug === "parallel") as PromptGuide));
+  });
+
+  test("the self-fix reviewer is an Orca worker for the owner and an Agent tool agent below", () => {
+    const base = { learnings: [], repoPath: "/repo", restartScript: "/restart.sh" };
+    const owner = buildSystemPrompt({ ...base, orca: true });
+    expect(owner).toContain("The reviewer is an Orca worker, never the Agent tool");
+    const admin = buildSystemPrompt(base);
+    expect(admin).toContain("The reviewer is a background Agent tool agent");
+    expect(admin).toContain("you never run `orca`");
+    expect(admin).not.toContain("orca orchestration");
+    expect(admin).not.toContain("worker-start");
+    expect(admin).not.toContain("ORCA_TERMINAL_HANDLE");
   });
 
   test("each part is handed over as it lands, folded into one message", () => {

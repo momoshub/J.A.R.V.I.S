@@ -4,8 +4,12 @@
  * - owner / admin: full access (skip permissions, any tool, the normal cwd)
  * - pal: sandboxed read-only tools in a fixed scratch dir (may still use `review`)
  * - executer: sandboxed, tools assigned from the control deck, plus the read-only databases
- *   and the code tools - edit files, commit, push a branch and open a PR - and
- *   the browser tools to test a UI change on the host Mac
+ *   and the code tools - edit files, commit, push a branch and open a PR - the
+ *   Agent/Task tool for parallel or long work in its own process, and the
+ *   browser tools to test a UI change on the host Mac
+ *
+ * Orca is the owner's alone: a worker runs with full permissions on the host,
+ * so a role that can start one escapes its own sandbox (`ORCA_DENY`).
  *
  * When `skipPermissions` is false the CLI runs with an `--allowedTools` allow-list
  * and no permission bypass, so anything off the list is denied.
@@ -82,6 +86,23 @@ export const SLACK_CONNECTOR_WRITES: readonly string[] = [
   "mcp__slack__slack_send_message",
   "mcp__slack__slack_post_message",
 ];
+
+/**
+ * Orca starts workers with full permissions on the host Mac, so any role that
+ * could run it would step out of its own sandbox. Denied by name to every role
+ * but owner - an allow-list never refuses (see NO_TOOLS), only a denial does.
+ * Both the bare name and the installed paths, because a rule matches the
+ * command as typed: the symlink the bot uses and the app's own binary.
+ */
+export const ORCA_DENY: readonly string[] = [
+  "Bash(orca:*)",
+  "Bash(/opt/homebrew/bin/orca:*)",
+  "Bash(/Applications/Orca.app/Contents/Resources/bin/orca:*)",
+  "Bash(~/Applications/Orca.app/Contents/Resources/bin/orca:*)",
+];
+
+/** Orca is for the owner only. Everyone else uses the Agent tool in their own process. */
+export const mayUseOrca = (role: UserRole): boolean => role === "owner";
 
 export const ALWAYS_DISALLOW: readonly string[] = [
   ...SLACK_CONNECTOR_WRITES,
@@ -169,6 +190,7 @@ export const NO_TOOLS: readonly string[] = [
  */
 export const SANDBOX_DISALLOW: readonly string[] = [
   ...ALWAYS_DISALLOW,
+  ...ORCA_DENY,
   "Write", "Edit", "MultiEdit", "NotebookEdit",
   "Bash(aws secretsmanager:*)", "Bash(aws ssm get-parameter:*)", "Bash(aws kms:*)",
   ...DB_MCP_SERVERS,
@@ -180,6 +202,10 @@ export const SANDBOX_DISALLOW: readonly string[] = [
  * force push is denied below - review stays a human step.
  */
 export const EXECUTER_CODE_TOOLS: readonly string[] = [
+  // Subagents run in the turn's own process and inherit its permissions, so
+  // they are how an executer fans out or runs long work without Orca. Named
+  // here, not left to the dashboard tool list, which replaces PAL_TOOLS when set.
+  "Task", "Agent",
   "Write", "Edit", "MultiEdit",
   "Bash(mkdir:*)",
   "Bash(gh repo clone:*)", "Bash(gh pr create:*)", "Bash(gh pr edit:*)", "Bash(gh pr comment:*)",
@@ -345,8 +371,9 @@ const basePolicyFor = (role: UserRole, opts: ToolPolicyOptions): ToolPolicy => {
         skipPermissions: true,
         cwd: opts.fullCwd,
         model: modelOf(role, opts),
-        // Full access still does not mean "post as a human" or "bill us per query".
-        disallowedTools: ALWAYS_DISALLOW,
+        // Full access still does not mean "post as a human" or "bill us per query",
+        // and only the owner may start Orca workers.
+        disallowedTools: mayUseOrca(role) ? ALWAYS_DISALLOW : [...ALWAYS_DISALLOW, ...ORCA_DENY],
       };
     case "executer":
       return {

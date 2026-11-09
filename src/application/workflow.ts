@@ -11,7 +11,7 @@
 import { frontPrompt, workflowPrompt } from "../domain/workflowPrompt.ts";
 import { createMarkerFilter, parseContinue } from "../domain/workflowContinue.ts";
 import { createSteerFilter, FRONT_TIMEOUT_MS, frontMessage, parseSteers } from "../domain/workflowFront.ts";
-import { PAL_TOOLS } from "../domain/toolPolicy.ts";
+import { mayUseOrca, PAL_TOOLS } from "../domain/toolPolicy.ts";
 import { tokenFor, type ClaudeTokenPort } from "./claudeTokens.ts";
 import type { AllowedUser, UserRole, Workflow } from "../domain/types.ts";
 import type { ToolPolicy } from "../domain/toolPolicy.ts";
@@ -89,7 +89,7 @@ export const runWorkflowTurn = async (
   const base = deps.toolPolicy?.(actor.role, workflow.channelId) ?? { skipPermissions: true };
   let usage: LlmUsage | undefined;
   const params = {
-    system: workflowPrompt(name, workflow.task),
+    system: workflowPrompt(name, workflow.task, mayUseOrca(actor.role)),
     // Only the new message: the session is holding the rest of the conversation.
     messages: [{ role: "user" as const, content: message, speakerId: actor.slackId }],
     assistantName: name,

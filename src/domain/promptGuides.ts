@@ -51,6 +51,17 @@ export const GUIDE_SUMMARIES: Readonly<Record<GuideSlug, string>> = {
     "you cannot wait - never say you will do something once X finishes, set a `watch` instead (`watch worker <dispatchId>` after every Orca worker you start); `tell` steers another thread. Read for the watch and tell syntax",
 };
 
+/**
+ * The two lines that name Orca, as an agent below owner reads them: `orca` is
+ * denied there (`ORCA_DENY`), so they point at the Agent tool instead.
+ */
+export const AGENT_GUIDE_SUMMARIES: Readonly<Record<"parallel" | "waiting", string>> = {
+  parallel:
+    "a message with several independent asks is split and run in parallel as Agent tool agents (`run_in_background: true`) in your own process, each answer posted as it lands, never `orca` - it is the owner's. Read before spawning any background agent",
+  waiting:
+    "you cannot wait - never say you will do something once X finishes, set a `watch` instead; `tell` steers another thread. Read for the watch and tell syntax",
+};
+
 /** Order the index lists them in. */
 export const GUIDE_ORDER: readonly GuideSlug[] = [
   "investigate",
@@ -97,11 +108,16 @@ export const renderGuideIndex = (guides: readonly PromptGuide[], dir: string): s
  * The index with stand-in paths, for the session fingerprint: a guided turn's
  * always-on lines are rules too, so changing one must reopen live threads.
  */
-export const guideIndexForFingerprint = (logSources: readonly string[] = []): string =>
+export const guideIndexForFingerprint = (logSources: readonly string[] = [], orca = true): string =>
   renderGuideIndex(
     GUIDE_ORDER.map((slug) => ({
       slug,
-      summary: slug === "investigate" ? investigateSummary(logSources) : GUIDE_SUMMARIES[slug],
+      summary:
+        slug === "investigate"
+          ? investigateSummary(logSources)
+          : !orca && (slug === "parallel" || slug === "waiting")
+            ? AGENT_GUIDE_SUMMARIES[slug]
+            : GUIDE_SUMMARIES[slug],
       body: slug,
     })),
     "/fp/guides",
