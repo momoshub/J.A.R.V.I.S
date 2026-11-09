@@ -19,6 +19,12 @@ export const ACTIONS = [
   "labels-add",
   "labels-remove",
   "reviewers-request",
+  /**
+   * Not a REST call: hands the helper what a local `git` needs to act as the
+   * app on one repo (installation token + bot name and email). It is what
+   * `bin/github-app.sh git|push` asks for.
+   */
+  "git-auth",
 ] as const;
 export type ActionName = (typeof ACTIONS)[number];
 
@@ -85,6 +91,8 @@ export const planAction = (req: ActionRequest): Plan => {
       },
     ]);
   }
+
+  if (action === "git-auth") return done([]);
 
   const number = Number(req.number);
   if (!Number.isInteger(number) || number <= 0) return fail(`${action} needs a positive number`);

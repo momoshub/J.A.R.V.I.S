@@ -146,6 +146,14 @@ describe("buildSystemPrompt", () => {
     runTicket: "tkt123",
   };
 
+  test("names the GitHub App helper's git and push actions only when it is wired", () => {
+    const p = buildSystemPrompt({ ...runOpts, githubAppScript: "/x/bin/github-app.sh" });
+    expect(p).toContain("/x/bin/github-app.sh <action> <owner/repo>");
+    expect(p).toContain("git <owner/repo> <dir> -- <git args>");
+    expect(p).toContain("push <owner/repo> <dir> <branch> [--force-with-lease]");
+    expect(buildSystemPrompt(runOpts)).not.toContain("github-app.sh");
+  });
+
   test("offers to run a real command when a chat request is one", () => {
     const p = buildSystemPrompt(runOpts);
     expect(p).toContain("Running my own commands");
