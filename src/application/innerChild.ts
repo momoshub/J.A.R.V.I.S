@@ -92,6 +92,10 @@ export type InnerChildDeps = {
   drift?: DriftDeps;
   triageEveryMs?: number;
   maxFixesPerDay?: number;
+  /** Most self-issues open (queued or fixing) at once; triage files nothing past it. */
+  maxOpenIssues?: number;
+  /** A queued issue untouched this long is closed as stale. */
+  staleAfterMs?: number;
   /** A fix older than this is written off as failed. */
   fixTimeoutMs?: number;
   log?: (msg: string) => void;
@@ -154,6 +158,16 @@ export type InnerChild = {
 /** Most a single triage reads, and most it may file. */
 const TRIAGE_BATCH = 60;
 const MAX_FILED_PER_TRIAGE = 5;
+/**
+ * Open self-issues (queued + fixing) allowed at once. Fixes start at most
+ * `maxFixesPerDay` (4) a day, so 10 is about two and a half days of work: a
+ * backlog the fixer can plausibly clear before the findings go stale, while
+ * still leaving room for a bad day to file a handful. It had no bound before
+ * and reached 35 queued against 11 fixed.
+ */
+export const MAX_OPEN_ISSUES = 10;
+/** A queued issue with no activity for this long is closed as `stale`. */
+export const STALE_AFTER_MS = 7 * 24 * 60 * 60 * 1000;
 /** Nudges a day, across every thread. A bad model day must not become a flood. */
 const DRIFT_PER_DAY = 12;
 /** A steered turn older than this is written off as unanswered. */
@@ -184,6 +198,8 @@ export const createInnerChild = (deps: InnerChildDeps): InnerChild => {
   const log = deps.log ?? (() => {});
   const triageEvery = deps.triageEveryMs ?? 10 * 60 * 1000;
   const maxPerDay = deps.maxFixesPerDay ?? 4;
+  const maxOpen = deps.maxOpenIssues ?? MAX_OPEN_ISSUES;
+  const staleAfter = deps.staleAfterMs ?? STALE_AFTER_MS;
   const fixTimeout = deps.fixTimeoutMs ?? 2 * 60 * 60 * 1000;
   let running = false;
   let lastTriage = 0;
@@ -251,6 +267,15 @@ export const createInnerChild = (deps: InnerChildDeps): InnerChild => {
       if (!firstLook && now - e.steeredAt < DRIFT_TIMEOUT_MS) continue;
       await settleDrift(e, "no_reply", firstLook ? "a restart cut the steered turn off" : "", "");
     }
+  };
+
+  /**
+   * Close queued issues nobody got to within `staleAfter`. A row is kept with
+   * state `stale`, never deleted, and one being fixed is left alone.
+   */
+  const pruneStale = (now: number): void => {
+    const closed = deps.issues.pruneStale(now - staleAfter, now);
+    if (closed.length) log(`closed ${closed.length} stale issue(s): ${closed.map((i) => `#${i.id}`).join(", ")}`);
   };
 
   const fix = async (issue: SelfIssue, threadTs: string): Promise<void> => {
@@ -436,8 +461,16 @@ export const createInnerChild = (deps: InnerChildDeps): InnerChild => {
       // The cheap checks already ran; their drift is still steered below.
       log(`triage failed: ${e instanceof Error ? e.message : String(e)}`);
     }
-    const filed = byUrgency(parseFindings(raw))
-      .slice(0, MAX_FILED_PER_TRIAGE)
+    // The cap is on what is open now, so a triage fills the queue up to it and
+    // no further. Past it the findings are dropped, not parked: they come back
+    // if the defect is still there once there is room.
+    const room = Math.max(0, maxOpen - deps.issues.openCount());
+    const found = byUrgency(parseFindings(raw));
+    if (room === 0 && found.length) {
+      log(`queue full (${maxOpen} open), filing nothing: ${found.length} finding(s) dropped`);
+    }
+    const filed = found
+      .slice(0, Math.min(MAX_FILED_PER_TRIAGE, room))
       .map((f) => deps.issues.file(f, now))
       .filter((i): i is SelfIssue => i !== undefined);
     if (filed.length) log(`filed ${filed.map((i) => `#${i.id}`).join(", ")}`);
@@ -486,6 +519,7 @@ export const createInnerChild = (deps: InnerChildDeps): InnerChild => {
       try {
         const now = deps.clock();
         await writeOffStale(now);
+        pruneStale(now);
         if (now - lastTriage >= triageEvery) {
           lastTriage = now;
           await triage(now).catch((e) => log(`triage failed: ${e instanceof Error ? e.message : String(e)}`));
