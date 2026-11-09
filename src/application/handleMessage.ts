@@ -23,7 +23,7 @@ import { adapterRules } from "../domain/adapter.ts";
 import { hasContent } from "../domain/mentions.ts";
 import type { Clock, LlmPort, LlmStreamSink, LlmUsage } from "./ports.ts";
 import type { PromptContext, StoredMessage, UserRole } from "../domain/types.ts";
-import type { ToolPolicy } from "../domain/toolPolicy.ts";
+import { mayUseOrca, type ToolPolicy } from "../domain/toolPolicy.ts";
 import type { MessageRepo } from "../infrastructure/db/messageRepo.ts";
 import type { UserRepo } from "../infrastructure/db/userRepo.ts";
 import type { LearningsRepo } from "../infrastructure/db/learningsRepo.ts";
@@ -383,6 +383,9 @@ export const handleMessage = async (
     // the role that `watch` is gated on - offering it to anyone else would be
     // describing a door that is locked.
     canWatch: !!deps.watches && !!inbound.threadTs && canTeach(decision.user.role),
+    // Orca workers run with full permissions on the host: owner only, everyone
+    // else is told to use the Agent tool in their own process.
+    orca: mayUseOrca(decision.user.role),
     following: inbound.following === true,
     interrupted: inbound.interrupted === true,
     commandPrefix: deps.commandPrefix,

@@ -8,11 +8,12 @@
  * report as you go, ask when you are blocked, never silently stall.
  */
 
-import { ORCA_AGENT_RULES, SELF_PROCESS_NOTE } from "./personality.ts";
+import { AGENT_TOOL_RULES, ORCA_AGENT_RULES, SELF_PROCESS_NOTE } from "./personality.ts";
 import { CONTINUE_MARKER } from "./workflowContinue.ts";
 import { STEER_MARKER } from "./workflowFront.ts";
 
-export const workflowPrompt = (botName: string, task: string): string =>
+/** `orca` is true for an owner's workflow only; every other role runs its agents with the Agent tool. */
+export const workflowPrompt = (botName: string, task: string, orca = true): string =>
   `You are ${botName}, working through one long task with a colleague in a Slack thread.
 
 The task:
@@ -38,8 +39,11 @@ Keeping the work moving:
 - Never say you will "update when X is done" and then stop without that line - nothing will wake you up.
 
 Running agents in parallel:
-${ORCA_AGENT_RULES}
-- In a workflow this replaces the Orca waiting line above: you wait for a batch across steps, never with a watch or a background loop - a watch comes back to the front, not to you, and a background loop dies with the step. Start the workers, end the step with the carry-on line, and run the done check at the start of the next step. Not done yet -> do other useful work, or wait in a foreground loop of up to 5 minutes (give Bash a timeout that fits), then carry on again. Never sit in a sleep loop for the whole batch, it blocks steers, and never burn steps on a bare check - steps that do nothing still count toward the auto-continue cap. On the Agent tool fallback, run those agents in the foreground: a background one dies with the step too. The same holds for the reviewer on your own fix: wait for its PR comment across steps or in foreground loops of up to 5 minutes, never in a background loop.
+${orca
+  ? `${ORCA_AGENT_RULES}
+- In a workflow this replaces the Orca waiting line above: you wait for a batch across steps, never with a watch or a background loop - a watch comes back to the front, not to you, and a background loop dies with the step. Start the workers, end the step with the carry-on line, and run the done check at the start of the next step. Not done yet -> do other useful work, or wait in a foreground loop of up to 5 minutes (give Bash a timeout that fits), then carry on again. Never sit in a sleep loop for the whole batch, it blocks steers, and never burn steps on a bare check - steps that do nothing still count toward the auto-continue cap. On the Agent tool fallback, run those agents in the foreground: a background one dies with the step too. The same holds for the reviewer on your own fix: wait for its PR comment across steps or in foreground loops of up to 5 minutes, never in a background loop.`
+  : `${AGENT_TOOL_RULES}
+- In a workflow run those agents in the foreground and collect their results before you end the step: a background agent dies with the step, and a watch comes back to the front, not to you.`}
 
 You are in Slack: mention people with their Slack tag <@ID> when you need them, and use \`backticks\` for code, paths and commands.`;
 

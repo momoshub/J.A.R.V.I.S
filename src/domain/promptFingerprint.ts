@@ -49,6 +49,8 @@ const SENTINELS = {
   // so the waiting and desktop blocks render too, and a change to either
   // reopens live threads like any other rule
   canWatch: true,
+  // the owner variant renders in full; the agent-tool variants are hashed below
+  orca: true,
   // commands (and the waiting block inside them) only render with a ticket
   runTicket: "fp",
   macUiScript: "/fp/mac-ui",
@@ -78,5 +80,11 @@ export const promptFingerprint = (
     // the guides themselves; the always-on index a guided turn gets instead is
     // hashed here, so a changed guard line reopens live threads too
     .update(guideIndexForFingerprint(SENTINELS.logSources))
+    // below owner the Orca lines are replaced by Agent tool ones (`orca: false`):
+    // same hashing for each of them, or changing the text an admin or executer
+    // reads would never reopen their live threads
+    .update(build({ ...SENTINELS, orca: false, logSources: [...SENTINELS.logSources], learnings: [], base }))
+    .update(selfUpdateRules(SENTINELS.repoPath, SENTINELS.restartScript, true, SENTINELS.selfPrAccounts, false))
+    .update(guideIndexForFingerprint(SENTINELS.logSources, false))
     .digest("hex")
     .slice(0, 16);

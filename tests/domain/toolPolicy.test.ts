@@ -3,7 +3,9 @@ import {
   DB_MCP_SERVERS,
   EXECUTER_CODE_TOOLS,
   EXECUTER_DB_SERVERS,
+  mayUseOrca,
   NO_TOOLS,
+  ORCA_DENY,
   PAL_TOOLS,
   SANDBOX_DISALLOW,
   toolPolicyFor,
@@ -295,5 +297,58 @@ describe("database MCP servers", () => {
       expect(server).not.toBe("mcp__");
       expect(server.length).toBeGreaterThan("mcp__".length);
     }
+  });
+});
+
+describe("orca is the owner's alone", () => {
+  const roles = ["pal", "executer", "admin", "owner"] as const;
+
+  test("every role but owner is denied orca by name, owner is not", () => {
+    for (const role of roles) {
+      const denied = toolPolicyFor(role, opts).disallowedTools ?? [];
+      for (const rule of ORCA_DENY) {
+        if (role === "owner") expect(denied).not.toContain(rule);
+        else expect(denied).toContain(rule);
+      }
+    }
+    expect(mayUseOrca("owner")).toBe(true);
+    for (const role of ["admin", "executer", "pal"] as const) expect(mayUseOrca(role)).toBe(false);
+  });
+
+  test("the denial covers the bare name and the installed paths", () => {
+    expect(ORCA_DENY).toContain("Bash(orca:*)");
+    expect(ORCA_DENY).toContain("Bash(/opt/homebrew/bin/orca:*)");
+    expect(ORCA_DENY.some((r) => r.includes("Orca.app/Contents/Resources/bin/orca"))).toBe(true);
+  });
+
+  test("an executer's tool list from the dashboard cannot grant it back", () => {
+    const p = toolPolicyFor("executer", { ...opts, executerTools: ["Read", "Bash(orca:*)"] });
+    // allowed on the list, but the denial is what refuses
+    expect(p.disallowedTools).toContain("Bash(orca:*)");
+  });
+
+  test("a role-policy denial is added next to the orca denial, not instead of it", () => {
+    const p = toolPolicyFor("admin", { ...opts, roleDisallow: ["WebSearch"] });
+    expect(p.disallowedTools).toContain("WebSearch");
+    expect(p.disallowedTools).toContain("Bash(orca:*)");
+  });
+});
+
+describe("an executer runs code jobs in its own process", () => {
+  test("Agent and Task are allowed in code, with or without a dashboard tool list", () => {
+    expect(EXECUTER_CODE_TOOLS).toContain("Agent");
+    expect(EXECUTER_CODE_TOOLS).toContain("Task");
+    for (const executerTools of [undefined, [], ["Read"]]) {
+      const tools = toolPolicyFor("executer", { ...opts, executerTools }).allowedTools ?? [];
+      expect(tools).toContain("Agent");
+      expect(tools).toContain("Task");
+    }
+  });
+
+  test("and they are not denied, nor granted to a pal", () => {
+    const exe = toolPolicyFor("executer", opts);
+    expect(exe.disallowedTools).not.toContain("Agent");
+    expect(exe.disallowedTools).not.toContain("Task");
+    expect(toolPolicyFor("pal", opts).allowedTools).not.toContain("Agent");
   });
 });

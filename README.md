@@ -169,7 +169,9 @@ thread goes back to normal chat.
 - `executer`, `admin` and `owner` may drive one; anyone lower still chats
   normally in the thread without steering the task
 - tools are whatever the driver's role allows - a sandboxed `executer` gets a
-  sandboxed workflow
+  sandboxed workflow, and its parallel work uses the Agent tool (foreground
+  only in a workflow: a background agent dies with the step). Only an owner's
+  workflow worker is told to start Orca workers
 - the session id is in the database, so a bot restart does not lose the session
 - worker steps may run up to 15 minutes each; front answers are read-only and
   capped at 4 minutes
@@ -248,7 +250,7 @@ owner turn talks on Opus, but its helpers do not:
 | setting | default | what it covers |
 |---|---|---|
 | `model:subagent` | `sonnet` | Agent tool subagents in any turn (general-purpose, Explore, review child agents) |
-| `model:worker` | `sonnet` | Orca workers a turn starts (`worker-start`, `fanout`, the self-fix reviewer) |
+| `model:worker` | `sonnet` | Orca workers an owner turn starts (`worker-start`, `fanout`, the self-fix reviewer); other roles have no Orca |
 | `model:plan` | `opus` | the Plan subagent |
 
 ```
@@ -600,7 +602,7 @@ limit"; whoever stopped it already knows, and the thread has been told.
 
 ## Orca workers' questions
 
-A turn that starts an Orca worker (`orca orchestration worker-start`) is that
+An owner turn that starts an Orca worker (`orca orchestration worker-start`; no other role may) is that
 worker's coordinator, through the bot's own Orca terminal - a bare shell, so
 nobody would see a question the worker asks, and it would wait forever. The
 bot links every worker to the Slack thread whose turn started it (chat or
@@ -880,12 +882,14 @@ Each allowlisted user has a role that scopes what the brain may do when they tal
 
 | role | tool access |
 | --- | --- |
-| `owner` | full control, cannot be removed |
-| `admin` | full tool access (real shell, writes), manages users |
+| `owner` | full control, cannot be removed. The only role that may run `orca` |
+| `admin` | full tool access (real shell, writes), manages users. No `orca`: it is denied by name, background work goes through the Agent tool |
 | `pal` | sandboxed read-only tools in a fixed scratch dir: GitHub read (`gh pr/issue/repo/run/release/api`, plus the GitHub MCP), Notion read (search/fetch/comments), web search + fetch, git/aws read-only. May use `review`, and may react |
-| `executer` | sandboxed, tools assigned from the dashboard (Roles -> Executer tools) |
+| `executer` | sandboxed, tools assigned from the dashboard (Roles -> Executer tools), plus - always, in code - the read-only databases, the code tools (clone into the scratch dir, edit, commit, push a branch, open a PR) and the `Agent`/`Task` tool for parallel or long work in its own process. No `orca` |
 
 Sandboxed roles run the Claude CLI without `--dangerously-skip-permissions`, with an explicit `--allowedTools` allow-list. The `executer` allow-list is edited on the Roles page.
+
+**Orca is owner-only.** An Orca worker runs with full permissions on the host Mac, so a role that could start one would step out of its own sandbox. `Bash(orca:*)` (and the installed paths, `ORCA_DENY` in `src/domain/toolPolicy.ts`) is in `--disallowedTools` for `pal`, `executer` and `admin`, because an allow-list never refuses - only a denial does. An `executer` still gets a code job done inside its own sandboxed CLI process: it clones into the scratch dir, edits, commits, pushes and opens the PR, and uses the Agent tool (foreground, or `run_in_background`) for parallel or long work - a subagent inherits the same sandboxed permissions, so nothing is escaped. `Agent` and `Task` are in `EXECUTER_CODE_TOOLS`, so they do not depend on the dashboard tool list (which replaces the defaults when it is not empty). The prompt follows the role: owner turns keep the Orca wording (workers, `watch worker`, the Orca reviewer for a self-fix), every other role is told to use the Agent tool and never to call `orca`, in chat and in a workflow. Preset commands run under the bot's own owner policy, so they are untouched: `fanout` (admin+) still starts Orca workers itself, and the bot's own reads (`sys`, `worker-cost`, `stop`, the stuck-work sweeper, worker questions) still call `orca`. Limit: the denial matches the command as typed, so a wrapper such as `bash -c "orca ..."` or an unlisted install path is not caught.
 
 **Role policies** (dashboard -> Roles, stored in `role_policies`): each role can be switched off, and can be denied commands, CLI tools and whole MCP servers on top of what the code already denies it. A policy only takes away - the most a role may do (a command's minimum role, the sandbox deny lists) stays fixed in code, so the Roles page lists only the commands within a role's rank. A switched-off role grants nothing: its members are treated as not on the allowlist everywhere (chat, commands, buttons, GitHub calls) and are told their role is off instead of being raised as an access request. Their pending watches stop too (a watch predicate is shell run as the bot). Admins still see and manage them from Slack (`users` marks them, `remove`/`add`/`promote`/`demote` act on their real record). Denied tools and servers go into `--disallowedTools` for every turn of that role, full-access roles included; denied commands are refused at dispatch and left out of `help`. The owner role is always on and never restricted, whatever is saved. Saves apply to the next message, no restart. Preset full-access tasks (`review`, `investigate`, `ticket`, ...) keep their own fixed tool policy; deny the command itself to keep a role away from one.
 

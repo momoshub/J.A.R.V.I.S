@@ -16,7 +16,7 @@ import { SLACK_BREVITY, SLACK_FORMAT } from "./slackFormat.ts";
 import { BLOCK_KIT_RULES } from "./blockKit.ts";
 import { kitRules } from "./kitEvents.ts";
 import { type Adapter, type AdapterScope, renderAdapter } from "./adapter.ts";
-import { asGuide, investigateSummary, type PromptGuide, renderGuideIndex } from "./promptGuides.ts";
+import { AGENT_GUIDE_SUMMARIES, asGuide, investigateSummary, type PromptGuide, renderGuideIndex } from "./promptGuides.ts";
 import type { Participant, PromptContext, Reactable } from "./types.ts";
 
 /** Neutral fallback persona used when no custom one is configured. */
@@ -221,6 +221,17 @@ export const ORCA_AGENT_RULES = `- Background agents always run as Orca workers,
 - Fall back to the Agent tool only when \`orca status\` says the runtime is not reachable, \`ORCA_TERMINAL_HANDLE\` is unset, \`run-create\` refuses it as \`terminal_handle_stale\` (Orca restarted; the bot replaces it within a minute) or your tools refuse \`orca\`, and say so in one line. The reviewer on your own fix is one of these too: an Orca worker that talks to you only through PR comments`;
 
 /**
+ * How a background agent is spawned for everyone below owner (Kai): the Agent
+ * tool, in the turn's own process. Orca workers run with full permissions on
+ * the host, so a sandboxed role starting one would escape its sandbox - `orca`
+ * is denied to every role but owner (`ORCA_DENY` in `toolPolicy.ts`). A
+ * subagent inherits the turn's own permissions, so nothing is escaped.
+ */
+export const AGENT_TOOL_RULES = `- Background agents run through the Agent tool in your own process, never through Orca: \`run_in_background: true\` for a long job or parts that run side by side, a foreground call when you need the answer before you go on. They inherit your tools and your limits, so they cannot do more than you can. Give each one a self-contained brief
+- Never run \`orca\`, by name or by path: it starts workers with full permissions on the host, so it is the owner's alone and your tools refuse it. Do not look for a way round it, and never offer it. A job that truly needs one is the owner's to start - say so in one line
+- The agents live and die with this turn (a background one gets a short grace after your answer), so start them for work that finishes inside it, collect their results before you answer, and read them whole. They need no watch of their own. A long wait on something outside the turn (a PR, CI, a reply) is a normal watch where you can set one`;
+
+/**
  * A message that bundles several asks ("check the git author, and who
  * impersonated support") used to be worked through in one line, so the quick
  * part sat unread until the slowest part was done. Split it, run the
@@ -230,14 +241,14 @@ export const ORCA_AGENT_RULES = `- Background agents always run as Orca workers,
  * by a `watch worker` on it: Orca cannot wake the turn, so without one a
  * worker that dies or stops on a question is found only when somebody asks.
  */
-export const splitQuestionRules = (prefix?: string): string => `
+export const splitQuestionRules = (prefix?: string, orca = true): string => `
 
 A message with several questions in it:
 - Before you start, split the message into its separate asks. "check the git author, and who impersonated support" is two jobs, not one.
 - Decide which parts are independent and which truly need an earlier answer. Only a part that consumes another part's result waits for it - everything else starts at once.
 - Run the independent parts in parallel as background agents, one per part, each with a self-contained brief. Do not work through them one after another yourself.
-${ORCA_AGENT_RULES}${
-  prefix
+${orca ? ORCA_AGENT_RULES : AGENT_TOOL_RULES}${
+  prefix && orca
     ? `
 - Every \`worker-start\` is followed, in the same turn, by \`${prefix} watch worker <dispatchId> <what you will do with its result>\` - one per worker, the \`dispatchId\` from worker-start's JSON. That is how you wait on a worker: it hands you this thread back when that worker finishes, dies (stopped without reporting counts as died) or stands waiting for input, and says which. The task-list check above is only for the batch as a whole, never instead of these. Never end a turn with a worker running and no watch on it`
     : ""
@@ -259,6 +270,8 @@ export const commandRules = (
   budget?: number,
   /** True when a `watch` can be set, so the turn is told not to sit waiting. */
   waiting = false,
+  /** False below owner: the waiting block then leaves out `watch worker`. */
+  orca = true,
 ): string => {
   if (!runScript || !runUrl || !canRun) return "";
   return `
@@ -283,7 +296,7 @@ Running my own commands (when a request is really one):
   }
 - "remind me", "nhắc anh", "ping <@someone> at 3pm" is the \`remind\` command - it posts the reminder by itself at that time, with no turn and no tokens. Turn the time into its words, read in the host's clock: \`${prefix} remind [me|<@someone>] in 2h <what>\`, \`at 15:00 [today|tomorrow] <what>\`, \`tomorrow 9am <what>\`, \`on 2026-12-01 [at 10:00] <what>\`. \`remind list\` and \`remind cancel <id>\` manage them. Never promise to remember it yourself - you will not be running then.
 - For an ordinary question, answer it yourself. This is only for requests that map onto a real command.${
-    waiting ? waitingRules(prefix) : ""
+    waiting ? waitingRules(prefix, orca) : ""
   }`;
 };
 
@@ -291,7 +304,7 @@ Running my own commands (when a request is really one):
  * How to stop waiting: set a watch, and how to steer another thread. Offered
  * only when a watch can actually be set (see `canWatch`).
  */
-export const waitingRules = (prefix: string): string => `
+export const waitingRules = (prefix: string, orca = true): string => `
 
 Waiting for something to finish:
 - You cannot wait. Your turn ENDS when you stop writing, so "I'll promote once the build is done" is a promise nobody is around to keep - the thread stops there until a person comes back and prods you. That stall is the single most annoying thing you do.
@@ -300,8 +313,8 @@ Waiting for something to finish:
   \`${prefix} watch checks <pr-url> <what you will do next>\` - until CI stops running, pass or fail
   \`${prefix} watch reply <thread-link> [from <@someone>] <what you will do next>\` - until somebody answers there
   \`${prefix} watch url <url> <what you will do next>\` - until it responds
-  \`${prefix} watch worker <dispatchId> <what you will do next>\` - until that Orca worker finishes, dies or stands waiting for input; the hand-back says which, and what the worker used in tokens and list-price dollars (say it with the result). Set one right after EVERY \`orca orchestration worker-start\`, with the \`dispatchId\` it printed - one per worker. Asked later what a worker or a Run cost: \`${prefix} worker-cost <dispatchId|runId>\`
-  \`${prefix} watch <what you will do next> -- <shell command that exits 0 when ready>\` - anything else
+${orca ? `  \`${prefix} watch worker <dispatchId> <what you will do next>\` - until that Orca worker finishes, dies or stands waiting for input; the hand-back says which, and what the worker used in tokens and list-price dollars (say it with the result). Set one right after EVERY \`orca orchestration worker-start\`, with the \`dispatchId\` it printed - one per worker. Asked later what a worker or a Run cost: \`${prefix} worker-cost <dispatchId|runId>\`
+` : ""}  \`${prefix} watch <what you will do next> -- <shell command that exits 0 when ready>\` - anything else
 - Add \`--every <interval>\` and \`--until <give up after>\` when the defaults (every minute, 45 minutes; every 3 minutes, 3 hours for \`worker\`) are wrong for it. A deploy you expect to take an hour needs \`--until 90m\`, not hope.
 - One watch per thing. If you are waiting on two, set two - they are cheap, and a single watch on the slower one loses the other.
 - It is polled for you on a timer, OUTSIDE any turn: no session, no tokens, and the thread is not blocked. People can keep talking to you the whole time, and you answer them normally - the watch is not a mode you are in, it is a note that comes back.
@@ -363,6 +376,11 @@ export type BuildSystemPromptOptions = PromptContext & {
    * back to.
    */
   readonly canWatch?: boolean;
+  /**
+   * True for an owner turn only: `orca` is denied to every other role, so the
+   * prompt tells them to use the Agent tool instead (`AGENT_TOOL_RULES`).
+   */
+  readonly orca?: boolean;
   /** true when this turn is an untagged reply under a thread the bot started */
   readonly following?: boolean;
   /** true when this message is being retried after a restart cut the first attempt off */
@@ -438,7 +456,8 @@ export const buildSystemPromptParts = (
   // Self-fixing lives in a memory skill when this turn can see one.
   const skillsVisible =
     !!options.adapter && options.adapter.skills.length > 0 && options.adapterScope?.canReadFiles !== false;
-  const selfWork = selfUpdateRules(options.repoPath, options.restartScript, skillsVisible, options.selfPrAccounts);
+  const orca = options.orca === true;
+  const selfWork = selfUpdateRules(options.repoPath, options.restartScript, skillsVisible, options.selfPrAccounts, orca);
   // A turn that can read files carries the procedures as guides; one that
   // cannot (a sandboxed tier) could never open them, so it keeps them inline.
   const guided = !!options.guideDir && options.adapterScope?.canReadFiles !== false;
@@ -449,9 +468,10 @@ export const buildSystemPromptParts = (
     options.commandPrefix ?? "//bot",
     options.commandBudget,
     options.canWatch === true && !guided,
+    orca,
   );
   const waiting =
-    options.canWatch === true && commands ? waitingRules(options.commandPrefix ?? "//bot") : "";
+    options.canWatch === true && commands ? waitingRules(options.commandPrefix ?? "//bot", orca) : "";
 
   // The always-apply rules go LAST, not second. They used to sit directly under
   // the persona with every situational block appended after them - thirteen
@@ -462,7 +482,7 @@ export const buildSystemPromptParts = (
   const tail = `${remembering}\n\n${WORKSPACE_NOTE}\n\n${OPERATING_RULES}\n\n${BEFORE_YOU_SEND}\n\n${identityLock(botName, options.botUserId)}`;
   if (!guided) {
     return {
-      prompt: `${base}${learningsBlock}${addressed}${roster}${attachments}${investigating}${tickets}${slackReading}${desktop}${reaching}${selfWork}${splitQuestionRules(waiting ? (options.commandPrefix ?? "//bot") : undefined)}${reactions}${interactive}${following}${commands}${tail}`,
+      prompt: `${base}${learningsBlock}${addressed}${roster}${attachments}${investigating}${tickets}${slackReading}${desktop}${reaching}${selfWork}${splitQuestionRules(waiting ? (options.commandPrefix ?? "//bot") : undefined, orca)}${reactions}${interactive}${following}${commands}${tail}`,
       guides: [],
     };
   }
@@ -471,9 +491,13 @@ export const buildSystemPromptParts = (
     asGuide("tickets", tickets),
     asGuide("credential-gap", reaching),
     asGuide("desktop", desktop),
-    asGuide("parallel", splitQuestionRules(waiting ? (options.commandPrefix ?? "//bot") : undefined)),
+    asGuide(
+      "parallel",
+      splitQuestionRules(waiting ? (options.commandPrefix ?? "//bot") : undefined, orca),
+      orca ? undefined : AGENT_GUIDE_SUMMARIES.parallel,
+    ),
     asGuide("block-kit", interactive),
-    asGuide("waiting", waiting),
+    asGuide("waiting", waiting, orca ? undefined : AGENT_GUIDE_SUMMARIES.waiting),
   ].filter((g): g is PromptGuide => !!g);
   const index = renderGuideIndex(guides, options.guideDir ?? "");
   return {

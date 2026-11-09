@@ -230,7 +230,11 @@ Concrete implementations of the seams and the transports.
 - **Owner can never be locked out.** `decideAccess` grants the owner access even
   if the database is empty or broken.
 - **Role-based tool policy.** owner/admin run the CLI full-access; pal/executer
-  are sandboxed (allow-list + fixed cwd, no permission bypass). `review` is a
+  are sandboxed (allow-list + fixed cwd, no permission bypass). Orca is
+  owner-only (`ORCA_DENY` in `--disallowedTools` for the other three, since an
+  Orca worker runs with full host permissions); an executer gets code jobs
+  done in its own process with the Agent tool, and the prompt is role-aware
+  (`orca` flag on `buildSystemPrompt`). `review` is a
   preset that always runs full-access. On top of that, a per-role policy edited
   from the dashboard (`role_policies`) can switch a role off or deny it
   commands, tools and MCP servers - it only ever takes away, and never touches
