@@ -135,7 +135,7 @@ export type CommandDeps = {
   draft?: DraftReply;
   /** Per-role CLI tool policy (sandbox/allow-list), for ask + review. */
   toolPolicy?: (role: UserRole, channelId?: string) => ToolPolicy;
-  /** Per-user Claude Code tokens. `review` requires one; everything else prefers one. */
+  /** Per-user Claude Code tokens. Every CLI turn, `review` included, prefers one and falls back to the bot's own. */
   claudeTokens?: ClaudeTokenPort;
   /** Shared 2FA setup keys, for the `2fa` command. */
   totp?: TotpPort;

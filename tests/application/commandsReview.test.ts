@@ -345,13 +345,13 @@ describe("reviews run on the caller's Claude token when set, the bot's own other
     const { deps } = withTokens();
     const out = await dispatchCommand(deps, actor(), "C1", "token list");
     expect(out).toContain("Nobody has given me a token yet");
-    expect(out).toContain("nobody can run a review");
+    expect(out).toContain("every review runs on mine");
   });
 
   test("token reports what is on file and forgets it on request", async () => {
     const { deps } = withTokens({ [OWNER]: TOKEN });
     expect(await dispatchCommand(deps, actor(), "C1", "token")).toContain("…aaaa");
-    expect(await dispatchCommand(deps, actor(), "C1", "token remove")).toContain("Forgotten");
+    expect(await dispatchCommand(deps, actor(), "C1", "token remove")).toContain("Your reviews run on mine");
     expect(await dispatchCommand(deps, actor(), "C1", "token remove")).toContain("did not have");
     // and it never asks anyone to type one into a channel
     const asked = await dispatchCommand(deps, actor(), "C1", "token");

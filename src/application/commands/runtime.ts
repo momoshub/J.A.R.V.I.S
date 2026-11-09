@@ -152,7 +152,7 @@ export const RUNTIME_COMMANDS: readonly CommandDef[] = [
         const had = deps.claudeTokens.get(actor.slackId);
         deps.claudeTokens.remove(actor.slackId);
         return had
-          ? `Forgotten your token (${tokenHint(had)}). Your reviews will ask for a new one.`
+          ? `Forgotten your token (${tokenHint(had)}). Your reviews run on mine until you add another.`
           : "I did not have a token for you anyway.";
       }
       // Before the catch-all below, or it is never reached - which is exactly
@@ -161,7 +161,7 @@ export const RUNTIME_COMMANDS: readonly CommandDef[] = [
         if (RANK[actor.role] < RANK.admin) return "Only admins can see that.";
         const held = deps.claudeTokens.list();
         if (held.length === 0) {
-          return `Nobody has given me a token yet, so nobody can run a review. \`${slash} token\` opens the box.`;
+          return `Nobody has given me a token yet, so every review runs on mine. \`${slash} token\` opens the box.`;
         }
         const lines = held.map((h) => {
           const name = deps.users.get(h.slackId)?.displayName;

@@ -720,12 +720,9 @@ Bots, the app itself included, never trigger it.
 
 `@bot review <pr-url>` runs the review command, the same as typing it with the
 prefix. It has to be a mention carrying a real pull request url and actually say
-"review" - anything vaguer stays a conversation, because a review spends the
-asker's own credential rather than being free.
-
-This matters beyond convenience: only the command can offer the box that takes a
-Claude token, so a spoken request used to get a description of the token instead
-of the button that accepts one.
+"review" - anything vaguer stays a conversation, because a review is a long,
+expensive run (on the asker's own Claude token when one is on file, on the bot's
+otherwise), not a chat reply.
 
 Flags carry through (`@bot review <url> --policy after`); the rest of the
 sentence does not. "can you please" is not guidance, and guessing which half of
@@ -802,7 +799,7 @@ actual system prompt it runs on, which is no secret - it is in this repository.
 
 Both exist because the question used to cost a review: asked to explain itself,
 the bot ran `review help`, took the word "help" as a target, and spent minutes
-reviewing a pull request by that name on the asker's own credential. An argument
+reviewing a pull request by that name. An argument
 now has to look like a pull request - a url, `owner/repo#123`, or a bare number -
 before anything expensive starts.
 
