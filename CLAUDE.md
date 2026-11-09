@@ -11,7 +11,7 @@ A configurable Slack agent bot (Bun + TypeScript). Its "brain" is the local **Cl
 ```bash
 bun test              # full test suite (bun:test)
 bun run typecheck     # tsc --noEmit  (root)
-bun run test:e2e      # opt-in, real Slack: needs SLACK_BOT_TOKEN, see README "Testing"; not in bun test or CI
+bun run test:e2e      # opt-in, real Slack (block kit, stream, upload, watch): needs SLACK_BOT_TOKEN, see README "Testing"; not in bun test or CI
 bun run build:web     # build the React dashboard (web/ -> web/dist)
 bun start             # run the bot + dashboard
 bun run setup         # install + build:web
