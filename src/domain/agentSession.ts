@@ -73,19 +73,22 @@ export const planSessionStop = (event: AgentSessionStoppedEvent): SessionStopPla
 };
 
 /**
- * What the thread is told when Slack's own button stopped something.
+ * The one log-channel line for a press on Slack's own stop button.
  *
- * Nothing is said when nothing was running: the press still has to close the
- * stream so the session leaves `processing`, but announcing "nothing was
- * running" to a thread where somebody just tapped stop is noise. Slack's UI
- * already showed them it stopped.
+ * The stopped thread is told nothing: Slack's UI already showed the presser
+ * that it stopped, and a "stopped" line under every press was noise for
+ * everyone else reading. The context goes to the log channel instead - who,
+ * which thread, what was running and for how long. Nothing is logged when
+ * nothing was running (the press still closes its stream, but there is
+ * nothing to report).
  */
-export const sessionStoppedNotice = (
+export const sessionStoppedLog = (
   run: { readonly what: string; readonly startedAt: number; readonly actor: string },
-  by: string,
+  press: { readonly by: string; readonly channel: string; readonly threadTs: string; readonly link?: string },
   now: number,
   forHowLong: (ms: number) => string,
 ): string => {
-  const whose = by === run.actor ? "" : ` (<@${run.actor}>'s)`;
-  return `⏹ stopped *${run.what}*${whose} after ${forHowLong(now - run.startedAt)} - you pressed stop`;
+  const whose = press.by === run.actor ? "" : ` (<@${run.actor}>'s)`;
+  const where = press.link ? `<${press.link}|thread>` : `<#${press.channel}> \`${press.threadTs}\``;
+  return `⏹ <@${press.by}> pressed stop in ${where}: stopped *${run.what}*${whose} after ${forHowLong(now - run.startedAt)}`;
 };

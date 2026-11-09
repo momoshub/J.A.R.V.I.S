@@ -779,6 +779,8 @@ const main = async () => {
   // With a gateway, Slack traffic arrives through its inbox and the socket is
   // not ours to open - a restart here then costs a short wait, not lost messages.
   // The one drain notice in the log channel, edited as more threads wait.
+  // The log channel (#jarvis_logs): restart notice, voice drift, stop presses.
+  const logChannel = (): string => config.drainNoticeChannel ?? "";
   let drainPost: { channel: string; ts: string } | undefined;
   let drainPosting: Promise<void> = Promise.resolve();
   const inbox = config.slackTransport === "inbox" ? openInbox(config.inboxDatabasePath) : undefined;
@@ -804,7 +806,7 @@ const main = async () => {
             // message is safe, but silence reads as death - so the log
             // channel gets one message listing every waiting thread.
             onDeferred: (waiting) => {
-              const channel = config.drainNoticeChannel;
+              const channel = logChannel();
               if (!channel) return;
               drainPosting = drainPosting
                 .then(async () => {
@@ -838,7 +840,7 @@ const main = async () => {
       commandPrefix: config.commandPrefix,
       slashCommand: config.slashCommand,
     },
-    { ...deps, kitViews, log: activity.line },
+    { ...deps, kitViews, log: activity.line, stopLogChannel: logChannel },
   );
   slackApp = slack;
   await slack.start();
@@ -1051,7 +1053,7 @@ const main = async () => {
       logChannel: () => {
         const v = settings.get(SETTING_KEYS.innerChildDriftChannel)?.trim() ?? "";
         if (v.toLowerCase() === "off") return "";
-        return v || config.drainNoticeChannel || "";
+        return v || logChannel();
       },
       replies: (channel, threadTs) => slackAdmin.replies(channel, threadTs),
       workflowActive: (channel, threadTs) => !!workflows.activeFor(channel, threadTs),
