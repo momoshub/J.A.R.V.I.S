@@ -478,6 +478,7 @@ export const createHandler =
        */
       const updateTidy = (ts: string, text: string, withTail: boolean) =>
         msg.client.chat.update({ channel: msg.channelId, ts, ...tidy(text, withTail) }).catch((e: unknown) => {
+          if (!/invalid_blocks|invalid_arguments/.test(e instanceof Error ? e.message : String(e))) throw e;
           log(`rewrite refused, retrying as words: ${e instanceof Error ? e.message : String(e)}`);
           return msg.client.chat.update({ channel: msg.channelId, ts, ...tidy(text, withTail, true) });
         });

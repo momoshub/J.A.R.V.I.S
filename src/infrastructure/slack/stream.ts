@@ -294,6 +294,8 @@ export const createSlackStream = (
         await send({ chunks: [chunk] }, JSON.stringify(chunk).length);
       } catch (e) {
         if (!/invalid_blocks|invalid_arguments/.test(errMsg(e))) throw e;
+        // A refused chunk was never shown, so it is not part of the allowance.
+        used = Math.max(0, used - JSON.stringify(chunk).length);
         log(`blocks refused, shown as text: ${errMsg(e)}`);
         const words = blocksToText(blocks);
         const shown = words ? `\n${words}\n\n` : `\n\`\`\`\n${JSON.stringify(blocks, null, 2)}\n\`\`\`\n`;
