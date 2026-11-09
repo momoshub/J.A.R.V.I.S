@@ -14,7 +14,7 @@
  * simply "no handle" and the turn's rules fall back to the Agent tool.
  */
 import { stopProcess } from "../llm/killTree.ts";
-import { logAndIgnore } from "../../application/ignoredError.ts";
+import { ignoreQuietly } from "../../application/ignoredError.ts";
 
 /** One `orca` call: its exit code and stdout. Never throws. */
 export type OrcaRun = (args: readonly string[]) => Promise<{ code: number; stdout: string }>;
@@ -103,7 +103,7 @@ export const createOrcaTerminal = (config: OrcaTerminalConfig): OrcaTerminal => 
     if (checkedAt !== undefined && config.now() - checkedAt < ttl) return Promise.resolve(answer);
     // Turns that start together share one check rather than each creating a pane.
     inflight ??= settle()
-      .catch(logAndIgnore("orca terminal check"))
+      .catch(ignoreQuietly("orca terminal check"))
       .then((h) => {
         // Said once when it stops working, not on every check while it is down.
         if (!h && !failing) config.log?.("[orca] no terminal of my own (Orca not running, or it refused the worktree); turns get no ORCA_TERMINAL_HANDLE");

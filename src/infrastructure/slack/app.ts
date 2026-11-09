@@ -925,7 +925,7 @@ export const createSlackApp = (config: SlackAppConfig, deps: Deps) => {
   // The real WebClient is a superset of the minimal SlackClient seam.
   const asClient = (client: WebClient) => client as unknown as SlackClient;
   const retireOnReply = async (client: unknown, m: Parameters<typeof retireOpenKit>[2]) =>
-    retireOpenKit(client, await deps.slack?.botUserId().catch(logAndIgnore("bot user id lookup")), m, log);
+    retireOpenKit(client, await deps.slack?.botUserId().catch(ignoreQuietly("bot user id lookup")), m, log);
 
   // @-mentions in channels -> reply in the same thread.
   app.event("app_mention", async ({ event, client, say, context }) => {
@@ -1413,7 +1413,7 @@ export const createSlackApp = (config: SlackAppConfig, deps: Deps) => {
     const follows = deps.follows;
     if (!follows || channel.startsWith("D")) return;
     if (follows.isFollowed(channel, threadTs) || follows.isOptedOut(channel, threadTs)) return;
-    const me = await deps.slack?.botUserId().catch(logAndIgnore("bot user id lookup"));
+    const me = await deps.slack?.botUserId().catch(ignoreQuietly("bot user id lookup"));
     if (!me) return;
     const info = await threadInfo(client, channel, threadTs);
     if (!startsAutoFollow({ participants: info.participants, author, botUserId: me })) return;
@@ -1433,7 +1433,7 @@ export const createSlackApp = (config: SlackAppConfig, deps: Deps) => {
       // it. Or somebody ASKED it to, with `follow`, which is how a thread
       // started by a person gets the same treatment. Or it is just it and
       // one person talking, who should not have to tag it on every line.
-      const me = await deps.slack?.botUserId().catch(logAndIgnore("bot user id lookup"));
+      const me = await deps.slack?.botUserId().catch(ignoreQuietly("bot user id lookup"));
       if (!couldFollowThread(m, me)) return;
       if (!me) {
         log(`follow skip channel=${m.channel} thread=${m.thread_ts} user=${m.user}: bot id unknown`);

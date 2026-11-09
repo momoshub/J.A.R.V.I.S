@@ -25,7 +25,7 @@ import type { RolePolicyRepo } from "../db/rolePolicyRepo.ts";
 import type { StatsRepo } from "../db/statsRepo.ts";
 import { createSlackDirectory } from "../../application/slackDirectory.ts";
 import { createNameResolver } from "../../application/nameResolver.ts";
-import { ignoreQuietly, logAndIgnore } from "../../application/ignoredError.ts";
+import { ignoreQuietly } from "../../application/ignoredError.ts";
 
 export type DashboardConfig = {
   port: number;
@@ -455,7 +455,7 @@ export const createDashboard = (config: DashboardConfig, deps: DashboardDeps) =>
   const route = async (req: Request, url: URL): Promise<Response> => {
     if (url.pathname === "/health") {
       const health = deps.slackHealth?.();
-      const ui = await deps.uiAccess?.().catch(logAndIgnore("dashboard ui access probe"));
+      const ui = await deps.uiAccess?.().catch(ignoreQuietly("dashboard ui access probe"));
       // `ok` means "can do its job", not "the process is up" - a bot that
       // cannot hear Slack is down however well this endpoint answers.
       // `ui` rides along without touching `ok`: being unable to drive the
