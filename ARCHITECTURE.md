@@ -107,7 +107,10 @@ no classes.
   on (PRs, comments, reviews, labels, merge) through `bin/github-app.sh` ->
   `/api/github-app/action`: the ticket resolves to the Slack user, the role is
   checked in `githubAppActions`, the installation is looked up per repo, and
-  every call lands in the command log.
+  every call lands in the command log. The same helper's `git` / `push` run a
+  local git as the app: it asks the bot for the `git-auth` action (installation
+  token + `<slug>[bot]` identity) and gives that one git process the token in its
+  environment (`GIT_CONFIG_*` `http.extraheader`), never in a url or a file.
 - **Self-update.** A fix lands through a PR that CI (`.github/workflows/ci.yml`)
   passes, merged only by `bin/merge-when-green.sh` (exit 4 at once on a PR that
   conflicts with its base, which GitHub never runs CI on). When it touches runtime code

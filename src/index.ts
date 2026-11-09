@@ -991,6 +991,7 @@ const main = async () => {
       github: appClient,
       audit: commandLog,
       allowedOwners: config.githubApp.allowedOwners,
+      slug: config.githubApp.slug,
     });
     app.recover();
     webhookServer = startWebhookServer({

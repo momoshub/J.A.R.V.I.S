@@ -730,7 +730,30 @@ bin/github-app.sh pr-close|pr-reopen <owner/repo> <n>
 bin/github-app.sh pr-merge <owner/repo> <n> [--method merge|squash|rebase]
 bin/github-app.sh labels-add|labels-remove <owner/repo> <n> <label>...
 bin/github-app.sh reviewers-request <owner/repo> <n> <login|team:slug>...
+bin/github-app.sh git <owner/repo> <local-repo-dir> -- <git args>...
+bin/github-app.sh push <owner/repo> <local-repo-dir> <branch> [--force-with-lease]
 ```
+
+`git` runs `git -C <dir> <args>` **as the app**: commits and cherry-picks are
+committed by `jarvis-at-acme[bot]` (`<id>+jarvis-at-acme[bot]@users.noreply.github.com`,
+no GPG signing; the id is looked up once with `GET /users/<slug>[bot]`), and
+anything that talks to github.com (fetch, pull, push, ls-remote; an ssh remote
+is read as https) carries a fresh installation token. `push` pushes one branch
+to the remote of `<dir>` that points at `<owner/repo>`. The token is a one-shot
+credential: the bot hands it back for the `git-auth` action (same ticket, same
+admin/owner gate, same command log row, no token in the log) and the helper puts
+it in that one git process's environment as `http.extraheader` through
+`GIT_CONFIG_*` - never in a remote url, `.git/config`, argv or any file. A
+cherry-picked commit keeps its original author unless you pass `--reset-author`.
+
+```
+bin/github-app.sh git acme/acme-be ~/Workspaces/be -- commit -m "fix: x"
+bin/github-app.sh push acme/acme-be ~/Workspaces/be fix/x
+```
+
+In the `acme` org, every PR is committed and opened as the app
+(`git` + `push` + `pr-create` above); review comments and the merge are done as
+`kai-at-acme`.
 
 It only acts on owners in `GITHUB_APP_ALLOWED_OWNERS`. It posts to `/api/github-app/action` with the turn's ticket (from
 `JARVIS_RUN_TICKET`, never an argument); the bot resolves it to the person the
