@@ -66,7 +66,8 @@ export type TurnLogRepo = {
   /**
    * Threads whose NEWEST turn failed - the ones still broken, rather than every
    * thread that has ever had a bad turn. A thread that failed and then worked
-   * needs nobody's attention.
+   * needs nobody's attention, and neither does one a person deliberately
+   * stopped (or a restart cut and redelivered): `stopped` is not unfinished work.
    */
   stuckThreads: (since: number, limit?: number) => TurnEntry[];
   count: () => number;
@@ -84,13 +85,14 @@ export const createTurnLogRepo = (db: DbClient): TurnLogRepo => {
   const latestStmt = db.query<Row, [string, string]>(
     "SELECT * FROM turn_log WHERE channel_id = ? AND thread_ts = ? ORDER BY id DESC LIMIT 1",
   );
-  // The newest row per thread, then only the ones that did not end well.
+  // The newest row per thread, then only the ones that failed. A stopped turn is a
+  // decision (or a restart that redelivers), so it is counted in `since`, not here.
   const stuckStmt = db.query<Row, [number, number]>(
     `SELECT * FROM turn_log t
       WHERE t.ended_at >= ?
         AND t.id = (SELECT MAX(t2.id) FROM turn_log t2
                      WHERE t2.channel_id = t.channel_id AND t2.thread_ts = t.thread_ts)
-        AND t.outcome <> 'ok'
+        AND t.outcome = 'failed'
       ORDER BY t.ended_at DESC LIMIT ?`,
   );
   const countStmt = db.query<{ n: number }, []>("SELECT COUNT(*) AS n FROM turn_log");
