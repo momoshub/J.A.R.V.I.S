@@ -22,7 +22,7 @@ import { MAX_SILENCE_NOTE } from "../../domain/silence.ts";
 import { createFenceNormalizer } from "./fences.ts";
 import type { FinishedStep } from "../../domain/collapseSteps.ts";
 import type { LlmUsage } from "../../application/ports.ts";
-import { createBlockKitExtractor, type Block, type Segment } from "../../domain/blockKit.ts";
+import { blocksToText, createBlockKitExtractor, type Block, type Segment } from "../../domain/blockKit.ts";
 import type { LlmStreamEvent, LlmStreamSink } from "../../application/ports.ts";
 
 /** The slice of Slack's ChatStreamer we depend on (kept minimal for testing). */
@@ -279,10 +279,12 @@ export const createSlackStream = (
    * Send a run of blocks as one chunk, in order with the text around it.
    *
    * Slack refuses a block it does not support in a message (`alert` is
-   * rejected with `invalid_blocks` even though the SDK types it), and a refusal
-   * would otherwise break the stream for the whole turn. So a refused chunk is
-   * shown as its JSON in a code block instead: the content survives, and the
-   * rest of the reply keeps streaming.
+   * rejected with `invalid_blocks` even though the SDK types it) or one that
+   * breaks its schema (an empty table cell came back `invalid_arguments`), and a
+   * refusal would otherwise break the stream for the whole turn: the reply
+   * split in two and the table vanished. So a refused chunk is shown as the
+   * words it holds instead (its JSON in a code block when it holds none): the
+   * content survives, and the rest of the reply keeps streaming.
    */
   const appendBlocks = (blocks: Block[]) => {
     ensure();
@@ -291,10 +293,11 @@ export const createSlackStream = (
       try {
         await send({ chunks: [chunk] }, JSON.stringify(chunk).length);
       } catch (e) {
-        if (!errMsg(e).includes("invalid_blocks")) throw e;
-        log(`blocks refused, shown as code: ${errMsg(e)}`);
-        const code = `\n\`\`\`\n${JSON.stringify(blocks, null, 2)}\n\`\`\`\n`;
-        await send({ markdown_text: code }, code.length);
+        if (!/invalid_blocks|invalid_arguments/.test(errMsg(e))) throw e;
+        log(`blocks refused, shown as text: ${errMsg(e)}`);
+        const words = blocksToText(blocks);
+        const shown = words ? `\n${words}\n\n` : `\n\`\`\`\n${JSON.stringify(blocks, null, 2)}\n\`\`\`\n`;
+        await send({ markdown_text: shown }, shown.length);
       }
     });
   };

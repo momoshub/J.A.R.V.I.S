@@ -31,6 +31,96 @@ const KIT_TAGS = new Set(["blockkit", "block-kit", "blocks"]);
 const isBlock = (v: unknown): v is Block =>
   typeof v === "object" && v !== null && !Array.isArray(v) && typeof (v as { type?: unknown }).type === "string";
 
+/** What an empty text becomes where Slack wants at least one character (same as `systemBlocks`). */
+const BLANK_CELL = "-";
+
+const isBlank = (v: unknown): boolean => typeof v === "string" && v.trim() === "";
+
+const textField = (b: Block, key: string): unknown => {
+  const v = b[key];
+  return typeof v === "object" && v !== null ? (v as { text?: unknown }).text : v;
+};
+
+/**
+ * Fix the well-known min-length traps in model-written blocks, before they are
+ * sent. Slack refuses `raw_text` under 1 char (a table with an empty cell took
+ * the whole message down with `invalid_blocks`), and a `header`, `markdown` or
+ * `section` with no text. An empty table cell reads "-" (as in `sys`); a block
+ * with nothing to show is dropped, since a dash there would be invented content.
+ */
+export const normalizeBlocks = (blocks: readonly Block[]): Block[] => {
+  const out: Block[] = [];
+  for (const b of blocks) {
+    if (b.type === "table" && Array.isArray(b.rows)) {
+      const rows = b.rows.map((row: unknown) =>
+        Array.isArray(row)
+          ? row.map((c: unknown) =>
+              typeof c === "object" && c !== null && (c as { type?: unknown }).type === "raw_text" && isBlank((c as { text?: unknown }).text)
+                ? { ...(c as object), text: BLANK_CELL }
+                : c,
+            )
+          : row,
+      );
+      out.push({ ...b, rows });
+      continue;
+    }
+    if ((b.type === "header" || b.type === "markdown") && isBlank(textField(b, "text"))) continue;
+    if (b.type === "section" && isBlank(textField(b, "text"))) {
+      if (Array.isArray(b.fields) && b.fields.length > 0) {
+        const { text: _blank, ...rest } = b;
+        out.push(rest as Block);
+      }
+      continue;
+    }
+    out.push(b);
+  }
+  return out;
+};
+
+/** The strings a block would show a reader, in order. */
+const shownStrings = (v: unknown, out: string[]): void => {
+  if (Array.isArray(v)) {
+    for (const x of v) shownStrings(x, out);
+    return;
+  }
+  if (typeof v !== "object" || v === null) return;
+  for (const [k, x] of Object.entries(v)) {
+    if ((k === "text" || k === "title" || k === "subtitle" || k === "alt_text") && typeof x === "string") {
+      if (x.trim()) out.push(x.trim());
+    } else if (typeof x === "object") shownStrings(x, out);
+  }
+};
+
+/**
+ * Blocks as words, for a reader that cannot see blocks (a post Slack refused,
+ * a chunk Slack refused): a table as lines of `a | b`, anything else as the
+ * text it holds. Empty when there is nothing to say - the caller decides what
+ * stands in then.
+ */
+export const blocksToText = (blocks: readonly Block[]): string =>
+  blocks
+    .map((b) => {
+      if (b.type === "table" && Array.isArray(b.rows)) {
+        return b.rows
+          .filter(Array.isArray)
+          .map((row: unknown[]) =>
+            row
+              .map((c) => {
+                const t: string[] = [];
+                shownStrings(c, t);
+                return t.join(" ") || BLANK_CELL;
+              })
+              .join(" | "),
+          )
+          .join("\n");
+      }
+      const parts: string[] = [];
+      shownStrings(b, parts);
+      return parts.join("\n");
+    })
+    .filter(Boolean)
+    .join("\n\n");
+
 /**
  * Parse a fence body into blocks - and, for `{"text": ..., "blocks": [...]}`,
  * the mrkdwn that stands in for them in a notification - or undefined when it
@@ -51,7 +141,9 @@ export const parseKit = (raw: string): { blocks: Block[]; fallback?: string } | 
     value = (value as { blocks: unknown }).blocks;
   }
   if (!Array.isArray(value) || value.length === 0 || !value.every(isBlock)) return undefined;
-  return { blocks: value.slice(0, MAX_BLOCKS), ...(fallback ? { fallback } : {}) };
+  const blocks = normalizeBlocks(value.slice(0, MAX_BLOCKS));
+  if (blocks.length === 0) return undefined;
+  return { blocks, ...(fallback ? { fallback } : {}) };
 };
 
 /** Parse a fence body into blocks, or undefined when it is not usable Block Kit. */
@@ -183,34 +275,39 @@ export const splitBlockKit = (text: string): Segment[] => {
  * A plain (non-streamed) post of a reply that may hold Block Kit: prose goes in
  * `markdown` blocks around the fences, and `text` keeps the prose - plus each
  * fence's own `text`, in place - as the notification and screen-reader
- * fallback. `plain` is set when every fence carried its own text: the whole
- * reply as mrkdwn, for when Slack refuses the blocks. Undefined when there are
- * no blocks, so the ordinary text post stays exactly as it was.
+ * fallback. `plain` is the whole reply as words, for when Slack refuses the
+ * blocks: a fence's own text, else its blocks rendered (`blocksToText`), so a
+ * refused post never falls back to the raw ```blockkit JSON. Undefined when
+ * there are no blocks, so the ordinary text post stays exactly as it was.
  */
 export const toBlockMessage = (
   text: string,
   fallback: (prose: string) => string = (p) => p,
-): { text: string; blocks: Block[]; plain?: string } | undefined => {
+): { text: string; blocks: Block[]; plain: string } | undefined => {
   const segs = splitBlockKit(text);
   if (!segs.some((s) => s.kind === "blocks")) return undefined;
-  const covered = segs.every((s) => s.kind === "text" || !!s.fallback);
   const blocks: Block[] = [];
   const prose: string[] = [];
+  const words: string[] = [];
   for (const s of segs) {
     if (s.kind === "blocks") {
       blocks.push(...s.blocks);
       if (s.fallback) prose.push(s.fallback.trim());
+      const said = s.fallback?.trim() || blocksToText(s.blocks);
+      if (said) words.push(said);
       continue;
     }
     const t = s.text.trim();
     if (!t) continue;
     prose.push(t);
+    words.push(t);
     blocks.push({ type: "markdown", text: t });
   }
-  const plainText = fallback(prose.join("\n\n")) || " ";
-  // Every fence brought its own words, so a post whose blocks Slack refuses
-  // can go out as those words rather than as the raw JSON.
-  return { text: plainText, blocks: blocks.slice(0, MAX_BLOCKS), ...(covered ? { plain: plainText } : {}) };
+  return {
+    text: fallback(prose.join("\n\n")) || " ",
+    blocks: blocks.slice(0, MAX_BLOCKS),
+    plain: fallback(words.join("\n\n")) || " ",
+  };
 };
 
 /**

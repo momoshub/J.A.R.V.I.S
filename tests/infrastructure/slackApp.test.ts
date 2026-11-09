@@ -71,6 +71,8 @@ const build = (opts: {
   thinkingAfterMs?: number;
   /** `say` throws on any post carrying blocks, as Slack does on `invalid_blocks`. */
   refuseBlocks?: boolean;
+  /** `chat.update` throws on any message carrying blocks other than markdown/context, as Slack does on `invalid_blocks`. */
+  refuseUpdateBlocks?: boolean;
   threadQueue?: ThreadQueue;
 }) => {
   const db = openDatabase(":memory:");
@@ -108,6 +110,8 @@ const build = (opts: {
     chatStream: () => fakeStreamer(rec, streams++ === 0 ? "222.2" : `222.${streams + 1}`),
     chat: {
       update: async (a) => {
+        if (opts.refuseUpdateBlocks && (a.blocks as { type: string }[] | undefined)?.some((b) => b.type !== "markdown" && b.type !== "context"))
+          throw new Error("invalid_blocks");
         updates.push(a);
         return {};
       },
@@ -307,6 +311,48 @@ describe("createHandler streaming truth table", () => {
     await r.handle({ ...r.msg("hi"), say });
     expect(posts.map((p) => p.blocks === undefined)).toEqual([false, true]);
     expect(posts[1]?.text).toBe("plain post");
+  });
+
+  const TABLE_REPLY = `intro\n\`\`\`blockkit\n${JSON.stringify([
+    {
+      type: "table",
+      rows: [
+        [{ type: "raw_text", text: "Name" }, { type: "raw_text", text: "Qty" }],
+        [{ type: "raw_text", text: "widget" }, { type: "raw_text", text: "" }],
+      ],
+    },
+  ])}\n\`\`\`\n`;
+
+  test("a reply whose blocks Slack refuses is never posted as a raw blockkit fence", async () => {
+    // the stream dies on its first append and the post with blocks is refused: the last fallback
+    const rec: Recorded = { appends: [], stops: 0, stopThrows: false, appendThrows: true };
+    const r = build({ llm: streamingLlm(TABLE_REPLY, [{ type: "text", delta: TABLE_REPLY }]), streamUpdates: true, rec, refuseBlocks: true });
+    await r.handle(r.msg("hi", "000.9"));
+    expect(r.said).toHaveLength(1);
+    expect(r.said[0]?.text).not.toContain("blockkit");
+    expect(r.said[0]?.text).toContain("Name | Qty\nwidget | -");
+  });
+
+  test("a dead stream's rewrite that Slack refuses is retried as words, not reposted", async () => {
+    const rec: Recorded = { appends: [], stops: 0, stopThrows: true, appendThrows: false };
+    const r = build({ llm: streamingLlm(TABLE_REPLY, [{ type: "text", delta: "half" }]), streamUpdates: true, rec, refuseUpdateBlocks: true });
+    await r.handle(r.msg("hi", "000.9"));
+    expect(r.said).toHaveLength(0);
+    expect(r.updates).toHaveLength(1);
+    const sent = JSON.stringify(r.updates[0]);
+    expect(sent).toContain("widget | -");
+    expect(sent).not.toContain("blockkit");
+  });
+
+  test("a finished stream whose tidy-up blocks Slack refuses is rewritten as words, footer kept", async () => {
+    const r = build({ llm: streamingLlm(TABLE_REPLY, [{ type: "text", delta: TABLE_REPLY }]), streamUpdates: true, refuseUpdateBlocks: true });
+    await r.handle(r.msg("hi", "000.9"));
+    expect(r.said).toHaveLength(0);
+    expect(r.updates).toHaveLength(1);
+    const sent = r.updates[0] as { text: string; blocks: { type: string; block_id?: string }[] };
+    expect(sent.text).toContain("widget | -");
+    expect(JSON.stringify(sent)).not.toContain("blockkit");
+    expect(sent.blocks.at(-1)).toMatchObject({ block_id: FOOTER_BLOCK_ID });
   });
 
   test("a streamed Block Kit reply already at 50 blocks still fits its footer", async () => {

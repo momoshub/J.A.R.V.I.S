@@ -2,13 +2,32 @@ import { describe, expect, test } from "bun:test";
 import {
   BLOCK_KIT_RULES,
   blockKitReply,
+  blocksToText,
   createBlockKitExtractor,
+  normalizeBlocks,
   parseBlocks,
   parseKit,
   splitBlockKit,
+  readableText,
   toBlockMessage,
   type Segment,
 } from "../../src/domain/blockKit.ts";
+
+const TABLE_WITH_EMPTY_CELL = JSON.stringify([
+  {
+    type: "table",
+    rows: [
+      [
+        { type: "raw_text", text: "Name" },
+        { type: "raw_text", text: "Qty" },
+      ],
+      [
+        { type: "raw_text", text: "widget" },
+        { type: "raw_text", text: "" },
+      ],
+    ],
+  },
+]);
 
 const ALERT = '[{"type":"alert","level":"warning","text":{"type":"mrkdwn","text":"careful"}}]';
 
@@ -103,8 +122,17 @@ describe("toBlockMessage", () => {
     expect(toBlockMessage(`\`\`\`blockkit\n${ALERT}\n\`\`\``)?.text).toBe(" ");
   });
 
-  test("a model fence brings no words of its own, so there is no plain stand-in", () => {
-    expect(toBlockMessage(`hi\n\`\`\`blockkit\n${ALERT}\n\`\`\``)?.plain).toBeUndefined();
+  test("a model fence brings no words of its own, so its blocks are rendered as the plain stand-in", () => {
+    const m = toBlockMessage(`hi\n\`\`\`blockkit\n${ALERT}\n\`\`\``);
+    expect(m?.plain).toBe("hi\n\ncareful");
+    expect(m?.text).toBe("hi");
+  });
+
+  test("the plain stand-in never carries the raw fence, whatever the blocks are", () => {
+    const m = toBlockMessage(`intro\n\`\`\`blockkit\n${TABLE_WITH_EMPTY_CELL}\n\`\`\`\noutro`);
+    expect(m?.plain).toBe("intro\n\nName | Qty\nwidget | -\n\noutro");
+    expect(m?.plain).not.toContain("blockkit");
+    expect(readableText(`\`\`\`blockkit\n${TABLE_WITH_EMPTY_CELL}\n\`\`\``)).toBe("Name | Qty\nwidget | -");
   });
 
   test("a fence with its own text: that text is the fallback, in place, and the plain stand-in", () => {
@@ -138,4 +166,65 @@ describe("parseKit / blockKitReply", () => {
 test("the prompt teaches the fence tag", () => {
   expect(BLOCK_KIT_RULES).toContain("blockkit");
   expect(BLOCK_KIT_RULES).toContain("table");
+});
+
+describe("normalizeBlocks (Slack's min-length traps)", () => {
+  const table = (...cells: string[]) => ({ type: "table", rows: [cells.map((text) => ({ type: "raw_text", text }))] });
+
+  test("an empty or whitespace table cell becomes a dash, header included", () => {
+    expect(parseBlocks(JSON.stringify([table("", "  ", "ok")]))).toEqual([table("-", "-", "ok")]);
+  });
+
+  test("a cell that has text, and one that is not raw_text, are left alone", () => {
+    const rich = { type: "rich_text", elements: [] };
+    const t = { type: "table", rows: [[{ type: "raw_text", text: "x" }, rich]] };
+    expect(normalizeBlocks([t])).toEqual([t]);
+  });
+
+  test("a header, markdown or section with no text is dropped; the rest stay in order", () => {
+    const blocks = [
+      { type: "header", text: { type: "plain_text", text: " " } },
+      { type: "markdown", text: "" },
+      { type: "section", text: { type: "mrkdwn", text: "" } },
+      { type: "divider" },
+      { type: "section", text: { type: "mrkdwn", text: "kept" } },
+    ];
+    expect(normalizeBlocks(blocks)).toEqual([{ type: "divider" }, { type: "section", text: { type: "mrkdwn", text: "kept" } }]);
+  });
+
+  test("a section with empty text but fields keeps its fields", () => {
+    const fields = [{ type: "mrkdwn", text: "a" }];
+    expect(normalizeBlocks([{ type: "section", text: { type: "mrkdwn", text: "" }, fields }])).toEqual([{ type: "section", fields }]);
+  });
+
+  test("a fence of nothing but empty blocks is not usable Block Kit, so it is shown as code", () => {
+    expect(parseKit('[{"type":"markdown","text":""}]')).toBeUndefined();
+    const segs = splitBlockKit('```blockkit\n[{"type":"markdown","text":""}]\n```\n');
+    expect(segs.map((s) => s.kind)).toEqual(["text"]);
+  });
+
+  test("the fix applies to a fence in a reply", () => {
+    const m = toBlockMessage(`\`\`\`blockkit\n${TABLE_WITH_EMPTY_CELL}\n\`\`\``);
+    expect(JSON.stringify(m?.blocks)).not.toContain('"text":""');
+  });
+});
+
+describe("blocksToText", () => {
+  test("a table is lines of cells; an empty cell is a dash", () => {
+    expect(blocksToText([{ type: "table", rows: [[{ type: "raw_text", text: "a" }, { type: "raw_text", text: "" }]] }])).toBe("a | -");
+  });
+
+  test("other blocks give the text they hold, cards their titles", () => {
+    expect(
+      blocksToText([
+        { type: "section", text: { type: "mrkdwn", text: "hello" }, fields: [{ type: "mrkdwn", text: "f1" }] },
+        { type: "divider" },
+        { type: "carousel", elements: [{ type: "card", title: { type: "mrkdwn", text: "T" }, body: { type: "mrkdwn", text: "B" } }] },
+      ]),
+    ).toBe("hello\nf1\n\nT\nB");
+  });
+
+  test("nothing to say is an empty string", () => {
+    expect(blocksToText([{ type: "divider" }, { type: "alert" }])).toBe("");
+  });
 });

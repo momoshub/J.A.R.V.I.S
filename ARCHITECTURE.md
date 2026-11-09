@@ -155,7 +155,7 @@ No I/O, no frameworks. Just data shapes and functions of their inputs.
 - `innerChild.ts`, `voiceDrift.ts` - the self-review triage, and the cheap voice-drift check, nudge and log lines
 - `githubApp.ts` - webhook signature, owner allowlist, trigger detection and what the GitHub App says
 - `*Prompt.ts` - prompts for the preset tasks (review, ticket, investigate, read, note, workflow, ...)
-- `blockKit.ts`, `kitEvents.ts`, `slackFormat.ts`, `slackLinks.ts` - Slack formatting, Block Kit and links
+- `blockKit.ts`, `kitEvents.ts`, `slackFormat.ts`, `slackLinks.ts` - Slack formatting, Block Kit (model fences are normalised against Slack's min-length rules and can be rendered as words when Slack refuses them) and links
 - `usageFooter.ts`, `collapseSteps.ts`, `messageFooter.ts` - the one grey line under a message: who wrote it (Jarvis, inner child Jarvis, watch, reminder, ...), what the turn cost, the step summary, and when it was last updated (restamped on every edit); `signedText` posts plain text as one `markdown` block (never folded behind "Show more", unlike a long section) up to Slack's 12k markdown cap, and `sectionChunks` cuts the rest (and the `signedSections` fallback) into sections Slack accepts, hard-splitting long lines and keeping code fences closed
 
 Fully unit tested, no mocks needed.
@@ -189,7 +189,7 @@ Concrete implementations of the seams and the transports.
 - `slack/gateway.ts` - the gateway's socket, writing envelopes to the inbox
 - `slack/inboxReceiver.ts` - the Bolt receiver that reads the inbox instead of a socket
 - `slack/app.ts` - Bolt listeners + slash commands mapping Slack events to `respond`
-- `slack/stream.ts`, `slack/fences.ts` - bridges the `LlmStreamSink` onto Slack's `chatStream` (text + `task_update` tool cards, Block Kit fences), falling back to a single post
+- `slack/stream.ts`, `slack/fences.ts` - bridges the `LlmStreamSink` onto Slack's `chatStream` (text + `task_update` tool cards, Block Kit fences; a blocks chunk Slack refuses is written as its words and the stream carries on), falling back to a single post
 - `slack/adminClient.ts` - `SlackAdminPort` over the Slack Web API; every post and edit carries the signed footer (`by` names the poster; `post` also takes a turn's usage, so an unwatched turn's reply shows the same usage line as a live one), falling back to bare text when Slack refuses the blocks
 - `slack/offlineAlarmClient.ts` - the offline alarm's scheduled-message calls
 - `inbox/inboxRepo.ts` - the inbox queue shared by both processes
