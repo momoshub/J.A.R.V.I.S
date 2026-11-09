@@ -6,6 +6,7 @@ import { runWorkflowTurn, WORKFLOW_MIN_ROLE, type WorkflowDeps } from "../workfl
 import { afterWorkflowTurn, steerWorker } from "../workflowContinue.ts";
 import { allowanceFor, limitFor, PAL_WINDOW_MS, setLimit, type CommandLimitDeps } from "../commandLimits.ts";
 import { forHowLong } from "../../domain/runControl.ts";
+import { tellPrompt } from "../../domain/tellPrompt.ts";
 import { frontKeyOf } from "../../domain/workflowFront.ts";
 import { workerStateOf } from "../workflowFront.ts";
 import type { UserRole } from "../../domain/types.ts";
@@ -247,19 +248,19 @@ Up to ${BOMB_SIZE} reactions; no category means *${DEFAULT_CATEGORY}*.`;
   {
     name: "tell",
     aliases: ["relay"],
-    // It puts words into another conversation as the sender, which is a
-    // decision about a room the sender may not be watching.
+    // It steers a session in a room the sender may not be watching.
     minRole: "admin",
     // The confirmation goes back to the caller: a batch of tells left one
     // "sent" line per thread in the thread that sent them.
     quiet: true,
     usage: "<thread-link> <message>",
-    summary: "send a message into another thread's session, as if you typed it there",
+    summary: "steer another thread's session with a message; posts nothing in Slack, there or here",
     run: async ({ deps, actor, args, prefix, channelId, threadTs }) => {
       // A session in one thread could not steer the session in another, so the
       // owner copied instructions between threads by hand. This delivers the
-      // message to that thread's own session (its workflow if it has one),
-      // verbatim and as the sender, through the ordinary turn path.
+      // message to that thread's own session (its workflow if it has one) and
+      // posts nothing in Slack: no echo of the message, and the turn is told
+      // not to acknowledge it.
       if (!deps.runTurn) return "I cannot start a turn from here right now.";
       const link = (args[0] ?? "").replace(/^<|>$/g, "").replace(/&amp;/g, "&");
       const ref = parseMessageLink(link);
@@ -278,13 +279,21 @@ Up to ${BOMB_SIZE} reactions; no category means *${DEFAULT_CATEGORY}*.`;
         if (outcome === "kicked") return "sent straight to that workflow's worker - it was idle, so it starts now 📨";
         if (outcome === "queued") return "sent straight to that workflow's worker - it gets it at its next step 📨";
       }
-      // Shown in the target thread first, so its answer has the question above
-      // it and nobody there wonders who asked.
-      await deps.slack?.post(ref.channel, `📨 <@${actor.slackId}>: ${message}`, root);
+      // Nothing is posted in the target thread: the message goes to its session
+      // as an internal steer, and that turn is told to stay silent unless its
+      // work produces something for the people there. `unprompted` keeps a
+      // busy thread from announcing "yours is next" about a message nobody typed.
       void deps
-        .runTurn({ channelId: ref.channel, threadTs: root, slackUserId: actor.slackId, text: message, keepSession: true })
+        .runTurn({
+          channelId: ref.channel,
+          threadTs: root,
+          slackUserId: actor.slackId,
+          text: tellPrompt(actor.slackId, message),
+          keepSession: true,
+          unprompted: true,
+        })
         .catch(() => {});
-      return "sent - that thread is on it 📨";
+      return "sent - that thread is on it, nothing posted there 📨";
     },
   },
   {
