@@ -102,6 +102,7 @@ import { createGhCli } from "./infrastructure/github/ghCli.ts";
 import { createDraftReply } from "./application/draftReply.ts";
 import { syntheticTs } from "./domain/slackLinks.ts";
 import { toolPolicyFor } from "./domain/toolPolicy.ts";
+import { roleOf } from "./application/commands/shared.ts";
 import { effectivePolicy, policyDisallow } from "./domain/rolePolicy.ts";
 import { disabledRoleOf, enforceRolePolicies } from "./application/rolePolicies.ts";
 import { createRolePolicyRepo } from "./infrastructure/db/rolePolicyRepo.ts";
@@ -341,6 +342,8 @@ const main = async () => {
         .filter(Boolean),
       // The role's dashboard policy: denied tools and MCP servers, read per turn.
       roleDisallow: policyDisallow(rolePolicies.get(role)),
+      // The host's Notion MCP server writes as the host, like `note`: same floor.
+      notionFloor: roleOf(settings.get(SETTING_KEYS.noteMinRole)?.trim().toLowerCase()),
     });
 
   // Every finished run is recorded: who asked, what for, what it consumed.

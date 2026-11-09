@@ -3,7 +3,9 @@ import {
   DB_MCP_SERVERS,
   EXECUTER_CODE_TOOLS,
   EXECUTER_DB_SERVERS,
+  mayUseNotion,
   mayUseOrca,
+  NOTION_MCP_SERVER,
   NO_TOOLS,
   ORCA_DENY,
   PAL_TOOLS,
@@ -68,7 +70,7 @@ describe("toolPolicyFor", () => {
     const p = toolPolicyFor("pal", opts);
     expect(p.skipPermissions).toBe(false);
     expect(p.cwd).toBe("/scratch");
-    expect(p.disallowedTools).toEqual(SANDBOX_DISALLOW);
+    expect(p.disallowedTools).toEqual([...SANDBOX_DISALLOW, NOTION_MCP_SERVER]); // below note's floor
     expect(p.allowedTools).not.toContain("Write");
   });
 
@@ -259,7 +261,7 @@ describe("model per role", () => {
     const p = toolPolicyFor("pal", { ...opts, models: { pal: "haiku" } });
     expect(p.skipPermissions).toBe(false);
     expect(p.cwd).toBe("/scratch");
-    expect(p.disallowedTools).toEqual(SANDBOX_DISALLOW);
+    expect(p.disallowedTools).toEqual([...SANDBOX_DISALLOW, NOTION_MCP_SERVER]); // below note's floor
   });
 });
 
@@ -350,5 +352,47 @@ describe("an executer runs code jobs in its own process", () => {
     expect(exe.disallowedTools).not.toContain("Agent");
     expect(exe.disallowedTools).not.toContain("Task");
     expect(toolPolicyFor("pal", opts).allowedTools).not.toContain("Agent");
+  });
+});
+
+describe("the host's Notion MCP server", () => {
+  test("defaults to the floor of `note`: admin and above only", () => {
+    expect(mayUseNotion("owner")).toBe(true);
+    expect(mayUseNotion("admin")).toBe(true);
+    expect(mayUseNotion("executer")).toBe(false);
+    expect(mayUseNotion("pal")).toBe(false);
+  });
+
+  test("full-access roles at the floor get it unrestricted; sandboxed ones are denied by name", () => {
+    expect(toolPolicyFor("admin", opts).disallowedTools).not.toContain(NOTION_MCP_SERVER);
+    expect(toolPolicyFor("owner", opts).disallowedTools).not.toContain(NOTION_MCP_SERVER);
+    for (const role of ["executer", "pal"] as const) {
+      const p = toolPolicyFor(role, opts);
+      expect(p.disallowedTools).toContain(NOTION_MCP_SERVER);
+      expect(p.allowedTools).not.toContain(NOTION_MCP_SERVER);
+    }
+  });
+
+  test("lowering the floor pre-approves it for a sandboxed role", () => {
+    for (const role of ["executer", "pal"] as const) {
+      const p = toolPolicyFor(role, { ...opts, notionFloor: "pal" });
+      expect(p.allowedTools).toContain(NOTION_MCP_SERVER);
+      expect(p.disallowedTools).not.toContain(NOTION_MCP_SERVER);
+    }
+    const exe = toolPolicyFor("executer", { ...opts, notionFloor: "executer" });
+    expect(exe.allowedTools).toContain(NOTION_MCP_SERVER);
+    expect(toolPolicyFor("pal", { ...opts, notionFloor: "executer" }).disallowedTools).toContain(NOTION_MCP_SERVER);
+  });
+
+  test("raising the floor to owner takes it from admin", () => {
+    expect(toolPolicyFor("admin", { ...opts, notionFloor: "owner" }).disallowedTools).toContain(NOTION_MCP_SERVER);
+    expect(toolPolicyFor("owner", { ...opts, notionFloor: "owner" }).disallowedTools).not.toContain(NOTION_MCP_SERVER);
+  });
+
+  test("a side question never gets it, and Slack posting stays denied to everyone", () => {
+    expect(NO_TOOLS).toContain(NOTION_MCP_SERVER);
+    for (const role of ["owner", "admin", "executer", "pal"] as const) {
+      expect(toolPolicyFor(role, { ...opts, notionFloor: "pal" }).disallowedTools).toContain("mcp__claude_ai_Slack__slack_send_message");
+    }
   });
 });

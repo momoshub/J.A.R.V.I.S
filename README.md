@@ -303,6 +303,16 @@ out 3x too high), check every region rather than the one the report came from,
 prove the mechanism with a request timeline instead of a plausible story, and
 question an id that returns nothing before concluding there is no data.
 
+### Notion in chat turns
+
+Notion is the one connector a chat turn can use directly. The claude.ai connector
+cannot reach a setup-token turn, so the host registers its own server once:
+`claude mcp add --scope user --transport http notion https://mcp.notion.com/mcp`, then
+authenticate it in `/mcp`. From then on a turn sees `mcp__notion__notion-*`
+(search, fetch, create and update pages including properties like Status,
+comments). Unverified until set up on the host: unlike the local database servers this is a remote OAuth server, so check with `claude mcp list` and a real call from a chat turn that it loads under the setup token; if it does not, the prompt falls back to `read`/`note`. It writes as the host's Notion identity, so it follows `note`'s floor:
+`note access <role>` (default admin). Other connectors are not widened.
+
 ### Why tickets use the host's login
 
 A ticket is the one task that needs a claude.ai connector (Notion), and a

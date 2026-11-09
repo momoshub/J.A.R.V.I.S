@@ -141,7 +141,7 @@ no classes.
 No I/O, no frameworks. Just data shapes and functions of their inputs.
 
 - `types.ts` - core data shapes (`AllowedUser`, `StoredMessage`, roles: pal/executer/admin/owner)
-- `access.ts`, `toolPolicy.ts`, `toolVisibility.ts` - who may talk to the bot, and the per-role CLI sandbox (skip-permissions vs `--allowedTools` allow-list + fixed cwd)
+- `access.ts`, `toolPolicy.ts`, `toolVisibility.ts` - who may talk to the bot, and the per-role CLI sandbox (skip-permissions vs `--allowedTools` allow-list + fixed cwd), incl. the host `notion` MCP server gated by `note`'s floor
 - `agentModels.ts` - the models of handed-off work (`model:subagent|worker|plan`, defaults sonnet/sonnet/opus): the turn env and the Explore/Plan `--agents` overrides
 - `rolePolicy.ts` - the dashboard-edited policy per role: on/off, and the commands, tools and MCP servers it is denied (restrict-only; the owner is never restricted)
 - `slackNames.ts` - how a person or conversation is shown: always name and id
