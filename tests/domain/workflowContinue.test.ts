@@ -71,7 +71,7 @@ describe("prompt and notice", () => {
 
   test("the workflow worker spawns agents as Orca workers and waits across steps", () => {
     const p = workflowPrompt("Evie", "rebuild the blog");
-    expect(p).toContain("Background agents always run as Orca workers, never the Agent tool");
+    expect(p).toContain("Pick the run mode by the job's weight, never by habit");
     expect(p).toContain("never through the Workflow tool");
     expect(p).toContain("orca orchestration run-create");
     expect(p).toContain("run the done check at the start of the next step");
