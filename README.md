@@ -121,7 +121,7 @@ Every command has two interfaces - use whichever you like. Both triggers are con
 | `token [remove\|who]` (alias `claude-token`) | anyone | add, replace or forget your own Claude Code token - see [Your own Claude token](#your-own-claude-token) |
 | `session [reset\|on\|off]` (alias `sess`) | anyone (on/off: admins) | the CLI session this thread is talking to - see [One session per thread](#one-session-per-thread) |
 | `ticket <what is wrong>` (aliases `bug`, `raise`) | anyone | raise a properly written, correctly routed ticket - see [Raising a ticket](#raising-a-ticket) |
-| `review <pr-url\|help\|prompt> [--policy first\|after] [what to look at]` (alias `rv`) | pal+ | review a PR: approve first (even if it is already merged or closed), then post a blockers-only comment on GitHub *and* back in the thread; request changes on a blocker, open a GitHub issue for a non-blocking finding worth fixing later (big PRs are cloned + reviewed by child agents). Runs full-access. |
+| `review <pr-url\|help\|prompt> [--policy first\|after] [what to look at]` (alias `rv`) | pal+ | review a PR: read it first, post a blockers-only comment on GitHub *and* back in the thread; request changes on a blocker, open a GitHub issue for a non-blocking finding worth fixing later (big PRs are cloned + reviewed by child agents). Runs full-access. |
 | `bomb [categories] [count] <message-link>` (alias `br`) | admins | reaction-bomb a message. Combine categories with commas and set a count: `bomb money,face,negative 9 <link>`. Up to 23; `bomb help` lists every category |
 | `reply <message-link>` (alias `jrp`) | admins | draft and post an AI reply to a message |
 | `rm-msg <message-link>` (aliases `rmmsg`, `unsend`) | admins | delete a message the bot posted (a bot token cannot delete anyone else's) |
@@ -391,13 +391,14 @@ opens a PR. Nothing about any particular workspace lives in this codebase.
 
 ## Review policy per repo
 
-By default `review` approves immediately and reverses that with a request for
-changes if the review turns up something blocking. Some repositories want the
-opposite - nothing approved until a review has been written and come back clean:
+By default `review` posts "reviewing", runs the review, and approves only once
+it has come back clean. A repository can opt in to the faster order instead -
+approve immediately and reverse that with a request for changes if the review
+turns up something blocking:
 
 ```
-//bot review-policy owner/repo after      approve only after a clean review
-//bot review-policy owner/repo first      the default
+//bot review-policy owner/repo after      approve only after a clean review (the default)
+//bot review-policy owner/repo first      approve up front, reverse on a blocker
 //bot review-policy owner/repo default    clear it
 //bot review-policy                       the default, and every repo that differs
 ```

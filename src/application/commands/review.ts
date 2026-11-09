@@ -34,10 +34,10 @@ const clip = (s: string): string =>
 const REVIEW_TIMEOUT_MS = 900_000;
 
 /** The policy a PR's repository is on, defaulting when nothing is configured. */
-const repoPolicyOf = (deps: CommandDeps, prUrl: string): ReviewPolicy => {
+const repoPolicyOf = (deps: CommandDeps, prUrl: string, fallback: ReviewPolicy): ReviewPolicy => {
   const repo = repoOf(prUrl);
-  if (!repo) return DEFAULT_REVIEW_POLICY;
-  return asReviewPolicy(deps.settings?.get(reviewPolicyKey(repo))) ?? DEFAULT_REVIEW_POLICY;
+  if (!repo) return fallback;
+  return asReviewPolicy(deps.settings?.get(reviewPolicyKey(repo))) ?? fallback;
 };
 
 const AUTHOR_POLICY_PREFIX = "review_policy_author:";
@@ -47,8 +47,12 @@ const AUTHOR_POLICY_PREFIX = "review_policy_author:";
  * that author is configured. GitHub is only asked who wrote the PR when some
  * author policy exists, so the common case costs no extra `gh` call.
  */
-const reviewPolicyOf = async (deps: CommandDeps, prUrl: string): Promise<ReviewPolicy> => {
-  const repo = repoPolicyOf(deps, prUrl);
+const reviewPolicyOf = async (
+  deps: CommandDeps,
+  prUrl: string,
+  fallback: ReviewPolicy = DEFAULT_REVIEW_POLICY,
+): Promise<ReviewPolicy> => {
+  const repo = repoPolicyOf(deps, prUrl, fallback);
   if (repo === "approve-after") return repo;
   const anyAuthor = deps.settings?.list?.()?.some((e) => e.key.startsWith(AUTHOR_POLICY_PREFIX) && asReviewPolicy(e.value));
   if (!anyAuthor || !deps.github?.author) return repo;
@@ -58,8 +62,12 @@ const reviewPolicyOf = async (deps: CommandDeps, prUrl: string): Promise<ReviewP
 };
 
 /** Every url's policy, looked up once and in parallel. */
-const reviewPoliciesOf = async (deps: CommandDeps, urls: readonly string[]): Promise<Map<string, ReviewPolicy>> =>
-  new Map(await Promise.all(urls.map(async (u) => [u, await reviewPolicyOf(deps, u)] as const)));
+const reviewPoliciesOf = async (
+  deps: CommandDeps,
+  urls: readonly string[],
+  fallback: ReviewPolicy = DEFAULT_REVIEW_POLICY,
+): Promise<Map<string, ReviewPolicy>> =>
+  new Map(await Promise.all(urls.map(async (u) => [u, await reviewPolicyOf(deps, u, fallback)] as const)));
 
 export const REVIEW_COMMANDS: readonly CommandDef[] = [
   {
@@ -73,11 +81,11 @@ export const REVIEW_COMMANDS: readonly CommandDef[] = [
      * say `approve <pr-url>`, every time answered with "I do not recognise
      * `approve`", once typed as "approvel without review please".
      *
-     * It is not a new power: `review` approves up front already, in code,
-     * before the brain is spawned - this is that same step with the review
-     * left off, and it refuses exactly where `review` refuses. A repository
-     * set to approve only AFTER a clean review is an admin's decision about
-     * that repository, so a bare approval there is not on offer at any role.
+     * It is not a new power: it is the up-front approval a repo can opt in to
+     * with the review left off. A repository or author EXPLICITLY set to
+     * approve only AFTER a clean review is an admin's decision, so a bare
+     * approval there is not on offer at any role. The built-in default (also
+     * approve-after) is not such a decision, so it does not block this.
      *
      * No brain, so no Claude token and no cost. Every approval is a row in the
      * command log against the person who asked for it.
@@ -86,7 +94,7 @@ export const REVIEW_COMMANDS: readonly CommandDef[] = [
       if (!deps.github) return "I have no GitHub access wired up right now.";
       const urls = [...new Set(args.flatMap((a) => a.match(PR_URL) ?? []))];
       if (urls.length === 0) return `Which PR? \`${prefix} approve <pr-url>\``;
-      const policies = await reviewPoliciesOf(deps, urls);
+      const policies = await reviewPoliciesOf(deps, urls, "approve-first");
       const held = urls.filter((u) => policies.get(u) === "approve-after");
       const lines: string[] = [];
       for (const url of urls) {
@@ -165,9 +173,10 @@ export const REVIEW_COMMANDS: readonly CommandDef[] = [
       // needs it in its prompt, and it would otherwise spend a tool call on it.
       const account = deps.github?.whoami();
 
-      // Approve FIRST, in code, before the brain is even spawned. It is a fixed
-      // step, not a judgement call, so it must not wait ~30s for the model to read
-      // the PR. `seen` carries the lines forward so the brain cannot repeat them.
+      // Only a repo or run on `approve-first` approves here, in code, before the
+      // brain is even spawned (a fixed step that must not wait ~30s for the model).
+      // The default holds the approval until the review is clean. `seen` carries
+      // the lines forward so the brain cannot repeat them.
       const seen = new Set<string>();
       const announcements: string[] = [];
       const approvedUpFront: string[] = [];
@@ -185,8 +194,11 @@ export const REVIEW_COMMANDS: readonly CommandDef[] = [
       // Asking for a stricter run is anyone's call. Asking for a looser one -
       // approving up front on a repository that deliberately waits for a clean
       // review - is overruling an admin's decision, so it takes one.
+      // Only an EXPLICIT approve-after is an admin's decision; the built-in default
+      // (also approve-after) is not, so it is read with the opposite fallback.
+      const explicit = await reviewPoliciesOf(deps, urls, "approve-first");
       const configured = await reviewPoliciesOf(deps, urls);
-      const loosened = override === "approve-first" && urls.some((u) => configured.get(u) === "approve-after");
+      const loosened = override === "approve-first" && urls.some((u) => explicit.get(u) === "approve-after");
       if (loosened && RANK[actor.role] < RANK.admin) {
         return "That repo or author is set to approve only after a clean review, and only an admin can override that for a run.";
       }
@@ -247,12 +259,14 @@ export const REVIEW_COMMANDS: readonly CommandDef[] = [
         // Live: post progress as each PR action lands, then the review itself. The
         // destination is chosen by the transport - thread for a message command, DM
         // for a slash command - so nothing is hidden in an ephemeral reply.
-        for (const line of announcements) await reply(line);
+        // "reviewing" always opens the run: an up-front approval (opt-in policy)
+        // is announced after it, never before the thread says a review started.
         await reply(
           `🔍 reviewing ${targets.join(" ")}` +
             (override ? `\n_${override}, for this run only_` : "") +
             (note ? `\n_looking at: ${note}_` : ""),
         );
+        for (const line of announcements) await reply(line);
 
         let out = "";
         // Set when the run was killed mid-flight. What streamed is then a fragment

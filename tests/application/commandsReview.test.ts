@@ -574,11 +574,53 @@ describe("per-repo review policy", () => {
     return { deps, calls, lines, reply, sys: () => system };
   };
 
-  test("by default a PR is approved before the review, as before", async () => {
+  test("by default nothing is approved before the review: reviewing -> review -> approved, only if clean", async () => {
+    // Regression: the approval used to land ~2s after the command, before any
+    // review ran, and was posted ahead of "reviewing".
     const { deps, calls, lines, reply } = withPolicy();
-    await dispatchCommand(deps, actor(), "C1", `rv ${PR}`, { reply });
-    expect(calls).toEqual([PR]);
-    expect(lines[0]).toBe(`✅ approved ${PR}`);
+    const order: string[] = [];
+    const approve = deps.github!.approve;
+    deps.github!.approve = async (url) => {
+      order.push("approve");
+      return approve(url);
+    };
+    const llm = deps.llm!;
+    deps.llm = {
+      complete: async (p) => {
+        order.push("review");
+        expect(calls).toEqual([]); // not approved while the review runs
+        return llm.complete(p);
+      },
+    };
+    await dispatchCommand(deps, actor(), "C1", `rv ${OTHER}`, { reply });
+    expect(order).toEqual(["review", "approve"]);
+    expect(calls).toEqual([OTHER]);
+    expect(lines[0]).toContain("reviewing");
+    expect(lines[1]).toBe("the review");
+    expect(lines[lines.length - 1]).toContain("the review came back clean");
+    expect(lines.findIndex((l) => l.startsWith("✅ approved"))).toBeGreaterThan(lines.indexOf("the review"));
+  });
+
+  test("a blocked review on the default policy is never approved", async () => {
+    const { deps, calls, lines, reply } = withPolicy("CHANGES_REQUESTED");
+    await dispatchCommand(deps, actor(), "C1", `rv ${OTHER}`, { reply });
+    expect(calls).toEqual([]);
+    expect(lines.some((l) => l.startsWith("✅ approved"))).toBe(false);
+  });
+
+  test("a repo opted in to approve-first announces 'reviewing' before the approval", async () => {
+    const { deps, calls, lines, reply } = withPolicy();
+    await dispatchCommand(deps, actor(), "C1", "review-policy acme/acme-be first");
+    await dispatchCommand(deps, actor(), "C1", `rv ${OTHER}`, { reply });
+    expect(calls).toEqual([OTHER]);
+    expect(lines[0]).toContain("reviewing");
+    expect(lines[1]).toBe(`✅ approved ${OTHER}`);
+  });
+
+  test("a bare approve still works on a repo with no explicit policy", async () => {
+    const { deps, calls } = withPolicy();
+    expect(await dispatchCommand(deps, actor(), "C1", `approve ${OTHER}`)).toContain(`✅ approved ${OTHER}`);
+    expect(calls).toEqual([OTHER]);
   });
 
   test("on approve-after nothing is approved up front", async () => {
@@ -657,12 +699,13 @@ describe("per-repo review policy", () => {
     expect(calls).toEqual([OTHER]); // nothing more approved
   });
 
-  test("an executer's review still approves up front on a default repo", async () => {
+  test("an executer's review approves up front only when asked with --policy first", async () => {
     const { deps, calls, lines, reply } = withPolicy(undefined);
     const exec = actor({ slackId: "U0EXE0007", role: "executer" });
     deps.users.upsert(exec);
-    await dispatchCommand(deps, exec, "C1", `rv ${OTHER}`, { reply });
-    expect(lines[0]).toBe(`✅ approved ${OTHER}`);
+    await dispatchCommand(deps, exec, "C1", `rv ${OTHER} --policy first`, { reply });
+    expect(lines[0]).toContain("reviewing");
+    expect(lines[1]).toBe(`✅ approved ${OTHER}`);
     expect(calls).toEqual([OTHER]);
   });
 
@@ -705,9 +748,10 @@ describe("per-repo review policy", () => {
   test("the policy is per repo, so others are untouched", async () => {
     const { deps, calls, lines, reply } = withPolicy();
     await dispatchCommand(deps, actor(), "C1", "review-policy acme/sql-runner after");
+    await dispatchCommand(deps, actor(), "C1", "review-policy acme/acme-be first");
 
     await dispatchCommand(deps, actor(), "C1", `rv ${OTHER}`, { reply });
-    expect(lines[0]).toBe(`✅ approved ${OTHER}`); // still approved up front
+    expect(lines[1]).toBe(`✅ approved ${OTHER}`); // still approved up front, after "reviewing"
     expect(calls).toEqual([OTHER]);
   });
 
@@ -741,10 +785,11 @@ describe("per-repo review policy", () => {
     expect(lines[0]).toContain("reviewing"); // no approval up front
     expect(calls).toEqual([PR]); // approved only once the review came back clean
 
-    // someone else's PR is still on the repo's policy
+    // someone else's PR is still on the repo's policy (opted in to approve-first here)
+    await dispatchCommand(deps, actor(), "C1", "review-policy acme/acme-be first");
     lines.length = 0;
     await dispatchCommand(deps, actor(), "C1", `rv ${OTHER}`, { reply });
-    expect(lines[0]).toBe(`✅ approved ${OTHER}`);
+    expect(lines[1]).toBe(`✅ approved ${OTHER}`);
   });
 
   test("an author hold blocks a bare approve and an executer's --policy first", async () => {

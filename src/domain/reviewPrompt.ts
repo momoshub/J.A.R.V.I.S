@@ -175,7 +175,7 @@ export const reviewHelp = (
     "*5.* non-blocking findings are never posted. one worth fixing later becomes a GitHub issue on the repo, nits are dropped",
     "*6.* a short wrap-up lands back in the thread with what I did and the headline blocker",
     "",
-    "*approval* is decided by the repo's policy - up front and reversed if I find a blocker, or only after a clean review. `--policy first|after` changes it for one run",
+    "*approval* only after a clean review by default; a repo can opt in to up front, reversed if I find a blocker. `--policy first|after` changes it for one run",
     "*steering*: anything typed next to the url aims the review, e.g. `review <url> the migration is the risky bit`",
     `*cost*: it runs on *your own* Claude token, never mine - \`${prefix} token\` adds one`,
     "",
