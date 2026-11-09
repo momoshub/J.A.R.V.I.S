@@ -1,4 +1,4 @@
-# Typecheck and tests on every PR and every push to main. The repo is private
+# Typecheck, tests and the real-Slack e2e suite on every PR and every push to main. The repo is private
 # on a free plan, so GitHub cannot require this check before a merge: the gate
 # is bin/merge-when-green.sh, which every self-fix merges through.
 name: ci
@@ -24,6 +24,14 @@ jobs:
       - run: bun install --frozen-lockfile
       - run: bun run typecheck
       - run: bun test
+      # Real Slack, in the private #jarvis_self_testing (see README "Testing").
+      # A missing secret fails here: the suite would otherwise skip itself and pass.
+      - name: e2e (real Slack)
+        env:
+          SLACK_BOT_TOKEN: ${{ secrets.JARVIS_E2E_SLACK_BOT_TOKEN }}
+        run: |
+          test -n "$SLACK_BOT_TOKEN" || { echo "JARVIS_E2E_SLACK_BOT_TOKEN secret is not set" >&2; exit 1; }
+          bun run test:e2e
       # The dashboard has its own deps and tsconfig, and only a build proves it bundles.
       - run: bun install --frozen-lockfile
         working-directory: web
