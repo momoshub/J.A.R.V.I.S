@@ -113,7 +113,11 @@ export const respond = async (
     // that takes it. Same words, same path, whichever way it was typed.
     // `!` is the legacy trigger and needs no configured prefix, so this works
     // the same whether or not the instance set one.
-    const asked = reviewRequestIn(inbound.text);
+    // Not for a turn the bot started itself (`unprompted`: tell, a watch
+    // hand-back, a worker question, a drift nudge): its text is an internal
+    // steer, and a `tell` carrying a PR url and "review" was run as a review
+    // of that PR in the target thread instead of reaching its session.
+    const asked = inbound.unprompted ? undefined : reviewRequestIn(inbound.text);
     if (asked) return respond(deps, { ...inbound, text: `!${asked}` }, sink);
 
     // One function, shared with the agent-session stop handler: if the two ever

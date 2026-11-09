@@ -8,6 +8,7 @@ import { createRunRegistry, RESTART_STOPPER } from "../../src/application/runReg
 import { createWorkflowRepo } from "../../src/infrastructure/db/workflowRepo.ts";
 import { createTurnLogRepo } from "../../src/infrastructure/db/turnLogRepo.ts";
 import { createWatchRepo } from "../../src/infrastructure/db/watchRepo.ts";
+import { tellPrompt } from "../../src/domain/tellPrompt.ts";
 import { createCommandTickets } from "../../src/application/commandTickets.ts";
 import type { SlackAdminPort } from "../../src/application/slackAdmin.ts";
 import type { LlmPort } from "../../src/application/ports.ts";
@@ -112,6 +113,31 @@ describe("respond", () => {
       // the review command answered: no token store wired here, so it refuses
       expect(res.text).toContain("caller's own");
     }
+  });
+
+  test("a tell steer naming a PR and 'review' reaches the session, it does not run the review", async () => {
+    // `tell <thread> ... <pr url> ... review` answered "sent" and then ran
+    // `review` on the PR in the target thread; the session never saw the steer
+    let seen = "";
+    const deps = build({
+      complete: async (p) => {
+        seen = JSON.stringify(p);
+        return "NO_REPLY";
+      },
+    });
+    const steer = tellPrompt(OWNER, "please review https://github.com/o/r/pull/1 when CI is green");
+    const res = await respond(deps, {
+      channelId: "C1",
+      slackUserId: OWNER,
+      text: steer,
+      threadTs: "1.0",
+      keepSession: true,
+      unprompted: true,
+    });
+
+    expect(seen).toContain("internal steer"); // the chat brain ran on the steer
+    expect(seen).toContain("pull/1");
+    expect(res).toEqual({ kind: "reply", text: "NO_REPLY" });
   });
 
   test("talking about a PR is still just talking", async () => {
