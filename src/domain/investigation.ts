@@ -47,7 +47,7 @@ export const LOG_SOURCES: Record<string, LogSource> = {
   },
   datadog: {
     id: "datadog",
-    how: `the Datadog MCP tools (search_datadog_logs, search_datadog_rum_events, search_datadog_spans, and the rest). RUM - browser errors, user sessions, front-end crashes - exists ONLY here, never in Grafana. These tools come from the account's connectors, so an ordinary chat turn does not have them.`,
+    how: `the host's Datadog MCP server, tools named \`mcp__datadog__*\` (search_datadog_logs, search_datadog_rum_events, search_datadog_spans, get_datadog_metric and the rest, all read only). RUM - browser errors, user sessions, front-end crashes - exists ONLY here, never in Grafana. Like the database servers it connects a few seconds after the turn starts, so ToolSearch \`datadog\` before concluding the tools are missing. Do not use \`execute_code\`; it is denied.`,
   },
 };
 

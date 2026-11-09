@@ -1,5 +1,8 @@
 import { describe, expect, test } from "bun:test";
 import {
+  DATADOG_MCP_SERVER,
+  DATADOG_READ_TOOLS,
+  DATADOG_WRITE_TOOLS,
   DB_MCP_SERVERS,
   EXECUTER_CODE_TOOLS,
   EXECUTER_DB_SERVERS,
@@ -70,7 +73,7 @@ describe("toolPolicyFor", () => {
     const p = toolPolicyFor("pal", opts);
     expect(p.skipPermissions).toBe(false);
     expect(p.cwd).toBe("/scratch");
-    expect(p.disallowedTools).toEqual([...SANDBOX_DISALLOW, NOTION_MCP_SERVER]); // below note's floor
+    expect(p.disallowedTools).toEqual([...SANDBOX_DISALLOW, NOTION_MCP_SERVER, ...DATADOG_WRITE_TOOLS]); // below note's floor
     expect(p.allowedTools).not.toContain("Write");
   });
 
@@ -172,7 +175,7 @@ describe("toolPolicyFor", () => {
     const tools = toolPolicyFor("executer", { ...opts, executerTools: ["Read", "Bash(gh pr view:*)"] }).allowedTools;
     expect(tools).toEqual([
       "Read", "Bash(gh pr view:*)", ...EXECUTER_DB_SERVERS, ...EXECUTER_CODE_TOOLS,
-      "Bash(screencapture:*)", "Bash(sips:*)", `Bash(${REACT}:*)`,
+      "Bash(screencapture:*)", "Bash(sips:*)", ...DATADOG_READ_TOOLS, `Bash(${REACT}:*)`,
     ]);
   });
 
@@ -218,7 +221,7 @@ describe("toolPolicyFor", () => {
 
   test("without a helper path nothing extra is granted", () => {
     const tools = toolPolicyFor("pal", { fullCwd: "/work", sandboxCwd: "/scratch" }).allowedTools;
-    expect(tools).toEqual(PAL_TOOLS);
+    expect(tools).toEqual([...PAL_TOOLS, ...DATADOG_READ_TOOLS]);
     expect(tools?.some((t) => t.includes("slack-react"))).toBe(false);
   });
 });
@@ -261,7 +264,7 @@ describe("model per role", () => {
     const p = toolPolicyFor("pal", { ...opts, models: { pal: "haiku" } });
     expect(p.skipPermissions).toBe(false);
     expect(p.cwd).toBe("/scratch");
-    expect(p.disallowedTools).toEqual([...SANDBOX_DISALLOW, NOTION_MCP_SERVER]); // below note's floor
+    expect(p.disallowedTools).toEqual([...SANDBOX_DISALLOW, NOTION_MCP_SERVER, ...DATADOG_WRITE_TOOLS]); // below note's floor
   });
 });
 
@@ -394,5 +397,47 @@ describe("the host's Notion MCP server", () => {
     for (const role of ["owner", "admin", "executer", "pal"] as const) {
       expect(toolPolicyFor(role, { ...opts, notionFloor: "pal" }).disallowedTools).toContain("mcp__claude_ai_Slack__slack_send_message");
     }
+  });
+});
+
+describe("the host's Datadog MCP server", () => {
+  test("every sandboxed role is pre-approved the read tools, with no floor", () => {
+    for (const role of ["executer", "pal"] as const) {
+      const tools = toolPolicyFor(role, opts).allowedTools ?? [];
+      for (const t of DATADOG_READ_TOOLS) expect(tools).toContain(t);
+      expect(tools).toContain("mcp__datadog__search_datadog_logs");
+      expect(tools).toContain("mcp__datadog__search_datadog_rum_events");
+      expect(tools).toContain("mcp__datadog__search_datadog_spans");
+      expect(tools).toContain("mcp__datadog__get_datadog_metric");
+      // never the whole server: that would pre-approve the writers
+      expect(tools).not.toContain(DATADOG_MCP_SERVER);
+    }
+  });
+
+  test("the allow-list holds nothing that mutates", () => {
+    expect(DATADOG_READ_TOOLS.some((t) => /create|edit|delete|recover|upsert|execute|submit/.test(t))).toBe(false);
+    for (const w of DATADOG_WRITE_TOOLS) expect(DATADOG_READ_TOOLS).not.toContain(w);
+  });
+
+  test("writers and execute_code are denied by name to EVERY role, full access included", () => {
+    for (const role of ["owner", "admin", "executer", "pal"] as const) {
+      const denied = toolPolicyFor(role, opts).disallowedTools ?? [];
+      for (const w of DATADOG_WRITE_TOOLS) expect(denied).toContain(w);
+      expect(denied).toContain("mcp__datadog__upsert_datadog_dashboard");
+      expect(denied).toContain("mcp__datadog__execute_code");
+      expect(denied).not.toContain(DATADOG_MCP_SERVER); // reads stay open
+    }
+    // a lowered Notion floor does not change it
+    expect(toolPolicyFor("pal", { ...opts, notionFloor: "pal" }).disallowedTools).toContain("mcp__datadog__create_datadog_notebook");
+  });
+
+  test("a dashboard roleDisallow still stacks on top", () => {
+    const p = toolPolicyFor("pal", { ...opts, roleDisallow: ["WebFetch"] });
+    expect(p.disallowedTools).toContain("WebFetch");
+    expect(p.disallowedTools).toContain("mcp__datadog__execute_code");
+  });
+
+  test("a side question gets none of it", () => {
+    expect(NO_TOOLS).toContain(DATADOG_MCP_SERVER);
   });
 });

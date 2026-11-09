@@ -171,6 +171,41 @@ export const EXECUTER_DB_SERVERS: readonly string[] = [
  */
 export const NOTION_MCP_SERVER = "mcp__notion";
 
+/**
+ * The Datadog MCP server configured on the host (`claude mcp add --scope user
+ * --transport http datadog https://mcp.datadoghq.com/v1/mcp`, then authenticated
+ * once with OAuth in a browser).
+ *
+ * Same story as Notion: the claude.ai Datadog CONNECTOR cannot reach a chat
+ * turn, so until a server lived in the host's own MCP config only `investigate`
+ * (host login) could read logs, RUM, spans or metrics. Unlike Notion it has no
+ * floor: it is read only, and every role may look. "Read only" is enforced by
+ * name, because an allow-list does not refuse: the tools that change a notebook
+ * or dashboard are denied to every role, and so is `execute_code`, a sandbox
+ * that can call the write endpoints too. Reads go through the named search/get
+ * tools instead.
+ */
+export const DATADOG_MCP_SERVER = "mcp__datadog";
+
+export const DATADOG_READ_TOOLS: readonly string[] = [
+  "search_datadog_logs", "analyze_datadog_logs",
+  "search_datadog_rum_events", "aggregate_rum_events",
+  "search_datadog_spans", "aggregate_spans", "get_datadog_trace",
+  "search_datadog_metrics", "get_datadog_metric", "get_datadog_metric_context",
+  "search_datadog_events", "aggregate_events",
+  "search_datadog_monitors", "search_datadog_hosts", "search_datadog_entities",
+  "search_datadog_incidents", "get_datadog_incident", "get_change_stories",
+  "search_datadog_dashboards", "get_datadog_dashboard",
+  "search_datadog_notebooks", "get_datadog_notebook",
+  "list_datadog_skills", "load_datadog_skill", "search_datadog_sdk",
+].map((t) => `${DATADOG_MCP_SERVER}__${t}`);
+
+export const DATADOG_WRITE_TOOLS: readonly string[] = [
+  "create_datadog_notebook", "edit_datadog_notebook", "delete_datadog_notebook",
+  "recover_datadog_notebook", "upsert_datadog_dashboard", "execute_code",
+  "submit_mcp_feedback",
+].map((t) => `${DATADOG_MCP_SERVER}__${t}`);
+
 const ROLE_RANK: Record<UserRole, number> = { pal: 0, executer: 1, admin: 2, owner: 3 };
 
 /** The default floor of `note`: it writes with the host's Notion identity. */
@@ -204,6 +239,7 @@ export const NO_TOOLS: readonly string[] = [
   // A side question running a production query is the opposite of an aside.
   ...DB_MCP_SERVERS,
   NOTION_MCP_SERVER,
+  DATADOG_MCP_SERVER,
 ];
 
 /**
@@ -394,6 +430,7 @@ export const toolPolicyFor = (role: UserRole, opts: ToolPolicyOptions): ToolPoli
   const extra = [
     ...(opts.roleDisallow ?? []),
     ...(mayUseNotion(role, opts.notionFloor) ? [] : [NOTION_MCP_SERVER]),
+    ...DATADOG_WRITE_TOOLS,
   ];
   return extra.length
     ? { ...base, disallowedTools: [...new Set([...(base.disallowedTools ?? []), ...extra])] }
@@ -427,6 +464,7 @@ const basePolicyFor = (role: UserRole, opts: ToolPolicyOptions): ToolPolicy => {
             ...EXECUTER_CODE_TOOLS,
             ...executerBrowserTools(opts),
             ...notionAllow(role, opts),
+            ...DATADOG_READ_TOOLS,
           ],
           opts,
         ),
@@ -438,7 +476,7 @@ const basePolicyFor = (role: UserRole, opts: ToolPolicyOptions): ToolPolicy => {
       return {
         skipPermissions: false,
         cwd: opts.sandboxCwd,
-        allowedTools: withHelpers([...PAL_TOOLS, ...notionAllow(role, opts)], opts),
+        allowedTools: withHelpers([...PAL_TOOLS, ...notionAllow(role, opts), ...DATADOG_READ_TOOLS], opts),
         disallowedTools: SANDBOX_DISALLOW,
         model: modelOf("pal", opts),
       };

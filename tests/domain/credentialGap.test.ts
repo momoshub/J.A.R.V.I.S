@@ -51,6 +51,16 @@ describe("credentialGapRules", () => {
     expect(r).toContain('"I cannot write to Notion" is simply wrong');
   });
 
+  test("Datadog is reachable directly, read only, and investigate is the fallback", () => {
+    expect(r).toContain("mcp__datadog__search_datadog_logs");
+    expect(r).toContain("READ ONLY");
+    expect(r).toContain("execute_code");
+    expect(r).toContain("ToolSearch \`datadog\`");
+    expect(r).not.toContain("no Datadog, no Slack connector");
+    expect(r).not.toContain("a chat turn has no Slack/Datadog connector");
+    expect(r).toContain("fall back to \`investigate\`");
+  });
+
   test("Notion is reachable directly, and the prompt no longer says a chat turn has no Notion", () => {
     expect(r).toContain("mcp__notion__notion-update-page");
     expect(r).toContain("note access <role>");
