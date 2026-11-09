@@ -935,7 +935,27 @@ Identity and learnings are stored in the DB and applied on the next reply - no r
 ```bash
 bun test           # full suite
 bun run typecheck  # tsc --noEmit
+bun run test:e2e   # opt-in, real Slack (see below)
 ```
+
+### End-to-end test against real Slack (opt-in)
+
+`e2e/slackBlockKit.e2e.ts` drives a reply with Block Kit through the real stream code path (`createHandler` -> `createSlackStream` -> `chat.startStream`/`appendStream`/`stopStream`, the tidy-up rewrite and the plain-post fallbacks; only the model is scripted) and reads the thread back with `conversations.replies`. Per reply it asserts exactly one bot message, a `table` block where the reply had one, and no literal ```` ```blockkit ```` in the text or blocks. The cases: a table with an empty header cell (the bug that split a reply in two and lost the table), a plain-text reply, and a block Slack refuses (`alert`), which must degrade to its words.
+
+It is not part of `bun test` or CI: the file is not a `*.test.ts`, and it skips itself unless `JARVIS_E2E=1` and `SLACK_BOT_TOKEN` are set. Run it with the bot's token in the environment:
+
+```bash
+SLACK_BOT_TOKEN=xoxb-... bun run test:e2e
+```
+
+| Variable | Meaning |
+| --- | --- |
+| `SLACK_BOT_TOKEN` | the bot token; the bot must be a member of the channel |
+| `JARVIS_E2E_CHANNEL` | channel to post in (default `C0TEST00005`, the private `#jarvis_self_testing`) |
+| `JARVIS_E2E_USER` | Slack user id the streams are addressed to (default `OWNER_SLACK_ID` if set, else the bot's own id) |
+| `JARVIS_E2E_KEEP` | `1` leaves what it posted in the channel instead of deleting it |
+
+A run posts ONE root message (`jarvis e2e run <time>`) and every reply under it in the thread, then `chat.delete`s all of them, so the channel is left as it was. A run that is killed mid-way can leave its root behind: delete it by hand.
 
 CI (`.github/workflows/ci.yml`) runs both, plus the dashboard's typecheck and build (`web/`), on every PR and every push to `main`. The repo is private on a free plan, so GitHub cannot require it before a merge: merge with `bin/merge-when-green.sh <pr>`, which waits for the checks, refuses unless they are all green, refuses at once (exit 4) when the PR conflicts with its base - GitHub runs no CI on it, so merge the base in and resolve first - and approves the PR as the merging account right before it merges (skipped when that account opened the PR, since GitHub forbids self-approval; a failed approval is no merge). With `SELF_PR_REVIEWER` set, run it as that account: `GH_TOKEN=$(gh auth token -u <reviewer>) bin/merge-when-green.sh <pr>`.
 

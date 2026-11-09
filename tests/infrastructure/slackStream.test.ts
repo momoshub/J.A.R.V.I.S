@@ -535,7 +535,7 @@ describe("createSlackStream block kit", () => {
   });
 });
 
-test("blocks Slack refuses are shown as code and the stream carries on", async () => {
+test("blocks Slack refuses are shown as code when they hold no words, and the stream carries on", async () => {
   const appends: Call[] = [];
   const streamer: Streamer = {
     append: async (a) => {
@@ -550,6 +550,80 @@ test("blocks Slack refuses are shown as code and the stream carries on", async (
   const text = appends.map((x) => x.markdown_text ?? "").join("");
   expect(text).toContain('"alert"');
   expect(text.endsWith("b")).toBe(true);
+});
+
+describe("a blocks chunk Slack rejects does not kill the stream", () => {
+  const TABLE = JSON.stringify([
+    {
+      type: "table",
+      rows: [
+        [{ type: "raw_text", text: "Name" }, { type: "raw_text", text: "Qty" }],
+        [{ type: "raw_text", text: "widget" }, { type: "raw_text", text: "3" }],
+      ],
+    },
+  ]);
+
+  const refusing = (error: string) => {
+    const appends: Call[] = [];
+    let stops = 0;
+    let opened = 0;
+    const streamer: Streamer = {
+      append: async (a) => {
+        if (a.chunks?.some((c) => c.type === "blocks")) throw new Error(error);
+        appends.push(a as Call);
+      },
+      stop: async () => {
+        stops += 1;
+      },
+      ts: "1.1",
+    };
+    return { make: () => (opened++, streamer), appends, stops: () => stops, opened: () => opened };
+  };
+
+  // The live incident: Slack answered the table chunk with invalid_arguments
+  // ("failed to match exactly one allowed schema"), which was not caught, so
+  // the stream broke, the reply split in two and the table vanished.
+  test("invalid_arguments: the table is written as its words, one message, nothing broken", async () => {
+    const f = refusing("An API error occurred: invalid_arguments (failed to match exactly one allowed schema [json-pointer:/chunks/0])");
+    const logs: string[] = [];
+    const s = createSlackStream(f.make, (m) => logs.push(m));
+    s.sink({ type: "text", delta: `before\n\`\`\`blockkit\n${TABLE}\n\`\`\`\nafter` });
+    expect(await s.finish()).toBe(true);
+    expect(f.opened()).toBe(1);
+    const text = f.appends.map((x) => x.markdown_text ?? "").join("");
+    expect(text).toContain("Name | Qty\nwidget | 3");
+    expect(text.startsWith("before")).toBe(true);
+    expect(text.endsWith("after")).toBe(true);
+    expect(text).not.toContain("blockkit");
+    expect(logs.some((l) => l.includes("blocks refused"))).toBe(true);
+    // what the part recorded is words too, so the tidy-up never rebuilds the refused blocks
+    expect(s.parts.map((p) => p.text).join("")).not.toContain("blockkit");
+  });
+
+  test("invalid_blocks: same", async () => {
+    const f = refusing("An API error occurred: invalid_blocks");
+    const s = createSlackStream(f.make);
+    s.sink({ type: "text", delta: `\`\`\`blockkit\n${TABLE}\n\`\`\`\n` });
+    expect(await s.finish()).toBe(true);
+    expect(f.appends.map((x) => x.markdown_text ?? "").join("")).toContain("widget | 3");
+  });
+
+  test("another failure still breaks the stream, as before", async () => {
+    const f = refusing("An API error occurred: ratelimited");
+    const s = createSlackStream(f.make);
+    s.sink({ type: "text", delta: `\`\`\`blockkit\n${TABLE}\n\`\`\`\n` });
+    expect(await s.finish()).toBe(false);
+  });
+
+  test("a table with an empty cell is fixed before it is sent, so nothing is refused", async () => {
+    const f = fakeStreamer();
+    const s = createSlackStream(f.make);
+    const table = JSON.stringify([{ type: "table", rows: [[{ type: "raw_text", text: "" }, { type: "raw_text", text: "Qty" }]] }]);
+    s.sink({ type: "text", delta: `\`\`\`blockkit\n${table}\n\`\`\`\n` });
+    expect(await s.finish()).toBe(true);
+    const chunk = f.appends.find((a) => a.chunks)?.chunks?.[0] as { blocks: { rows: { text: string }[][] }[] };
+    expect(chunk.blocks[0]?.rows[0]?.map((c) => c.text)).toEqual(["-", "Qty"]);
+  });
 });
 
 describe("the steps a finished message showed", () => {

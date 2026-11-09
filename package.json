@@ -10,6 +10,7 @@
     "dev": "bun --watch run src/index.ts",
     "typecheck": "tsc --noEmit",
     "test": "bun test",
+    "test:e2e": "JARVIS_E2E=1 bun test ./e2e/slackBlockKit.e2e.ts",
     "db:seed": "bun run src/infrastructure/db/seed.ts",
     "web:install": "cd web && bun install",
     "web:dev": "cd web && bun run dev",

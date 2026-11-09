@@ -54,7 +54,7 @@ import {
 import { annotateMentions, extractMentionIds } from "../../domain/mentions.ts";
 import { isTimeout } from "../../domain/threadSession.ts";
 import { toMrkdwn } from "../../domain/slackFormat.ts";
-import { MAX_BLOCKS, toBlockMessage, type Block } from "../../domain/blockKit.ts";
+import { MAX_BLOCKS, readableText, toBlockMessage, type Block } from "../../domain/blockKit.ts";
 import { couldFollowThread, followVerdict, isOneOnOneThread, isSpeech, startsAutoFollow } from "../../domain/threadFollow.ts";
 import { unfollowOnReaction } from "../../application/followReaction.ts";
 import { collapsedBlocks, collapseSteps } from "../../domain/collapseSteps.ts";
@@ -457,24 +457,36 @@ export const createHandler =
         deps.clock(),
         stream?.usage ? usageFooter(stream.usage) : undefined,
       );
-      const tidy = (text: string, withTail: boolean) => {
+      const tidy = (text: string, withTail: boolean, asWords = false) => {
         const tailCollapsed = withTail ? collapsed : undefined;
         const tailFooter = withTail ? footer : undefined;
-        const body = toMrkdwn(text);
-        const rich = toBlockMessage(text, toMrkdwn);
+        // `asWords`: Slack refused the blocks, so send what they said - never
+        // the raw ```blockkit fence.
+        const body = toMrkdwn(asWords ? readableText(text) : text);
+        const rich = asWords ? undefined : toBlockMessage(text, toMrkdwn);
         const tail = collapsedBlocks("", tailCollapsed, tailFooter);
         // The fence may already hold Slack's 50; the tail must still fit.
         const blocks = rich?.blocks
           ? [...rich.blocks.slice(0, MAX_BLOCKS - tail.length), ...tail]
           : collapsedBlocks(body, tailCollapsed, tailFooter);
-        return { text: body, blocks };
+        return { text: rich?.text ?? body, blocks };
       };
+      /**
+       * Rewrite a message of this reply. Blocks Slack refuses are retried as
+       * their words, so a refused block costs the block, not the footer or the
+       * rewrite of the message.
+       */
+      const updateTidy = (ts: string, text: string, withTail: boolean) =>
+        msg.client.chat.update({ channel: msg.channelId, ts, ...tidy(text, withTail) }).catch((e: unknown) => {
+          if (!/invalid_blocks|invalid_arguments/.test(e instanceof Error ? e.message : String(e))) throw e;
+          log(`rewrite refused, retrying as words: ${e instanceof Error ? e.message : String(e)}`);
+          return msg.client.chat.update({ channel: msg.channelId, ts, ...tidy(text, withTail, true) });
+        });
       /** Put the whole answer on the first message the stream opened, and drop the rest. */
       const rewriteDeadStream = async (): Promise<boolean> => {
         const [first, ...rest] = parts;
         if (!first) return false;
-        const rewritten = await msg.client.chat
-          .update({ channel: msg.channelId, ts: first.ts, ...tidy(result.text, true) })
+        const rewritten = await updateTidy(first.ts, result.text, true)
           .then(() => true)
           .catch((e: unknown) => {
             log(`rewrite of dead stream failed: ${e instanceof Error ? e.message : String(e)}`);
@@ -515,8 +527,7 @@ export const createHandler =
           parts.length > 1 &&
           first !== undefined &&
           joined.length <= STREAM_CHAR_BUDGET &&
-          (await msg.client.chat
-            .update({ channel: msg.channelId, ts: first.ts, ...tidy(joined, true) })
+          (await updateTidy(first.ts, joined, true)
             .then(() => true)
             .catch((e: unknown) => {
               fail(e);
@@ -529,8 +540,7 @@ export const createHandler =
         } else if (parts.length === 1 && stream?.ts) {
           // Always rewritten now, not only when there is something to
           // collapse: every message carries its signature footer.
-          await msg.client.chat
-            .update({ channel: msg.channelId, ts: stream.ts, ...tidy(result.text, true) })
+          await updateTidy(stream.ts, result.text, true)
             // A tidy-up that fails must leave the answer exactly as it was.
             .catch(fail);
         } else if (parts.length > 1) {
@@ -542,9 +552,7 @@ export const createHandler =
               }
               continue;
             }
-            await msg.client.chat
-              .update({ channel: msg.channelId, ts: part.ts, ...tidy(part.text, i === lastWithText) })
-              .catch(fail);
+            await updateTidy(part.ts, part.text, i === lastWithText).catch(fail);
           }
         }
       } else if (result.text.trim() && !isSilenceNote(result.text)) {
