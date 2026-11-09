@@ -1007,11 +1007,11 @@ bun run test:e2e   # opt-in, real Slack: every e2e/*.e2e.ts (see below)
 | `slackUpload.e2e.ts` | `bin/slack-upload.sh` (`files.getUploadURLExternal` + `files.completeUploadExternal` with `thread_ts`) lands the file in the thread, not at the channel root; the file is deleted afterwards |
 | `slackWatch.e2e.ts` | a real `createWatcher` + `createShellCheck` + `watchRepo`: a watch stays quiet while its shell check exits non-zero, then fires once on exit 0 and hands back into the watched thread |
 
-A new e2e file goes in `e2e/`, imports `./support.ts` (env gate, root message, cleanup) and is added to the `test:e2e` script; `*.e2e.ts` is not picked up by `bun test`, so it never runs there or in CI.
+A new e2e file goes in `e2e/`, imports `./support.ts` (env gate, root message, cleanup) and is added to the `test:e2e` script; `*.e2e.ts` is not picked up by `bun test`, only by `test:e2e`, which CI runs as its own step.
 
 `e2e/slackBlockKit.e2e.ts` drives a reply with Block Kit through the real stream code path (`createHandler` -> `createSlackStream` -> `chat.startStream`/`appendStream`/`stopStream`, the tidy-up rewrite and the plain-post fallbacks; only the model is scripted) and reads the thread back with `conversations.replies`. Per reply it asserts exactly one bot message, a `table` block where the reply had one, and no literal ```` ```blockkit ```` in the text or blocks. The cases: a table with an empty header cell (the bug that split a reply in two and lost the table), a plain-text reply, and a block Slack refuses (`alert`), which must degrade to its words.
 
-It is not part of `bun test` or CI: the file is not a `*.test.ts`, and it skips itself unless `JARVIS_E2E=1` and `SLACK_BOT_TOKEN` are set. Run it with the bot's token in the environment:
+It is not part of `bun test`: the file is not a `*.test.ts`, and it skips itself unless `JARVIS_E2E=1` and `SLACK_BOT_TOKEN` are set. CI runs it as its own step with the bot token from the `JARVIS_E2E_SLACK_BOT_TOKEN` repo secret, and fails that step when the secret is missing rather than letting the suite skip itself green. Run it locally with the bot's token in the environment:
 
 ```bash
 SLACK_BOT_TOKEN=xoxb-... bun run test:e2e
@@ -1026,7 +1026,7 @@ SLACK_BOT_TOKEN=xoxb-... bun run test:e2e
 
 A run posts ONE root message (`jarvis e2e run <time>`) and every reply under it in the thread, then `chat.delete`s all of them, so the channel is left as it was. A run that is killed mid-way can leave its root behind: delete it by hand.
 
-CI (`.github/workflows/ci.yml`) runs both, plus the dashboard's typecheck and build (`web/`), on every PR and every push to `main`. The repo is private on a free plan, so GitHub cannot require it before a merge: merge with `bin/merge-when-green.sh <pr>`, which waits for the checks, refuses unless they are all green, refuses at once (exit 4) when the PR conflicts with its base - GitHub runs no CI on it, so merge the base in and resolve first - and approves the PR as the merging account right before it merges (skipped when that account opened the PR, since GitHub forbids self-approval; a failed approval is no merge). With `SELF_PR_REVIEWER` set, run it as that account: `GH_TOKEN=$(gh auth token -u <reviewer>) bin/merge-when-green.sh <pr>`.
+CI (`.github/workflows/ci.yml`) runs both, the e2e suite, plus the dashboard's typecheck and build (`web/`), on every PR and every push to `main`. The repo is private on a free plan, so GitHub cannot require it before a merge: merge with `bin/merge-when-green.sh <pr>`, which waits for the checks, refuses unless they are all green, refuses at once (exit 4) when the PR conflicts with its base - GitHub runs no CI on it, so merge the base in and resolve first - and approves the PR as the merging account right before it merges (skipped when that account opened the PR, since GitHub forbids self-approval; a failed approval is no merge). With `SELF_PR_REVIEWER` set, run it as that account: `GH_TOKEN=$(gh auth token -u <reviewer>) bin/merge-when-green.sh <pr>`.
 
 ## Notes
 
