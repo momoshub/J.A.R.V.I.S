@@ -26,7 +26,10 @@ const ACTION_LINE: Record<GhAction, RegExp> = {
 /** Unescape a double-quoted shell string (single quotes are already literal). */
 const unescapeDouble = (s: string): string => s.replace(/\\(["`$\\\n])/g, "$1");
 
-const BODY_INLINE = /--body(?:=|\s+)(?:"((?:[^"\\]|\\.)*)"|'([^']*)'|(\S+))/;
+// A quoted body may span lines, so this runs on the command from the action's
+// start, never on the single `gh` line. A bare word must not open with a quote:
+// an unterminated one is a body this cannot read, not the word `"good`.
+const BODY_INLINE = /--body(?:=|\s+)(?:"((?:[^"\\]|\\.)*)"|'([^']*)'|([^\s"']\S*))/;
 const BODY_FILE = /--body-file(?:=|\s+)(?:"([^"]+)"|'([^']+)'|(\S+))/;
 
 const escapeRe = (s: string): string => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
@@ -47,10 +50,13 @@ const heredocFor = (command: string, path: string): string | undefined => {
  * body lives somewhere this cannot see (a file written by an earlier command).
  */
 export const postedBody = (command: string, action: GhAction): string | undefined => {
-  const line = command.match(ACTION_LINE[action])?.[0];
-  if (!line) return undefined;
+  const found = ACTION_LINE[action].exec(command);
+  if (!found) return undefined;
+  const line = found[0];
+  const fromAction = command.slice(found.index);
 
-  const inline = line.match(BODY_INLINE);
+  // Only when the gh line itself names `--body`, or a later command's body is taken.
+  const inline = /--body(?:=|\s+)/.test(line) ? fromAction.match(BODY_INLINE) : null;
   if (inline) {
     const [, dq, sq, bare] = inline;
     const body = dq !== undefined ? unescapeDouble(dq) : (sq ?? bare ?? "");
