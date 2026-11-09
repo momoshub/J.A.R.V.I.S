@@ -153,8 +153,9 @@ export const EXECUTER_DB_SERVERS: readonly string[] = [
 ];
 
 /**
- * The Notion MCP server configured on the host (`claude mcp add --transport
- * http notion https://mcp.notion.com/mcp`, then authenticated once).
+ * The Notion MCP server configured on the host (`claude mcp add --scope user
+ * --transport http notion https://mcp.notion.com/mcp`, then authenticated once;
+ * user scope, because a turn's cwd varies by role).
  *
  * The claude.ai Notion CONNECTOR cannot reach a chat turn - its authorisation
  * lives on the account, and a `claude setup-token` credential carries none. A

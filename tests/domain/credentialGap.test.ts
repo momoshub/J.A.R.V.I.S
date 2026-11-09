@@ -56,6 +56,8 @@ describe("credentialGapRules", () => {
     expect(r).toContain("note access <role>");
     expect(r).not.toContain("no Notion, no Datadog");
     expect(r).not.toContain("has no connectors at all");
+    // if the server is not there, the working host commands are still the route
+    expect(r).toContain("fall back to the host commands");
   });
 
   test("a genuine dead end is still a real answer", () => {
