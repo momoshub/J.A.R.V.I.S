@@ -1,16 +1,14 @@
 /**
  * The `investigate` command: find out what actually happened.
  *
- * It exists because of a credential split, not a missing skill. Observability
- * backends reached through a claude.ai connector - Datadog and its RUM data -
- * are invisible to a `claude setup-token` credential, which loads zero `mcp__`
- * tools. Ordinary chat runs on such a token (the speaker's own, or the bot's),
- * so a chat turn can query Grafana through `gcx` and genuinely cannot see
- * Datadog, however connected the account is.
- *
- * This task runs on the host's interactive login instead, which holds the
- * connectors. That is the whole reason it is a separate command rather than
- * something the chat brain does inline.
+ * A chat turn can now do a quick read-only look in Datadog itself, through the
+ * host's `datadog` MCP server (see `DATADOG_MCP_SERVER`). This command is still
+ * the route for a real investigation: it runs on the host's interactive login
+ * with FULL tools and the account's connectors, as its own job that posts its
+ * findings in the thread, and it is the fallback when the server's login has
+ * lapsed. The claude.ai connectors themselves remain invisible to a
+ * `claude setup-token` credential, which is why the chat path needs the
+ * host-level server at all.
  */
 
 import { investigationRules } from "./investigation.ts";

@@ -192,7 +192,7 @@ order rather than reaching for whichever backend it noticed first:
    datasource, so VictoriaLogs, Elasticsearch and friends go through
    `bin/grafana-get.sh`. For a real investigation it loads `gcx`'s own bundled
    `debug-with-grafana` skill.
-2. **Datadog**, via the Datadog MCP tools, and only when Grafana genuinely has
+2. **Datadog**, via the host's read-only Datadog MCP server, and only when Grafana genuinely has
    nothing - no such datasource, or the data does not reach back far enough. An
    empty result is an answer, not a reason to try the next one.
 
@@ -276,14 +276,15 @@ reports back in the thread - it reads the thread first, so the ids and
 timestamps already posted are not asked for again. It files nothing and changes
 nothing unless you ask; finding out is the job.
 
-It is a separate command for one reason: **Datadog is only reachable from the
-host's login.** RUM - browser errors, user sessions, front-end crashes - exists
-nowhere else, and the connectors that reach it come with the interactive
-account session, not with a `claude setup-token` credential. Ordinary chat runs
-on a setup token (the speaker's own, or the bot's), which loads zero `mcp__`
-tools, so a chat turn can query Grafana through `gcx` and genuinely cannot see
-Datadog however connected the account is. Chat does not hand that back to you,
-though: when a question needs Datadog and the tools are not there, the bot runs
+Every chat turn, for every role, can also look in Datadog itself: the host runs
+a Datadog MCP server (`claude mcp add --scope user --transport http datadog
+https://mcp.datadoghq.com/v1/mcp`, authenticated once with OAuth in a browser;
+the claude.ai Datadog connector cannot reach a chat turn, which runs on a
+`claude setup-token` credential). Only the read tools are exposed - logs, RUM,
+spans, metrics, monitors, incidents, dashboards; anything that edits a notebook
+or dashboard, and `execute_code`, is denied. `investigate` stays the route for a
+full investigation on the host login, and the fallback when that server's login
+lapses: when a question needs Datadog and the tools are not there, the bot runs
 `investigate` **itself** through its own command bridge and reports what it
 found - and since that run posts its own findings into the thread, the bot says
 one line and lets it speak rather than repeating it. Telling someone to go and

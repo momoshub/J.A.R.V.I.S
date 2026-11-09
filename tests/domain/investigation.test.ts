@@ -95,11 +95,14 @@ describe("investigationRules", () => {
 });
 
 describe("datadog states where the data is, not how to escalate", () => {
-  test("RUM lives only in Datadog, and those tools come from connectors", () => {
+  test("RUM lives only in Datadog, reached through the host's read-only server", () => {
     const out = investigationRules(["datadog"]);
     expect(out).toContain("RUM");
     expect(out).toContain("exists ONLY here, never in Grafana");
-    expect(out).toContain("an ordinary chat turn does not have them");
+    expect(out).toContain("mcp__datadog__");
+    expect(out).toContain("ToolSearch");
+    expect(out).toContain("execute_code");
+    expect(out).not.toContain("an ordinary chat turn does not have them");
   });
 
   test("escalation is NOT repeated here - one rule covers every source", () => {
