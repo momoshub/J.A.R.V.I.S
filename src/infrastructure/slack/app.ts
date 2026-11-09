@@ -20,7 +20,7 @@ import {
   AGENT_SESSION_STOPPED,
   type AgentSessionStoppedEvent,
   planSessionStop,
-  sessionStoppedNotice,
+  sessionStoppedLog,
 } from "../../domain/agentSession.ts";
 import {
   decodeRequest,
@@ -148,6 +148,8 @@ type Deps = RespondDeps & {
   log?: (msg: string) => void;
   /** Modals the brain stored, opened by a `jv:modal:<id>` button. */
   kitViews?: Pick<KitViewRepo, "get">;
+  /** The log channel a stop press is reported to; empty or absent: only logged. */
+  stopLogChannel?: () => string;
 };
 
 /** The slice of the Slack WebClient the handler needs (kept minimal for testing). */
@@ -1280,12 +1282,17 @@ export const createSlackApp = (config: SlackAppConfig, deps: Deps) => {
       }
     }
 
-    // Only when something was actually stopped. Telling a thread "nothing was
-    // running" right after somebody tapped stop is noise - Slack's own UI has
-    // already shown them it stopped.
-    if (stopped) {
+    // Nothing goes into the thread: Slack's UI already showed the presser it
+    // stopped. The context goes to the log channel, and only when something
+    // was actually stopped (a press with nothing running has nothing to say).
+    const logChannel = deps.stopLogChannel?.() ?? "";
+    if (stopped && logChannel) {
+      const link = await deps.slack?.permalink?.(plan.channel, plan.threadTs).catch(() => undefined);
       await deps.slack
-        ?.post(plan.channel, sessionStoppedNotice(stopped, plan.by, Date.now(), forHowLong), plan.threadTs)
+        ?.post(
+          logChannel,
+          sessionStoppedLog(stopped, { by: plan.by, channel: plan.channel, threadTs: plan.threadTs, ...(link ? { link } : {}) }, Date.now(), forHowLong),
+        )
         .catch(() => undefined);
     }
     log(

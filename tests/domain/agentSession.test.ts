@@ -2,7 +2,7 @@ import { describe, expect, test } from "bun:test";
 import {
   AGENT_SESSION_STOPPED,
   planSessionStop,
-  sessionStoppedNotice,
+  sessionStoppedLog,
   sessionThreadKey,
 } from "../../src/domain/agentSession.ts";
 import { forHowLong } from "../../src/domain/runControl.ts";
@@ -79,24 +79,33 @@ describe("sessionThreadKey", () => {
   });
 });
 
-describe("sessionStoppedNotice", () => {
+describe("sessionStoppedLog", () => {
   const run = { what: "summarise the thread", startedAt: 1_000, actor: "U9" };
+  const where = { by: "U9", channel: "C123", threadTs: "100.1" };
 
-  test("it says what was stopped and how long it had been going", () => {
-    const text = sessionStoppedNotice(run, "U9", 61_000, forHowLong);
+  test("it says who stopped what, in which thread, and how long it had been going", () => {
+    const text = sessionStoppedLog(run, { ...where, link: "https://x.slack.com/archives/C123/p1001" }, 61_000, forHowLong);
+    expect(text).toContain("<@U9> pressed stop");
+    expect(text).toContain("<https://x.slack.com/archives/C123/p1001|thread>");
     expect(text).toContain("summarise the thread");
     expect(text).toContain("1m");
-    expect(text).toContain("you pressed stop");
+  });
+
+  test("without a permalink it names the channel and the thread ts", () => {
+    const text = sessionStoppedLog(run, where, 61_000, forHowLong);
+    expect(text).toContain("<#C123>");
+    expect(text).toContain("100.1");
   });
 
   test("stopping somebody else's turn names whose it was", () => {
     // Slack draws this button for anyone who can see the session, so the press
-    // is honoured rather than refused - but it should not be silent
-    const text = sessionStoppedNotice(run, "U2", 61_000, forHowLong);
-    expect(text).toContain("<@U9>");
+    // is honoured rather than refused - and the log says whose work it cut
+    const text = sessionStoppedLog(run, { ...where, by: "U2" }, 61_000, forHowLong);
+    expect(text).toContain("<@U2> pressed stop");
+    expect(text).toContain("(<@U9>'s)");
   });
 
-  test("stopping your own does not name you back at you", () => {
-    expect(sessionStoppedNotice(run, "U9", 61_000, forHowLong)).not.toContain("<@U9>");
+  test("stopping your own does not name you twice", () => {
+    expect(sessionStoppedLog(run, where, 61_000, forHowLong)).not.toContain("(<@U9>'s)");
   });
 });
