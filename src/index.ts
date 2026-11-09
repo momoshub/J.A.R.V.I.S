@@ -580,8 +580,8 @@ const main = async () => {
     selfPrAccounts: config.selfPrAccounts,
     draft,
     toolPolicy,
-    // A person's own Claude Code credential: optional: `review` and every
-    // other turn of theirs run on it when they have one on file, on the bot's own otherwise.
+    // A person's own Claude Code credential: required by `review`, used by every
+    // other turn of theirs when they have one on file.
     claudeTokens,
     totp,
     // The dashboard API is loopback-only, so the brain can save a learning the
@@ -884,7 +884,7 @@ const main = async () => {
     onError: onDbError,
   });
   // GitHub review requests of the bot's account, posted and reviewed in a
-  // channel as whoever asked - on their own token when they have one, review before approve.
+  // channel as whoever asked - on their own token, review before approve.
   const ghRequests = createGhReviewRequests();
   const reviewInbox = createReviewInbox({
     clock,
@@ -895,6 +895,7 @@ const main = async () => {
     account: async () => (await deps.github?.whoami())?.login,
     githubName: ghRequests.githubName,
     users,
+    hasToken: (id) => claudeTokens.has(id),
     post: async (channel, text, thread) => (await slackAdmin.post(channel, text, thread, SIGNATURES.reviewInbox))?.ts,
     runReview: async ({ actor, channelId, threadTs, line }) => {
       const reply = async (text: string) => void (await slackAdmin.post(channelId, text, threadTs, SIGNATURES.reviewInbox));

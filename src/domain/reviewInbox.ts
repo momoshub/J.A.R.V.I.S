@@ -4,7 +4,7 @@
  *
  * Nothing here talks to GitHub or Slack. It decides which requests are new,
  * who on Slack asked, and what each line says. A review spends the
- * requester's Claude token when they have one, so the matching is deliberately strict: an
+ * requester's own Claude token, so the matching is deliberately strict: an
  * explicit link, or exactly one person whose name matches - never a guess
  * between two.
  */
@@ -82,6 +82,9 @@ export const announceRequest = (r: ReviewRequest, requesterSlackId: string | und
 
 export const unknownRequester = (login: string, prefix: string): string =>
   `I cannot tell who \`${login}\` is on Slack, so no review. \`${prefix} review-inbox link ${login}\` from them (or an admin with \`@someone\`) fixes it`;
+
+export const noTokenOnFile = (slackId: string, prefix: string): string =>
+  `<@${slackId}> no Claude token of yours on file, so no review - a review only runs on the requester's own. \`${prefix} token\` adds one, then \`${prefix} review <pr-url>\``;
 
 /**
  * The review line to run. This path always reviews BEFORE approving; a pal's
