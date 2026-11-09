@@ -34,6 +34,7 @@ Always run `bun run typecheck` AND `bun test` before considering a change done. 
 
 - **TypeScript, functional style. No classes** - repos/adapters are factory functions returning a bag of functions. Do not introduce OOP.
 - **Never use `any`.** Use precise types; `unknown` + narrowing at boundaries.
+- **Big files carry `TODO(split)` markers** (`src/index.ts`, `src/infrastructure/slack/app.ts`): split the section you touch into the module its marker names, rather than refactoring the whole file at once.
 - Local imports use explicit `.ts` extensions (Bun style).
 - Use `bun:sqlite`; SQL is parameterized (named/positional binds), never string-concatenated.
 - Depend on ports (`LlmPort`, `SlackAdminPort`, injected clocks/deps), not concrete adapters, so use cases stay testable with fakes + `:memory:` sqlite.

@@ -6,6 +6,8 @@
  * the Slack listener and the dashboard. Everything below this file is decoupled
  * and independently testable.
  */
+// TODO(split): big file, deliberately not refactored in one go. Rule: split the part you
+//   touch into its own module; the markers below name where each section should go.
 import { writeGuides } from "./infrastructure/system/guideWriter.ts";
 import { mkdirSync } from "node:fs";
 import { dirname, join } from "node:path";
@@ -133,6 +135,7 @@ const ensureDir = (path: string): string => {
   return path;
 };
 
+// TODO(split): move buildLlm to src/infrastructure/llm/buildLlm.ts
 /** Pick the brain based on config: the local Claude Code CLI or the API. */
 const buildLlm = (
   config: AppConfig,
@@ -177,6 +180,7 @@ const WATCH_TICK_MS = 10_000;
 const main = async () => {
   const config = loadConfig();
 
+  // TODO(split): move db + repository construction to src/infrastructure/persistence/buildRepos.ts (returns the repo bag)
   const db = openDatabase(config.databasePath);
   // The bot reads its allowlist through the role policies, so a switched-off
   // role grants nothing anywhere; the dashboard alone gets the raw store.
@@ -430,6 +434,7 @@ const main = async () => {
       }
     | undefined;
   const runs = createRunRegistry();
+  // TODO(split): move the system tracker/probe wiring to src/application/systemWiring.ts
   // Vitals, sampled on a timer: a snapshot answers "is it bad now", a short
   // history answers "has it been bad for a while", which is the question
   // someone is really asking when they notice something feels slow.
@@ -604,6 +609,7 @@ const main = async () => {
   // the grant is bound to the runtime's path, so upgrading it silently revokes
   // the permission and nothing says so.
   const uiAccess = createUiAccessProbe();
+  // TODO(split): move restart/drain state (requestRestart, onDbError) to src/application/restartDrain.ts
   // Exit, and let launchd bring us back. Deferred so the reply that asked
   // for it has landed, and held until no turn is running anywhere.
   // Set once a restart is asked for. From then on timers that start turns
@@ -664,6 +670,7 @@ const main = async () => {
     requestRestart("database file was replaced on disk (SQLITE_IOERR_VNODE)");
   };
 
+  // TODO(split): move dashboard wiring to src/application/dashboardWiring.ts
   // Set once the GitHub App is wired below; the dashboard reaches it through this.
   let githubApp: GithubApp | undefined;
   let githubActions: GithubActions | undefined;
@@ -855,6 +862,7 @@ const main = async () => {
     console.log(`[ui] ${line}`);
   });
 
+  // TODO(split): move watcher, orca bridge and reminder sender wiring to src/application/watchWiring.ts
   // The thing that actually waits. It polls outside every turn and session, so
   // a thread waiting on a build is not a thread that has stopped working - and
   // a turn that said it would carry on afterwards now does.
@@ -922,6 +930,7 @@ const main = async () => {
     prefix: config.commandPrefix,
     log: (msg) => console.error(`[review-inbox] ${msg}`),
   });
+  // TODO(split): move GitHub App webhook and review-inbox wiring to src/application/githubWiring.ts
   // Calls from GitHub (a mention of the app, or its label) over a loopback
   // webhook that Tailscale Funnel exposes. Off unless the app's id, key and
   // webhook secret are all on disk / in env.
@@ -1078,6 +1087,7 @@ const main = async () => {
     },
     log: (msg) => console.error(`[inner-child] ${msg}`),
   });
+  // TODO(split): move the timers (watch tick, stuck sweeper, offline alarm) and shutdown to src/application/timers.ts
   // A rejection on a bare timer is unhandled, and an unhandled rejection kills
   // the process - mid-turn, for whoever is talking to the bot. Never let one out.
   const tickFailed = (name: string) => (e: unknown): void => {
