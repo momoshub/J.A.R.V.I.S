@@ -113,13 +113,11 @@ describe("reviewPrompt comment shape", () => {
     expect(p).toContain("never go in the comment");
   });
 
-  test("one worth fixing later becomes a deduplicated issue; nits never do", () => {
+  test("non-blocking findings never become an issue", () => {
     const p = reviewPrompt([PR], "Bot");
-    expect(p).toContain("gh issue list --repo <owner>/<repo> --search");
-    expect(p).toContain("gh issue create --repo <owner>/<repo>");
-    expect(p).toContain("<pr url> <file:line>");
-    expect(p).toContain("Nits and style never become issues");
-    expect(p).toContain("Everything else is dropped");
+    expect(p).toContain("never become an issue: they are dropped");
+    expect(p).toContain("Never open an issue");
+    expect(p).not.toContain("gh issue create");
   });
 
   test("a declared gap is not a blocker, but what the PR breaks is not excused", () => {

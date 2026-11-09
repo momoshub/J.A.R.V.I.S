@@ -121,7 +121,7 @@ Every command has two interfaces - use whichever you like. Both triggers are con
 | `token [remove\|who]` (alias `claude-token`) | anyone | add, replace or forget your own Claude Code token - see [Your own Claude token](#your-own-claude-token) |
 | `session [reset\|on\|off]` (alias `sess`) | anyone (on/off: admins) | the CLI session this thread is talking to - see [One session per thread](#one-session-per-thread) |
 | `ticket <what is wrong>` (aliases `bug`, `raise`) | anyone | raise a properly written, correctly routed ticket - see [Raising a ticket](#raising-a-ticket) |
-| `review <pr-url\|help\|prompt> [--policy first\|after] [what to look at]` (alias `rv`) | pal+ | review a PR: read it first, post a blockers-only comment on GitHub *and* back in the thread; request changes on a blocker, open a GitHub issue for a non-blocking finding worth fixing later (big PRs are cloned + reviewed by child agents). Runs full-access. |
+| `review <pr-url\|help\|prompt> [--policy first\|after] [what to look at]` (alias `rv`) | pal+ | review a PR: read it first, post a blockers-only comment on GitHub *and* back in the thread; request changes on a blocker, non-blocking findings are dropped (big PRs are cloned + reviewed by child agents). Runs full-access. |
 | `bomb [categories] [count] <message-link>` (alias `br`) | admins | reaction-bomb a message. Combine categories with commas and set a count: `bomb money,face,negative 9 <link>`. Up to 23; `bomb help` lists every category |
 | `reply <message-link>` (alias `jrp`) | admins | draft and post an AI reply to a message |
 | `rm-msg <message-link>` (aliases `rmmsg`, `unsend`) | admins | delete a message the bot posted (a bot token cannot delete anyone else's) |
@@ -813,11 +813,8 @@ matters. A clean PR gets that one line and the sign-off.
 
 Blocking means a security hole, data loss, a breaking change, a correctness bug
 that would ship, missing or failing tests on a critical path, or failing CI.
-Everything else - design, cleanups, style, nits - is never posted. A
-non-blocking finding that is a real risk worth fixing later becomes one short
-GitHub issue on the PR's repo (PR link, `file:line`, why), after checking for a
-duplicate; nits and style never become issues, the rest is dropped. Each issue
-is announced in the thread by title and its url is in the wrap-up.
+Everything else - design, cleanups, style, nits - is never posted, and never
+becomes a GitHub issue either: it is dropped.
 
 It reads the description and the existing comments **before** reviewing, so
 nothing already said is said again. A gap the description declares out of scope

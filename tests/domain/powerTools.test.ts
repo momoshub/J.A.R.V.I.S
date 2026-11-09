@@ -171,7 +171,6 @@ describe("reviewPrompt", () => {
     const p = reviewPrompt([URL], "Evie");
     expect(p).toContain("relayed into the thread as they land");
     expect(p).toContain("do not paste them again");
-    expect(p).toContain("any issue url you opened");
     expect(p).toContain("just a cozy little glance from me and my claude");
   });
 });

@@ -119,7 +119,7 @@ export const REVIEW_COMMANDS: readonly CommandDef[] = [
     ownHelp: true,
     minRole: "pal",
     usage: "<pr-url> [pr-url...] [--policy first|after] [what to look at]",
-    summary: "review a PR: blockers-only comment on GitHub and here, an issue for what can wait",
+    summary: "review a PR: blockers-only comment on GitHub and here",
     run: async (ctx) => {
       const { deps, actor, args, prefix, reply, channelId } = ctx;
       if (args.length === 0) return `Which PR? \`${prefix} review <pr-url>\``;
@@ -312,13 +312,6 @@ export const REVIEW_COMMANDS: readonly CommandDef[] = [
               // twice, which reads as the same thing posted again.
               const what = comments++ === 0 ? "posted the review" : "posted a follow-up";
               announce(`📝 ${what}${on}${body ? `\n\n${clip(body)}` : ""}`);
-            }
-            // A non-blocking finding worth fixing later goes to an issue, never
-            // the comment, and nothing else relays it - so say it here, by title.
-            if (/gh issue create\b/.test(t)) {
-              const title = ran.match(/--title[= ](?:"([^"]*)"|'([^']*)')/);
-              const named = title ? `: ${title[1] ?? title[2]}` : "";
-              announce(`📌 opened a follow-up issue${on}${named}`);
             }
           });
         } else {
