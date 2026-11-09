@@ -1107,6 +1107,33 @@ describe("dispatchCommand", () => {
     expect(workflows.get(w.id)?.steers).toHaveLength(2);
   });
 
+  test("tell falls back to the silent steer turn when the workflow ended meanwhile", async () => {
+    const ran: { text: string; unprompted?: boolean }[] = [];
+    const base = build();
+    const workflows = createWorkflowRepo(db);
+    const w = workflows.start(
+      { channelId: "C0TEST00001", threadTs: "1787122692.303399", sessionId: "s1", task: "blog", startedBy: OWNER },
+      1,
+    );
+    // the lookup still sees it active, then it ends before the steer lands
+    const stale: typeof workflows = {
+      ...workflows,
+      activeFor: (c, t) => {
+        const found = workflows.activeFor(c, t);
+        if (found) workflows.stop(w.id, 2);
+        return found;
+      },
+    };
+    const deps: CommandDeps = { ...base, workflows: stale, runTurn: async (r) => void ran.push(r) };
+    const out = await dispatchCommand(deps, actor(), "C1", `tell ${LINK} fix the hero`, { threadTs: "1700000000.000001" });
+    expect(out).toContain("nothing posted there");
+    expect(ran).toHaveLength(1);
+    expect(ran[0]?.text).toContain("[tell from another thread]");
+    expect(ran[0]?.text).toContain("fix the hero");
+    expect(ran[0]?.unprompted).toBe(true);
+    expect(slackCalls.posts).toHaveLength(0);
+  });
+
   test("tell needs a thread link and a message, and not this same thread", async () => {
     const deps = { ...build(), runTurn: async () => {} };
     expect(await dispatchCommand(deps, actor(), "C1", "tell nope hello")).toContain("thread link");
