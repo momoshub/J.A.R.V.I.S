@@ -244,6 +244,12 @@ cheap channel is still done properly.
 
 ### Handed-off work: subagents, Orca workers, planning
 
+An owner turn picks the run mode by the job's weight: light work (a few edits,
+a TODO comment, one lookup) stays inline, short or side-by-side work that ends
+inside the turn goes to the Agent tool, and anything that opens a PR, waits on
+CI or a reviewer, or outlives the turn goes to an Orca worker. Other roles have
+only the Agent tool.
+
 What a turn hands off runs on its own model, whatever the turn itself is on - an
 owner turn talks on Opus, but its helpers do not:
 
