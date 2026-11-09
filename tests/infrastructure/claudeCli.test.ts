@@ -220,6 +220,57 @@ describe("createClaudeCliLlm", () => {
     delete process.env.CLAUDE_CODE_OAUTH_TOKEN;
   });
 
+  test("a bot turn loads no claude.ai connectors and none of the unauthenticated servers", async () => {
+    // datadog and figma were unauthenticated, so the CLI injected a needs-auth
+    // notice mid-turn and the model wrote it into a Slack reply. The env var
+    // drops the claude.ai connectors; --strict-mcp-config with the host's own
+    // servers minus the denylist drops the rest, and keeps notion/db servers.
+    const dir = mkdtempSync(join(tmpdir(), "ev-claudejson-"));
+    const claudeJsonPath = join(dir, "claude.json");
+    writeFileSync(
+      claudeJsonPath,
+      JSON.stringify({ mcpServers: { figma: { type: "http" }, datadog: { type: "http" }, notion: { type: "http" }, "pg-prod": { command: "x" } } }),
+    );
+    // prints the env var, then the argument after --mcp-config, then whether --strict-mcp-config came after it
+    const bin = fakeBin(
+      `#!/usr/bin/env bash\ncat > /dev/null\nC=none; S=no\nwhile [ $# -gt 0 ]; do if [ "$1" = "--mcp-config" ]; then C=$(printf %s "$2" | base64 | tr -d '\\n'); fi; if [ "$1" = "--strict-mcp-config" ]; then S=yes; fi; shift; done\necho "{\\"type\\":\\"result\\",\\"subtype\\":\\"success\\",\\"is_error\\":false,\\"result\\":\\"$ENABLE_CLAUDEAI_MCP_SERVERS $S $C\\"}"`,
+    );
+    const llm = createClaudeCliLlm({ binPath: bin, claudeJsonPath });
+    const [flag, strict, cfg] = (await llm.complete({ system: "s", messages: [{ role: "user", content: "hi" }] })).split(" ");
+    expect(flag).toBe("false");
+    expect(strict).toBe("yes");
+    expect(Object.keys(JSON.parse(Buffer.from(cfg!, "base64").toString()).mcpServers)).toEqual(["notion", "pg-prod"]);
+
+    // a caller's own token is a bot turn too
+    const own = await llm.complete({ system: "s", messages: [{ role: "user", content: "hi" }], oauthToken: "sk-ant-oat01-theirs" });
+    expect(own.split(" ")[0]).toBe("false");
+  });
+
+  test("a host-login spawn keeps the account's connectors: no env var, no strict config", async () => {
+    // read/ticket/note/close are the tasks that need them
+    const dir = mkdtempSync(join(tmpdir(), "ev-claudejson-"));
+    const claudeJsonPath = join(dir, "claude.json");
+    writeFileSync(claudeJsonPath, JSON.stringify({ mcpServers: { notion: {} } }));
+    const bin = fakeBin(
+      `#!/usr/bin/env bash\ncat > /dev/null\necho "{\\"type\\":\\"result\\",\\"subtype\\":\\"success\\",\\"is_error\\":false,\\"result\\":\\"[$ENABLE_CLAUDEAI_MCP_SERVERS][$*]\\"}"`,
+    );
+    const llm = createClaudeCliLlm({ binPath: bin, claudeJsonPath });
+    const out = await llm.complete({ system: "s", messages: [{ role: "user", content: "hi" }], useHostLogin: true });
+    expect(out.startsWith("[]")).toBe(true);
+    expect(out).not.toContain("--strict-mcp-config");
+    expect(out).not.toContain("--mcp-config");
+  });
+
+  test("an unreadable host config leaves MCP config alone instead of loading nothing", async () => {
+    const bin = fakeBin(
+      `#!/usr/bin/env bash\ncat > /dev/null\necho "{\\"type\\":\\"result\\",\\"subtype\\":\\"success\\",\\"is_error\\":false,\\"result\\":\\"[$ENABLE_CLAUDEAI_MCP_SERVERS][$*]\\"}"`,
+    );
+    const llm = createClaudeCliLlm({ binPath: bin, claudeJsonPath: join(tmpdir(), "does-not-exist.json") });
+    const out = await llm.complete({ system: "s", messages: [{ role: "user", content: "hi" }] });
+    expect(out.startsWith("[false]")).toBe(true);
+    expect(out).not.toContain("--strict-mcp-config");
+  });
+
   test("this turn's command ticket travels in the environment, not the prompt", async () => {
     // a thread holds one long-lived session, so a ticket written into the prompt
     // is one the model eventually retypes from memory - dead by then, and

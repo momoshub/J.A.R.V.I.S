@@ -29,6 +29,7 @@ import type { ToolPolicy } from "../../domain/toolPolicy.ts";
 import { isNoiseTool, redactPaths, redactSecrets } from "../../domain/toolVisibility.ts";
 import { stopProcess } from "./killTree.ts";
 import { ignoreQuietly } from "../../application/ignoredError.ts";
+import { NO_CLAUDEAI_CONNECTORS_ENV, createClaudeJsonReader, mcpConfigFor } from "./mcpConfig.ts";
 
 export type ClaudeCliConfig = {
   /** Path or name of the claude binary. Default "claude". */
@@ -39,6 +40,8 @@ export type ClaudeCliConfig = {
   skipPermissions?: boolean;
   /** Working directory the CLI runs in (scopes tool access). */
   cwd?: string;
+  /** The host's `~/.claude.json`, read for the MCP server list. Default `~/.claude.json`; tests point it elsewhere. */
+  claudeJsonPath?: string;
   /** Hard timeout for a single invocation, ms. Default 120000. */
   timeoutMs?: number;
   /**
@@ -271,7 +274,7 @@ const spawnClaude = (
   extraEnv: Record<string, string | undefined> = {},
 ) => {
   const proc = Bun.spawn({
-    cmd: [config.binPath ?? "claude", ...args],
+    cmd: [config.binPath ?? "claude", ...args, ...connectorArgs(config, policy, useHostLogin)],
     stdin: Buffer.from(prompt),
     stdout: "pipe",
     stderr: "pipe",
@@ -311,6 +314,28 @@ const spawnClaude = (
   return proc;
 };
 
+const claudeJsonReaders = new Map<string, () => unknown>();
+
+/**
+ * Keeps unauthenticated MCP servers out of a bot turn (see
+ * `UNAUTHENTICATED_MCP_SERVERS`). Every other configured server is passed
+ * explicitly under `--strict-mcp-config`, which is what drops the rest. A
+ * host-login spawn is left alone: its commands (read, ticket, note, close) use
+ * the account's connectors. Goes last because `--mcp-config` is variadic and
+ * the flag after it ends the list.
+ */
+const connectorArgs = (config: ClaudeCliConfig, policy?: ToolPolicy, useHostLogin?: boolean): string[] => {
+  if (useHostLogin) return [];
+  const key = config.claudeJsonPath ?? "";
+  let read = claudeJsonReaders.get(key);
+  if (!read) {
+    read = createClaudeJsonReader(config.claudeJsonPath);
+    claudeJsonReaders.set(key, read);
+  }
+  const json = mcpConfigFor(read(), policy?.cwd ?? config.cwd);
+  return json ? ["--mcp-config", json, "--strict-mcp-config"] : [];
+};
+
 /**
  * The environment the CLI is spawned with.
  *
@@ -324,6 +349,8 @@ const hostLoginEnv = (oauthToken?: string, useHostLogin?: boolean): Record<strin
     delete env.CLAUDE_CODE_OAUTH_TOKEN;
     return env;
   }
+  // The account's claude.ai connectors are never wanted in a bot turn.
+  Object.assign(env, NO_CLAUDEAI_CONNECTORS_ENV);
   if (oauthToken) env.CLAUDE_CODE_OAUTH_TOKEN = oauthToken;
   return env;
 };
