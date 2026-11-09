@@ -46,4 +46,4 @@ export const tokenGuide = (slash: string): string =>
   ].join("\n");
 
 /** Why the bot is asking at all, in one line. */
-export const tokenWhy = "reviews run on your own Claude Code account, so the usage lands on you and not on me";
+export const tokenWhy = "optional: with one on file your reviews and chats run on your own Claude Code account, so the usage lands on you; without one they run on mine";

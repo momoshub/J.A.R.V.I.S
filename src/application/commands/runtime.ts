@@ -142,7 +142,7 @@ export const RUNTIME_COMMANDS: readonly CommandDef[] = [
     aliases: ["claude-token"],
     minRole: "pal",
     usage: "[remove|who]",
-    summary: "your own Claude Code token, which your reviews run on",
+    summary: "optional: your own Claude Code token - your reviews run on it when set, on mine otherwise",
     run: async (ctx) => {
       const { deps, actor, args, slash } = ctx;
       if (!deps.claudeTokens) return "Token storage is not wired up here.";

@@ -7,8 +7,8 @@
  * a minute of delay on a review that takes ten is nothing.
  *
  * Two hard rules ride on it. The review is always review-then-approve, never
- * approve up front. And it only runs on the requester's own Claude token - no
- * token on file, no review, just a line saying so. Nobody is asked for one
+ * approve up front. And it runs on the requester's own Claude token when
+ * they have one on file, on the bot's own otherwise. Nobody is asked for one
  * here: they asked GitHub, not Slack, and the ask belongs to `token`.
  */
 import {
@@ -17,7 +17,6 @@ import {
   githubLinkKey,
   matchByName,
   newRequests,
-  noTokenOnFile,
   reviewLine,
   type ReviewRequest,
   unknownRequester,
@@ -44,7 +43,6 @@ export type ReviewInboxDeps = {
   /** A GitHub account's display name, for matching to Slack. */
   githubName: (login: string) => Promise<string | undefined>;
   users: { get: (slackId: string) => AllowedUser | undefined; list: () => AllowedUser[] };
-  hasToken: (slackId: string) => boolean;
   /** Post; returns the ts so the review can go in its thread. */
   post: (channel: string, text: string, threadTs?: string) => Promise<string | undefined>;
   /** Run a command line as `actor` in a thread. Resolves when it is done. */
@@ -94,10 +92,6 @@ export const createReviewInbox = (deps: ReviewInboxDeps): ReviewInbox => {
     const actor = slackId ? deps.users.get(slackId) : undefined;
     if (!slackId || !actor) {
       await deps.post(channel, unknownRequester(r.requester, deps.prefix), ts);
-      return;
-    }
-    if (!deps.hasToken(slackId)) {
-      await deps.post(channel, noTokenOnFile(slackId, deps.prefix), ts);
       return;
     }
     // Not awaited: a review takes ten minutes, and the next request should not

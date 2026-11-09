@@ -30,7 +30,6 @@ let posts: { channel: string; text: string; thread?: string }[];
 let reviews: { actor: string; threadTs: string; line: string }[];
 let pending: ReviewRequest[];
 let people: AllowedUser[];
-let tokens: Set<string>;
 
 const inbox = (over: Partial<ReviewInboxDeps> = {}) =>
   createReviewInbox({
@@ -42,7 +41,6 @@ const inbox = (over: Partial<ReviewInboxDeps> = {}) =>
     account: async () => "bot-gh",
     githubName: async (login) => (login === "dev-gh" ? "Dev Person" : undefined),
     users: { get: (id) => people.find((p) => p.slackId === id), list: () => people },
-    hasToken: (id) => tokens.has(id),
     post: async (channel, text, thread) => {
       posts.push({ channel, text, thread });
       return `ts${posts.length}`;
@@ -59,7 +57,6 @@ beforeEach(() => {
   reviews = [];
   pending = [req()];
   people = [user("UDEV", "Dev Person")];
-  tokens = new Set(["UDEV"]);
 });
 
 describe("review inbox", () => {
@@ -79,17 +76,14 @@ describe("review inbox", () => {
     expect(reviews).toHaveLength(1);
   });
 
-  test("no token, no review - and no ask", async () => {
-    tokens.clear();
+  test("a review runs whether or not the requester has a token on file", async () => {
     await inbox().tick();
-    expect(reviews).toHaveLength(0);
-    expect(posts[1]?.thread).toBe("ts1");
-    expect(posts[1]?.text).toContain("no Claude token");
+    expect(reviews).toHaveLength(1);
+    expect(posts).toHaveLength(1); // the announcement only: no refusal line, no ask
   });
 
   test("an explicit link wins over the name", async () => {
     people.push(user("UKAI", "Kai"));
-    tokens.add("UKAI");
     store.set("github_login:dev-gh", "UKAI");
     await inbox().tick();
     expect(reviews[0]?.actor).toBe("UKAI");

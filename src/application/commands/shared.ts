@@ -277,7 +277,7 @@ export const parseWindow = (token?: string): number | undefined => {
  */
 export const askForToken = async (ctx: Context, line: string, force = false): Promise<string> => {
   const { deps, actor, channelId, threadTs, slash } = ctx;
-  const ask = `🔑 <@${actor.slackId}> I need your own Claude Code token before I can run that - ${tokenWhy}\n\n${tokenGuide(slash)}`;
+  const ask = `🔑 <@${actor.slackId}> your own Claude Code token is optional - ${tokenWhy}\n\n${tokenGuide(slash)}`;
   if (!force && deps.claudeTokens?.asked(actor.slackId)) {
     return `🔑 still waiting on your Claude Code token - \`${slash} token\` opens the box, or use the one I sent you earlier`;
   }

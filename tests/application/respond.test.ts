@@ -108,11 +108,9 @@ describe("respond", () => {
       text: "<@UBOT> review https://github.com/o/r/pull/1",
     });
 
-    expect(asked).toBeUndefined(); // the chat brain never ran
-    if (res.kind === "reply") {
-      // the review command answered: no token store wired here, so it refuses
-      expect(res.text).toContain("caller's own");
-    }
+    // the review command ran (its prompt, not the chat one), with no token needed
+    expect(asked).toContain("doing a real code review");
+    if (res.kind === "reply") expect(res.text).toContain("I would love to review that for you");
   });
 
   test("a tell steer naming a PR and 'review' reaches the session, it does not run the review", async () => {
