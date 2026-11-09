@@ -27,6 +27,7 @@ const setup = (role: UserRole | undefined, opts: { fail?: Error } = {}) => {
       },
     },
     audit: { add: (entry, at) => void audit.push({ entry, at }) },
+    allowedOwners: ["o"],
   });
   return { actions, audit, calls, installs };
 };
@@ -77,6 +78,37 @@ describe("github app actions: auth gate", () => {
     const { actions, calls } = setup("pal");
     await expect(actions.run({ ticket: "good", ...create, actor: "OWNER", role: "owner" } as never)).rejects.toThrow("admin role");
     expect(calls).toEqual([]);
+  });
+});
+
+describe("github app actions: scope and audit", () => {
+  test("an owner outside the allowlist is refused before the installation lookup", async () => {
+    const { actions, installs, calls, audit } = setup("owner");
+    await expect(actions.run({ ticket: "good", ...create, repo: "stranger/r" })).rejects.toThrow("GITHUB_APP_ALLOWED_OWNERS");
+    expect(installs).toEqual([]);
+    expect(calls).toEqual([]);
+    expect(audit[0]?.entry.ok).toBe(false);
+  });
+
+  test("the owner match ignores case", async () => {
+    const { actions, installs } = setup("owner");
+    await actions.run({ ticket: "good", ...create, repo: "O/r" });
+    expect(installs).toEqual(["O/r"]);
+  });
+
+  test("the audit row names what was acted on, never the body", async () => {
+    const { actions, audit } = setup("admin");
+    await actions.run({ ticket: "good", action: "labels-add", repo: "o/r", number: 5, labels: ["bug", "p1"] });
+    await actions.run({ ticket: "good", action: "reviewers-request", repo: "o/r", number: 5, reviewers: ["bob", "team:core"] });
+    await actions.run({ ticket: "good", ...create, body: "SECRET BODY", draft: true });
+    await actions.run({ ticket: "good", action: "pr-edit", repo: "o/r", number: 5, title: "New", body: "SECRET BODY" });
+    const args = audit.map((a) => a.entry.args);
+    expect(args[0]).toBe("labels-add o/r 5 labels=bug,p1");
+    expect(args[1]).toBe("reviewers-request o/r 5 reviewers=bob,team:core");
+    expect(args[2]).toContain("draft=true");
+    expect(args[2]).toContain("head=h base=master");
+    expect(args[3]).toContain("body=changed");
+    expect(args.join("\n")).not.toContain("SECRET");
   });
 });
 

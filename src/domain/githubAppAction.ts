@@ -52,6 +52,8 @@ export type ActionRequest = {
 export type Plan = { ok: true; action: ActionName; repo: string; calls: GithubCall[] } | { ok: false; error: string };
 
 const REPO = /^[\w.-]+\/[\w.-]+$/;
+/** `.` and `..` match the pattern above but are path steps, not names. */
+const isRepoName = (repo: string): boolean => REPO.test(repo) && repo.split("/").every((s) => !/^\.+$/.test(s));
 const REF = /^[^\s~^:?*[\\]+$/;
 
 const str = (v: unknown): string => (typeof v === "string" ? v : "");
@@ -66,7 +68,7 @@ export const planAction = (req: ActionRequest): Plan => {
   const action = req.action;
   if (!isActionName(action)) return fail(`unknown action ${JSON.stringify(action)}; one of ${ACTIONS.join(", ")}`);
   const repo = str(req.repo).trim();
-  if (!REPO.test(repo)) return fail("repo must look like owner/name");
+  if (!isRepoName(repo)) return fail("repo must look like owner/name");
   const done = (calls: GithubCall[]): Plan => ({ ok: true, action, repo, calls });
 
   if (action === "pr-create") {

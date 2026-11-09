@@ -10,6 +10,7 @@
  * refusal (not installed, missing permission) is returned as it came.
  */
 import { type ActionRequest, DENIED_MESSAGE, mayActAsApp, planAction, summarize } from "../domain/githubAppAction.ts";
+import { isAllowedOwner } from "../domain/githubApp.ts";
 import type { AllowedUser } from "../domain/types.ts";
 import type { CommandLogRepo } from "../infrastructure/db/commandLogRepo.ts";
 import type { Clock } from "./ports.ts";
@@ -24,6 +25,12 @@ export type GithubActionDeps = {
     request: (installationId: number, method: string, path: string, body?: unknown) => Promise<unknown>;
   };
   audit: Pick<CommandLogRepo, "add">;
+  /**
+   * Owners the app may act on (`GITHUB_APP_ALLOWED_OWNERS`). The app is public,
+   * so anybody can install it; acting as it is limited to the same owners the
+   * webhook listens to.
+   */
+  allowedOwners: readonly string[];
 };
 
 export type GithubActionResult = { url?: string; number?: number; github: unknown };
@@ -35,9 +42,22 @@ export type GithubActions = {
 const errText = (e: unknown): string => (e instanceof Error ? e.message : String(e));
 
 /** The audit line: what was asked, never the body text. */
+const list = (v: unknown): string => (Array.isArray(v) ? v.map(String).join(",").slice(0, 120) : "");
 const describe = (req: ActionRequest): string =>
-  [req.repo, req.number, req.head && `head=${String(req.head)}`, req.base && `base=${String(req.base)}`, req.event, req.method]
-    .filter((x) => x !== undefined && x !== "" && x !== null)
+  [
+    req.repo,
+    req.number,
+    req.head && `head=${String(req.head)}`,
+    req.base && `base=${String(req.base)}`,
+    req.event,
+    req.method,
+    req.action === "pr-create" && `draft=${req.draft === true}`,
+    typeof req.title === "string" && req.title && `title=${req.title.length}ch`,
+    req.body !== undefined && req.action === "pr-edit" && "body=changed",
+    list(req.labels) && `labels=${list(req.labels)}`,
+    list(req.reviewers) && `reviewers=${list(req.reviewers)}`,
+  ]
+    .filter((x) => x !== undefined && x !== "" && x !== null && x !== false)
     .join(" ");
 
 export const createGithubActions = (deps: GithubActionDeps): GithubActions => ({
@@ -66,6 +86,10 @@ export const createGithubActions = (deps: GithubActionDeps): GithubActions => ({
     if (user && !mayActAsApp(user.role)) refuse(DENIED_MESSAGE);
     const plan = planAction(req);
     if (!plan.ok) return refuse(plan.error);
+    const owner = plan.repo.split("/")[0] ?? "";
+    if (!isAllowedOwner(owner, deps.allowedOwners)) {
+      return refuse(`${owner} is not in GITHUB_APP_ALLOWED_OWNERS, so the app will not act there`);
+    }
 
     try {
       const installation = await deps.github.installationOfRepo(plan.repo);

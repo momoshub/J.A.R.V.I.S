@@ -723,7 +723,7 @@ bin/github-app.sh labels-add|labels-remove <owner/repo> <n> <label>...
 bin/github-app.sh reviewers-request <owner/repo> <n> <login|team:slug>...
 ```
 
-It posts to `/api/github-app/action` with the turn's ticket (from
+It only acts on owners in `GITHUB_APP_ALLOWED_OWNERS`. It posts to `/api/github-app/action` with the turn's ticket (from
 `JARVIS_RUN_TICKET`, never an argument); the bot resolves it to the person the
 turn runs as, refuses unless they are admin or owner, logs the call in the
 command log, and prints GitHub's JSON (url, number) or GitHub's own error (app
