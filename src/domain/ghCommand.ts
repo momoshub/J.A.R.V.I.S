@@ -24,12 +24,17 @@ const ACTION_LINE: Record<GhAction, RegExp> = {
 };
 
 /** Unescape a double-quoted shell string (single quotes are already literal). */
-const unescapeDouble = (s: string): string => s.replace(/\\(["`$\\\n])/g, "$1");
+const unescapeDouble = (s: string): string => s.replace(/\\(\n|["`$\\])/g, (_, c: string) => (c === "\n" ? "" : c));
 
-// A quoted body may span lines, so this runs on the command from the action's
-// start, never on the single `gh` line. A bare word must not open with a quote:
-// an unterminated one is a body this cannot read, not the word `"good`.
-const BODY_INLINE = /--body(?:=|\s+)(?:"((?:[^"\\]|\\.)*)"|'([^']*)'|([^\s"']\S*))/;
+// Anchored: it runs on the command sliced at the gh line's own `--body`, so a body
+// that cannot be read yields nothing instead of scanning on to a later command's.
+// A quoted body may span lines (`\\` + newline included); a bare word must not open
+// with a quote - an unterminated one is unreadable, not the word `"good`.
+const BODY_INLINE = /^--body(?:=|\s+)(?:"((?:[^"\\]|\\[\s\S])*)"|'([^']*)'|([^\s"']\S*))/;
+// `--body "$(cat <<'EOF' ... EOF)"`: the usual way to pass a long body, and its
+// text may hold a `"` that would end the plain quoted match early.
+const BODY_SUBSHELL_HEREDOC =
+  /^--body(?:=|\s+)"\$\(\s*cat\s*<<-?\s*(["']?)([A-Za-z_][A-Za-z0-9_]*)\1[^\n]*\n([\s\S]*?)\n\s*\2\s*\n?\s*\)"/;
 const BODY_FILE = /--body-file(?:=|\s+)(?:"([^"]+)"|'([^']+)'|(\S+))/;
 
 const escapeRe = (s: string): string => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
@@ -55,11 +60,18 @@ export const postedBody = (command: string, action: GhAction): string | undefine
   const line = found[0];
   const fromAction = command.slice(found.index);
 
-  // Only when the gh line itself names `--body`, or a later command's body is taken.
-  const inline = /--body(?:=|\s+)/.test(line) ? fromAction.match(BODY_INLINE) : null;
-  if (inline) {
+  // Only when the gh line itself names `--body`, so a later command's is never taken.
+  const at = line.search(/--body(?:=|\s+)/);
+  if (at >= 0) {
+    const fromBody = fromAction.slice(at);
+    const heredoc = fromBody.match(BODY_SUBSHELL_HEREDOC)?.[3];
+    if (heredoc !== undefined) return heredoc.trim() || undefined;
+    const inline = fromBody.match(BODY_INLINE);
+    if (!inline) return undefined;
     const [, dq, sq, bare] = inline;
     const body = dq !== undefined ? unescapeDouble(dq) : (sq ?? bare ?? "");
+    // Any other substitution is shell that was never run, not the text posted.
+    if (/^\s*(?:\$\(|`)/.test(body)) return undefined;
     return body.trim() || undefined;
   }
 

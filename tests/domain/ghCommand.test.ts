@@ -79,4 +79,29 @@ describe("postedBody", () => {
     ].join("\n");
     expect(postedBody(cmd, "comment")).toBe("the review");
   });
+
+  test("an unreadable --body never falls through to a later command's --body", () => {
+    const cmd = `gh pr comment ${PR} --body "good \\\nx\ngh issue create --title t --body "follow-up"`;
+    expect(postedBody(cmd, "comment")).not.toBe("follow-up");
+    const open = `gh pr comment ${PR} --body "good\nstuff\ngh issue create --body "follow-up"`;
+    expect(postedBody(open, "comment")).not.toContain("follow-up");
+  });
+
+  test("a backslash-newline inside the quotes is a line continuation", () => {
+    expect(postedBody(`gh pr comment ${PR} --body "a \\\nb"`, "comment")).toBe("a b");
+  });
+
+  test('--body "$(cat <<EOF ... EOF)" relays the heredoc text, quotes and all', () => {
+    const cmd = `gh pr comment ${PR} --body "$(cat <<'EOF'\nreview line\nhe said "ok"\nEOF\n)"`;
+    expect(postedBody(cmd, "comment")).toBe('review line\nhe said "ok"');
+  });
+
+  test("any other substitution in the body is unreadable, not relayed as shell", () => {
+    expect(postedBody(`gh pr comment ${PR} --body "$(date)"`, "comment")).toBeUndefined();
+  });
+
+  test("single-quoted multi-line body and --body= with a multi-line quote", () => {
+    expect(postedBody(`gh pr comment ${PR} --body 'one\ntwo'`, "comment")).toBe("one\ntwo");
+    expect(postedBody(`gh pr comment ${PR} --body="one\ntwo"`, "comment")).toBe("one\ntwo");
+  });
 });
