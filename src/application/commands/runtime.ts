@@ -10,6 +10,7 @@ import { NOTHING_IN_BACKGROUND, stopReply } from "../../domain/threadBackground.
 import { SETTING_KEYS } from "../../infrastructure/db/settingsRepo.ts";
 import { SIGNATURES } from "../../domain/messageFooter.ts";
 import { type Context, type CommandDef, RANK, askForToken, since, reviewAgentsOf } from "./shared.ts";
+import { logAndIgnore } from "../ignoredError.ts";
 
 /**
  * A code with only a moment left is a code that fails while it is being typed,
@@ -44,7 +45,7 @@ const askForSecret = async (ctx: Context, label: string): Promise<string> => {
         threadTs,
         SIGNATURES.command,
       )
-      .catch(() => undefined);
+      .catch(logAndIgnore("stop command reply post"));
     if (posted) return "";
   }
   return `${ask}\n\nrun \`${slash} 2fa add ${label}\` in a channel I am in and a box will open for it`;
@@ -87,7 +88,7 @@ export const RUNTIME_COMMANDS: readonly CommandDef[] = [
       const background = deps.backgroundAgents
         ? await deps.backgroundAgents
             .stopForThread({ channelId, threadTs, actor: actor.slackId, mayStopOthers: isAdmin })
-            .catch(() => NOTHING_IN_BACKGROUND)
+            .catch(logAndIgnore("stop background agents", NOTHING_IN_BACKGROUND))
         : NOTHING_IN_BACKGROUND;
       const reply = stopReply(turnLine, background);
       if (reply) return reply;

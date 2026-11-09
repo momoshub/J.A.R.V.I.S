@@ -37,6 +37,7 @@ import type { FollowRepo } from "../../infrastructure/db/followRepo.ts";
 import type { WorkflowRepo } from "../../infrastructure/db/workflowRepo.ts";
 import type { CommandApprovalRepo } from "../../infrastructure/db/commandApprovalRepo.ts";
 import { SETTING_KEYS, type SettingsRepo } from "../../infrastructure/db/settingsRepo.ts";
+import { logAndIgnore } from "../ignoredError.ts";
 
 /** Neutral fallbacks; the real prefix/slash come from config (see index.ts). */
 export const DEFAULT_COMMAND_PREFIX = "//bot";
@@ -297,7 +298,7 @@ export const askForToken = async (ctx: Context, line: string, force = false): Pr
         threadTs,
         SIGNATURES.command,
       )
-      .catch(() => undefined);
+      .catch(logAndIgnore("command reply post"));
     if (posted) {
       deps.claudeTokens?.markAsked(actor.slackId);
       return "";

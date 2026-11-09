@@ -61,6 +61,7 @@ import type { TurnLogRepo } from "../infrastructure/db/turnLogRepo.ts";
 import type { Clock, LlmPort } from "./ports.ts";
 import type { SelfPrAccounts } from "../domain/selfUpdate.ts";
 import { EMPTY_REPLY_FALLBACK } from "./handleMessage.ts";
+import { logAndIgnore } from "./ignoredError.ts";
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 
@@ -243,7 +244,7 @@ export const createInnerChild = (deps: InnerChildDeps): InnerChild => {
     });
     if (!e.logChannel || !e.logTs) return;
     const link = ts ? messageLink(e.channelId, ts, e.threadTs, "correction") : "";
-    await deps.post(e.logChannel, driftFollowUp(outcome, text, link), e.logTs).catch(() => {});
+    await deps.post(e.logChannel, driftFollowUp(outcome, text, link), e.logTs).catch(logAndIgnore("drift follow-up post"));
   };
 
   /**
@@ -259,7 +260,7 @@ export const createInnerChild = (deps: InnerChildDeps): InnerChild => {
       if (!firstLook && now - i.startedAt < fixTimeout) continue;
       deps.issues.settle(i.id, "failed", now);
       const why = firstLook ? "a restart cut it off" : "it never reported back";
-      await deps.post(i.fixChannel, afterNotice(i.id, "failed", why), i.fixThread).catch(() => {});
+      await deps.post(i.fixChannel, afterNotice(i.id, "failed", why), i.fixThread).catch(logAndIgnore("inner child failed notice"));
     }
     // A steered turn runs in this process too: same rule, so the log thread
     // says what happened instead of waiting for ever.
@@ -293,7 +294,7 @@ export const createInnerChild = (deps: InnerChildDeps): InnerChild => {
       const msg = e instanceof Error ? e.message : String(e);
       log(`issue ${issue.id} fix failed: ${msg}`);
       deps.issues.settle(issue.id, "failed", deps.clock());
-      await deps.post(deps.channelId, afterNotice(issue.id, "failed", msg), threadTs).catch(() => {});
+      await deps.post(deps.channelId, afterNotice(issue.id, "failed", msg), threadTs).catch(logAndIgnore("inner child fix-failed notice"));
     }
   };
 
@@ -335,7 +336,7 @@ export const createInnerChild = (deps: InnerChildDeps): InnerChild => {
         return;
       }
       if (drift.events.steering().some((e) => e.channelId === c.channelId && e.threadTs === c.threadTs)) continue;
-      const all = await drift.replies(c.channelId, c.threadTs).catch(() => []);
+      const all = await drift.replies(c.channelId, c.threadTs).catch(logAndIgnore("drift thread replies", [] as Awaited<ReturnType<typeof drift.replies>>));
       const replyTs = pickReplyTs(all, c.startedAt, c.endedAt, c.reply) ?? "";
       const nudge = driftNudge(c.hits);
       const e = drift.events.record(
@@ -364,7 +365,7 @@ export const createInnerChild = (deps: InnerChildDeps): InnerChild => {
       // nudge nobody can review afterwards is what was ruled out.
       const posted = await deps
         .post(logChannel, driftLogMessage({ id: e.id, channelId: c.channelId, threadTs: c.threadTs, replyTs, hits: c.hits, nudge }))
-        .catch(() => undefined);
+        .catch(logAndIgnore("drift log post"));
       if (!posted) {
         log(`drift #${e.id}: the log message did not post, not steering`);
         drift.events.settle(e.id, "failed", "the log message did not post", "", deps.clock());

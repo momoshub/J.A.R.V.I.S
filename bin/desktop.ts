@@ -29,6 +29,7 @@ import {
   type DesktopDriver,
   type DesktopLock,
 } from "../src/domain/desktopLock.ts";
+import { ignoreQuietly } from "../src/application/ignoredError.ts";
 
 const BUSY_EXIT = 75;
 const lockPath = process.env.JARVIS_DESKTOP_LOCK || join(tmpdir(), "jarvis-desktop.lock");
@@ -48,7 +49,9 @@ const withMutex = async <T>(fn: () => T): Promise<T> => {
       // a writer that died inside the section leaves the mutex behind
       try {
         if (Date.now() - statSync(mutexPath).mtimeMs > 10_000) rmSync(mutexPath, { force: true });
-      } catch {}
+      } catch (e) {
+        ignoreQuietly("desktop mutex cleanup")(e);
+      }
       if (i > 200) throw new Error(`desktop lock: could not get ${mutexPath}`);
       await sleep(10);
     }
@@ -132,6 +135,8 @@ const code = await proc.exited;
 if (releasesKeysAfter(driver, rest)) {
   try {
     await Bun.spawn({ cmd: [...driverCmd("mac-ui"), "release-keys"], stdout: "ignore", stderr: "ignore" }).exited;
-  } catch {}
+  } catch (e) {
+    ignoreQuietly("release keys")(e);
+  }
 }
 process.exit(code);

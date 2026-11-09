@@ -10,6 +10,7 @@
  */
 import { parseSeen, REPEAT_AFTER_MS, stuckDm, toReport, type StuckWork } from "../domain/stuckWork.ts";
 import type { Clock } from "./ports.ts";
+import { logAndIgnore } from "./ignoredError.ts";
 
 export type StuckSweeperDeps = {
   readonly clock: Clock;
@@ -39,7 +40,7 @@ export const createStuckSweeper = (deps: StuckSweeperDeps): StuckSweeper => {
     const work = await deps.scan();
     const now = deps.clock();
     const { fresh, seen } = toReport(work, parseSeen(deps.settings.get(deps.seenKey)), now, deps.repeatMs ?? REPEAT_AFTER_MS);
-    const text = stuckDm(fresh, now, deps.prefix, await deps.team?.(fresh).catch(() => undefined));
+    const text = stuckDm(fresh, now, deps.prefix, await deps.team?.(fresh).catch(logAndIgnore("stuck sweeper team lookup")));
     if (!text) return;
     const posted = await deps.postDm(deps.ownerSlackId, text);
     if (!posted) {

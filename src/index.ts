@@ -124,6 +124,7 @@ import { createStuckSweeper } from "./application/stuckSweeper.ts";
 import { SWEEP_TICK_MS } from "./domain/stuckWork.ts";
 import { teamFromPermalink } from "./domain/mindful.ts";
 import type { RespondDeps } from "./application/respond.ts";
+import { logAndIgnore } from "./application/ignoredError.ts";
 
 /**
  * Where the CLI runs. Default to a neutral dir outside the bot's own source so she
@@ -801,7 +802,7 @@ const main = async () => {
             // cut it and tell its thread once; the next process picks it up.
             onOverBudget: createRestartCutter(
               runs,
-              (channelId, text, threadTs) => void slackAdmin.post(channelId, text, threadTs).catch(() => undefined),
+              (channelId, text, threadTs) => void slackAdmin.post(channelId, text, threadTs).catch(logAndIgnore("restart cut notice")),
               RESTART_HOLD_NOTICE,
             ),
             // Commands, slash commands and buttons cannot be cut at a budget,
@@ -834,7 +835,7 @@ const main = async () => {
                   if (drainPost) await slackAdmin.update(drainPost.channel, drainPost.ts, text);
                   else drainPost = (await slackAdmin.post(channel, text)) ?? undefined;
                 })
-                .catch(() => undefined);
+                .catch(logAndIgnore("drain notice post"));
             },
           })
         : undefined,

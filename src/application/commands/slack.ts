@@ -11,6 +11,7 @@ import { frontKeyOf } from "../../domain/workflowFront.ts";
 import { workerStateOf } from "../workflowFront.ts";
 import type { UserRole } from "../../domain/types.ts";
 import { type CommandDef, RANK, slackIdOf } from "./shared.ts";
+import { logAndIgnore } from "../ignoredError.ts";
 
 /** Roles an allowance applies to; mirrors LIMITED_ROLES without the import cycle. */
 const LIMITED: readonly UserRole[] = ["pal"];
@@ -292,7 +293,7 @@ Up to ${BOMB_SIZE} reactions; no category means *${DEFAULT_CATEGORY}*.`;
           keepSession: true,
           unprompted: true,
         })
-        .catch(() => {});
+        .catch(logAndIgnore("slack command run turn"));
       return "sent - that thread is on it, nothing posted there 📨";
     },
   },
@@ -322,7 +323,7 @@ Up to ${BOMB_SIZE} reactions; no category means *${DEFAULT_CATEGORY}*.`;
         .join("\n");
       // Not awaited: a real answer can take minutes, and the person who asked
       // should not hold a command open for it. The turn posts its own reply.
-      void deps.runTurn({ channelId: ref.channel, threadTs: root, slackUserId: actor.slackId, text }).catch(() => {});
+      void deps.runTurn({ channelId: ref.channel, threadTs: root, slackUserId: actor.slackId, text }).catch(logAndIgnore("slack command run turn"));
       return "on it, answering in that thread 🙈";
     },
   },

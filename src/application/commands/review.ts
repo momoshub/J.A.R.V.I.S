@@ -23,6 +23,7 @@ import { postedBody } from "../../domain/ghCommand.ts";
 import { tokenFor } from "../claudeTokens.ts";
 import { authorReviewPolicyKey, reviewPolicyKey, SETTING_KEYS } from "../../infrastructure/db/settingsRepo.ts";
 import { type CommandDeps, PR_URL, type CommandDef, RANK, askForToken, reviewAgentsOf, botNameOf } from "./shared.ts";
+import { logAndIgnore } from "../ignoredError.ts";
 
 /** Ceiling for a relayed GitHub body in one Slack message. */
 const RELAYED_BODY_CHARS = 3000;
@@ -217,7 +218,7 @@ export const REVIEW_COMMANDS: readonly CommandDef[] = [
         }
         const link =
           holder.threadTs && deps.slack?.permalink
-            ? await deps.slack.permalink(holder.channelId, holder.threadTs).catch(() => undefined)
+            ? await deps.slack.permalink(holder.channelId, holder.threadTs).catch(logAndIgnore("review permalink"))
             : undefined;
         const where = link ? `<${link}|in this thread>` : `in <#${holder.channelId}>`;
         busy.push(`👯 ${url} ${holder.doneAt === undefined ? "is already being reviewed" : "was just reviewed"} ${where}`);
