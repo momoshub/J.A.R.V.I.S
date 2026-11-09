@@ -1,11 +1,13 @@
 /**
  * Per-repository review policy.
  *
- * The default is to approve immediately and reverse it if the review turns up
- * something blocking - fast, and honest about it. Some repositories want the
- * opposite: nothing is approved until a review has actually been written and
- * come back clean. Which repository is which is configuration, never code -
- * this is an open codebase and nobody else's repo belongs in it.
+ * The default is to approve only after the review has been written and come
+ * back clean: an approval that lands before anything was read (seen on a run
+ * whose approval arrived two seconds after the command) is a green tick with
+ * nothing behind it. A repository can opt in to the old, faster behaviour -
+ * approve up front, reverse if the review finds a blocker. Which repository is
+ * which is configuration, never code - this is an open codebase and nobody
+ * else's repo belongs in it.
  */
 
 export type ReviewPolicy =
@@ -14,7 +16,7 @@ export type ReviewPolicy =
   /** Approve only after the review, and only if nothing is blocking. */
   | "approve-after";
 
-export const DEFAULT_REVIEW_POLICY: ReviewPolicy = "approve-first";
+export const DEFAULT_REVIEW_POLICY: ReviewPolicy = "approve-after";
 
 /** `owner/repo` from a PR url, lowercased. Undefined when it is not one. */
 export const repoOf = (prUrl: string): string | undefined => {

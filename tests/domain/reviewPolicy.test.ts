@@ -41,7 +41,7 @@ describe("asReviewPolicy", () => {
 
   test("anything else is not a policy, so the default applies", () => {
     for (const junk of [undefined, "", "yes", "APPROVE-AFTER"]) expect(asReviewPolicy(junk)).toBeUndefined();
-    expect(DEFAULT_REVIEW_POLICY).toBe("approve-first");
+    expect(DEFAULT_REVIEW_POLICY).toBe("approve-after");
   });
 });
 

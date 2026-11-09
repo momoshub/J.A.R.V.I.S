@@ -795,7 +795,7 @@ describe("dispatchCommand", () => {
     expect(out).toContain("only after a clean review");
   });
 
-  test("rv approves in code before the brain runs, and says so first", async () => {
+  test("rv --policy first approves in code before the brain runs, announced after 'reviewing'", async () => {
     const PR = "https://github.com/o/r/pull/1";
     const order: string[] = [];
     const github: GitHubPort = {
@@ -816,15 +816,16 @@ describe("dispatchCommand", () => {
     };
     const lines: string[] = [];
     // Slack-wrapped link: the bare url must be what gets approved and prompted.
-    await dispatchCommand({ ...build(), github, llm: slow }, actor(), "C1", `rv <${PR}|o/r#1>`, {
+    await dispatchCommand({ ...build(), github, llm: slow }, actor(), "C1", `rv <${PR}|o/r#1> --policy first`, {
       reply: async (t: string) => {
         lines.push(t);
       },
     });
 
     expect(order).toEqual([`approve:${PR}`, "brain"]); // approved before the model starts
-    expect(lines[0]).toBe(`✅ approved ${PR}`);
-    expect(lines[1]).toBe(`🔍 reviewing ${PR}`);
+    // "reviewing" always opens the run, even when the approval was made first
+    expect(lines[0]).toContain(`🔍 reviewing ${PR}`);
+    expect(lines[1]).toBe(`✅ approved ${PR}`);
     expect(lines[lines.length - 1]).toBe("the review");
     // the resolved account reaches the prompt, so the brain need not look it up
     expect(system).toContain("first person as Kai (posted as kai-at-acme)");
@@ -861,7 +862,7 @@ describe("dispatchCommand", () => {
       reviewGuard: createReviewGuard(() => 0),
       slack: { ...base.slack!, permalink: async (c, ts) => `https://x.slack.com/archives/${c}/p${ts}` },
     };
-    const first = dispatchCommand(deps, actor(), "C1", `rv ${PR}`, { threadTs: "1.1", reply: async () => {} });
+    const first = dispatchCommand(deps, actor(), "C1", `rv ${PR} --policy first`, { threadTs: "1.1", reply: async () => {} });
     await new Promise((r) => setTimeout(r, 0));
     const lines: string[] = [];
     const second = await dispatchCommand(deps, actor(), "C2", `rv ${PR}`, {
@@ -888,13 +889,13 @@ describe("dispatchCommand", () => {
       approve: async () => ({ ok: false, error: "can not approve your own PR" }),
     };
     const lines: string[] = [];
-    await dispatchCommand({ ...build(), github }, actor(), "C1", `rv ${PR}`, {
+    await dispatchCommand({ ...build(), github }, actor(), "C1", `rv ${PR} --policy first`, {
       reply: async (t: string) => {
         lines.push(t);
       },
     });
-    expect(lines[0]).toBe(`⚠️ could not approve ${PR} - can not approve your own PR`);
-    expect(lines[1]).toContain("reviewing");
+    expect(lines[0]).toContain("reviewing");
+    expect(lines[1]).toBe(`⚠️ could not approve ${PR} - can not approve your own PR`);
     expect(lines[lines.length - 1]).toBe("drafted answer"); // review still ran
   });
 
@@ -914,7 +915,7 @@ describe("dispatchCommand", () => {
       },
     };
     const lines: string[] = [];
-    await dispatchCommand({ ...build(), github, llm: streamed }, actor(), "C1", `rv ${PR}`, {
+    await dispatchCommand({ ...build(), github, llm: streamed }, actor(), "C1", `rv ${PR} --policy first`, {
       reply: async (t: string) => {
         lines.push(t);
       },
