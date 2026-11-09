@@ -51,9 +51,16 @@ describe("turnLogRepo", () => {
     expect(stuck[0]?.error).toBe("boom");
   });
 
-  test("a stopped turn counts as stuck too - nobody got an answer", () => {
+  test("a stopped turn is not stuck - a person chose it - but still shows in the window", () => {
     turns.add(turn({ endedAt: 20, outcome: "stopped" }));
-    expect(turns.stuckThreads(0)).toHaveLength(1);
+    expect(turns.stuckThreads(0)).toHaveLength(0);
+    expect(turns.since(0)).toHaveLength(1);
+  });
+
+  test("a thread that failed and was then stopped is not stuck", () => {
+    turns.add(turn({ endedAt: 10, outcome: "failed", error: "boom" }));
+    turns.add(turn({ endedAt: 20, outcome: "stopped" }));
+    expect(turns.stuckThreads(0)).toHaveLength(0);
   });
 
   test("threads are judged separately", () => {
