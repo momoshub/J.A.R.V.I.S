@@ -13,6 +13,7 @@ import { tmpdir } from "node:os";
 import { loadConfig, modelLabel, type AppConfig } from "./config/env.ts";
 import { isSilenceNote } from "./domain/silence.ts";
 import { openDatabase } from "./infrastructure/db/client.ts";
+import { adoptDatabase } from "./infrastructure/db/location.ts";
 import { createThreadSessionRepo } from "./infrastructure/db/threadSessionRepo.ts";
 import { createThreadQueue } from "./application/threadQueue.ts";
 import { RESTART_DELAY_MS, RESTART_HOLD_NOTICE, RESTART_MAX_WAIT_MS, restartWhenIdle } from "./domain/selfUpdate.ts";
@@ -177,6 +178,9 @@ const WATCH_TICK_MS = 10_000;
 const main = async () => {
   const config = loadConfig();
 
+  // A moved database is filled from its old place once, before anything opens it.
+  const adopted = adoptDatabase(config.databasePath, config.databaseMigrateFrom);
+  if (adopted === "migrated") console.log(`[db] ${config.databasePath} created from ${config.databaseMigrateFrom}`);
   const db = openDatabase(config.databasePath);
   // The bot reads its allowlist through the role policies, so a switched-off
   // role grants nothing anywhere; the dashboard alone gets the raw store.
@@ -209,6 +213,10 @@ const main = async () => {
   const settings = createSettingsRepo(db);
   // Separate database on purpose: the main one is committed, and user tokens
   // must never be able to reach git. Encrypted under a key kept beside it.
+  const tokenAdopted = adoptDatabase(config.tokenDatabasePath, config.tokenDatabaseMigrateFrom, 0o600);
+  if (tokenAdopted === "migrated") {
+    console.log(`[db] ${config.tokenDatabasePath} created from ${config.tokenDatabaseMigrateFrom}`);
+  }
   const tokenDb = openTokenDatabase(config.tokenDatabasePath);
   const tokenKey = loadOrCreateKey(config.tokenKeyPath);
   const claudeTokens = createClaudeTokenRepo(tokenDb, tokenKey);
