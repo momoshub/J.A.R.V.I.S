@@ -30,6 +30,7 @@ import { isSilenceNote } from "../domain/silence.ts";
 import type { AllowedUser } from "../domain/types.ts";
 import type { Clock } from "./ports.ts";
 import { slackIdOfGithub } from "./reviewInbox.ts";
+import { logAndIgnore } from "./ignoredError.ts";
 
 /** Delivery ids are remembered this long, which covers any manual redelivery. */
 export const DELIVERY_RETENTION_MS = 30 * 24 * 60 * 60_000;
@@ -154,7 +155,7 @@ export const createGithubApp = (deps: GithubAppDeps): GithubApp => {
       })
       .catch(async (e) => {
         log(`turn for ${t.repo}#${t.number} failed: ${errText(e)}`);
-        if (!answered()) await deps.github.comment(t.installationId, t.repo, t.number, failedRunComment()).catch(() => undefined);
+        if (!answered()) await deps.github.comment(t.installationId, t.repo, t.number, failedRunComment()).catch(logAndIgnore("github failed-run comment"));
       });
   };
 

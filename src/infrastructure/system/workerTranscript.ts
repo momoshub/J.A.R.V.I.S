@@ -21,6 +21,7 @@ import { join } from "node:path";
 import { homedir } from "node:os";
 import type { OrcaRun } from "./orcaTerminal.ts";
 import { projectSlug, sumTranscripts, workerUsage, type WorkerUsage } from "../../domain/workerUsage.ts";
+import { ignoreQuietly } from "../../application/ignoredError.ts";
 
 export type WorkerSession = {
   readonly dispatchId: string;
@@ -84,12 +85,12 @@ export const workerPlace = (stdout: string): { cwd?: string; runId?: string; sta
 };
 
 const jsonlIn = async (dir: string, since?: number): Promise<{ path: string; mtime: number }[]> => {
-  const names = await readdir(dir).catch(() => [] as string[]);
+  const names = await readdir(dir).catch(ignoreQuietly("read transcript dir", [] as string[]));
   const out: { path: string; mtime: number }[] = [];
   for (const n of names) {
     if (!n.endsWith(".jsonl")) continue;
     const path = join(dir, n);
-    const s = await stat(path).catch(() => undefined);
+    const s = await stat(path).catch(ignoreQuietly("stat transcript"));
     if (!s?.isFile()) continue;
     if (since !== undefined && s.mtimeMs < since) continue;
     out.push({ path, mtime: s.mtimeMs });
@@ -98,7 +99,7 @@ const jsonlIn = async (dir: string, since?: number): Promise<{ path: string; mti
 };
 
 const holds = async (path: string, needle: string): Promise<boolean> =>
-  (await Bun.file(path).text().catch(() => "")).includes(needle);
+  (await Bun.file(path).text().catch(ignoreQuietly("read transcript file", ""))).includes(needle);
 
 /** Find the session file holding `messageId`, the worker's own folder first. */
 const findSession = async (projects: string, messageId: string, cwd?: string, since?: number): Promise<string | undefined> => {
@@ -109,7 +110,7 @@ const findSession = async (projects: string, messageId: string, cwd?: string, si
   const after = since !== undefined ? since - 60_000 : undefined;
   const own = cwd ? join(projects, projectSlug(cwd)) : undefined;
   if (own) for (const f of await jsonlIn(own, after)) if (await holds(f.path, needle)) return f.path;
-  const dirs = await readdir(projects).catch(() => [] as string[]);
+  const dirs = await readdir(projects).catch(ignoreQuietly("read projects dir", [] as string[]));
   const candidates: { path: string; mtime: number }[] = [];
   for (const d of dirs) {
     const dir = join(projects, d);
@@ -147,7 +148,7 @@ export const measureWorker = async (
 ): Promise<(WorkerUsage & { readonly session: WorkerSession }) | { readonly error: string }> => {
   const session = await resolveWorkerSession(dispatchId, deps);
   if ("error" in session) return session;
-  const texts = await Promise.all(session.files.map((f) => Bun.file(f).text().catch(() => "")));
+  const texts = await Promise.all(session.files.map((f) => Bun.file(f).text().catch(ignoreQuietly("read transcript file", ""))));
   return {
     ...workerUsage(dispatchId, session.sessionId, sumTranscripts(texts)),
     ...(session.runId ? { runId: session.runId } : {}),

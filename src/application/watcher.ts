@@ -24,6 +24,7 @@ import {
 } from "../domain/watch.ts";
 import type { Watch, WatchRepo } from "../infrastructure/db/watchRepo.ts";
 import type { Clock } from "./ports.ts";
+import { logAndIgnore } from "./ignoredError.ts";
 
 /** Result of running a watch's predicate. */
 export type CheckResult = {
@@ -99,7 +100,7 @@ export const createWatcher = (deps: WatcherDeps): Watcher => {
       return (
         deps.say?.(w.channelId, `I finished waiting but could not pick the thread back up: ${msg}`, w.threadTs) ??
         Promise.resolve()
-      ).catch(() => {});
+      ).catch(logAndIgnore("watch resume-failed notice"));
     };
     try {
       void deps
@@ -134,7 +135,7 @@ export const createWatcher = (deps: WatcherDeps): Watcher => {
       await (
         deps.say?.(w.channelId, `Stopped waiting: whoever set this watch is no longer allowed to run it.`, w.threadTs) ??
         Promise.resolve()
-      ).catch(() => {});
+      ).catch(logAndIgnore("watch stopped notice"));
       return;
     }
 

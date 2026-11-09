@@ -16,6 +16,7 @@ import { gatewayHealth } from "../../domain/inbox.ts";
 import { envelopeThread, unnotified } from "../../domain/drainNotice.ts";
 import { footerLine, SIGNATURES, withFooter } from "../../domain/messageFooter.ts";
 import type { InboxRepo, InboxRow, Interrupted } from "../inbox/inboxRepo.ts";
+import { ignoreQuietly } from "../../application/ignoredError.ts";
 
 /**
  * What Bolt adds to a listener's `context` for a row from the inbox. Named so
@@ -287,7 +288,7 @@ export const tidyInterrupted = async (
   const fail = (what: string, ts: string) => (err: unknown) =>
     log(`${what} ${row.channel}/${ts} failed: ${err instanceof Error ? err.message : String(err)}`);
   for (const [i, ts] of row.streamTs.entries()) {
-    await api.apiCall("chat.stopStream", { channel: row.channel, ts }).catch(() => undefined);
+    await api.apiCall("chat.stopStream", { channel: row.channel, ts }).catch(ignoreQuietly("stop stream"));
     if (i === 0) {
       await api
         .apiCall("chat.update", {

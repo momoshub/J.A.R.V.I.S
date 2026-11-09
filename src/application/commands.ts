@@ -48,6 +48,7 @@ export {
   type CommandDeps,
   type CommandInfo,
 } from "./commands/shared.ts";
+import { logAndIgnore } from "./ignoredError.ts";
 
 export const COMMANDS: readonly CommandDef[] = [
   {
@@ -95,7 +96,7 @@ export const COMMANDS: readonly CommandDef[] = [
             threadTs,
             SIGNATURES.command,
           )
-          .catch(() => undefined);
+          .catch(logAndIgnore("command reply post"));
         if (posted) return "";
       }
       return listed;

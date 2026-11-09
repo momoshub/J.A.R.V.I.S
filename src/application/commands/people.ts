@@ -5,6 +5,7 @@ import type { UserRole } from "../../domain/types.ts";
 import { spendReport } from "../../domain/spendReport.ts";
 import { workerCostReport } from "../workerCost.ts";
 import { type Context, type CommandDef, slackIdOf, roleOf, parseWindow, recordsOf } from "./shared.ts";
+import { logAndIgnore } from "../ignoredError.ts";
 
 const changeRole = (ctx: Context, slackId: string, next: UserRole, requireExisting: boolean): string => {
   const records = recordsOf(ctx.deps);
@@ -52,7 +53,7 @@ export const PEOPLE_COMMANDS: readonly CommandDef[] = [
       );
       const missing = byUser.map((u) => u.key).filter((k) => k && !names.has(k));
       if (missing.length > 0 && deps.slack) {
-        const found = await deps.slack.resolveNames(missing).catch(() => ({}) as Record<string, string>);
+        const found = await deps.slack.resolveNames(missing).catch(logAndIgnore("resolve slack names", {} as Record<string, string>));
         for (const [id, name] of Object.entries(found)) if (name) names.set(id, name);
       }
       return spendReport(

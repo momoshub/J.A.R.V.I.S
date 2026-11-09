@@ -22,6 +22,7 @@ import { orcaWorkerEvent, workerEventLine } from "../src/domain/watch.ts";
 import { workerUsageLine } from "../src/domain/workerUsage.ts";
 import { measureWorker } from "../src/infrastructure/system/workerTranscript.ts";
 import { createOrcaCli } from "../src/infrastructure/system/orcaTerminal.ts";
+import { logAndIgnore } from "../src/application/ignoredError.ts";
 
 const TIMEOUT_MS = 15_000;
 /** The whole usage step; the watcher kills a check at 30s (`CHECK_TIMEOUT_MS`). */
@@ -65,7 +66,7 @@ if (ev.kind === "unknown") {
 console.log(workerEventLine(id, ev));
 if (ev.kind !== "waiting") {
   const usage = await Promise.race([
-    measureWorker(id, { orca: createOrcaCli(orca, USAGE_BUDGET_MS), shown: out }).catch(() => undefined),
+    measureWorker(id, { orca: createOrcaCli(orca, USAGE_BUDGET_MS), shown: out }).catch(logAndIgnore("orca worker usage")),
     new Promise<undefined>((r) => setTimeout(() => r(undefined), USAGE_BUDGET_MS)),
   ]);
   if (usage && !("error" in usage)) console.log(workerUsageLine(usage));

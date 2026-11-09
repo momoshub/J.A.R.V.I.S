@@ -15,6 +15,7 @@ import {
   type WorkerUsage,
 } from "../domain/workerUsage.ts";
 import type { WorkerUsageRepo } from "../infrastructure/db/workerUsageRepo.ts";
+import { logAndIgnore } from "./ignoredError.ts";
 
 export type WorkerUsagePort = {
   /** Resolve the worker's session and sum its transcript now. */
@@ -60,7 +61,7 @@ export const workerCostReport = async (target: string, port: WorkerUsagePort, no
   if (!RUN.test(target)) return "Give me a dispatch id (`ctx_...`, what `worker-start` printed) or a Run id (`run_...`).";
 
   // Orca's list first; what was stored for the Run covers workers Orca forgot.
-  const ids = [...(await port.dispatchesOf(target).catch(() => [] as string[]))];
+  const ids = [...(await port.dispatchesOf(target).catch(logAndIgnore("orca dispatch ids", [] as string[])))];
   for (const s of port.repo.inRun(target)) if (!ids.includes(s.dispatchId)) ids.push(s.dispatchId);
   if (ids.length === 0) return `I know of no workers in ${target}.`;
 

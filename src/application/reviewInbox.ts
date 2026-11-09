@@ -24,6 +24,7 @@ import {
 } from "../domain/reviewInbox.ts";
 import type { AllowedUser } from "../domain/types.ts";
 import type { Clock } from "./ports.ts";
+import { logAndIgnore } from "./ignoredError.ts";
 
 /** How often GitHub is asked. Search allows 30 a minute; this uses one. */
 export const POLL_MS = 60_000;
@@ -72,7 +73,7 @@ export type GithubIdentityDeps = {
 export const slackIdOfGithub = async (deps: GithubIdentityDeps, login: string): Promise<string | undefined> => {
   const linked = deps.settings.get(githubLinkKey(login))?.trim();
   if (linked) return linked;
-  const name = await deps.githubName(login).catch(() => undefined);
+  const name = await deps.githubName(login).catch(logAndIgnore("github name lookup"));
   const candidates = deps.users.list().map((u) => ({ slackId: u.slackId, displayName: u.displayName }));
   return matchByName(login, name, candidates);
 };

@@ -12,6 +12,7 @@
 import { z } from "zod";
 import { openInbox } from "./infrastructure/inbox/inboxRepo.ts";
 import { startGateway } from "./infrastructure/slack/gateway.ts";
+import { ignoreQuietly } from "./application/ignoredError.ts";
 
 const env = z
   .object({
@@ -33,7 +34,7 @@ const gateway = await startGateway({ appToken: env.data.SLACK_APP_TOKEN, inbox }
 
 const shutdown = async () => {
   console.log("[gateway] shutting down");
-  await gateway.stop().catch(() => undefined);
+  await gateway.stop().catch(ignoreQuietly("gateway stop"));
   inbox.close();
   process.exit(0);
 };

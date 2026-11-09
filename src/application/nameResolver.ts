@@ -10,6 +10,7 @@
  */
 import { conversationLabel, userLabel, type ConversationInfo } from "../domain/slackNames.ts";
 import type { Clock } from "./ports.ts";
+import { logAndIgnore } from "./ignoredError.ts";
 
 export type NameLookups = {
   /** One conversation's kind and name; undefined when Slack would not say. */
@@ -85,7 +86,7 @@ export const createNameResolver = (opts: {
     if (fresh(cached)) return Promise.resolve(cached.value);
     const pending = inflight.get(id);
     if (pending) return pending;
-    const lookup = opts.lookups?.conversation(id).catch(() => undefined) ?? Promise.resolve(undefined);
+    const lookup = opts.lookups?.conversation(id).catch(logAndIgnore("conversation name lookup")) ?? Promise.resolve(undefined);
     const p = lookup.then((info) => {
       conversations.set(id, { value: info, until: opts.clock() + (info ? ttl : failTtl) });
       inflight.delete(id);

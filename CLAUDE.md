@@ -37,6 +37,7 @@ Always run `bun run typecheck` AND `bun test` before considering a change done. 
 - Local imports use explicit `.ts` extensions (Bun style).
 - Use `bun:sqlite`; SQL is parameterized (named/positional binds), never string-concatenated.
 - Depend on ports (`LlmPort`, `SlackAdminPort`, injected clocks/deps), not concrete adapters, so use cases stay testable with fakes + `:memory:` sqlite.
+- **No silent catches.** A `.catch(() => undefined)` / empty `catch {}` leaves no trace. Use `logAndIgnore("what failed")` (warn) from `src/application/ignoredError.ts`, or `ignoreQuietly("what failed")` (debug, printed with `JARVIS_DEBUG=1`) when the failure is expected and harmless (best-effort cleanup, a missing file). Both take an optional fallback value; neither throws.
 - Keep changes small and focused; add/adjust tests with any behavior change (TDD).
 
 ## Key facts (non-obvious)
