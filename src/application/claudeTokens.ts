@@ -3,9 +3,10 @@
  * and what happens when someone submits one.
  *
  * Every CLI turn the bot runs on a person's behalf can run on that person's own
- * token. None is required: every turn, `review` included, uses a token when the
- * speaker has one on file and the bot's own when they do not, so nobody is
- * locked out of chat or reviews by a credential they never set up.
+ * token. `review` requires one - it is the expensive, long-running job, and the
+ * one whose cost should obviously sit with whoever asked for it. Everything else
+ * uses a token when the speaker has one on file and the bot's own when they do
+ * not, so nobody is locked out of chat by a credential they never set up.
  *
  * A token is never typed into a channel. It arrives through a Slack modal, whose
  * input is not a message: it is not in anyone's history, not in search, and not

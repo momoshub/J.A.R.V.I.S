@@ -22,7 +22,7 @@ import { GITHUB_LINK_PREFIX, githubLinkKey } from "../../domain/reviewInbox.ts";
 import { postedBody } from "../../domain/ghCommand.ts";
 import { tokenFor } from "../claudeTokens.ts";
 import { authorReviewPolicyKey, reviewPolicyKey, SETTING_KEYS } from "../../infrastructure/db/settingsRepo.ts";
-import { type CommandDeps, PR_URL, type CommandDef, RANK, reviewAgentsOf, botNameOf } from "./shared.ts";
+import { type CommandDeps, PR_URL, type CommandDef, RANK, askForToken, reviewAgentsOf, botNameOf } from "./shared.ts";
 
 /** Ceiling for a relayed GitHub body in one Slack message. */
 const RELAYED_BODY_CHARS = 3000;
@@ -124,12 +124,16 @@ export const REVIEW_COMMANDS: readonly CommandDef[] = [
       const { deps, actor, args, prefix, reply, channelId } = ctx;
       if (args.length === 0) return `Which PR? \`${prefix} review <pr-url>\``;
       if (!deps.llm) return "My brain is not wired up right now.";
-      // A review runs on the caller's own Claude Code credential when they have
-      // one on file, and on the bot's own (undefined: the CLI's default login)
-      // when they do not - so a pal or an executer with no token still gets one.
-      // Only the Claude side differs: the comment and the approval are always
-      // the bot's GitHub account, which the token never touches.
+      // A review runs on the caller's own Claude Code credential, never the
+      // bot's: it is the long, expensive job, and the usage belongs to whoever
+      // asked for it. No token, no review - but the ask carries the box to put
+      // one in, and the command resumes itself once it lands.
       const oauthToken = tokenFor(deps, actor);
+      if (!oauthToken) {
+        return deps.claudeTokens
+          ? askForToken(ctx, `review ${args.join(" ")}`.trim())
+          : "I have nowhere to keep a Claude Code token right now, and a review only ever runs on the caller's own. Ask an admin to check the token store.";
+      }
       // A policy asked for on the line itself, for this run only. Pulled out
       // first so it reaches neither the url parser nor the free-text note.
       const { asked, rest, bad } = parsePolicyArg(args);
@@ -405,7 +409,7 @@ export const REVIEW_COMMANDS: readonly CommandDef[] = [
         settings.set(SETTING_KEYS.reviewInboxChannel, id);
         // From now: a backlog of old requests is not what this was turned on for.
         settings.set(SETTING_KEYS.reviewInboxCursor, new Date(deps.clock()).toISOString());
-        return `review requests of my GitHub account now land in <#${id}>, reviewed first and approved only if clean, on the requester's token if they set one, on mine otherwise`;
+        return `review requests of my GitHub account now land in <#${id}>, reviewed first and approved only if clean, on the requester's own token`;
       }
 
       if (sub === "link" || sub === "unlink") {
@@ -434,7 +438,7 @@ export const REVIEW_COMMANDS: readonly CommandDef[] = [
         .map((e) => `- \`${e.key.slice(GITHUB_LINK_PREFIX.length)}\` -> <@${e.value}>`);
       return [
         channel
-          ? `review requests of my GitHub account land in <#${channel}>, reviewed then approved only if clean, on the requester's token if they set one, on mine otherwise`
+          ? `review requests of my GitHub account land in <#${channel}>, reviewed then approved only if clean, on the requester's own token`
           : `review inbox is off - \`${prefix} review-inbox channel #channel\``,
         ...(links.length ? ["GitHub links:", ...links] : []),
       ].join("\n");

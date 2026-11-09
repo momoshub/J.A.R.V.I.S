@@ -4,7 +4,7 @@ import { dispatchCommand, isQuietCommand } from "../../src/application/commands.
 import type { LlmPort } from "../../src/application/ports.ts";
 import { OWNER, db, actor, slackCalls, build } from "./commandsFixture.ts";
 
-describe("reviews run on the caller's Claude token when set, the bot's own otherwise", () => {
+describe("reviews run on the caller's own Claude token", () => {
   const PR = "https://github.com/o/r/pull/1";
   const TOKEN = `sk-ant-oat01-${"a".repeat(48)}`;
 
@@ -49,48 +49,61 @@ describe("reviews run on the caller's Claude token when set, the bot's own other
     expect(token()).toBe(TOKEN);
   });
 
-  test("without one the review runs on the bot's own credential, with nothing asked", async () => {
-    const { deps, token, sys } = withTokens();
-    const out = await dispatchCommand(deps, actor(), "C1", `rv ${PR}`);
-    expect(out).toContain("the review");
-    expect(token()).toBeUndefined(); // oauthToken undefined = the CLI's default login
-    expect(sys()).toContain("doing a real code review");
-    expect(slackCalls.buttons.some((b) => b.includes("claude_token_add"))).toBe(false);
-  });
-
-  test.each(["pal", "executer"] as const)("a %s with no token can run review", async (role) => {
+  test("without one the review does not run - the ask goes out with a button", async () => {
     const { deps, token } = withTokens();
-    const who = actor({ slackId: "U0REVIEW9", role });
-    deps.users.upsert(who);
-    const out = await dispatchCommand(deps, who, "C1", `review ${PR}`);
-    expect(out).toContain("the review");
-    expect(token()).toBeUndefined();
+    const lines: string[] = [];
+    const out = await dispatchCommand(deps, actor(), "C1", `rv ${PR}`, {
+      reply: async (t: string) => {
+        lines.push(t);
+      },
+      threadTs: "111.1",
+    });
+
+    expect(out).toBe(""); // posted into the thread, not returned
+    expect(token()).toBeUndefined(); // the brain never started
+    const ask = slackCalls.posts[slackCalls.posts.length - 1];
+    expect(ask?.text).toContain("claude setup-token");
+    expect(ask?.threadTs).toBe("111.1");
+    expect(ask?.by).toBe("command"); // command output, not Jarvis talking
+    // the button carries the command, so submitting a token resumes it
+    const button = slackCalls.buttons[slackCalls.buttons.length - 1] ?? "";
+    expect(button).toContain("claude_token_add");
+    expect(button).toContain(PR);
   });
 
-  test("a pal with a token on file still runs on theirs", async () => {
-    const { deps, token } = withTokens({ U0REVIEW9: TOKEN });
-    const pal = actor({ slackId: "U0REVIEW9", role: "pal" });
-    deps.users.upsert(pal);
-    await dispatchCommand(deps, pal, "C1", `review ${PR}`);
-    expect(token()).toBe(TOKEN);
+  test("nobody is asked twice - the second attempt points at the box they have", async () => {
+    const { deps } = withTokens();
+    const reply = async () => {};
+    await dispatchCommand(deps, actor(), "C1", `rv ${PR}`, { reply });
+    const asks = slackCalls.posts.filter((p) => p.text.includes("claude setup-token")).length;
+    expect(asks).toBe(1);
+
+    const again = await dispatchCommand(deps, actor(), "C1", `rv ${PR}`, { reply });
+    expect(again).toContain("still waiting");
+    // and no second walkthrough went into the channel
+    expect(slackCalls.posts.filter((p) => p.text.includes("claude setup-token")).length).toBe(1);
+
+    // answering resets it, so removing a token later earns a fresh ask
+    deps.claudeTokens!.set(OWNER, TOKEN);
+    deps.claudeTokens!.remove(OWNER);
+    await dispatchCommand(deps, actor(), "C1", `rv ${PR}`, { reply });
+    expect(slackCalls.posts.filter((p) => p.text.includes("claude setup-token")).length).toBe(2);
   });
 
-  test("a pal's review is still approve-after only and cannot pass --policy", async () => {
-    const { deps, token } = withTokens();
-    const pal = actor({ slackId: "U0REVIEW9", role: "pal" });
-    deps.users.upsert(pal);
-    const out = await dispatchCommand(deps, pal, "C1", `review ${PR} --policy first`);
-    expect(out).toContain("not a pal's to set");
-    expect(token()).toBeUndefined();
-    expect(slackCalls.posts.every((p) => !p.text.includes("claude setup-token"))).toBe(true);
-  });
-
-  test("with no token store at all the review still runs on the bot's own", async () => {
+  test("with no token store at all it refuses rather than using the bot's own", async () => {
     const { deps, token } = withTokens();
     deps.claudeTokens = undefined;
     const out = await dispatchCommand(deps, actor(), "C1", `rv ${PR}`);
-    expect(out).toContain("the review");
-    expect(token()).toBeUndefined();
+    expect(out).toContain("only ever runs on the caller's own");
+    expect(token()).toBeUndefined(); // the brain never started
+  });
+
+  test("with no button to offer, the guidance is still returned in words", async () => {
+    const { deps } = withTokens();
+    deps.slack = undefined;
+    const out = await dispatchCommand(deps, actor(), "C1", `rv ${PR}`);
+    expect(out).toContain("claude setup-token");
+    expect(out).toContain("token");
   });
 
   test("a chat turn of theirs uses it too, and someone else's does not", async () => {
@@ -345,13 +358,13 @@ describe("reviews run on the caller's Claude token when set, the bot's own other
     const { deps } = withTokens();
     const out = await dispatchCommand(deps, actor(), "C1", "token list");
     expect(out).toContain("Nobody has given me a token yet");
-    expect(out).toContain("every review runs on mine");
+    expect(out).toContain("nobody can run a review");
   });
 
   test("token reports what is on file and forgets it on request", async () => {
     const { deps } = withTokens({ [OWNER]: TOKEN });
     expect(await dispatchCommand(deps, actor(), "C1", "token")).toContain("…aaaa");
-    expect(await dispatchCommand(deps, actor(), "C1", "token remove")).toContain("Your reviews run on mine");
+    expect(await dispatchCommand(deps, actor(), "C1", "token remove")).toContain("Forgotten");
     expect(await dispatchCommand(deps, actor(), "C1", "token remove")).toContain("did not have");
     // and it never asks anyone to type one into a channel
     const asked = await dispatchCommand(deps, actor(), "C1", "token");

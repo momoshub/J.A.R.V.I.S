@@ -135,7 +135,7 @@ export type CommandDeps = {
   draft?: DraftReply;
   /** Per-role CLI tool policy (sandbox/allow-list), for ask + review. */
   toolPolicy?: (role: UserRole, channelId?: string) => ToolPolicy;
-  /** Per-user Claude Code tokens. Every CLI turn, `review` included, prefers one and falls back to the bot's own. */
+  /** Per-user Claude Code tokens. `review` requires one; everything else prefers one. */
   claudeTokens?: ClaudeTokenPort;
   /** Shared 2FA setup keys, for the `2fa` command. */
   totp?: TotpPort;
@@ -277,7 +277,7 @@ export const parseWindow = (token?: string): number | undefined => {
  */
 export const askForToken = async (ctx: Context, line: string, force = false): Promise<string> => {
   const { deps, actor, channelId, threadTs, slash } = ctx;
-  const ask = `🔑 <@${actor.slackId}> your own Claude Code token is optional - ${tokenWhy}\n\n${tokenGuide(slash)}`;
+  const ask = `🔑 <@${actor.slackId}> I need your own Claude Code token before I can run that - ${tokenWhy}\n\n${tokenGuide(slash)}`;
   if (!force && deps.claudeTokens?.asked(actor.slackId)) {
     return `🔑 still waiting on your Claude Code token - \`${slash} token\` opens the box, or use the one I sent you earlier`;
   }

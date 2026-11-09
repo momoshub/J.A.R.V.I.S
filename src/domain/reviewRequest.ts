@@ -3,13 +3,14 @@
  *
  * `review <url>` typed with the command prefix runs the command; the same thing
  * said to the bot as a mention used to go to the chat brain, which would talk
- * about the review instead of running one - and, back when reviews needed the
- * caller's own token, explain the token instead of running. The person asking cannot tell the two paths apart, so this closes the gap.
+ * about the review instead of running one - and, once reviews needed the
+ * caller's own token, explain the token instead of offering the box that takes
+ * it. The person asking cannot tell the two paths apart, so this closes the gap.
  *
  * Deliberately narrow: the bot has to have been spoken to, the message has to
  * carry a real pull request url, and it has to actually say "review". Anything
  * vaguer stays a conversation, because running a review is not free - it spends
- * the asker's credential (or the bot's, with none on file).
+ * the asker's own credential.
  */
 
 const PR_URL = /https?:\/\/github\.com\/[\w.-]+\/[\w.-]+\/pull\/\d+/g;
