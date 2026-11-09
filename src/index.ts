@@ -52,6 +52,7 @@ import { createOrcaQuestionBridge } from "./application/orcaQuestions.ts";
 import { createOrcaQuestionRepo } from "./infrastructure/db/orcaQuestionRepo.ts";
 import { createGhReviewRequests } from "./infrastructure/github/reviewRequests.ts";
 import { createGithubApp, type GithubApp } from "./application/githubApp.ts";
+import { createGithubActions, type GithubActions } from "./application/githubAppActions.ts";
 import { createGithubAppClient } from "./infrastructure/github/appClient.ts";
 import { loadGithubAppCredentials, webhookSecretOf } from "./infrastructure/github/appCredentials.ts";
 import { startWebhookServer } from "./infrastructure/github/webhookServer.ts";
@@ -300,6 +301,7 @@ const main = async () => {
   const restartScript = join(import.meta.dir, "..", "bin", "jarvis-restart.sh");
   // Posts a turn's answer to the GitHub issue its thread was opened for, as the app.
   const githubCommentScript = join(import.meta.dir, "..", "bin", "github-app-comment.sh");
+  const githubAppScript = join(import.meta.dir, "..", "bin", "github-app.sh");
   const repoPath = join(import.meta.dir, "..");
   const stuckWorkProbe = createStuckWorkProbe({
     orca: createOrcaCli(),
@@ -334,6 +336,7 @@ const main = async () => {
       browserScripts,
       uploadScript,
       githubCommentScript,
+      githubAppScript,
       models: modelsForRoles(),
       protectedPaths: [repoPath],
       executerTools: (settings.get(SETTING_KEYS.executerTools) ?? "")
@@ -591,6 +594,7 @@ const main = async () => {
     kitUrl: `http://127.0.0.1:${config.dashboardPort}/api/kit/views`,
     commandBudget: () => config.commandTicketUses,
     runScript,
+    githubAppScript,
     commandTickets,
     commandPrefix: config.commandPrefix,
     slashCommand: config.slashCommand,
@@ -662,6 +666,7 @@ const main = async () => {
 
   // Set once the GitHub App is wired below; the dashboard reaches it through this.
   let githubApp: GithubApp | undefined;
+  let githubActions: GithubActions | undefined;
   const dashboard = createDashboard(
     {
       port: config.dashboardPort,
@@ -761,6 +766,11 @@ const main = async () => {
           body,
         });
         return url ? { url } : {};
+      },
+      // The app's full capability, behind the admin role of the ticket's actor.
+      githubAction: async (req) => {
+        if (!githubActions) throw new Error("the GitHub App is not configured");
+        return { ...(await githubActions.run(req)) };
       },
     },
   );
@@ -959,6 +969,18 @@ const main = async () => {
       log: (msg) => console.error(`[github-app] ${msg}`),
     });
     githubApp = app;
+    githubActions = createGithubActions({
+      clock,
+      resolve: (ticket) => {
+        const resolved = commandTickets.redeem(ticket);
+        if (!resolved.ok) throw new Error(refusalMessage(resolved.reason, resolved.limit));
+        return { actor: resolved.ctx.actor, channel: resolved.ctx.channel };
+      },
+      users,
+      github: appClient,
+      audit: commandLog,
+      allowedOwners: config.githubApp.allowedOwners,
+    });
     app.recover();
     webhookServer = startWebhookServer({
       port: config.githubApp.port,

@@ -67,3 +67,52 @@ describe("createGithubAppClient", () => {
     expect(JSON.parse(calls.at(-1)!.body!)).toEqual({ content: "eyes" });
   });
 });
+
+describe("createGithubAppClient: actions", () => {
+  const setup = (installStatus = 200) => {
+    const calls: { url: string; method: string; auth: string; body?: string }[] = [];
+    const fetchFn: FetchLike = async (url, init) => {
+      const headers = init.headers as Record<string, string>;
+      calls.push({ url, method: String(init.method), auth: headers.Authorization ?? "", body: init.body as string | undefined });
+      if (url.endsWith("/installation")) {
+        return installStatus === 200
+          ? Response.json({ id: 77 })
+          : new Response('{"message":"Not Found"}', { status: installStatus });
+      }
+      if (url.endsWith("/access_tokens")) {
+        return Response.json({ token: "ghs_x", expires_at: new Date(NOW + 3_600_000).toISOString() }, { status: 201 });
+      }
+      if (url.endsWith("/pulls")) return Response.json({ html_url: "https://github.com/o/r/pull/9", number: 9 }, { status: 201 });
+      return new Response('{"message":"Resource not accessible by integration"}', { status: 403 });
+    };
+    return { calls, client: createGithubAppClient({ appId: "1", privateKey, userAgent: "t", fetch: fetchFn, clock: () => NOW }) };
+  };
+
+  test("finds a repo's installation with the app JWT, once", async () => {
+    const { client, calls } = setup();
+    expect(await client.installationOfRepo("acme/acme-be")).toBe(77);
+    expect(await client.installationOfRepo("acme/acme-be")).toBe(77);
+    expect(calls).toHaveLength(1);
+    expect(calls[0]?.url).toBe("https://api.github.com/repos/acme/acme-be/installation");
+    expect(calls[0]?.auth.split(".")).toHaveLength(3);
+  });
+
+  test("an app that is not installed says GitHub's own 404", async () => {
+    const { client } = setup(404);
+    await expect(client.installationOfRepo("x/y")).rejects.toThrow("404");
+  });
+
+  test("request sends the method, path and body under the installation token and returns the JSON", async () => {
+    const { client, calls } = setup();
+    const out = await client.request(77, "POST", "repos/o/r/pulls", { title: "T" });
+    expect(out).toEqual({ html_url: "https://github.com/o/r/pull/9", number: 9 });
+    const call = calls.at(-1);
+    expect(call).toMatchObject({ method: "POST", url: "https://api.github.com/repos/o/r/pulls", auth: "Bearer ghs_x" });
+    expect(JSON.parse(call!.body!)).toEqual({ title: "T" });
+  });
+
+  test("a missing permission comes back as GitHub's message", async () => {
+    const { client } = setup();
+    await expect(client.request(77, "PUT", "repos/o/r/pulls/1/merge", {})).rejects.toThrow("Resource not accessible by integration");
+  });
+});

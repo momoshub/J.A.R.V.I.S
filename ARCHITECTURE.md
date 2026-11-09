@@ -102,7 +102,12 @@ no classes.
   - the dedupe and the queue, held while a restart drains. Each is posted into
   a channel and run as a turn in that thread as the matched Slack person; the
   turn answers on GitHub through `bin/github-app-comment.sh` ->
-  `/api/github-app/comment`, ticketed and bound to that one issue.
+  `/api/github-app/comment`, ticketed and bound to that one issue. Beyond that,
+  an admin's or the owner's turn can act as the app on any repo it is installed
+  on (PRs, comments, reviews, labels, merge) through `bin/github-app.sh` ->
+  `/api/github-app/action`: the ticket resolves to the Slack user, the role is
+  checked in `githubAppActions`, the installation is looked up per repo, and
+  every call lands in the command log.
 - **Self-update.** A fix lands through a PR that CI (`.github/workflows/ci.yml`)
   passes, merged only by `bin/merge-when-green.sh` (exit 4 at once on a PR that
   conflicts with its base, which GitHub never runs CI on). When it touches runtime code

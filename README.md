@@ -709,6 +709,26 @@ The turn posts its answer back on the issue/PR, as the app, through
 only posts to the issue that turn's thread was opened for. If the turn ends
 without posting, its reply is posted for it.
 
+For anything wider, an **admin or the owner** can have a turn act as the app on
+any repository it is installed on (`acme`, `cute-me-on-repos`, ...):
+
+```
+bin/github-app.sh pr-create <owner/repo> --head <branch> --base <branch> --title <t> --body-file <f> [--draft]
+bin/github-app.sh comment <owner/repo> <n> <body-file>
+bin/github-app.sh review <owner/repo> <n> APPROVE|REQUEST_CHANGES|COMMENT [body-file]
+bin/github-app.sh pr-edit <owner/repo> <n> [--title <t>] [--body-file <f>]
+bin/github-app.sh pr-close|pr-reopen <owner/repo> <n>
+bin/github-app.sh pr-merge <owner/repo> <n> [--method merge|squash|rebase]
+bin/github-app.sh labels-add|labels-remove <owner/repo> <n> <label>...
+bin/github-app.sh reviewers-request <owner/repo> <n> <login|team:slug>...
+```
+
+It only acts on owners in `GITHUB_APP_ALLOWED_OWNERS`. It posts to `/api/github-app/action` with the turn's ticket (from
+`JARVIS_RUN_TICKET`, never an argument); the bot resolves it to the person the
+turn runs as, refuses unless they are admin or owner, logs the call in the
+command log, and prints GitHub's JSON (url, number) or GitHub's own error (app
+not installed, permission missing).
+
 Setup: the webhook listener binds `127.0.0.1:GITHUB_APP_PORT` (2003) and only
 starts when the app id, private key and webhook secret are found. Tailscale
 Funnel maps `https://<host>/github` to it; `/github/webhook` and `/webhook`

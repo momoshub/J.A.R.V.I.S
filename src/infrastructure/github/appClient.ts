@@ -44,6 +44,10 @@ export type GithubAppClient = {
   react: (installationId: number, path: string, content: string) => Promise<void>;
   /** Comment on an issue or PR conversation; returns the comment's url. */
   comment: (installationId: number, repo: string, number: number, body: string) => Promise<string | undefined>;
+  /** The installation the app has on `owner/name`; GitHub's error (404 = not installed) is thrown plainly. */
+  installationOfRepo: (repo: string) => Promise<number>;
+  /** Any REST call as the app's installation; resolves with GitHub's JSON. */
+  request: (installationId: number, method: string, path: string, body?: unknown) => Promise<unknown>;
   /** A GitHub account's display name, for matching to Slack. */
   userName: (installationId: number, login: string) => Promise<string | undefined>;
 };
@@ -88,8 +92,22 @@ export const createGithubAppClient = (config: GithubAppClientConfig): GithubAppC
     return token;
   };
 
+  const installs = new Map<string, number>();
+  const installationOfRepo = async (repo: string): Promise<number> => {
+    const key = repo.toLowerCase();
+    const hit = installs.get(key);
+    if (hit) return hit;
+    const jwt = createAppJwt(config.appId, config.privateKey, clock());
+    const out = (await call(jwt, "GET", `repos/${repo}/installation`)) as { id?: unknown } | undefined;
+    if (typeof out?.id !== "number") throw new Error(`GitHub returned no installation for ${repo}`);
+    installs.set(key, out.id);
+    return out.id;
+  };
+
   return {
     installationToken,
+    installationOfRepo,
+    request: async (installationId, method, path, body) => call(await installationToken(installationId), method, path, body),
     react: async (installationId, path, content) => {
       await call(await installationToken(installationId), "POST", path, { content });
     },

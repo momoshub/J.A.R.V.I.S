@@ -173,7 +173,7 @@ export const FLOWS: Flow[] = [
       { from: "respond", to: "queue", note: "One turn per thread, as always." },
       { from: "queue", to: "chat", note: "Their role, their token." },
       { from: "chat", to: "llm", note: "The brain does the work." },
-      { from: "llm", to: "tools", note: "It answers through bin/github-app-comment.sh." },
+      { from: "llm", to: "tools", note: "It answers through bin/github-app-comment.sh (an admin's turn may also act as the app through bin/github-app.sh)." },
       { from: "tools", to: "api", note: "The ticket is bound to that one issue - it can answer this call and nothing else." },
       { from: "api", to: "github", note: "Posted as the app itself. The private key never reaches a turn." },
     ],
