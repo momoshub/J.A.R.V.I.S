@@ -226,10 +226,11 @@ describe("createHandler streaming truth table", () => {
       type: "tool",
       id,
       title: `run: ${id}`,
-      status: "complete",
-      details: "d".repeat(250),
+      status: "in_progress",
+      details: `log at: ${"d".repeat(250)} - line 1`,
     });
-    // enough cards to push the allowance over, then a short answer
+    // enough cards to push the allowance over, then a short answer. They are all
+    // in progress at once: a card finished is reused, only a running one takes room.
     const cards = Array.from({ length: 40 }, (_, i) => big(`t${i}`));
     const r = build({
       llm: streamingLlm("done", [{ type: "text", delta: "done" }, ...cards]),
@@ -247,8 +248,8 @@ describe("createHandler streaming truth table", () => {
       type: "tool",
       id,
       title: `run: ${id}`,
-      status: "complete",
-      details: "d".repeat(250),
+      status: "in_progress",
+      details: `log at: ${"d".repeat(250)} - line 1`,
     });
     const cards = Array.from({ length: 40 }, (_, i) => big(`t${i}`));
     const head = "first half of the answer ";
@@ -529,7 +530,7 @@ describe("createHandler streaming truth table", () => {
   });
 
   test("an answer that never streamed as text lands on the card message", async () => {
-    const big = (id: string): LlmStreamEvent => ({ ...card, id, details: "d".repeat(250) });
+    const big = (id: string): LlmStreamEvent => ({ ...card, id, title: `run: ${id}`, status: "in_progress", details: `log at: ${"d".repeat(250)} - line 1` });
     const cards = Array.from({ length: 40 }, (_, i) => big(`t${i}`));
     const r = build({ llm: streamingLlm("the answer", cards), streamUpdates: true });
     await r.handle(r.msg("hi", "000.9"));
