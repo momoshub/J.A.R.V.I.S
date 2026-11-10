@@ -189,7 +189,7 @@ describe("the token repository", () => {
   });
 
   test("the key file is created 0600 and reused on the next boot", () => {
-    const dir = mkdtempSync(join(tmpdir(), "ev-token-"));
+    const dir = mkdtempSync(join(tmpdir(), "jarvis-token-"));
     const path = join(dir, "tokens.key");
     const first = loadOrCreateKey(path);
     expect(first).toHaveLength(32);

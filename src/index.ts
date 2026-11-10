@@ -308,7 +308,7 @@ const main = async () => {
       thinkingDoneLabel: config.botThinkingDoneLabel,
     });
 
-  // Full-access cwd (owner/admin) is neutral (outside EV's source); sandboxed
+  // Full-access cwd (owner/admin) is neutral (outside Jarvis's source); sandboxed
   // roles (pal/executer) run in a separate fixed scratch dir.
   const fullCwd = ensureDir(config.claudeCwd ?? join(tmpdir(), "bot-agent-workspace"));
   const sandboxCwd = ensureDir(join(tmpdir(), "bot-sandbox-workspace"));

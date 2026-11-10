@@ -80,7 +80,7 @@ const build = () => {
     settings: createSettingsRepo(db),
     slack,
     llm: { complete: async () => "an answer" } as LlmPort,
-    botInfo: () => ({ botName: "Evie", model: "m" }),
+    botInfo: () => ({ botName: "Jarvis", model: "m" }),
     clock: () => now.t,
     ownerSlackId: OWNER,
   };

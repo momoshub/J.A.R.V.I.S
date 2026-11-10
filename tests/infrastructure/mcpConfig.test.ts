@@ -41,7 +41,7 @@ describe("mcpConfigFor", () => {
 
 describe("createClaudeJsonReader", () => {
   test("reads the file, follows changes, and answers undefined when it is missing or broken", () => {
-    const dir = mkdtempSync(join(tmpdir(), "ev-mcp-"));
+    const dir = mkdtempSync(join(tmpdir(), "jarvis-mcp-"));
     const path = join(dir, "c.json");
     const read = createClaudeJsonReader(path);
     expect(read()).toBeUndefined();

@@ -1,7 +1,7 @@
 {
-  "name": "slack-agent-bot",
+  "name": "jarvis",
   "version": "0.1.0",
-  "description": "A configurable Slack agent bot powered by the Claude CLI, with SQLite memory, live streaming replies, and an admin dashboard",
+  "description": "Jarvis, a configurable Slack agent bot powered by the Claude CLI, with SQLite memory, live streaming replies, and an admin dashboard",
   "type": "module",
   "license": "Apache-2.0",
   "module": "src/index.ts",

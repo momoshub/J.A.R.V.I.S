@@ -43,7 +43,7 @@ const fakeKeychain = (
 };
 
 const setup = () => {
-  const dir = mkdtempSync(join(tmpdir(), "ev-keystore-"));
+  const dir = mkdtempSync(join(tmpdir(), "jarvis-keystore-"));
   return { keyPath: join(dir, "tokens.key") };
 };
 const base = { service: "svc", account: "me" };

@@ -7,7 +7,7 @@
 # optional power-tool commands. Socket Mode needs no request URL (the url is a placeholder).
 display_information:
   name: Assistant
-  description: A Slack agent bot powered by the Claude CLI
+  description: Jarvis, a Slack agent bot powered by the Claude CLI
 features:
   app_home:
     home_tab_enabled: false

@@ -55,9 +55,9 @@ describe("macUiRules", () => {
   });
 
   test("a turn without the helper is not told about a door that is locked", () => {
-    const p = buildSystemPrompt({ base: "p", botName: "Evie" });
+    const p = buildSystemPrompt({ base: "p", botName: "Jarvis" });
     expect(p).not.toContain("Driving a desktop app");
-    const q = buildSystemPrompt({ base: "p", botName: "Evie", macUiScript: "/x/mac-ui.js" });
+    const q = buildSystemPrompt({ base: "p", botName: "Jarvis", macUiScript: "/x/mac-ui.js" });
     expect(q).toContain("Driving a desktop app");
   });
 });

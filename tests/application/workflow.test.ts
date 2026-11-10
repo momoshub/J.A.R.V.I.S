@@ -40,7 +40,7 @@ const build = () => {
     llm,
     clock: () => 42,
     ownerSlackId: OWNER,
-    botInfo: () => ({ botName: "Evie", model: "claude-cli (opus)" }),
+    botInfo: () => ({ botName: "Jarvis", model: "claude-cli (opus)" }),
     newSessionId: (() => {
       let n = 0;
       return () => (n++ === 0 ? SESSION : FRONT);
