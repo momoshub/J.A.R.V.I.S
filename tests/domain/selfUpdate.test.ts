@@ -73,9 +73,9 @@ describe("selfUpdateRules with a memory skill", () => {
     expect(STANDALONE_REVIEW_RULE).toContain("never merge anything before green CI");
   });
 
-  test("never rewrites the live database", () => {
-    expect(short).toContain("data/*.db");
-    expect(short).toContain("I crash mid-turn");
+  test("carries no stash/checkout rule about the database", () => {
+    expect(short).not.toContain("data/*.db");
+    expect(short).not.toContain("git stash");
   });
 });
 

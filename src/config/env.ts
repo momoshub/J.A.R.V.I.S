@@ -37,8 +37,8 @@ const schema = z
     // process; `inbox` reads what the separate gateway (src/gateway.ts) wrote,
     // so a restart of the bot never drops the connection.
     SLACK_TRANSPORT: z.enum(["socket", "inbox"]).default("socket"),
-    // The gateway's queue. Its own file: two processes write it and it must
-    // never be committed. Gitignored.
+    // The gateway's queue. Its own file: two processes write it. Keep it OUTSIDE
+    // the git checkout like the databases (`~/` works), e.g. ~/.jarvis/data/inbox.db.
     INBOX_DATABASE_PATH: z.string().default("data/inbox.db"),
 
     // Bot identity defaults. These only bootstrap a fresh database; once set, the
@@ -78,8 +78,7 @@ const schema = z
     // for when you reach it through a proxy/tunnel/port-forward. Loopback origins
     // are always allowed.
     DASHBOARD_ALLOWED_ORIGINS: z.string().optional(),
-    // The live database. Keep it OUTSIDE the git checkout (`~/` works): a stash,
-    // checkout, reset or rebase there swaps the file under the open handle.
+    // The live database. Keep it OUTSIDE the git checkout (`~/` works).
     DATABASE_PATH: z.string().default("data/bot.db"),
     // One-time move: when DATABASE_PATH does not exist yet and this file does,
     // the first boot fills it with a consistent snapshot of this one. The old
