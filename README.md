@@ -132,7 +132,7 @@ Every command has two interfaces - use whichever you like. Both triggers are con
 | `token [remove\|who]` (alias `claude-token`) | anyone | add, replace or forget your own Claude Code token - see [Your own Claude token](#your-own-claude-token) |
 | `session [reset\|on\|off]` (alias `sess`) | anyone (on/off: admins) | the CLI session this thread is talking to - see [One session per thread](#one-session-per-thread) |
 | `ticket <what is wrong>` (aliases `bug`, `raise`) | anyone | raise a properly written, correctly routed ticket - see [Raising a ticket](#raising-a-ticket) |
-| `review <pr-url\|help\|prompt> [--policy first\|after] [what to look at]` (alias `rv`) | pal+ | review a PR: read it first, post a blockers-only comment on GitHub *and* back in the thread; request changes on a blocker, non-blocking findings are dropped (big PRs are cloned + reviewed by child agents). Runs full-access. |
+| `review <pr-url\|help\|prompt> [--policy first\|after] [what to look at]` (alias `rv`) | pal+ | review a PR: read it first, post a blockers-only comment on GitHub *and* back in the thread (PRs in `acme` repos also get the non-blocking findings as bullets); request changes on a blocker only, other repos drop non-blocking findings (big PRs are cloned + reviewed by child agents). Runs full-access. |
 | `bomb [categories] [count] <message-link>` (alias `br`) | admins | reaction-bomb a message. Combine categories with commas and set a count: `bomb money,face,negative 9 <link>`. Up to 23; `bomb help` lists every category |
 | `reply <message-link>` (alias `jrp`) | admins | draft and post an AI reply to a message |
 | `rm-msg <message-link>` (aliases `rmmsg`, `unsend`) | admins | delete a message the bot posted (a bot token cannot delete anyone else's) |
@@ -864,7 +864,7 @@ from anywhere but the host opens nothing.
 
 ## What a review comment looks like
 
-Blockers only. One line saying where it lands - good to merge, or what blocks -
+Blockers only (outside `acme` repos, see below). One line saying where it lands - good to merge, or what blocks -
 then one short bullet per blocker, worst first: what is wrong, one pointer
 (`file.ts:120` or an identifier, never a code block or a quoted line), why it
 matters. A clean PR gets that one line and the sign-off.
@@ -873,6 +873,13 @@ Blocking means a security hole, data loss, a breaking change, a correctness bug
 that would ship, missing or failing tests on a critical path, or failing CI.
 Everything else - design, cleanups, style, nits - is never posted, and never
 becomes a GitHub issue either: it is dropped.
+
+PRs in acme repos (GitHub owner `acme`, decided per PR from a full url or `owner/repo#N`) are the
+exception: non-blocking findings (design risk, correctness, coding style, real
+cleanups) follow the blockers as bullets, worst first, under about 250 words for
+a normal PR, then one last "out of scope per the description: ... risk left
+standing" warning bullet for anything the description defers. They never make
+it request changes and never become an issue; pure-noise nits are still dropped.
 
 It reads the description and the existing comments **before** reviewing, so
 nothing already said is said again. A gap the description declares out of scope

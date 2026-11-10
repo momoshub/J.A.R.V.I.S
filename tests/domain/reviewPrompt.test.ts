@@ -2,7 +2,9 @@ import { describe, expect, test } from "bun:test";
 import {
   asAgentCap,
   DEFAULT_REVIEW_AGENTS,
+  isAcmePr,
   REVIEW_AGENT_CEILING,
+  reviewHelp,
   reviewPrompt,
 } from "../../src/domain/reviewPrompt.ts";
 
@@ -148,5 +150,68 @@ describe("reviewPrompt comment shape", () => {
     // the owner asked for a token-efficient prompt; it was ~12.6k chars before
     const p = reviewPrompt([PR], "Bot", { login: "kai", name: "Kai" });
     expect(p.length).toBeLessThan(7500);
+  });
+});
+
+describe("reviewPrompt per-owner shape", () => {
+  const ACME = "https://github.com/acme/acme-be/pull/7";
+  const ACME_UPPER = "https://github.com/acme/x/pull/2";
+
+  test("isAcmePr matches the owner only, case-insensitive", () => {
+    expect(isAcmePr(ACME)).toBe(true);
+    expect(isAcmePr(ACME_UPPER)).toBe(true);
+    expect(isAcmePr(PR)).toBe(false);
+    expect(isAcmePr("https://github.com/o/acme/pull/1")).toBe(false);
+    expect(isAcmePr("https://github.com/acme-fork/r/pull/1")).toBe(false);
+    expect(isAcmePr("#12")).toBe(false);
+    expect(isAcmePr("12")).toBe(false);
+  });
+
+  test("isAcmePr reads the owner/repo#N shorthand too", () => {
+    expect(isAcmePr("acme/acme-be#7")).toBe(true);
+    expect(isAcmePr("acme/x#2")).toBe(true);
+    expect(isAcmePr("o/acme#7")).toBe(false);
+    expect(isAcmePr("acme/x")).toBe(false);
+  });
+
+  test("a acme PR posts non-blocking bullets and the out-of-scope bullet", () => {
+    const p = reviewPrompt([ACME], "Bot");
+    expect(p).toContain("NON-BLOCKING findings (design risk, correctness, coding style, real cleanups) go in the comment");
+    expect(p).toContain("blockers, then non-blocking findings, then the out-of-scope bullet last");
+    expect(p).toContain("out of scope per the description: ... risk left standing");
+    expect(p).toContain("under 250 words");
+    expect(p).toContain("blockers are never squeezed");
+    expect(p).toContain("never make flow B and never become an issue");
+    expect(p).toContain("Never open an issue");
+    expect(reviewPrompt([ACME_UPPER], "Bot")).toContain("go in the comment");
+  });
+
+  test("any other owner keeps the blockers-only text", () => {
+    const p = reviewPrompt([PR], "Bot");
+    expect(p).toContain("never go in the comment and never become an issue: they are dropped");
+    expect(p).toContain('one "- " bullet per blocker, worst first');
+    expect(p).not.toContain("out of scope per the description");
+    expect(p).not.toContain("under 250 words");
+    expect(p).not.toContain("Acme PRs");
+  });
+
+  test("a mixed batch says which PR gets which shape", () => {
+    const p = reviewPrompt([ACME, PR], "Bot");
+    expect(p).toContain(`Acme PRs (non-blocking findings are posted):\n${ACME}`);
+    expect(p).toContain(`Every other PR (blockers only, non-blocking findings are never posted):\n${PR}`);
+    expect(p).toContain("For every other PR: non-blocking findings never go in the comment");
+    expect(p).toContain("out of scope per the description");
+  });
+
+  test("the acme prompt stays lean too", () => {
+    expect(reviewPrompt([ACME, PR], "Bot", { login: "kai", name: "Kai" }).length).toBeLessThan(9000);
+  });
+});
+
+describe("reviewHelp", () => {
+  test("says acme repos get non-blocking findings", () => {
+    const h = reviewHelp("X", false, 3, "Bot");
+    expect(h).toContain("acme");
+    expect(h).toContain("out of scope per the description");
   });
 });
