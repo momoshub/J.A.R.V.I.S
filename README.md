@@ -113,9 +113,9 @@ Backups: `bun bin/db-backup.ts [--keep N] [--commit]` writes a consistent snapsh
 bun start        # or: bun dev  (watch mode)
 ```
 
-The Slack app needs Socket Mode plus the `app_mention`, `message.im` and `reaction_added` event subscriptions and the `chat:write`, `app_mentions:read`, `im:history`, `users:read`, `reactions:read`, `reactions:write` scopes. (`reaction_added` + `reactions:read` are what let the owner approve an access request with ✅; `reactions:write` is the bot reacting.) Live streaming uses `chat.startStream`; if your app lacks that capability the bot falls back to a single post automatically.
+The Slack app needs Socket Mode plus the `app_mention`, `message.im`, `reaction_added` event subscriptions (plus `message.channels`, `message.groups`, `message.mpim` for following threads in channels, which need `channels:history`, `groups:history`, `mpim:history`) and the `chat:write`, `app_mentions:read`, `im:history`, `users:read`, `reactions:read`, `reactions:write` scopes. (`reaction_added` + `reactions:read` are what let the owner approve an access request with ✅; `reactions:write` is the bot reacting.) Live streaming uses `chat.startStream`; if your app lacks that capability the bot falls back to a single post automatically.
 
-The **Console** tab additionally needs read scopes to list and open conversations: `channels:read`, `groups:read`, `im:read`, `mpim:read` and the matching history scopes `channels:history`, `groups:history`, `mpim:history` (DM history is covered by `im:history`). Without them the Console shows a `missing_scope` error but the rest of the dashboard works.
+The **Console** tab additionally needs read scopes to list and open conversations: `channels:read`, `groups:read`, `im:read`, `mpim:read` (and the history scopes above). Without them the Console shows a `missing_scope` error but the rest of the dashboard works.
 
 ## Talking to the bot
 

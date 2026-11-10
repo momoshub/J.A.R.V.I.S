@@ -23,9 +23,11 @@ jobs:
       - run: bun install --frozen-lockfile
       - run: bun run typecheck
       - run: bun test
-      # Real Slack, in the private #jarvis_self_testing (see README "Testing").
-      # A missing secret fails here: the suite would otherwise skip itself and pass.
+      # Real Slack, in a private test channel (see README "Testing"). Secrets are never
+      # passed to fork PRs, so those skip this step. On a push or a same-repo PR a missing
+      # secret fails here: the suite would otherwise skip itself and pass.
       - name: e2e (real Slack)
+        if: github.event_name == 'push' || github.event.pull_request.head.repo.full_name == github.repository
         env:
           SLACK_BOT_TOKEN: ${{ secrets.JARVIS_E2E_SLACK_BOT_TOKEN }}
         run: |

@@ -48,19 +48,24 @@ oauth_config:
       - reactions:read
       - reactions:write
       - users:read
-      # Console tab (dashboard): list and open conversations. Optional; without them
-      # the Console shows `missing_scope` and the rest works.
-      - channels:read
+      # The history scopes are needed by the message.channels/groups/mpim events; the
+      # *:read ones only by the dashboard Console tab (without them it shows
+      # `missing_scope` and the rest works).
       - channels:history
-      - groups:read
       - groups:history
-      - mpim:read
       - mpim:history
+      - channels:read
+      - groups:read
+      - mpim:read
 settings:
   event_subscriptions:
     bot_events:
       - app_mention
       - message.im
+      # Channel messages: thread following (`follow`, own threads) and typed answers in threads.
+      - message.channels
+      - message.groups
+      - message.mpim
       - reaction_added
   interactivity:
     is_enabled: true
