@@ -14,7 +14,7 @@ describe("slack members", () => {
   });
 
   test("folding drops case and diacritics", () => {
-    expect(fold(" Lý Lương Minh ")).toBe("ly luong minh");
+    expect(fold(" Lê Thị Hương ")).toBe("le thi huong");
     expect(fold("Đức")).toBe("duc");
   });
 

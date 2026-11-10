@@ -1065,7 +1065,7 @@ A new e2e file goes in `e2e/`, imports `./support.ts` (env gate, root message, c
 
 `e2e/slackBlockKit.e2e.ts` drives a reply with Block Kit through the real stream code path (`createHandler` -> `createSlackStream` -> `chat.startStream`/`appendStream`/`stopStream`, the tidy-up rewrite and the plain-post fallbacks; only the model is scripted) and reads the thread back with `conversations.replies`. Per reply it asserts exactly one bot message, a `table` block where the reply had one, and no literal ```` ```blockkit ```` in the text or blocks. The cases: a table with an empty header cell (the bug that split a reply in two and lost the table), a plain-text reply, and a block Slack refuses (`alert`), which must degrade to its words.
 
-It is not part of `bun test`: the file is not a `*.test.ts`, and it skips itself unless `JARVIS_E2E=1` and `SLACK_BOT_TOKEN` are set. CI runs it as its own step with the bot token from the `JARVIS_E2E_SLACK_BOT_TOKEN` repo secret, and fails that step when the secret is missing rather than letting the suite skip itself green. Run it locally with the bot's token in the environment:
+It is not part of `bun test`: the file is not a `*.test.ts`, and it skips itself unless `JARVIS_E2E=1`, `SLACK_BOT_TOKEN` and `JARVIS_E2E_CHANNEL` are set. CI runs it as its own step with the bot token from the `JARVIS_E2E_SLACK_BOT_TOKEN` repo secret, and fails that step when the secret is missing rather than letting the suite skip itself green. Run it locally with the bot's token in the environment:
 
 ```bash
 SLACK_BOT_TOKEN=xoxb-... JARVIS_E2E_CHANNEL=<channel id> bun run test:e2e
