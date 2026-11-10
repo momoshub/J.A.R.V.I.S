@@ -642,12 +642,12 @@ describe("the steps a finished message showed", () => {
     const stream = createSlackStream(fakeStreamer().make);
     stream.sink({ type: "tool", id: "a", title: "Run: 🏃 Listing files", status: "in_progress" });
     stream.sink({ type: "tool", id: "a", title: "Run: 🏃 Listing files", status: "complete" });
-    stream.sink({ type: "tool", id: "b", title: "run: cat x", status: "in_progress" });
-    stream.sink({ type: "tool", id: "b", title: "run: cat x", status: "error" });
+    stream.sink({ type: "tool", id: "b", title: "Run: 🏃 Reading x", status: "in_progress" });
+    stream.sink({ type: "tool", id: "b", title: "Run: 🏃 Reading x", status: "error" });
 
     expect(stream.steps).toEqual([
       { title: "Run: 🏃 Listing files", failed: false },
-      { title: "run: cat x", failed: true },
+      { title: "Run: 🏃 Reading x", failed: true },
     ]);
   });
 

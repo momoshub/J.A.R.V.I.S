@@ -12,7 +12,7 @@ import {
   usageOf,
 } from "../../src/infrastructure/llm/claudeCli.ts";
 import type { PromptMessage } from "../../src/domain/types.ts";
-import type { BillingContext, LlmStreamEvent, ToolTrace } from "../../src/application/ports.ts";
+import type { BillingContext, LlmStreamEvent, ToolTrace, ToolTraceSink } from "../../src/application/ports.ts";
 
 describe("renderPrompt", () => {
   test("empty window renders nothing", () => {
@@ -392,7 +392,9 @@ describe("createClaudeCliLlm", () => {
     expect(summarizeTool("Edit", '{"file_path":"/x"}').title).toBe("Tool: ✏️ Editing a file");
     expect(summarizeTool("WebSearch", '{"query":"q"}').title).toBe("Tool: 🌐 Searching the web");
     expect(summarizeTool("Agent", '{"description":"Review the diff","prompt":"p"}').title).toBe("Agent: 🧩 Review the diff");
-    expect(summarizeTool("Agent", '{"description":"Try it","subagent_type":"fork"}').title).toBe("FAgent: 🍴 Try it");
+    expect(summarizeTool("Agent", '{"description":"Try it","run_in_background":false}').title).toBe("FAgent: 🍴 Try it");
+    expect(summarizeTool("Agent", '{"description":"Try it","run_in_background":true}').title).toBe("Agent: 🧩 Try it");
+    expect(summarizeTool("Agent", '{"description":"Try it","subagent_type":"fork"}').title).toBe("Agent: 🧩 Try it");
     expect(summarizeTool("Task", '{"prompt":"p"}').title).toBe("Agent: 🧩 Running a helper agent");
     expect(summarizeTool("Skill", '{"skill":"jarvis-source"}').title).toBe("Skill: 📘 jarvis-source");
     expect(summarizeTool("Workflow", '{"script":"x"}').title).toBe("WAgent: 👷 Running a workflow");
@@ -407,6 +409,11 @@ describe("createClaudeCliLlm", () => {
     const out = summarizeTool("Bash", JSON.stringify({ command: cmd, description: "Start a reviewer worker" }));
     expect(out.title).toBe("WAgent: 👷 Start a reviewer worker");
     expect(out.command).toBe(cmd);
+  });
+
+  test("summarizeTool calls a worker start a WAgent even when its command mentions the learnings API", () => {
+    const cmd = "orca orchestration worker-start --spec 'POST /api/learnings' --agent claude";
+    expect(summarizeTool("Bash", JSON.stringify({ command: cmd })).title).toBe("WAgent: 👷 Starting a worker agent");
   });
 
   test("summarizeTool calls memory writes and reads Memory, and still keeps the command", () => {
@@ -475,6 +482,34 @@ describe("isReactCall", () => {
     expect(isReactCall("Read", cmd("bin/slack-react.sh C1 1.1 fire"))).toBe(false);
     expect(isReactCall("Bash", "{broken")).toBe(false);
     expect(isReactCall("Bash", "")).toBe(false);
+  });
+});
+
+describe("createClaudeCliLlm.stream cards", () => {
+  const toolEvents = (id: string, name: string, input: string): unknown[] => [
+    { type: "stream_event", event: { type: "message_start" } },
+    { type: "stream_event", event: { type: "content_block_start", index: 0, content_block: { type: "tool_use", id, name } } },
+    { type: "stream_event", event: { type: "content_block_delta", index: 0, delta: { type: "input_json_delta", partial_json: input } } },
+    { type: "stream_event", event: { type: "content_block_stop", index: 0 } },
+    { type: "stream_event", event: { type: "message_delta", delta: { stop_reason: "tool_use" } } },
+    { type: "result", subtype: "success", is_error: false, result: "done" },
+  ];
+  const cardOf = async (onToolTrace?: ToolTraceSink) => {
+    const llm = createClaudeCliLlm({ binPath: fakeStreamBin(toolEvents("t1", "Read", '{"file_path":"/x"}')), onToolTrace });
+    const events: LlmStreamEvent[] = [];
+    await llm.stream!({ system: "s", messages: [{ role: "user", content: "hi" }] }, (e) => events.push(e));
+    return events.find((e) => e.type === "tool") as Extract<LlmStreamEvent, { type: "tool" }>;
+  };
+
+  test("a sink that reports the line gives the card a log pointer", async () => {
+    const card = await cardOf(() => ({ file: "logs/threads/C1/1.jsonl", line: 4 }));
+    expect(card.title).toBe("Tool: 📖 Reading a file");
+    expect(card.details).toBe("log at: logs/threads/C1/1.jsonl - line 4");
+  });
+
+  test("a throwing sink or no sink leaves the card without details", async () => {
+    expect((await cardOf(() => { throw new Error("disk"); })).details).toBeUndefined();
+    expect((await cardOf()).details).toBeUndefined();
   });
 });
 

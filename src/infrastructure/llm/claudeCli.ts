@@ -180,7 +180,7 @@ const touchesMemory = (name: string, input: Record<string, unknown>): boolean =>
  * the per-thread trace, when the sink reported one). The command, path or query
  * behind a step is never shown.
  *
- * Names: Run (Bash), Agent, FAgent (a forked agent), WAgent (an Orca worker or
+ * Names: Run (Bash), Agent (background, the default), FAgent (foreground), WAgent (an Orca worker or
  * a Workflow agent), Memory, Skill, MCP, and Tool for every other built-in.
  *
  * `command` carries the Bash command in full: it is never shown, but consumers
@@ -202,17 +202,17 @@ export const summarizeTool = (
   const described = describedStep(input);
   let label: string;
   const command = name === "Bash" && typeof input.command === "string" ? input.command : undefined;
-  if (touchesMemory(name, input)) {
+  if (command !== undefined && runsOrcaWorkerStart(command)) {
+    label = `WAgent: 👷 ${described ?? "Starting a worker agent"}`;
+  } else if (touchesMemory(name, input)) {
     label = `Memory: 🧠 ${described ?? (name === "Read" ? "Reading a memory note" : "Updating memory")}`;
   } else if (name === "Bash") {
-    label =
-      command !== undefined && runsOrcaWorkerStart(command)
-        ? `WAgent: 👷 ${described ?? "Starting a worker agent"}`
-        : `Run: 🏃 ${described ?? "Running a command"}`;
+    label = `Run: 🏃 ${described ?? "Running a command"}`;
   } else if (name === "Agent" || name === "Task") {
+    // Foreground (run_in_background: false) is an FAgent; background, the default, a plain Agent.
     label =
-      input.subagent_type === "fork"
-        ? `FAgent: 🍴 ${described ?? "Running a forked agent"}`
+      input.run_in_background === false
+        ? `FAgent: 🍴 ${described ?? "Running a foreground agent"}`
         : `Agent: 🧩 ${described ?? "Running a helper agent"}`;
   } else if (name === "Workflow") {
     label = `WAgent: 👷 ${described ?? "Running a workflow"}`;

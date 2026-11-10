@@ -323,8 +323,9 @@ export const ERRANDS_COMMANDS: readonly CommandDef[] = [
             const ran = (ev.command ?? ev.title).toLowerCase();
             // Which source actually answered is the thing people most want to
             // know mid-run, and the thing a report most often blurs.
-            if (/mcp__.*datadog.*rum/.test(ran)) announce("📊 reading RUM in Datadog");
-            else if (/mcp__.*datadog/.test(ran)) announce("🐶 querying Datadog");
+            // An MCP card's title is `MCP: 🔌 <server> <tool>` (summarizeTool).
+            if (/mcp: 🔌 [^\n]*datadog[^\n]*rum/.test(ran)) announce("📊 reading RUM in Datadog");
+            else if (/mcp: 🔌 [^\n]*datadog/.test(ran)) announce("🐶 querying Datadog");
             if (/gcx |grafana-get\.sh/.test(ran)) announce("📈 querying Grafana");
           });
         } else {
@@ -467,7 +468,7 @@ export const ERRANDS_COMMANDS: readonly CommandDef[] = [
           out = await deps.llm.stream(params, (ev) => {
             if (ev.type !== "tool" || ev.status !== "complete") return;
             const ran = (ev.command ?? ev.title).toLowerCase();
-            if (/notion-create-pages/.test(ran)) announce("📝 created the ticket");
+            if (/mcp: 🔌 [^\n]*notion-create-pages/.test(ran)) announce("📝 created the ticket");
             if (/gh pr create\b/.test(ran)) announce("🔧 opened a PR for it");
             if (/gh pr edit[^\n]*--add-reviewer/.test(ran)) announce("👀 asked for a review");
           });

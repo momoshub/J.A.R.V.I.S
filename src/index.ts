@@ -381,7 +381,7 @@ const main = async () => {
     );
 
   // One file per thread, beside the bot's own logs - what every turn ran, in full.
-  const traceLog = createToolTraceLog(join(config.logDir, "threads"));
+  const traceLog = createToolTraceLog(join(config.logDir, "threads"), () => new Date(), join(import.meta.dir, ".."));
   // Orca workers a thread starts are linked to it as their launch goes by, so
   // a worker's question can find its way back (the bridge is built below,
   // once there is a turn path to hand questions to).

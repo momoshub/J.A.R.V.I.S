@@ -11,7 +11,7 @@
  * debug log that fills the disk with one `cat` of a binary is its own outage.
  */
 import { appendFileSync, closeSync, fstatSync, mkdirSync, openSync, readFileSync, readSync } from "node:fs";
-import { join, relative } from "node:path";
+import { isAbsolute, join, relative } from "node:path";
 import type { BillingContext, ToolTrace, ToolTraceSink, TraceSpot } from "../../application/ports.ts";
 import { redactSecrets } from "../../domain/toolVisibility.ts";
 import type { DigestCall } from "../../domain/workflowFront.ts";
@@ -55,8 +55,8 @@ const linesIn = (file: string): number => {
 
 /**
  * Appends every trace and reports where it landed, as a path relative to
- * `root` (the repo, never an absolute host path) and the line number, which the
- * Slack card shows as "log at: ...". Counted in memory per file after one read.
+ * `root` (the repo; nothing when the log lies outside it, so no host path ever
+ * leaves) and the line number, which the Slack card shows as "log at: ...". Counted in memory per file after one read.
  */
 export const createToolTraceLog = (
   dir: string,
@@ -65,7 +65,7 @@ export const createToolTraceLog = (
 ): ToolTraceSink => {
   const made = new Set<string>();
   const lines = new Map<string, number>();
-  return (trace, bill): TraceSpot => {
+  return (trace, bill): TraceSpot | undefined => {
     const now = clock();
     const file = traceFileFor(dir, bill, now);
     const folder = join(file, "..");
@@ -76,7 +76,9 @@ export const createToolTraceLog = (
     const before = lines.get(file) ?? linesIn(file);
     appendFileSync(file, traceLine(trace, bill, now));
     lines.set(file, before + 1);
-    return { file: relative(root, file), line: before + 1 };
+    const shown = relative(root, file);
+    // A log outside the repo has no path worth showing in a channel.
+    return shown.startsWith("..") || isAbsolute(shown) ? undefined : { file: shown, line: before + 1 };
   };
 };
 

@@ -983,6 +983,31 @@ describe("dispatchCommand", () => {
     expect(lines.some((l) => l.startsWith("✅"))).toBe(false);
   });
 
+  test("investigate and ticket announce MCP steps from their `MCP: 🔌 <server> <tool>` titles", async () => {
+    const mcp = (title: string): LlmPort => ({
+      complete: async () => "unused",
+      stream: async (_p, sink) => {
+        sink({ type: "tool", id: "t1", title, status: "complete" });
+        return "done";
+      },
+    });
+    const run = async (line: string, title: string, settle?: (d: ReturnType<typeof build>) => Promise<void>) => {
+      const deps = { ...build(), llm: mcp(title) };
+      deps.settings = createSettingsRepo(db);
+      await settle?.(deps);
+      const lines: string[] = [];
+      await dispatchCommand(deps, actor(), "C1", line, { reply: async (t: string) => void lines.push(t) });
+      return lines;
+    };
+    expect(await run("investigate why", "MCP: 🔌 datadog search_datadog_rum_events")).toContain("📊 reading RUM in Datadog");
+    expect(await run("investigate why", "MCP: 🔌 datadog search_datadog_logs")).toContain("🐶 querying Datadog");
+    expect(
+      await run("ticket the inbox will not load", "MCP: 🔌 Notion notion-create-pages", async (d) => {
+        await dispatchCommand(d, actor(), "C1", "ticket config tracker https://notion.so/roadmap");
+      }),
+    ).toContain("📝 created the ticket");
+  });
+
   test("rv needs a PR url", async () => {
     expect(await dispatchCommand(build(), actor(), "C1", "rv")).toContain("Which PR");
   });

@@ -40,6 +40,14 @@ describe("per-thread tool trace log", () => {
     expect(again({ kind: "call", id: "t3", name: "Bash", input: "{}" }, bill)).toMatchObject({ line: 3 });
   });
 
+  test("a log outside the root reports no spot, so no host path reaches a card", () => {
+    const dir = mkdtempSync(join(tmpdir(), "trace-"));
+    const elsewhere = mkdtempSync(join(tmpdir(), "root-"));
+    const log = createToolTraceLog(dir, () => NOW, elsewhere);
+    expect(log({ kind: "call", id: "t1", name: "Bash", input: "{}" }, bill)).toBeUndefined();
+    expect(readFileSync(join(dir, "C1", "111.1.jsonl"), "utf8")).toContain('"t1"');
+  });
+
   test("redacts secrets and clips a huge output", () => {
     const dir = mkdtempSync(join(tmpdir(), "trace-"));
     const log = createToolTraceLog(dir, () => NOW);
