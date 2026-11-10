@@ -47,7 +47,7 @@ jobs:
 
   # Secret scan with the gitleaks CLI (the action needs a licence for organisations).
   # Push: the whole history. Pull request: only the commits it adds. False positives
-  # (test vectors, fake tokens) are fingerprinted in .gitleaksignore. Rules: .gitleaks.toml plus
+  # (test vectors, fake tokens) are allowlisted by value in .gitleaks.toml. Rules: .gitleaks.toml plus
   # the private names rule from the LEAK_NAMES_TOML secret (skipped with a notice when unset,
   # e.g. on fork PRs), both through bin/leak-scan.sh.
   gitleaks:

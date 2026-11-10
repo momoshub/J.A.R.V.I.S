@@ -101,6 +101,28 @@ describe.skipIf(!HAS_GITLEAKS)("leak guard", () => {
     expect(sh(repo, "git push -q origin :clean", env).code).toBe(0);
   });
 
+  test("real ids of every kind are flagged, including ones a loose fake pattern would pass", () => {
+    const { repo, env } = makeRepo();
+    // letters-then-digits user ids, team/bot ids and a legacy id without the leading 0
+    for (const id of ["U0ABCDE" + "FG12", "U0ABCDE" + "FGH1", "T07AB12" + "CD3E", "B07AB12" + "CD3E", "U024B" + "E7LH"]) {
+      writeFileSync(join(repo, "id.txt"), `const id = '${id}';\n`);
+      const r = sh(repo, "bin/leak-scan.sh dir id.txt --no-banner --redact -v", env);
+      expect(r.out).toContain("slack-real-looking-id");
+    }
+  });
+
+  test("pre-push scans a force-push whose remote tip this clone never fetched", () => {
+    const { repo, env } = makeRepo();
+    // another clone moves main on the remote; this clone does not fetch
+    const other = join(repo, "..", "other");
+    expect(sh(join(repo, ".."), `git clone -q remote.git other && cd other && git config user.email t@example.com && git config user.name t && echo x > x.txt && git add x.txt && git commit -qm x && git push -q --no-verify origin main`, env).code).toBe(0);
+    expect(other).toBeTruthy();
+    writeFileSync(join(repo, "leak.txt"), "const id = 'U07AB12" + "CD3E';\n");
+    const r = sh(repo, "git add leak.txt && git commit -qm leak --no-verify && git push --force origin main", env);
+    expect(r.code).not.toBe(0);
+    expect(r.out).toContain("BLOCKED");
+  });
+
   test("pre-push skips with a warning when gitleaks is missing", () => {
     const { repo, env } = makeRepo();
     const r = sh(repo, `PATH=/usr/bin:/bin git push origin main`, env);

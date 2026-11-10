@@ -10,18 +10,25 @@ useDefault = true
 [allowlist]
 description = "this config names the patterns it hunts"
 paths = ['''^\.gitleaks\.toml$''', '''^docs/leak-names\.example\.toml$''']
+# the known fake secrets in tests, by value, so a history rewrite (new SHAs) does
+# not break the scan the way .gitleaksignore fingerprints do: the RFC 6238 seed,
+# a made-up DASHBOARD_TOKEN and a made-up xoxb fed to the redactor
+regexTarget = "match"
+regexes = ['''GEZDGNBVGY3TQOJQ''', '''0123456789abcdef0123456789abcdef''', '''xoxb-123456789012-abcdefghijkl''']
 
-# (a) Slack ids that look real (U/C/D/G/W + 0 + 8-10 random chars).
+# (a) Slack ids that look real: user/channel/DM/group/workspace/team/bot/app/
+# enterprise ids (U C D G W T B A E), a digit, then 7-10 more upper-case chars.
+# That also covers legacy ids without the leading 0 (U024BE7LH).
 [[rules]]
 id = "slack-real-looking-id"
-description = "Slack user/channel/DM/group/workspace id that is not an obvious test fake"
-regex = '''\b[UCDGW]0[A-Z0-9]{8,10}\b'''
-keywords = ["u0", "c0", "d0", "g0", "w0"]
+description = "Slack id (user, channel, DM, team, bot, app, enterprise) that is not a test fake"
+regex = '''\b[UCDGWTBAE][0-9][A-Z0-9]{7,10}\b'''
+keywords = ["u0", "u1", "u2", "c0", "c1", "d0", "g0", "w0", "t0", "t1", "b0", "a0", "e0"]
 
   [rules.allowlist]
-  description = "fake shapes used in tests: a word, zero padding, a counter (U0OWNER0001, C0TEST0000N, U0NUISANCE) or 0123456789"
+  description = "the fake ids the tests use: a role word plus a counter (U0OWNER0001, U0PAL0007, C0TEST0000N, U0NUISANCE) and U0123456789. Explicit words, so a random real id does not slip through"
   regexTarget = "match"
-  regexes = ['''^[UCDGW]0(?:[A-Z]{2,8}0*[0-9N]{0,4}|123456789)$''']
+  regexes = ['''^[UCDGW]0(?:OWNER|PAL|ALEX|TEST|BOT|DEV|USER|REVIEW|EXE|GONE|SNUBBED|ADMIN|TEAM|NUISANCE|OTHER|DM|STRANGE)[0-9N]*$''', '''^U0123456789$''']
 
 # (b) the employer name: only the copyright lines may carry it.
 [[rules]]
