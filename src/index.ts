@@ -236,6 +236,9 @@ const main = async () => {
   const threadSessions = createThreadSessionRepo(db);
   const accessRequests = createAccessRequestRepo(db);
   const commandApprovals = createCommandApprovalRepo(db);
+  const cloudwatchRepo = createCloudwatchRepo(db);
+  // A query still `running` lost its process in the last restart.
+  cloudwatchRepo.failRunning(Date.now());
   const commandTickets = createCommandTickets(() => Date.now(), undefined, config.commandTicketUses);
   const baseCommandLog = createCommandLogRepo(db);
   const commandLog: CommandLogRepo = {
@@ -583,7 +586,7 @@ const main = async () => {
     // warning, the Confirm / Cancel buttons and an audit row per request.
     cloudwatch: {
       aws: createCloudwatchCli(),
-      repo: createCloudwatchRepo(db),
+      repo: cloudwatchRepo,
       users,
       slack: slackAdmin,
       settings,

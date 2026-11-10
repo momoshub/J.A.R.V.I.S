@@ -35,6 +35,8 @@ export const MAX_LIMIT = 1000;
 export const CONFIRM_TTL_MS = 15 * 60_000;
 /** Insights queries over this many log groups are refused (the API takes 50). */
 export const MAX_GROUPS = 10;
+/** Longest query accepted: the Confirm message shows it whole, so what is confirmed is what runs. */
+export const MAX_QUERY_CHARS = 1500;
 
 /** Button ids. `jv:` like every element of ours, but handled in code, never sent to the model. */
 export const CODE_ACTION_PREFIX = "jv:cloudwatch:";
@@ -159,6 +161,7 @@ export const parseCloudwatchArgs = (
 
   const query = unescapeSlack(args.slice(i).join(" ")).trim();
   if (!query) return { ok: false, error: "Which query? Everything after the flags is the Logs Insights query" };
+  if (query.length > MAX_QUERY_CHARS) return { ok: false, error: `That query is ${query.length} characters; the limit is ${MAX_QUERY_CHARS} so the Confirm message can show all of it` };
   if (last !== undefined && (from !== undefined || to !== undefined)) {
     return { ok: false, error: "Use `--last` or `--from`/`--to`, not both" };
   }
@@ -196,9 +199,10 @@ export type GroupInfo = {
 export const estimateScanBytes = (groups: readonly GroupInfo[], rangeMs: number, now: number): number =>
   Math.round(
     groups.reduce((sum, g) => {
+      const age = g.createdAt ? Math.max(DAY_MS, now - g.createdAt) : undefined;
       const keptMs = g.retentionDays
-        ? g.retentionDays * DAY_MS
-        : Math.max(DAY_MS, now - (g.createdAt ?? now - 365 * DAY_MS));
+        ? Math.min(g.retentionDays * DAY_MS, age ?? Infinity)
+        : (age ?? 365 * DAY_MS);
       return sum + g.storedBytes * Math.min(1, rangeMs / keptMs);
     }, 0),
   );
@@ -245,7 +249,8 @@ export const requestSummary = (r: CloudwatchRequest): string =>
   [
     `*Log group:* ${r.groups.map((g) => `\`${g}\``).join(", ")} (${r.region})`,
     `*Range:* ${stamp(r.startMs)} → ${stamp(r.endMs)}`,
-    `*Query:* ${fenced(r.query)}`,
+    `*Query:* ${fenced(r.query, MAX_QUERY_CHARS)}`,
+    `*Rows:* up to ${r.limit}`,
   ].join("\n");
 
 /** The text a Confirm / Cancel message carries; the buttons are added by the poster. */

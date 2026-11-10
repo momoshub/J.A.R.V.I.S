@@ -126,6 +126,8 @@ export type CloudwatchRepo = {
   /** pending -> expired when older than `ttlMs`. False when it is not pending or not old enough. */
   expire: (id: number, at: number, ttlMs: number) => boolean;
   finish: (id: number, result: { ok: true; scannedBytes: number; recordsMatched: number } | { ok: false; error: string }, at: number) => void;
+  /** Boot sweep: a row still `running` lost its process. Returns how many were closed. */
+  failRunning: (at: number) => number;
   /** Most recent first, for the audit view. */
   recent: (limit: number) => StoredCloudwatch[];
 };
@@ -146,7 +148,7 @@ export const createCloudwatchRepo = (db: DbClient): CloudwatchRepo => {
      WHERE id = $id AND status = 'pending' AND created_at >= $oldest`,
   );
   const cancelStmt = db.query(
-    `UPDATE cloudwatch_requests SET status = 'cancelled', confirmed_by = '', decided_at = $at, error = $by
+    `UPDATE cloudwatch_requests SET status = 'cancelled', confirmed_by = '', decided_at = $at, error = $by /* who cancelled */
      WHERE id = $id AND status = 'pending'`,
   );
   const expireStmt = db.query(
@@ -158,6 +160,7 @@ export const createCloudwatchRepo = (db: DbClient): CloudwatchRepo => {
      WHERE id = $id`,
   );
   const failStmt = db.query("UPDATE cloudwatch_requests SET status = 'failed', error = $error, finished_at = $at WHERE id = $id");
+  const failRunningStmt = db.query("UPDATE cloudwatch_requests SET status = 'failed', error = 'interrupted by a restart', finished_at = $at WHERE status = 'running'");
   const recentStmt = db.query<Row, [number]>("SELECT * FROM cloudwatch_requests ORDER BY id DESC LIMIT ?");
 
   return {
@@ -197,6 +200,7 @@ export const createCloudwatchRepo = (db: DbClient): CloudwatchRepo => {
       if (result.ok) doneStmt.run({ $id: id, $scanned: result.scannedBytes, $matched: result.recordsMatched, $at: at });
       else failStmt.run({ $id: id, $error: result.error.slice(0, 500), $at: at });
     },
+    failRunning: (at) => Number(failRunningStmt.run({ $at: at }).changes),
     recent: (limit) => recentStmt.all(limit).map(toStored),
   };
 };

@@ -66,4 +66,13 @@ describe("cloudwatch_requests", () => {
     expect(repo.get(a.id)).toMatchObject({ noticeChannel: "C1", noticeTs: "9.9" });
     expect(repo.recent(10).map((r) => r.id)).toEqual([b.id, a.id]);
   });
+
+  test("failRunning closes rows a restart orphaned, and only those", () => {
+    const a = repo.open({ ...base, mode: "confirm" }, 100);
+    repo.claim(a.id, "U1", 110, TTL);
+    const pending = repo.open({ ...base, mode: "confirm" }, 100);
+    expect(repo.failRunning(200)).toBe(1);
+    expect(repo.get(a.id)).toMatchObject({ status: "failed", error: "interrupted by a restart" });
+    expect(repo.get(pending.id)?.status).toBe("pending");
+  });
 });

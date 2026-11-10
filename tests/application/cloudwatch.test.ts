@@ -171,7 +171,8 @@ describe.each([
 ] as const)("%s: never runs immediately", (role, id) => {
   test("posts the Confirm / Cancel message with query, group, range and cost warning, and runs nothing", async () => {
     const out = await run(r, user(id, role), LINE);
-    expect(out).toBe("");
+    // never empty: a brain running this must not read silence as "nothing happened" and ask again
+    expect(out).toContain("nothing has run yet");
     expect(r.ran).toEqual([]);
     expect(r.interactive).toHaveLength(1);
     const msg = r.interactive[0];

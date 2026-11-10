@@ -172,7 +172,8 @@ export const askCloudwatch = async (deps: CloudwatchDeps, ask: AskContext, args:
       void deps.slack?.settleInteractive(notice.channel, notice.ts, settledText("expired"), SIGNATURES.command).catch(logAndIgnore("cloudwatch expiry settle"));
     }
   }, ttlOf(deps) + 1_000);
-  return "";
+  // Not empty: a brain running this for someone must not read silence as "nothing happened" and ask again.
+  return `Confirm / Cancel posted for request #${stored.id}: nothing has run yet, it waits for <@${actor.slackId}> or the owner.`;
 };
 
 export type PressOutcome =

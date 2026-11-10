@@ -122,6 +122,7 @@ describe("parseCloudwatchArgs", () => {
     expect(err("--group /g --last 1h --from 2026-11-10T08:00:00Z fields x")).toContain("not both");
     expect(err("--group /g --from 2026-11-10T09:00:00Z --to 2026-11-10T08:00:00Z fields x")).toContain("empty");
     expect(err("--group /g --last 500d fields x")).toContain("longer than any log group keeps");
+    expect(err(`--group /g ${"x".repeat(1600)}`)).toContain("the limit is 1500");
     expect(err(`--group ${Array.from({ length: 11 }, (_, i) => `/g${i}`).join(",")} fields x`)).toContain("At most");
   });
 });
@@ -134,6 +135,11 @@ describe("cost estimate", () => {
     expect(estimateScanBytes([group], 365 * DAY, NOW)).toBe(365e9);
     // a range longer than retention cannot scan more than is stored
     expect(estimateScanBytes([group], 400 * DAY, NOW)).toBe(365e9);
+  });
+
+  test("a young group with long retention is aged, not spread over its retention", () => {
+    const young = { name: "/y", storedBytes: 5e9, retentionDays: 30, createdAt: NOW - 5 * DAY };
+    expect(estimateScanBytes([young], 1 * DAY, NOW)).toBe(1e9);
   });
 
   test("sums groups, and a never-expiring group is aged from its creation", () => {
@@ -169,6 +175,14 @@ describe("what the Confirm message shows", () => {
     expect(text).toContain("bills per GB");
     expect(text).toContain("Only <@U1> or the owner can confirm");
     expect(text).toContain("Expires in 15 min");
+  });
+
+  test("the whole query and the row limit are shown, never clipped", () => {
+    const query = `fields @message | filter @message like /${"a".repeat(1400)}/`;
+    const req: CloudwatchRequest = { groups: ["/g"], region: "r", query, startMs: 0, endMs: 1, limit: 77 };
+    const text = confirmText("U1", req, { bytes: 0, usd: 0, costly: false, rangeMs: 1 });
+    expect(text).toContain(query);
+    expect(text).toContain("up to 77");
   });
 
   test("a query cannot close its own code fence", () => {
