@@ -19,7 +19,7 @@ describe("slack members", () => {
   });
 
   test("an exact field beats a word start beats a substring", () => {
-    const thien = m({ id: "U1", realName: "Thiện Lý", handle: "thien", email: "thien@example.com" });
+    const thien = m({ id: "U1", realName: "Thiện Lý", handle: "thien", email: "thien@acme.com" });
     expect(matchScore(thien, "thien")).toBe(3);
     expect(matchScore(thien, "@ly")).toBe(2);
     expect(matchScore(thien, "acme")).toBe(2);

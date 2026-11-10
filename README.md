@@ -776,8 +776,8 @@ it in that one git process's environment as `http.extraheader` through
 cherry-picked commit keeps its original author unless you pass `--reset-author`.
 
 ```
-bin/github-app.sh git acme/acme-be ~/Workspaces/be -- commit -m "fix: x"
-bin/github-app.sh push acme/acme-be ~/Workspaces/be fix/x
+bin/github-app.sh git acme/acme-api ~/Workspaces/be -- commit -m "fix: x"
+bin/github-app.sh push acme/acme-api ~/Workspaces/be fix/x
 ```
 
 In the `acme` org, every PR is committed and opened as the app

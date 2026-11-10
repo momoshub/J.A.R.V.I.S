@@ -45,13 +45,13 @@ describe("role policies, persisted and enforced", () => {
   test("denied tools and MCP servers reach the CLI's --disallowedTools for that role", () => {
     const { policies } = setup();
     policies.save(
-      { ...defaultRolePolicy("admin"), deniedTools: ["WebFetch"], deniedMcpServers: ["pg-prod"] },
+      { ...defaultRolePolicy("admin"), deniedTools: ["WebFetch"], deniedMcpServers: ["acme-pg-prod"] },
       "dashboard",
       5,
     );
     const policy = (role: UserRole) => toolPolicyFor(role, { roleDisallow: policyDisallow(policies.get(role)) });
     expect(policy("admin").disallowedTools).toContain("WebFetch");
-    expect(policy("admin").disallowedTools).toContain("mcp__pg-prod");
+    expect(policy("admin").disallowedTools).toContain("mcp__acme-pg-prod");
     expect(policy("admin").skipPermissions).toBe(true);
     expect(policy("pal").disallowedTools).not.toContain("WebFetch");
     // Unedited roles are exactly what they were.

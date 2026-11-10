@@ -128,7 +128,7 @@ describe("humanDuration", () => {
 });
 
 describe("named waits", () => {
-  const PR = "https://github.com/acme/acme-be/pull/14538";
+  const PR = "https://github.com/acme/acme-api/pull/14538";
 
   test("a PR it opened: merged", () => {
     const r = builtinCheck("pr", PR);

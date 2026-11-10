@@ -229,7 +229,7 @@ describe("createClaudeCliLlm", () => {
     const claudeJsonPath = join(dir, "claude.json");
     writeFileSync(
       claudeJsonPath,
-      JSON.stringify({ mcpServers: { figma: { type: "http" }, datadog: { type: "http" }, notion: { type: "http" }, "pg-prod": { command: "x" } } }),
+      JSON.stringify({ mcpServers: { figma: { type: "http" }, datadog: { type: "http" }, notion: { type: "http" }, "acme-pg-prod": { command: "x" } } }),
     );
     // prints the env var, then the argument after --mcp-config, then whether --strict-mcp-config came after it
     const bin = fakeBin(
@@ -239,7 +239,7 @@ describe("createClaudeCliLlm", () => {
     const [flag, strict, cfg] = (await llm.complete({ system: "s", messages: [{ role: "user", content: "hi" }] })).split(" ");
     expect(flag).toBe("false");
     expect(strict).toBe("yes");
-    expect(Object.keys(JSON.parse(Buffer.from(cfg!, "base64").toString()).mcpServers)).toEqual(["notion", "pg-prod"]);
+    expect(Object.keys(JSON.parse(Buffer.from(cfg!, "base64").toString()).mcpServers)).toEqual(["notion", "acme-pg-prod"]);
 
     // a caller's own token is a bot turn too
     const own = await llm.complete({ system: "s", messages: [{ role: "user", content: "hi" }], oauthToken: "sk-ant-oat01-theirs" });
@@ -383,8 +383,8 @@ describe("createClaudeCliLlm", () => {
 
   test("summarizeTool shortens the host's paths in a description", () => {
     const home = process.env.HOME ?? "/Users/x";
-    const out = summarizeTool("Bash", JSON.stringify({ command: "x", description: `Search ${home}/Workspaces/acme-be` }));
-    expect(out.title).toBe("Run: 🏃 Search $Workspaces/acme-be");
+    const out = summarizeTool("Bash", JSON.stringify({ command: "x", description: `Search ${home}/Workspaces/acme-api` }));
+    expect(out.title).toBe("Run: 🏃 Search $Workspaces/acme-api");
   });
 
   test("summarizeTool names each kind of step", () => {
@@ -398,8 +398,8 @@ describe("createClaudeCliLlm", () => {
     expect(summarizeTool("Task", '{"prompt":"p"}').title).toBe("Agent: 🧩 Running a helper agent");
     expect(summarizeTool("Skill", '{"skill":"jarvis-source"}').title).toBe("Skill: 📘 jarvis-source");
     expect(summarizeTool("Workflow", '{"script":"x"}').title).toBe("WAgent: 👷 Running a workflow");
-    expect(summarizeTool("mcp__pg-prod__execute_sql", '{"sql":"select 1"}')).toEqual({
-      title: "MCP: 🔌 pg-prod execute_sql",
+    expect(summarizeTool("mcp__acme-pg-prod__execute_sql", '{"sql":"select 1"}')).toEqual({
+      title: "MCP: 🔌 acme-pg-prod execute_sql",
     });
     expect(summarizeTool("mcp__claude_ai_Slack__slack_read_thread", "{}").title).toBe("MCP: 🔌 Slack slack_read_thread");
   });

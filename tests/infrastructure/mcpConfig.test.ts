@@ -12,13 +12,13 @@ const servers = (json: string | undefined): string[] =>
 
 describe("mcpConfigFor", () => {
   const host = {
-    mcpServers: { figma: {}, datadog: {}, notion: {}, "pg-prod": {}, "clickhouse-sql-us-prod-ro": {}, later: {} },
+    mcpServers: { figma: {}, datadog: {}, notion: {}, "acme-pg-prod": {}, "clickhouse-sql-us-prod-ro": {}, later: {} },
     projects: { "/repo": { mcpServers: { playwright: {}, figma: {} } }, "/other": { mcpServers: { nope: {} } } },
   };
 
   test("denies figma and datadog, keeps everything else including a server added later", () => {
     expect(UNAUTHENTICATED_MCP_SERVERS).toEqual(["figma", "datadog"]);
-    expect(servers(mcpConfigFor(host, undefined))).toEqual(["notion", "pg-prod", "clickhouse-sql-us-prod-ro", "later"]);
+    expect(servers(mcpConfigFor(host, undefined))).toEqual(["notion", "acme-pg-prod", "clickhouse-sql-us-prod-ro", "later"]);
   });
 
   test("adds the project servers for the spawn's cwd only, and the denylist covers them too", () => {

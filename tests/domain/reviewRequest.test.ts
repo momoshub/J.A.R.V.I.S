@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { reviewRequestIn } from "../../src/domain/reviewRequest.ts";
 
-const PR = "https://github.com/acme/acme-fe/pull/8011";
+const PR = "https://github.com/acme/acme-web/pull/8011";
 
 describe("reviewRequestIn", () => {
   test("the shape people actually type", () => {
@@ -12,7 +12,7 @@ describe("reviewRequestIn", () => {
   });
 
   test("Slack's own link wrapping does not hide the url", () => {
-    expect(reviewRequestIn(`<@U1> review <${PR}|acme-fe#8011>`)).toBe(`review ${PR}`);
+    expect(reviewRequestIn(`<@U1> review <${PR}|acme-web#8011>`)).toBe(`review ${PR}`);
   });
 
   test("several PRs, in order, once each", () => {

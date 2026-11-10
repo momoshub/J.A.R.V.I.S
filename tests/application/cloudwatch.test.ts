@@ -15,7 +15,7 @@ const ADMIN = "UADMIN001";
 const EXEC = "UEXEC0001";
 const PAL = "UPAL00001";
 const NOW0 = Date.parse("2026-11-10T10:00:00Z");
-const GROUP = "/ecs/prod-api";
+const GROUP = "/ecs/prod-api-2";
 const DAY = 86_400_000;
 
 const user = (slackId: string, role: UserRole): AllowedUser => ({ slackId, role, displayName: slackId, addedBy: "x", createdAt: 0 });

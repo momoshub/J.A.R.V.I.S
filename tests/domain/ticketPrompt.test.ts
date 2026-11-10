@@ -12,7 +12,7 @@ const SOURCES = {
   tracker: "https://notion.so/tracker",
   sop: "https://notion.so/sop",
   pods: "https://notion.so/pods",
-  repoScope: parseRepoScope("acme/acme-be"),
+  repoScope: parseRepoScope("acme/acme-api"),
 };
 
 describe("canRaiseTickets", () => {
@@ -54,7 +54,7 @@ describe("ticketPrompt", () => {
 
   test("opens a PR only for a genuinely small fix, in a listed repo", () => {
     const p = ticketPrompt("x", "Evie", SOURCES);
-    expect(p).toContain("`acme/acme-be` - and nowhere else");
+    expect(p).toContain("`acme/acme-api` - and nowhere else");
     expect(p).toContain("SMALL means obvious and low risk");
     expect(p).toContain("it is not small");
     expect(p).toContain("Guessing at a fix is worse than not fixing");
@@ -113,8 +113,8 @@ describe("repo scope", () => {
   });
 
   test("takes a github url and normalises case, without duplicates", () => {
-    expect(parseRepoScope("https://github.com/acme/Adhoc/")).toEqual({ orgs: [], repos: ["acme/adhoc"] });
-    expect(parseRepoScope("acme, acme")).toEqual({ orgs: ["acme"], repos: [] });
+    expect(parseRepoScope("https://github.com/Acme/Adhoc/")).toEqual({ orgs: [], repos: ["acme/adhoc"] });
+    expect(parseRepoScope("acme, ACME")).toEqual({ orgs: ["acme"], repos: [] });
   });
 
   test("malformed entries are dropped, not half-accepted", () => {

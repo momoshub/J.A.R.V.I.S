@@ -207,7 +207,7 @@ describe("2fa", () => {
    * public test vector as a leaked key.
    */
   const RFC_VECTOR = base32("12345678901234567890");
-  const SEED = `otpauth://totp/acme:demo%40acme.io?secret=${RFC_VECTOR}&issuer=acme`;
+  const SEED = `otpauth://totp/acme:demo%40example.com?secret=${RFC_VECTOR}&issuer=acme`;
 
   const fakeTotp = (): TotpPort => {
     const rows = new Map<string, { uri: string; account?: string; addedBy: string; updatedAt: number }>();
@@ -279,11 +279,11 @@ describe("2fa", () => {
 
   test("a code, with the account and the time left", async () => {
     const deps = withTotp(45_000);
-    deps.totp.set("demo", SEED, OWNER, "demo@acme.io");
+    deps.totp.set("demo", SEED, OWNER, "demo@example.com");
     const out = await dispatchCommand(deps, actor(), "C1", "2fa demo");
     const expected = totpCode(parseTotpInput(SEED)!, 45_000);
     expect(out).toContain(expected);
-    expect(out).toContain("demo@acme.io");
+    expect(out).toContain("demo@example.com");
     expect(out).toContain("15s");
   });
 
@@ -313,7 +313,7 @@ describe("2fa", () => {
 
   test("list shows who added each one, and never the secret", async () => {
     const deps = withTotp(0);
-    deps.totp.set("demo", SEED, OWNER, "demo@acme.io");
+    deps.totp.set("demo", SEED, OWNER, "demo@example.com");
     const out = await dispatchCommand(deps, actor(), "C1", "2fa list");
     expect(out).toContain("demo");
     expect(out).toContain(OWNER);
