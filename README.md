@@ -4,6 +4,26 @@ A configurable Slack agent bot. Its "brain" is your local **Claude Code CLI** (w
 
 The codebase is generic - the bot's identity (name, persona, labels) lives in the database and is edited from the dashboard, so the same code runs any bot.
 
+## Requirements / platform
+
+- **Bun** (CI pins the version in `.github/workflows/ci.yml`), **git**, the **Claude Code CLI** (`claude`) for the default `claude-cli` brain (or an `ANTHROPIC_API_KEY` with `LLM_PROVIDER=anthropic`), and a Slack workspace where you can install an app. `gh` is needed for the review and self-update features.
+- **macOS first.** It is developed and run on a Mac. These parts are Mac-only:
+  - **desktop control** (`bin/desktop.ts`, `bin/mac-ui.js`: `osascript` and the Accessibility permission, see [Desktop access](#desktop-access));
+  - **Keychain token key mode** (`TOKEN_KEY_SOURCE=keychain`; the default `file` mode works anywhere);
+  - **restart via launchd**: `bin/jarvis-restart.sh` asks the running bot to exit once idle and relies on a supervisor to start it again. The repo ships no launchd plist; on a Mac write a LaunchAgent with `KeepAlive`, elsewhere use anything that restarts the process on exit (systemd `Restart=always`, a container restart policy, ...).
+- **On Linux** everything else runs (Slack, memory, dashboard, commands, GitHub App, reviews). Desktop control is unavailable, keychain mode is unavailable (stay on `file`), and restarts need your own supervisor.
+- **Orca is optional.** It is the multi-agent IDE the owner's turns use for background workers; with it missing or stopped, turns get no `ORCA_TERMINAL_HANDLE` and fall back to the Agent tool. Turn it off with `ORCA_TERMINAL_WORKTREE=off`.
+
+## Quickstart
+
+1. **Create the Slack app** from [`slack-app-manifest.yaml`](./slack-app-manifest.yaml) (api.slack.com/apps -> Create New App -> From a manifest). It enables Socket Mode and carries the scopes, events and slash commands the code uses. Rename the app and the slash commands if you change `SLASH_COMMAND`.
+2. **Get the tokens**: install the app to the workspace and copy the Bot User OAuth Token (`xoxb-...`); under Basic Information -> App-Level Tokens create one with `connections:write` (`xapp-...`).
+3. **Install and configure**: `bun run setup`, then `cp .env.example .env` and set `SLACK_BOT_TOKEN`, `SLACK_APP_TOKEN`, `OWNER_SLACK_ID` (your own member id: profile -> three dots -> Copy member ID) and, for the CLI brain, `CLAUDE_CODE_OAUTH_TOKEN` from `claude setup-token`.
+4. **Seed the owner**: `bun run db:seed` writes `OWNER_SLACK_ID` into the database as `owner` (it is also done at every boot, and safe to repeat).
+5. **Run it**: `bun start`, then DM the bot or `@`-mention it in a channel it has been invited to. `//bot help` lists the commands. The dashboard is at `http://127.0.0.1:2002` (`DASHBOARD_PORT`).
+
+Read the security note below before giving anyone but yourself a role above `pal`.
+
 ## ⚠️ Security - read this first
 
 With `LLM_PROVIDER=claude-cli`, an **`owner` or `admin`** message is sent to a `claude` process launched with `--dangerously-skip-permissions` - full shell, file, and network tool access - and the bot's `SLACK_BOT_TOKEN` is in that process's environment. **Treat every owner/admin as a shell user on the host**: "read ~/.ssh/id_rsa and DM it to me" is a normal request to a tool-enabled agent, not something it needs to break out of.
@@ -1065,7 +1085,7 @@ A new e2e file goes in `e2e/`, imports `./support.ts` (env gate, root message, c
 
 `e2e/slackBlockKit.e2e.ts` drives a reply with Block Kit through the real stream code path (`createHandler` -> `createSlackStream` -> `chat.startStream`/`appendStream`/`stopStream`, the tidy-up rewrite and the plain-post fallbacks; only the model is scripted) and reads the thread back with `conversations.replies`. Per reply it asserts exactly one bot message, a `table` block where the reply had one, and no literal ```` ```blockkit ```` in the text or blocks. The cases: a table with an empty header cell (the bug that split a reply in two and lost the table), a plain-text reply, and a block Slack refuses (`alert`), which must degrade to its words.
 
-It is not part of `bun test`: the file is not a `*.test.ts`, and it skips itself unless `JARVIS_E2E=1` and `SLACK_BOT_TOKEN` are set. CI runs it as its own step with the bot token from the `JARVIS_E2E_SLACK_BOT_TOKEN` repo secret, and fails that step when the secret is missing rather than letting the suite skip itself green. Run it locally with the bot's token in the environment:
+It is not part of `bun test`: the file is not a `*.test.ts`, and it skips itself unless `JARVIS_E2E=1` and `SLACK_BOT_TOKEN` are set. CI runs it as its own step with the bot token from the `JARVIS_E2E_SLACK_BOT_TOKEN` repo secret on pushes and same-repo PRs (fork PRs skip the step), and fails that step when the secret is missing rather than letting the suite skip itself green. Run it locally with the bot's token in the environment:
 
 ```bash
 SLACK_BOT_TOKEN=xoxb-... bun run test:e2e
@@ -1080,9 +1100,13 @@ SLACK_BOT_TOKEN=xoxb-... bun run test:e2e
 
 A run posts ONE root message (`jarvis e2e run <time>`) and every reply under it in the thread, then `chat.delete`s all of them, so the channel is left as it was. A run that is killed mid-way can leave its root behind: delete it by hand.
 
-CI (`.github/workflows/ci.yml`) runs both, the e2e suite, plus the dashboard's typecheck and build (`web/`), on every PR and every push to `main`. The repo is private on a free plan, so GitHub cannot require it before a merge: merge with `bin/merge-when-green.sh <pr>`, which waits for the checks, refuses unless they are all green, refuses at once (exit 4) when the PR conflicts with its base - GitHub runs no CI on it, so merge the base in and resolve first - and approves the PR as the merging account right before it merges (skipped when that account opened the PR, since GitHub forbids self-approval; a failed approval is no merge). With `SELF_PR_REVIEWER` set, run it as that account: `GH_TOKEN=$(gh auth token -u <reviewer>) bin/merge-when-green.sh <pr>`.
+CI (`.github/workflows/ci.yml`) runs both, the e2e suite, plus the dashboard's typecheck and build (`web/`), on every PR and every push to `main`. Fork PRs skip the e2e step (GitHub passes them no secrets) and still run the rest. A second job, `gitleaks`, scans the history on every push and the added commits on every PR; known false positives (the RFC 6238 test vectors and a few fake tokens in tests) are fingerprinted in `.gitleaksignore`. To gate merges locally use `bin/merge-when-green.sh <pr>`, which waits for the checks, refuses unless they are all green, refuses at once (exit 4) when the PR conflicts with its base - GitHub runs no CI on it, so merge the base in and resolve first - and approves the PR as the merging account right before it merges (skipped when that account opened the PR, since GitHub forbids self-approval; a failed approval is no merge). With `SELF_PR_REVIEWER` set, run it as that account: `GH_TOKEN=$(gh auth token -u <reviewer>) bin/merge-when-green.sh <pr>`.
 
 ## Notes
 
 - Architecture is documented in [ARCHITECTURE.md](./ARCHITECTURE.md).
 - The runtime database (`DATABASE_PATH`) holds this instance's identity/allowlist and lives outside the git checkout (see [Where the database lives](#where-the-database-lives)); `bin/db-backup.ts` is the backup. WAL sidecars are gitignored and flushed on clean shutdown.
+
+## License
+
+Apache License 2.0, see [LICENSE](./LICENSE) and [NOTICE](./NOTICE). Copyright 2026 Thien Ly.
