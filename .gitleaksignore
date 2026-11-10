@@ -1,19 +1,13 @@
 # Known gitleaks false positives, by fingerprint. Only test fixtures are listed:
 #  - tests/domain/totp.test.ts: the RFC 6238 appendix B seed (public test vector)
 #  - tests/domain/toolVisibility.test.ts:32: a made-up xoxb token fed to the redactor
-#  - tests/config/env.test.ts: a made-up DASHBOARD_TOKEN (matches in two old commits)
-030ae22d8f32f39c0bddb077065638d32cd46105:tests/domain/totp.test.ts:generic-api-key:17
-030ae22d8f32f39c0bddb077065638d32cd46105:tests/domain/totp.test.ts:generic-api-key:54
-030ae22d8f32f39c0bddb077065638d32cd46105:tests/domain/totp.test.ts:generic-api-key:82
-030ae22d8f32f39c0bddb077065638d32cd46105:tests/domain/totp.test.ts:generic-api-key:94
-432c400f14f30b6db6e40ab2a7233bfe15240199:tests/config/env.test.ts:generic-api-key:9
-8ddacda381c0432cac47c808397c56811e558aa6:tests/domain/totp.test.ts:generic-api-key:17
-8ddacda381c0432cac47c808397c56811e558aa6:tests/domain/totp.test.ts:generic-api-key:54
-8ddacda381c0432cac47c808397c56811e558aa6:tests/domain/totp.test.ts:generic-api-key:82
-8ddacda381c0432cac47c808397c56811e558aa6:tests/domain/totp.test.ts:generic-api-key:94
-d75f49199eb053b29cf49d6e631fd98d1b5b22bb:tests/domain/toolVisibility.test.ts:curl-auth-header:32
-e30eb7d3fa23e189c5a0dfab491c261bf808c16e:tests/domain/toolVisibility.test.ts:curl-auth-header:32
-e3551fe08d7856ac925f08cd39fc33851f0da0c1:tests/config/env.test.ts:generic-api-key:9
+#  - tests/config/env.test.ts: a made-up DASHBOARD_TOKEN (matches in old commits)
+1a3235e68d7f46f3c5bfb5e9309b0ce070754fb7:tests/domain/toolVisibility.test.ts:curl-auth-header:32
+576afa48407241fbd67f9db50a858df25943ee48:tests/domain/totp.test.ts:generic-api-key:17
+576afa48407241fbd67f9db50a858df25943ee48:tests/domain/totp.test.ts:generic-api-key:54
+576afa48407241fbd67f9db50a858df25943ee48:tests/domain/totp.test.ts:generic-api-key:82
+576afa48407241fbd67f9db50a858df25943ee48:tests/domain/totp.test.ts:generic-api-key:94
+8970aa5564d1107acc510bcf9de88ef62cb191ba:tests/config/env.test.ts:generic-api-key:9
 tests/domain/toolVisibility.test.ts:curl-auth-header:32
 tests/domain/totp.test.ts:generic-api-key:17
 tests/domain/totp.test.ts:generic-api-key:54
