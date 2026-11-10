@@ -8,9 +8,9 @@
 import { WebClient } from "@slack/web-api";
 
 export const TOKEN = process.env.SLACK_BOT_TOKEN ?? "";
-export const CHANNEL = process.env.JARVIS_E2E_CHANNEL ?? "C0TEST00005";
+export const CHANNEL = process.env.JARVIS_E2E_CHANNEL ?? "";
 export const KEEP = process.env.JARVIS_E2E_KEEP === "1";
-export const enabled = process.env.JARVIS_E2E === "1" && TOKEN !== "";
+export const enabled = process.env.JARVIS_E2E === "1" && TOKEN !== "" && CHANNEL !== "";
 
 export type SlackMessage = {
   ts?: string;

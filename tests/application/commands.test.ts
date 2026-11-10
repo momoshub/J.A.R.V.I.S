@@ -134,16 +134,16 @@ describe("dispatchCommand", () => {
   });
 
   test("a mention still reads after the transport has annotated it", async () => {
-    // production sends `<@U1:Robin>`, not `<@U1>` - reading only the bare form
+    // production sends `<@U1:Casey>`, not `<@U1>` - reading only the bare form
     // made every @user command silently target nobody
     const deps = build();
-    await dispatchCommand(deps, actor(), "C1", "add <@U1:Robin> admin");
+    await dispatchCommand(deps, actor(), "C1", "add <@U1:Casey> admin");
     expect(deps.users.get("U1")?.role).toBe("admin");
 
-    await dispatchCommand(deps, actor(), "C1", "demote <@U1:Robin>");
+    await dispatchCommand(deps, actor(), "C1", "demote <@U1:Casey>");
     expect(deps.users.get("U1")?.role).toBe("pal");
 
-    const limit = await dispatchCommand(deps, actor(), "C1", "limit <@U1:Robin> 25");
+    const limit = await dispatchCommand(deps, actor(), "C1", "limit <@U1:Casey> 25");
     expect(limit).toContain("<@U1>");
     expect(limit).toContain("25");
   });
@@ -1220,7 +1220,7 @@ describe("owner copy of slash commands", () => {
     deps.commandPrefix = "X/ev";
     deps.slashCommand = "/ev";
     deps.users.upsert({ slackId: OWNER, role: "owner", displayName: "Kai", addedBy: "x", createdAt: 1 });
-    deps.users.upsert({ slackId: "Upal", role: "pal", displayName: "Robin", addedBy: "x", createdAt: 1 });
+    deps.users.upsert({ slackId: "Upal", role: "pal", displayName: "Casey", addedBy: "x", createdAt: 1 });
     return deps;
   };
 

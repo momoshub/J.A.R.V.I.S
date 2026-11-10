@@ -13,8 +13,8 @@
  * narrow helper gives every role the door that its token already opens.
  *
  * The reads come back with names written in, because a bare id invites a
- * guess: summarising a thread it only saw \`U0ALEX00001\` in, the bot said
- * "Jordan" asked what Alex Example had asked.
+ * guess: summarising a thread it only saw \`U0ALEX00001\` in, the bot gave
+ * the wrong name for the person who asked it.
  */
 
 export const slackReadRules = (script?: string): string => {

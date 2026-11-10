@@ -69,7 +69,7 @@ const replies = async (dir: string) => {
 describe("slack-read.sh names every user id", () => {
   test("each message carries the author's name, not just the id", async () => {
     // the failure this exists for: the thread showed only U0ALEX00001 and the
-    // bot filled in "Jordan" from memory for Alex Example
+    // bot guessed a name from memory for U0ALEX00001
     const { messages } = await replies(fakeCurl());
     expect(messages[0]!.user_name).toBe("Alex Example");
     expect(messages[1]!.user_name).toBe("Jarvis");
@@ -90,7 +90,7 @@ describe("slack-read.sh names every user id", () => {
     const dir = fakeCurl();
     await replies(dir);
     const lookups = readFileSync(join(dir, "lookups.txt"), "utf8").trim().split("\n");
-    expect(lookups.sort()).toEqual(["U0ALEX00001", "U0OWNER0001", "U0BOT000001", "U0GONE00000"]);
+    expect(lookups.sort()).toEqual(["U0ALEX00001", "U0BOT000001", "U0GONE00000", "U0OWNER0001"]);
   });
 
   test("a read past ARG_MAX still comes back whole and named", async () => {

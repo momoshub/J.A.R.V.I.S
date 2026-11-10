@@ -523,7 +523,7 @@ describe("review fan-out cap", () => {
 });
 
 describe("per-repo review policy", () => {
-  const PR = "https://github.com/acme/sql-runner/pull/905";
+  const PR = "https://github.com/acme/report-exports/pull/905";
   const OTHER = "https://github.com/acme/acme-api/pull/1";
 
   const withPolicy = (decision?: string) => {
@@ -603,7 +603,7 @@ describe("per-repo review policy", () => {
 
   test("on approve-after nothing is approved up front", async () => {
     const { deps, calls, lines, reply, sys } = withPolicy(undefined);
-    await dispatchCommand(deps, actor(), "C1", "review-policy acme/sql-runner after");
+    await dispatchCommand(deps, actor(), "C1", "review-policy acme/report-exports after");
 
     await dispatchCommand(deps, actor(), "C1", `rv ${PR}`, { reply });
     expect(lines[0]).toContain("reviewing"); // no approval line first
@@ -636,7 +636,7 @@ describe("per-repo review policy", () => {
 
   test("loosening an approve-after repo takes an admin; tightening does not", async () => {
     const { deps, calls, reply } = withPolicy(undefined);
-    await dispatchCommand(deps, actor(), "C1", "review-policy acme/sql-runner after");
+    await dispatchCommand(deps, actor(), "C1", "review-policy acme/report-exports after");
     const pal = actor({ slackId: "U0PAL0006", role: "pal" });
     deps.users.upsert(pal);
 
@@ -715,7 +715,7 @@ describe("per-repo review policy", () => {
 
   test("a blocked review is not approved at all", async () => {
     const { deps, calls, lines, reply } = withPolicy("CHANGES_REQUESTED");
-    await dispatchCommand(deps, actor(), "C1", "review-policy acme/sql-runner after");
+    await dispatchCommand(deps, actor(), "C1", "review-policy acme/report-exports after");
 
     await dispatchCommand(deps, actor(), "C1", `rv ${PR}`, { reply });
     expect(calls).toEqual([]); // never approved
@@ -725,7 +725,7 @@ describe("per-repo review policy", () => {
 
   test("the policy is per repo, so others are untouched", async () => {
     const { deps, calls, lines, reply } = withPolicy();
-    await dispatchCommand(deps, actor(), "C1", "review-policy acme/sql-runner after");
+    await dispatchCommand(deps, actor(), "C1", "review-policy acme/report-exports after");
     await dispatchCommand(deps, actor(), "C1", "review-policy acme/acme-api first");
 
     await dispatchCommand(deps, actor(), "C1", `rv ${OTHER}`, { reply });
@@ -802,7 +802,7 @@ describe("per-repo review policy", () => {
     const deps = build();
     deps.settings = createSettingsRepo(db);
     await dispatchCommand(deps, actor(), "C1", `review-policy ${PR} after`);
-    expect(deps.settings.get("review_policy:acme/sql-runner")).toBe("approve-after");
+    expect(deps.settings.get("review_policy:acme/report-exports")).toBe("approve-after");
   });
 });
 

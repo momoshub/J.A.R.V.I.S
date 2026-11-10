@@ -66,7 +66,7 @@ const build = () => {
 
 const who = {
   slackUserId: STRANGER,
-  displayName: "Robin",
+  displayName: "Casey",
   channelId: "C1",
   threadTs: "100.1",
   text: "jarvis can you help me",
@@ -80,7 +80,7 @@ describe("requestAccess", () => {
     expect(reply).toContain("asked the owner");
     const toOwner = posts.find((p) => p.channel === OWNER);
     expect(toOwner?.text).toContain(`<@${STRANGER}>`);
-    expect(toOwner?.text).toContain("Robin");
+    expect(toOwner?.text).toContain("Casey");
     expect(toOwner?.text).toContain("jarvis can you help me"); // what they said, quoted
     expect(toOwner?.text).toContain("✅");
     expect(toOwner?.text).toContain("❌");
@@ -205,7 +205,7 @@ describe("a stranger speaking", () => {
       channelId: "C1",
       slackUserId: STRANGER,
       text: "hello?",
-      displayName: "Robin",
+      displayName: "Casey",
       threadTs: "100.1",
     });
     expect(denied.kind).toBe("denied");
@@ -229,7 +229,7 @@ describe("a stranger who keeps tagging", () => {
   test("gets one reply, and the conversation is not filled with refusals", async () => {
     const { deps } = build();
     const say = (text: string) =>
-      handleMessage(deps, { channelId: "C1", slackUserId: STRANGER, text, displayName: "Robin" });
+      handleMessage(deps, { channelId: "C1", slackUserId: STRANGER, text, displayName: "Casey" });
 
     const first = await say("jarvis?");
     expect(first.kind).toBe("denied"); // answered once

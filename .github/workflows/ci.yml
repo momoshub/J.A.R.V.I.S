@@ -24,13 +24,15 @@ jobs:
       - run: bun install --frozen-lockfile
       - run: bun run typecheck
       - run: bun test
-      # Real Slack, in the private #jarvis_self_testing (see README "Testing").
+      # Real Slack, in the private test channel named by the JARVIS_E2E_CHANNEL repository variable (see README "Testing").
       # A missing secret fails here: the suite would otherwise skip itself and pass.
       - name: e2e (real Slack)
         env:
           SLACK_BOT_TOKEN: ${{ secrets.JARVIS_E2E_SLACK_BOT_TOKEN }}
+          JARVIS_E2E_CHANNEL: ${{ vars.JARVIS_E2E_CHANNEL }}
         run: |
           test -n "$SLACK_BOT_TOKEN" || { echo "JARVIS_E2E_SLACK_BOT_TOKEN secret is not set" >&2; exit 1; }
+          test -n "$JARVIS_E2E_CHANNEL" || { echo "JARVIS_E2E_CHANNEL repository variable is not set" >&2; exit 1; }
           bun run test:e2e
       # The dashboard has its own deps and tsconfig, and only a build proves it bundles.
       - run: bun install --frozen-lockfile

@@ -25,7 +25,7 @@ const PAL = "U0PAL0001";
 const actor = (over: Partial<AllowedUser> = {}): AllowedUser => ({
   slackId: PAL,
   role: "pal",
-  displayName: "Robin",
+  displayName: "Casey",
   addedBy: "x",
   createdAt: 0,
   ...over,

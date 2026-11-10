@@ -28,7 +28,7 @@ describe("slackReadRules", () => {
 
   test("a person is named from the read, never from memory", () => {
     // the failure this exists for: a thread read showed only U0ALEX00001 and
-    // the bot called Alex Example "Jordan"
+    // the bot guessed the wrong name for U0ALEX00001
     const r = slackReadRules("/s.sh");
     expect(r).toContain("`user_name`");
     expect(r).toContain("`/s.sh user <id>`, never a name from memory");
