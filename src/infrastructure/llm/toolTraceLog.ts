@@ -10,9 +10,9 @@
  * Credential-shaped strings are redacted, and a huge output is clipped - a
  * debug log that fills the disk with one `cat` of a binary is its own outage.
  */
-import { appendFileSync, closeSync, fstatSync, mkdirSync, openSync, readSync } from "node:fs";
-import { join } from "node:path";
-import type { BillingContext, ToolTrace, ToolTraceSink } from "../../application/ports.ts";
+import { appendFileSync, closeSync, fstatSync, mkdirSync, openSync, readFileSync, readSync } from "node:fs";
+import { isAbsolute, join, relative } from "node:path";
+import type { BillingContext, ToolTrace, ToolTraceSink, TraceSpot } from "../../application/ports.ts";
 import { redactSecrets } from "../../domain/toolVisibility.ts";
 import type { DigestCall } from "../../domain/workflowFront.ts";
 
@@ -42,9 +42,30 @@ export const traceLine = (trace: ToolTrace, bill: BillingContext | undefined, no
   return `${JSON.stringify({ at: now.toISOString(), actor: bill?.actor, run: bill?.kind, ...body })}\n`;
 };
 
-export const createToolTraceLog = (dir: string, clock: () => Date = () => new Date()): ToolTraceSink => {
+/** Lines already in a file (0 when there is none), so numbering survives a restart. */
+const linesIn = (file: string): number => {
+  try {
+    let n = 0;
+    for (const byte of readFileSync(file)) if (byte === 10) n++;
+    return n;
+  } catch {
+    return 0;
+  }
+};
+
+/**
+ * Appends every trace and reports where it landed, as a path relative to
+ * `root` (the repo; nothing when the log lies outside it, so no host path ever
+ * leaves) and the line number, which the Slack card shows as "log at: ...". Counted in memory per file after one read.
+ */
+export const createToolTraceLog = (
+  dir: string,
+  clock: () => Date = () => new Date(),
+  root: string = process.cwd(),
+): ToolTraceSink => {
   const made = new Set<string>();
-  return (trace, bill) => {
+  const lines = new Map<string, number>();
+  return (trace, bill): TraceSpot | undefined => {
     const now = clock();
     const file = traceFileFor(dir, bill, now);
     const folder = join(file, "..");
@@ -52,7 +73,12 @@ export const createToolTraceLog = (dir: string, clock: () => Date = () => new Da
       mkdirSync(folder, { recursive: true });
       made.add(folder);
     }
+    const before = lines.get(file) ?? linesIn(file);
     appendFileSync(file, traceLine(trace, bill, now));
+    lines.set(file, before + 1);
+    const shown = relative(root, file);
+    // A log outside the repo has no path worth showing in a channel.
+    return shown.startsWith("..") || isAbsolute(shown) ? undefined : { file: shown, line: before + 1 };
   };
 };
 

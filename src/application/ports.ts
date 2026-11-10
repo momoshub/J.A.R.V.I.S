@@ -83,8 +83,14 @@ export type ToolTrace =
   | { readonly kind: "call"; readonly id: string; readonly name: string; readonly input: string; readonly parent?: string }
   | { readonly kind: "result"; readonly id: string; readonly isError: boolean; readonly output: string; readonly parent?: string };
 
-/** Told about every tool call and result; wired at the composition root. */
-export type ToolTraceSink = (trace: ToolTrace, bill: BillingContext | undefined) => void;
+/** Where a trace line landed: the log file (relative to the repo root) and its 1-based line. */
+export type TraceSpot = { readonly file: string; readonly line: number };
+
+/**
+ * Told about every tool call and result; wired at the composition root. A sink
+ * that keeps the line says where, so a card can point at it.
+ */
+export type ToolTraceSink = (trace: ToolTrace, bill: BillingContext | undefined) => void | TraceSpot;
 
 /**
  * The background agents a thread's turns started outside their own process

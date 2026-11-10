@@ -1,8 +1,8 @@
 /**
  * Tidying a finished turn's message.
  *
- * A long turn leaves a column of tool cards above its answer - "run: cd ...",
- * "run: sqlite3 ...", twenty of them - and once the work is done none of it is
+ * A long turn leaves a column of tool cards above its answer - "Running a command",
+ * "Reading a file", twenty of them - and once the work is done none of it is
  * worth the room. Reading the thread back a day later, the cards are what you
  * have to scroll past to find the sentence that mattered.
  *

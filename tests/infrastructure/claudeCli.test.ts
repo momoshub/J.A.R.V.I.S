@@ -12,7 +12,7 @@ import {
   usageOf,
 } from "../../src/infrastructure/llm/claudeCli.ts";
 import type { PromptMessage } from "../../src/domain/types.ts";
-import type { BillingContext, LlmStreamEvent, ToolTrace } from "../../src/application/ports.ts";
+import type { BillingContext, LlmStreamEvent, ToolTrace, ToolTraceSink } from "../../src/application/ports.ts";
 
 describe("renderPrompt", () => {
   test("empty window renders nothing", () => {
@@ -349,33 +349,84 @@ describe("createClaudeCliLlm", () => {
     expect(oneShot).toBe("[]");
   });
 
-  test("summarizeTool renders a Bash command", () => {
-    const out = summarizeTool("Bash", '{"command":"ls -la","description":"list"}');
-    expect(out.title).toContain("ls -la");
-    expect(out.details).toBe("ls -la");
+  test("summarizeTool titles a Bash step `Run: <emoji> <description>`, never the command", () => {
+    const out = summarizeTool("Bash", '{"command":"ls -la","description":"List files in current directory"}');
+    expect(out.title).toBe("Run: 🏃 List files in current directory");
+    expect(out.details).toBeUndefined();
+    expect(out.command).toBe("ls -la");
   });
 
-  test("summarizeTool keeps the whole Bash command even when the card is clipped", () => {
-    // A heredoc body pushes the real gh call past the 200-char card title.
+  test("summarizeTool does not fall back to the raw command without a description", () => {
+    const out = summarizeTool("Bash", '{"command":"curl -H secret https://x"}');
+    expect(out.title).toBe("Run: 🏃 Running a command");
+    expect(out.details).toBeUndefined();
+    expect(out.command).toBe("curl -H secret https://x");
+    expect(summarizeTool("Bash", '{"command":"ls","description":"  "}').title).toBe("Run: 🏃 Running a command");
+  });
+
+  test("summarizeTool points the card's details at the trace log line, never the command", () => {
+    const spot = { file: "logs/threads/C1/1.2.jsonl", line: 7 };
+    const out = summarizeTool("Bash", '{"command":"ls","description":"List files"}', spot);
+    expect(out.details).toBe("log at: logs/threads/C1/1.2.jsonl - line 7");
+    expect(out.details).not.toContain("ls -");
+    expect(summarizeTool("Read", '{"file_path":"/x"}', spot).details).toBe("log at: logs/threads/C1/1.2.jsonl - line 7");
+  });
+
+  test("summarizeTool keeps the whole Bash command even when the description is clipped", () => {
+    // A heredoc body pushes the real gh call far past any card length.
     const body = "x".repeat(400);
     const cmd = `cat > /tmp/r.md <<'EOF'\n${body}\nEOF\ngh pr review https://github.com/o/r/pull/1 --request-changes --body-file /tmp/r.md`;
-    const out = summarizeTool("Bash", JSON.stringify({ command: cmd }));
+    const out = summarizeTool("Bash", JSON.stringify({ command: cmd, description: "d".repeat(400) }));
     expect(out.title.length).toBeLessThanOrEqual(200);
-    expect(out.title).not.toContain("gh pr review"); // clipped out of the card
-    expect(out.command).toBe(cmd); // ... but preserved in full for matching
-  });
-
-  test("summarizeTool shortens the host's paths in what it shows", () => {
-    const home = process.env.HOME ?? "/Users/x";
-    const cmd = `cd ${home}/Workspaces/acme-be && git grep foo`;
-    const out = summarizeTool("Bash", JSON.stringify({ command: cmd }));
-    expect(out.title).toBe("run: cd $Workspaces/acme-be && git grep foo");
     expect(out.command).toBe(cmd);
   });
 
+  test("summarizeTool shortens the host's paths in a description", () => {
+    const home = process.env.HOME ?? "/Users/x";
+    const out = summarizeTool("Bash", JSON.stringify({ command: "x", description: `Search ${home}/Workspaces/acme-be` }));
+    expect(out.title).toBe("Run: 🏃 Search $Workspaces/acme-be");
+  });
+
+  test("summarizeTool names each kind of step", () => {
+    expect(summarizeTool("Read", '{"file_path":"/x"}')).toEqual({ title: "Tool: 📖 Reading a file" });
+    expect(summarizeTool("Edit", '{"file_path":"/x"}').title).toBe("Tool: ✏️ Editing a file");
+    expect(summarizeTool("WebSearch", '{"query":"q"}').title).toBe("Tool: 🌐 Searching the web");
+    expect(summarizeTool("Agent", '{"description":"Review the diff","prompt":"p"}').title).toBe("Agent: 🧩 Review the diff");
+    expect(summarizeTool("Agent", '{"description":"Try it","run_in_background":false}').title).toBe("FAgent: 🍴 Try it");
+    expect(summarizeTool("Agent", '{"description":"Try it","run_in_background":true}').title).toBe("Agent: 🧩 Try it");
+    expect(summarizeTool("Agent", '{"description":"Try it","subagent_type":"fork"}').title).toBe("Agent: 🧩 Try it");
+    expect(summarizeTool("Task", '{"prompt":"p"}').title).toBe("Agent: 🧩 Running a helper agent");
+    expect(summarizeTool("Skill", '{"skill":"jarvis-source"}').title).toBe("Skill: 📘 jarvis-source");
+    expect(summarizeTool("Workflow", '{"script":"x"}').title).toBe("WAgent: 👷 Running a workflow");
+    expect(summarizeTool("mcp__pg-prod__execute_sql", '{"sql":"select 1"}')).toEqual({
+      title: "MCP: 🔌 pg-prod execute_sql",
+    });
+    expect(summarizeTool("mcp__claude_ai_Slack__slack_read_thread", "{}").title).toBe("MCP: 🔌 Slack slack_read_thread");
+  });
+
+  test("summarizeTool calls an Orca worker start a WAgent and keeps its command", () => {
+    const cmd = "orca orchestration worker-start --spec x --agent claude --json";
+    const out = summarizeTool("Bash", JSON.stringify({ command: cmd, description: "Start a reviewer worker" }));
+    expect(out.title).toBe("WAgent: 👷 Start a reviewer worker");
+    expect(out.command).toBe(cmd);
+  });
+
+  test("summarizeTool calls a worker start a WAgent even when its command mentions the learnings API", () => {
+    const cmd = "orca orchestration worker-start --spec 'POST /api/learnings' --agent claude";
+    expect(summarizeTool("Bash", JSON.stringify({ command: cmd })).title).toBe("WAgent: 👷 Starting a worker agent");
+  });
+
+  test("summarizeTool calls memory writes and reads Memory, and still keeps the command", () => {
+    const cmd = "curl -s localhost:2002/api/learnings -d x";
+    const out = summarizeTool("Bash", JSON.stringify({ command: cmd, description: "Save a learning" }));
+    expect(out.title).toBe("Memory: 🧠 Save a learning");
+    expect(out.command).toBe(cmd);
+    expect(summarizeTool("Write", '{"file_path":"data/adapter-mirror/memory/NOTES.md"}').title).toBe("Memory: 🧠 Updating memory");
+    expect(summarizeTool("Read", '{"file_path":"x/memory/NOTES.md"}').title).toBe("Memory: 🧠 Reading a memory note");
+  });
+
   test("summarizeTool falls back to the tool name", () => {
-    expect(summarizeTool("Read", '{"file_path":"/x"}').title).toBe("Read");
-    expect(summarizeTool("Weird", "not json").title).toBe("Weird");
+    expect(summarizeTool("Weird", "not json").title).toBe("Tool: 🔧 Using Weird");
   });
 
   test("passes the rendered prompt to the binary on stdin", async () => {
@@ -434,6 +485,34 @@ describe("isReactCall", () => {
   });
 });
 
+describe("createClaudeCliLlm.stream cards", () => {
+  const toolEvents = (id: string, name: string, input: string): unknown[] => [
+    { type: "stream_event", event: { type: "message_start" } },
+    { type: "stream_event", event: { type: "content_block_start", index: 0, content_block: { type: "tool_use", id, name } } },
+    { type: "stream_event", event: { type: "content_block_delta", index: 0, delta: { type: "input_json_delta", partial_json: input } } },
+    { type: "stream_event", event: { type: "content_block_stop", index: 0 } },
+    { type: "stream_event", event: { type: "message_delta", delta: { stop_reason: "tool_use" } } },
+    { type: "result", subtype: "success", is_error: false, result: "done" },
+  ];
+  const cardOf = async (onToolTrace?: ToolTraceSink) => {
+    const llm = createClaudeCliLlm({ binPath: fakeStreamBin(toolEvents("t1", "Read", '{"file_path":"/x"}')), onToolTrace });
+    const events: LlmStreamEvent[] = [];
+    await llm.stream!({ system: "s", messages: [{ role: "user", content: "hi" }] }, (e) => events.push(e));
+    return events.find((e) => e.type === "tool") as Extract<LlmStreamEvent, { type: "tool" }>;
+  };
+
+  test("a sink that reports the line gives the card a log pointer", async () => {
+    const card = await cardOf(() => ({ file: "logs/threads/C1/1.jsonl", line: 4 }));
+    expect(card.title).toBe("Tool: 📖 Reading a file");
+    expect(card.details).toBe("log at: logs/threads/C1/1.jsonl - line 4");
+  });
+
+  test("a throwing sink or no sink leaves the card without details", async () => {
+    expect((await cardOf(() => { throw new Error("disk"); })).details).toBeUndefined();
+    expect((await cardOf()).details).toBeUndefined();
+  });
+});
+
 describe("createClaudeCliLlm.stream", () => {
   test("forwards text deltas and tool events and returns the final text", async () => {
     const llm = createClaudeCliLlm({ binPath: fakeStreamBin(STREAM_EVENTS) });
@@ -453,7 +532,8 @@ describe("createClaudeCliLlm.stream", () => {
     >;
     expect(tools).toHaveLength(2);
     expect(tools[0]).toMatchObject({ id: "toolu_1", status: "in_progress" });
-    expect(tools[0]!.title).toContain("ls");
+    expect(tools[0]!.title).toBe("Run: 🏃 Running a command");
+    expect(tools[0]!.command).toContain("ls");
     expect(tools[1]).toMatchObject({ id: "toolu_1", status: "complete" });
   });
 
@@ -694,7 +774,7 @@ describe("tracing every tool call in full", () => {
       { type: "result", subtype: "success", is_error: false, result: "done" },
     ];
     const traces: { trace: ToolTrace; bill: BillingContext | undefined }[] = [];
-    const llm = createClaudeCliLlm({ binPath: fakeStreamBin(events), onToolTrace: (trace, bill) => traces.push({ trace, bill }) });
+    const llm = createClaudeCliLlm({ binPath: fakeStreamBin(events), onToolTrace: (trace, bill) => void traces.push({ trace, bill }) });
     const bill = { actor: "U1", kind: "chat", channel: "C1", threadTs: "111.1" };
     await llm.stream!({ system: "s", messages: [{ role: "user", content: "hi" }], bill }, () => {});
     expect(traces.map((t) => t.trace)).toEqual([
@@ -716,7 +796,7 @@ describe("tracing every tool call in full", () => {
       { type: "result", subtype: "success", is_error: false, result: "  it is Thursday  " },
     ];
     const traces: ToolTrace[] = [];
-    const llm = createClaudeCliLlm({ binPath: fakeStreamBin(events), onToolTrace: (t) => traces.push(t) });
+    const llm = createClaudeCliLlm({ binPath: fakeStreamBin(events), onToolTrace: (t) => void traces.push(t) });
     expect(await llm.complete({ system: "s", messages: [{ role: "user", content: "day?" }] })).toBe("it is Thursday");
     expect(traces.map((t) => t.kind)).toEqual(["call", "result"]);
 
