@@ -1240,6 +1240,29 @@ describe("owner copy of slash commands", () => {
     expect(rest.every((p) => p.threadTs === "dm-1")).toBe(true);
   });
 
+  test("with a mirror channel the run lands there, not in the owner's DM", async () => {
+    const deps = withUsers();
+    deps.slashMirrorChannel = "CMIRROR";
+    const posted = slackCalls.posts.length;
+    deps.slack = {
+      ...deps.slack!,
+      post: async (channel, text, threadTs) => {
+        slackCalls.posts.push({ channel, text, threadTs });
+        return threadTs ? undefined : { channel, ts: `ch-${slackCalls.posts.length}` };
+      },
+    };
+    await slashFrom(deps, "Upal", "ask what is 2+2");
+
+    const all = slackCalls.posts.slice(posted);
+    expect(all.filter((p) => p.channel === OWNER)).toHaveLength(0);
+    const mirrored = all.filter((p) => p.channel === "CMIRROR");
+    expect(mirrored[0]?.text).toContain("<@Upal> ran");
+    expect(mirrored[0]?.threadTs).toBeUndefined();
+    const ts = mirrored[0] ? `ch-${posted + all.indexOf(mirrored[0]) + 1}` : "";
+    expect(mirrored.slice(1).map((p) => p.text)).toContain("drafted answer");
+    expect(mirrored.slice(1).every((p) => p.threadTs === ts)).toBe(true);
+  });
+
   test("two runs are two threads, not one pile", async () => {
     const deps = withUsers();
     await slashFrom(deps, "Upal", "ask what is 2+2");

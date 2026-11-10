@@ -204,6 +204,8 @@ export type HandleMessageDeps = {
   /** Configured message command prefix + slash name, for the command layer. */
   commandPrefix?: string;
   slashCommand?: string;
+  /** Channel for the owner's copy of other people's slash commands; unset is the owner's DM. */
+  slashMirrorChannel?: string;
 };
 
 /** Author id recorded for the bot's own turns (never a real Slack id). */
