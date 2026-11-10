@@ -48,7 +48,7 @@ export type WatcherDeps = {
     text: string;
     /** Resume the thread's session even if its rules changed since. */
     keepSession?: boolean;
-    /** Nobody typed it, so it queues without a busy notice. */
+    /** Nobody typed it: the bot started this turn itself. */
     unprompted?: boolean;
   }) => Promise<void>;
   /** Say something in the thread without spending a turn. */
@@ -112,8 +112,7 @@ export const createWatcher = (deps: WatcherDeps): Watcher => {
           // The session that set the watch holds the job; a restart in between
           // (shipping a feature, say) must not hand it to a cold turn.
           keepSession: true,
-          // The bot's own note to itself: queued behind a running turn, it must
-          // not tell the person "yours is next" about a message they never sent.
+          // The bot's own note to itself, not a message anyone sent.
           unprompted: true,
         })
         .catch(lost);

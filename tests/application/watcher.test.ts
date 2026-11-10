@@ -245,7 +245,7 @@ describe("watcher", () => {
     await w.tick();
     expect(turns[0]?.keepSession).toBe(true);
   });
-  test("a hand-back is marked as nobody's message, so it queues without a busy notice", async () => {
+  test("a hand-back is marked as nobody's message, so it is not read as a person's request", async () => {
     add({ check: "true" });
     now += EVERY;
     const w = build(async () => ({ code: 0, output: "" }));

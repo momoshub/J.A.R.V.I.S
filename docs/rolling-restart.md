@@ -87,7 +87,7 @@ Things to settle while building it:
   the bot loses it. Tickets move to the database, with the same TTL and use
   budget
 - the run registry and thread queue are rebuilt at boot from the `turns` table,
-  so the stop button, busy notices and one-turn-per-thread keep working across
+  so the stop button and one-turn-per-thread keep working across
   a restart
 - workflow steps and watch-fired turns become rows in `turns` like any other,
   which removes the phase 1 limit above

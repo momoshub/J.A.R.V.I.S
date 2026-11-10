@@ -230,13 +230,17 @@ describe("respond", () => {
     expect(await turn).toEqual({ kind: "ignored" });
   });
 
-  test("a busy thread is told what is in the way, in plain text", async () => {
-    // the notice used to carry Stop and Never-mind buttons. Slack now draws a
-    // native stop control on the session itself, so the home-made pair went
+  test("a message queued behind a running turn posts nothing, and still runs after it", async () => {
     const posted: string[] = [];
+    const seen: string[] = [];
+    const order: string[] = [];
     const deps = build({
-      complete: async () => {
+      complete: async (p) => {
+        const asked = p.messages[p.messages.length - 1]?.content ?? "";
+        seen.push(asked);
+        order.push(`start ${asked}`);
         await new Promise((r) => setTimeout(r, 30));
+        order.push(`end ${asked}`);
         return "ok";
       },
     });
@@ -244,60 +248,32 @@ describe("respond", () => {
     deps.runs = createRunRegistry();
     deps.slack = {
       ...quietSlack,
-      post: async (_c, text) => void posted.push(text),
+      post: async (channel, text) => {
+        posted.push(text);
+        return { channel, ts: `9.${posted.length}` };
+      },
       postInteractive: async () => {
-        throw new Error("the busy notice must not post buttons any more");
+        throw new Error("a queued message must not post anything");
       },
     };
 
     const inbound = { channelId: "C1", slackUserId: OWNER, threadTs: "200.1" };
     const first = respond(deps, { ...inbound, text: "the long one", messageTs: "200.1" });
     await new Promise((r) => setTimeout(r, 10));
-    const second = respond(deps, { ...inbound, text: "actually, this instead", messageTs: "200.2" });
+    let started = 0;
+    const second = respond(deps, { ...inbound, text: "and this", messageTs: "200.2" }, undefined, () => void started++);
+    await new Promise((r) => setTimeout(r, 5));
+    expect(started).toBe(0); // still waiting its turn
+    expect(posted).toEqual([]); // and nothing said about it
 
     await Promise.all([first, second]);
-    expect(posted).toHaveLength(1);
-    expect(posted[0]).toContain("the long one"); // names what is in the way
+    expect(posted).toEqual([]);
+    expect(started).toBe(1);
+    expect(seen).toEqual(["the long one", "and this"]);
+    expect(order).toEqual(["start the long one", "end the long one", "start and this", "end and this"]);
   });
 
-  test("the busy notice links the running ask, and goes once the queued one starts", async () => {
-    const posted: { text: string; ts: string }[] = [];
-    const removed: string[] = [];
-    let removedBeforeAnswer = false;
-    const deps = build({
-      complete: async (p) => {
-        if (p.messages[p.messages.length - 1]?.content === "and this") removedBeforeAnswer = removed.length === 1;
-        await new Promise((r) => setTimeout(r, 30));
-        return "ok";
-      },
-    });
-    deps.threadQueue = createThreadQueue();
-    deps.runs = createRunRegistry();
-    deps.slack = {
-      ...quietSlack,
-      permalink: async (c, ts) => `https://x.slack.com/archives/${c}/p${ts.replace(".", "")}`,
-      post: async (channel, text) => {
-        const ts = `9.${posted.length}`;
-        posted.push({ text, ts });
-        return { channel, ts };
-      },
-      remove: async (_c, ts) => void removed.push(ts),
-    };
-
-    const inbound = { channelId: "C1", slackUserId: OWNER, threadTs: "400.1" };
-    const first = respond(deps, { ...inbound, text: "the long one", messageTs: "400.1" });
-    await new Promise((r) => setTimeout(r, 10));
-    const second = respond(deps, { ...inbound, text: "and this", messageTs: "400.2" });
-
-    await Promise.all([first, second]);
-    expect(posted[0]?.text).toContain("<https://x.slack.com/archives/C1/p4001|the long one>");
-    expect(removed).toEqual([posted[0]!.ts]);
-    expect(removedBeforeAnswer).toBe(true); // gone before the queued turn answers
-  });
-
-  test("a watch hand-back queued behind a running turn posts no busy notice", async () => {
-    // a watch fired mid-turn and "yours is next" landed in the thread,
-    // addressed to someone who had typed nothing
+  test("a watch hand-back queued behind a running turn posts nothing either", async () => {
     const posted: string[] = [];
     const deps = build({
       complete: async () => {
@@ -321,7 +297,7 @@ describe("respond", () => {
     const handBack = respond(deps, { ...inbound, text: "watch ready", messageTs: "500.2", unprompted: true });
 
     await Promise.all([first, handBack]);
-    expect(posted.filter((t) => t.includes("yours is next") || t.includes("still on the one before"))).toEqual([]);
+    expect(posted).toEqual([]);
   });
 
   test("a message dropped before it ran never reaches the brain", async () => {
@@ -355,18 +331,6 @@ describe("respond", () => {
     const deps = build(llm("x"));
     await respond(deps, { channelId: "C1", slackUserId: OWNER, text: "!add <@UNEW> member" });
     expect(deps.users.get("UNEW")?.role).toBe("pal");
-  });
-});
-
-describe("the busy notice and following", () => {
-  test("a followed turn does not announce its place in the queue", async () => {
-    // "still working on X - yours is next" went into a public channel about a
-    // message nobody had addressed to the bot
-    const { couldFollowThread } = await import("../../src/domain/threadFollow.ts");
-    expect(couldFollowThread({ user: "U1", text: "hi", channel_type: "channel", ts: "2", thread_ts: "1" }, "UBOT")).toBe(true);
-
-    const src = await Bun.file("src/application/respond.ts").text();
-    expect(src).toContain("if (!inbound.following) busy = await announceBusy");
   });
 });
 

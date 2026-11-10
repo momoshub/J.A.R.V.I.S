@@ -282,8 +282,8 @@ Up to ${BOMB_SIZE} reactions; no category means *${DEFAULT_CATEGORY}*.`;
       }
       // Nothing is posted in the target thread: the message goes to its session
       // as an internal steer, and that turn is told to stay silent unless its
-      // work produces something for the people there. `unprompted` keeps a
-      // busy thread from announcing "yours is next" about a message nobody typed.
+      // work produces something for the people there. `unprompted` marks it
+      // as a turn nobody typed.
       void deps
         .runTurn({
           channelId: ref.channel,

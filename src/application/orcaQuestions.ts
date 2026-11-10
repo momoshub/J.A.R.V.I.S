@@ -138,7 +138,7 @@ export const createOrcaQuestionBridge = (deps: OrcaQuestionDeps): OrcaQuestionBr
           text: questionTurnText(q),
           // The session that started the worker holds the context to answer with.
           keepSession: true,
-          // Nobody typed it: no "yours is next" notice behind a running turn.
+          // Nobody typed it: the bot started this turn itself.
           unprompted: true,
           // A workflow's worker started it, and only its session (with full
           // tools) can run the reply - the front cannot run `orca`.

@@ -103,7 +103,7 @@ export type HandleMessageDeps = {
     keepSession?: boolean;
     /** A workflow step the bot started itself, not a human message. */
     autoContinue?: boolean;
-    /** Started by the bot, nobody typed it: no "yours is next" notice. */
+    /** Started by the bot, nobody typed it. */
     unprompted?: boolean;
     /** In a workflow thread, run on the worker's lane (see `InboundMessage`). */
     workerLane?: boolean;
@@ -240,8 +240,7 @@ export type InboundMessage = {
   autoContinue?: boolean;
   /**
    * Started by the bot itself, not typed by anyone: a watch handing the
-   * thread back. It still queues behind a running turn, but nobody is waiting
-   * on its place in line, so it posts no "yours is next" notice.
+   * thread back. It still queues behind a running turn.
    */
   unprompted?: boolean;
   /**

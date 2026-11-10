@@ -1,6 +1,5 @@
 import { describe, expect, test } from "bun:test";
 import {
-  busyNotice,
   forHowLong,
   nameOfRequest,
   stoppedNotice,
@@ -34,20 +33,6 @@ describe("nameOfRequest", () => {
 });
 
 describe("the notices", () => {
-  test("busy names what is in the way, not just that something is", () => {
-    // "still on the one before this" does not say which one, and in a thread
-    // with several asks in flight that is the only useful part
-    const text = busyNotice({ what: "the escalation plans", startedAt: 0 }, 120_000);
-    expect(text).toContain("the escalation plans");
-    expect(text).toContain("2m so far");
-    expect(text).toContain("yours is next");
-  });
-
-  test("busy links to the message in the way when it has a link", () => {
-    const text = busyNotice({ what: "push <auto> | now", startedAt: 0 }, 11_000, "https://x.slack.com/archives/C1/p1");
-    expect(text).toBe("⏳ still working on <https://x.slack.com/archives/C1/p1|push auto  now> (11s so far) - yours is next");
-  });
-
   test("stopped says what went, and by whom when it was not their own", () => {
     const run = { what: "the big review", startedAt: 0, actor: "U1" };
     expect(stoppedNotice(run, "U1", 60_000)).toBe("⏹ stopped *the big review* after 1m");

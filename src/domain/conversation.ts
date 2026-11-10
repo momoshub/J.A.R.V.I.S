@@ -89,10 +89,10 @@ export const cleanInboundText = (raw: string): string => raw.replace(/\s+/g, " "
  * The thread as it stood when this message was sent: nothing after it.
  *
  * A queued turn reads the thread when it finally runs, not when it was asked.
- * By then the bot's own "still working on ... yours is next" notice sits under
- * the message, and so may later asks that are each getting a turn of their
- * own. Left in, the notice became "the newest message" and the turn answered
- * the bot's own status line instead of the person waiting on it.
+ * By then later asks may sit under the message, each getting a turn of their
+ * own, and a thread from before the busy notice was removed may still hold the
+ * bot's own "still working on ... yours is next" line. Left in, that became
+ * "the newest message" and the turn answered the bot's own status line.
  *
  * Unknown or missing ts leaves the thread alone; the caller appends the
  * trigger itself when Slack has not caught up with it yet.
