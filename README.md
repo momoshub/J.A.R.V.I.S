@@ -1109,4 +1109,4 @@ CI (`.github/workflows/ci.yml`) runs both, the e2e suite (secret `JARVIS_E2E_SLA
 
 ## License
 
-Apache License 2.0, see [LICENSE](./LICENSE) and [NOTICE](./NOTICE). Copyright 2026 Thien Ly.
+Apache License 2.0, see [LICENSE](./LICENSE) and [NOTICE](./NOTICE). Copyright 2026 Momos.
