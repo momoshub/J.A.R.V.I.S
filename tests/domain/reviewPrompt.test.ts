@@ -164,6 +164,14 @@ describe("reviewPrompt per-owner shape", () => {
     expect(isAcmePr("https://github.com/o/acme/pull/1")).toBe(false);
     expect(isAcmePr("https://github.com/acme-fork/r/pull/1")).toBe(false);
     expect(isAcmePr("#12")).toBe(false);
+    expect(isAcmePr("12")).toBe(false);
+  });
+
+  test("isAcmePr reads the owner/repo#N shorthand too", () => {
+    expect(isAcmePr("acme/acme-be#7")).toBe(true);
+    expect(isAcmePr("acme/x#2")).toBe(true);
+    expect(isAcmePr("o/acme#7")).toBe(false);
+    expect(isAcmePr("acme/x")).toBe(false);
   });
 
   test("a acme PR posts non-blocking bullets and the out-of-scope bullet", () => {

@@ -47,9 +47,13 @@ const ownApprovalNote = (approvedUpFront: boolean, account: string): string =>
 /** GitHub owner whose PRs get non-blocking findings in the comment. */
 export const ACME_OWNER = "acme";
 
-/** Is this PR url in a acme repo (owner `acme`, case-insensitive)? A shorthand like `#12` has no owner: false. */
-export const isAcmePr = (url: string): boolean =>
-  /^https?:\/\/github\.com\/([^/\s]+)\//i.exec(url)?.[1]?.toLowerCase() === ACME_OWNER;
+/**
+ * Is this PR in a acme repo (owner `acme`, case-insensitive)? Reads a full
+ * url or the `owner/repo#123` shorthand; a bare `#12` or `12` has no owner: false.
+ */
+export const isAcmePr = (ref: string): boolean =>
+  (/^https?:\/\/github\.com\/([^/\s]+)\//i.exec(ref) ?? /^([^/\s#]+)\/[^/\s#]+#\d+$/.exec(ref.trim()))?.[1]?.toLowerCase() ===
+  ACME_OWNER;
 
 /** A PR counts as "big" (clone + child agents) past these thresholds. */
 export const BIG_PR_FILES = 5;

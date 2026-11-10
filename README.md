@@ -873,7 +873,7 @@ that would ship, missing or failing tests on a critical path, or failing CI.
 Everything else - design, cleanups, style, nits - is never posted, and never
 becomes a GitHub issue either: it is dropped.
 
-PRs in acme repos (GitHub owner `acme`, decided per PR url) are the
+PRs in acme repos (GitHub owner `acme`, decided per PR from a full url or `owner/repo#N`) are the
 exception: non-blocking findings (design risk, correctness, coding style, real
 cleanups) follow the blockers as bullets, worst first, under about 250 words for
 a normal PR, then one last "out of scope per the description: ... risk left
