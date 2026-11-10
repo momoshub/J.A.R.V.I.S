@@ -21,7 +21,7 @@ no classes.
   +-----------------+                                |
             |                                        |
             v                                        |
-       data/inbox.db  (SQLite queue)                 |
+       INBOX_DATABASE_PATH (SQLite queue)      |
             |                                        |
   +---------v--------------------------------------------------------------+
   | src/index.ts - the bot (SLACK_TRANSPORT=inbox)                          |
@@ -63,7 +63,7 @@ no classes.
   is the backup (snapshots into `DATABASE_BACKUP_DIR`, optionally committed to a
   repo of its own).
 - **Gateway / bot split.** `src/gateway.ts` only holds the Slack socket and
-  writes every envelope to `data/inbox.db`. The bot reads it through
+  writes every envelope to the inbox DB (`INBOX_DATABASE_PATH`). The bot reads it through
   `inboxReceiver`, a Bolt receiver, so every listener in `app.ts` runs exactly
   as it would over Socket Mode. Restarting the bot never drops Slack. With
   `SLACK_TRANSPORT=socket` (the default) the bot holds the socket itself and no

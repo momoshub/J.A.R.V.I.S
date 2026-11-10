@@ -2,14 +2,15 @@
  * The durable queue between the Slack gateway and the bot.
  *
  * Its own SQLite file, not the main database: two processes write it, it is
- * pure transient traffic, and the main database is committed to git while
- * this must never be. WAL lets the gateway write while the bot reads, and the
+ * pure transient traffic, and it belongs outside the git checkout like the
+ * main databases (`INBOX_DATABASE_PATH`, `~/` works). WAL lets the gateway write while the bot reads, and the
  * schema is created idempotently by whichever process opens it first - there
  * is no migration ladder, so keep this table boring and additive.
  */
 import { Database } from "bun:sqlite";
 import { mkdirSync } from "node:fs";
 import { dirname } from "node:path";
+import { resolveDbPath } from "../db/location.ts";
 import {
   dedupeKeyOf,
   KEEP_FINISHED_MS,
@@ -132,7 +133,9 @@ export type InboxRepo = {
   close: () => void;
 };
 
-export const openInbox = (path: string): InboxRepo => {
+/** Open (and create) the queue at `path`; `~` and relative paths resolve like `DATABASE_PATH`. */
+export const openInbox = (configuredPath: string): InboxRepo => {
+  const path = configuredPath === ":memory:" ? configuredPath : resolveDbPath(configuredPath);
   if (path !== ":memory:") mkdirSync(dirname(path), { recursive: true });
   const db = new Database(path, { create: true });
   db.exec("PRAGMA journal_mode = WAL");

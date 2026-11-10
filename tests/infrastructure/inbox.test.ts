@@ -1,4 +1,7 @@
 import { describe, expect, test } from "bun:test";
+import { existsSync, mkdtempSync, rmSync } from "node:fs";
+import { homedir, tmpdir } from "node:os";
+import { join } from "node:path";
 import {
   dedupeKeyOf,
   gatewayHealth,
@@ -667,5 +670,38 @@ describe("a restart holding the intake", () => {
     await Promise.all(receiver.drain());
     expect(seen).toEqual([]);
     expect(inbox.counts()).toMatchObject({ pending: 1 });
+  });
+});
+
+describe("openInbox path", () => {
+  const withCwd = (dir: string, run: () => void) => {
+    const before = process.cwd();
+    process.chdir(dir);
+    try {
+      run();
+    } finally {
+      process.chdir(before);
+    }
+  };
+
+  test("a relative path resolves against the working directory and creates its folder", () => {
+    const dir = mkdtempSync(join(tmpdir(), "inbox-rel-"));
+    try {
+      withCwd(dir, () => openInbox("sub/inbox.db").close());
+      expect(existsSync(join(dir, "sub", "inbox.db"))).toBe(true);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  test("`~/` expands to the home directory", () => {
+    const name = `.jarvis-inbox-test-${process.pid}`;
+    const dir = join(homedir(), name);
+    try {
+      openInbox(`~/${name}/inbox.db`).close();
+      expect(existsSync(join(dir, "inbox.db"))).toBe(true);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
   });
 });
