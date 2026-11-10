@@ -670,8 +670,8 @@ describe("the cards a running message shows", () => {
   type Card = { id: string; title: string; status: string; details?: string };
   /**
    * What Slack would show: a card per id in the order the ids first appeared,
-   * an update to a known id rewriting it in place - and keeping its details
-   * when the update has none (measured against the real API).
+   * an update to a known id rewriting title and status in place, and APPENDING
+   * its details to the card's (measured against the real API).
    */
   const column = (appends: Call[]): Card[] => {
     const cards = new Map<string, Card>();
@@ -679,7 +679,7 @@ describe("the cards a running message shows", () => {
       for (const c of (a.chunks ?? []) as Array<Card & { type: string }>) {
         if (c.type !== "task_update" || c.id === "__thinking__") continue;
         const was = cards.get(c.id);
-        cards.set(c.id, { id: c.id, title: c.title, status: c.status, details: c.details ?? was?.details });
+        cards.set(c.id, { id: c.id, title: c.title, status: c.status, details: c.details === undefined ? was?.details : (was?.details ?? "") + c.details });
       }
     return [...cards.values()];
   };
@@ -701,7 +701,7 @@ describe("the cards a running message shows", () => {
     expect(cards.every((c) => c.status === "complete")).toBe(true);
   });
 
-  test("a turn of five steps or fewer is sent as it always was", async () => {
+  test("a turn of five steps or fewer gets one card per step, on its own id", async () => {
     const f = fakeStreamer();
     const s = createSlackStream(f.make);
     run(s, 5);
@@ -790,7 +790,7 @@ describe("the cards a running message shows", () => {
     expect(cards).toHaveLength(VISIBLE_STEP_SLOTS);
   });
 
-  test("a step that fails counts as finished", async () => {
+  test("a step that fails counts as finished, and keeps its error when it is reused", async () => {
     const f = fakeStreamer();
     const s = createSlackStream(f.make);
     for (let i = 1; i <= 7; i++) {
@@ -798,7 +798,29 @@ describe("the cards a running message shows", () => {
       s.sink({ type: "tool", id: `t${i}`, title: `Step ${i}`, status: i % 2 ? "error" : "complete" });
     }
     await s.finish();
-    expect(column(f.appends)).toHaveLength(VISIBLE_STEP_SLOTS);
+    const cards = column(f.appends);
+    expect(cards).toHaveLength(VISIBLE_STEP_SLOTS);
+    expect(cards.map((c) => [c.title, c.status]).sort()).toEqual([
+      ["Step 3", "error"],
+      ["Step 4", "complete"],
+      ["Step 5", "error"],
+      ["Step 6", "complete"],
+      ["Step 7", "error"],
+    ]);
+    // steps 6 and 7 took over the slots of the two oldest finished steps
+    expect(cards.map((c) => c.id).sort()).toEqual(["t1", "t2", "t3", "t4", "t5"]);
+  });
+
+  test("a late finish for a step whose card was taken over adds no card", async () => {
+    const f = fakeStreamer();
+    const s = createSlackStream(f.make);
+    run(s, 7);
+    s.sink({ type: "tool", id: "t1", title: "Step 1", status: "error" });
+    s.sink({ type: "tool", id: "t2", title: "Step 2", status: "complete" });
+    await s.finish();
+    const cards = column(f.appends);
+    expect(cards).toHaveLength(VISIBLE_STEP_SLOTS);
+    expect(cards.map((c) => c.title).sort()).toEqual([3, 4, 5, 6, 7].map((n) => `Step ${n} · log line ${n}`));
   });
 
   test("a repeated step whose card scrolled away comes back as a fresh card with its count", async () => {
@@ -812,6 +834,19 @@ describe("the cards a running message shows", () => {
     const cards = column(f.appends);
     expect(cards.filter((c) => c.title === "Query (2 runs)")).toHaveLength(1);
     expect(cards.filter((c) => c.status === "in_progress")).toHaveLength(1);
+  });
+
+  test("a long grouped title keeps its run count beside the log line", async () => {
+    const f = fakeStreamer();
+    const s = createSlackStream(f.make);
+    const title = "Q".repeat(190);
+    s.sink({ type: "tool", id: "g1", title, command: "q", details: "log at: l.jsonl - line 12", status: "in_progress" });
+    s.sink({ type: "tool", id: "g2", title, command: "q", details: "log at: l.jsonl - line 40", status: "in_progress" });
+    await s.finish();
+    const chunks = f.appends.flatMap((a) => (a.chunks ?? []) as Array<{ title: string }>);
+    const last = chunks[chunks.length - 1]?.title ?? "";
+    expect(last.length).toBeLessThanOrEqual(200);
+    expect(last.endsWith(" (2 runs) · log line 12")).toBe(true);
   });
 
   test("the summary still counts every step, not the visible ones", async () => {
@@ -832,6 +867,61 @@ describe("the cards a running message shows", () => {
     const all = f.appends.flatMap((a) => (a.chunks ?? []) as Array<{ id: string }>);
     expect(all.some((c) => c.id === "__thinking__")).toBe(true);
     expect(column(f.appends)).toHaveLength(VISIBLE_STEP_SLOTS);
+  });
+});
+
+describe("step cards across a rollover", () => {
+  /** A Slack that takes ~`cap` characters a message, with the cards each message holds. */
+  const rolling = (cap: number) => {
+    const messages: { size: number; cards: Array<{ id: string; title: string; details?: string }> }[] = [];
+    const make = (): Streamer => {
+      const m = { size: 0, cards: [] as Array<{ id: string; title: string; details?: string }> };
+      messages.push(m);
+      return {
+        append: async (a) => {
+          const add = (a.markdown_text?.length ?? 0) + (a.chunks ? JSON.stringify(a.chunks).length : 0);
+          if (m.size + add > cap) throw new Error("An API error occurred: msg_too_long");
+          m.size += add;
+          for (const c of (a.chunks ?? []) as Array<{ id: string; title: string; details?: string }>) {
+            const was = m.cards.find((x) => x.id === c.id);
+            if (was) {
+              was.title = c.title;
+              if (c.details !== undefined) was.details = (was.details ?? "") + c.details;
+            } else m.cards.push({ id: c.id, title: c.title, details: c.details });
+          }
+        },
+        stop: async () => {},
+      };
+    };
+    return { make, messages };
+  };
+
+  test("a card that first appears in the continuation message carries the log file there too", async () => {
+    const f = rolling(2_000);
+    const s = createSlackStream(f.make);
+    const long = "x".repeat(150);
+    for (let i = 1; i <= 12; i++) {
+      s.sink({ type: "tool", id: `t${i}`, title: `Step ${i} ${long}`, details: `log at: ${"f".repeat(80)} - line ${i}`, status: "in_progress" });
+      s.sink({ type: "tool", id: `t${i}`, title: `Step ${i} ${long}`, status: "complete" });
+    }
+    await s.finish();
+    expect(f.messages.length).toBeGreaterThan(1);
+    for (const m of f.messages) {
+      expect(m.cards.length).toBeGreaterThan(0);
+      for (const c of m.cards) expect(c.details).toBe(`log at: ${"f".repeat(80)}`);
+    }
+  });
+
+  test("no message ever holds more than five cards", async () => {
+    const f = rolling(2_000);
+    const s = createSlackStream(f.make);
+    const long = "x".repeat(150);
+    for (let i = 1; i <= 12; i++) {
+      s.sink({ type: "tool", id: `t${i}`, title: `Step ${i} ${long}`, details: `log at: ${"f".repeat(80)} - line ${i}`, status: "in_progress" });
+      s.sink({ type: "tool", id: `t${i}`, title: `Step ${i} ${long}`, status: "complete" });
+    }
+    await s.finish();
+    for (const m of f.messages) expect(m.cards.length).toBeLessThanOrEqual(VISIBLE_STEP_SLOTS);
   });
 });
 
