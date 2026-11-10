@@ -884,8 +884,10 @@ On macOS the key can live in the login Keychain instead of a file:
   restart. Reviews then say there is nowhere to keep a token, and the log has one
   `[token-key] WARNING` line naming the cause. Unlock the Keychain and restart.
 
-The secret is passed to `security` as an argument, so it is briefly visible to
-other processes of the same user; it is never logged. The key is not in git and
+The key is written through `security -i` on stdin, so it never appears in a
+process's arguments, and it is never logged. A leftover key file next to an item
+holding the same key is deleted at boot (an interrupted move is finished); two
+different keys abort the boot. The key is not in git and
 not in `data/` any more, so back up the Keychain item (Keychain Access, or
 `security find-generic-password -s jarvis-token-key -w`) instead of a file.
 

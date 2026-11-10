@@ -12,15 +12,20 @@ import {
   KEY_BYTES,
   causeOf,
   classifyRead,
+  interactiveLine,
   parseKey,
   type SecurityRunner,
 } from "../../domain/tokenKey.ts";
 import { loadOrCreateKey } from "./secretBox.ts";
 
 /** The real runner. A missing binary (Linux) reads as exit 127, not a throw. */
-export const runSecurity: SecurityRunner = (args) => {
+export const runSecurity: SecurityRunner = (args, stdin) => {
   try {
-    const res = Bun.spawnSync(["security", ...args], { stdout: "pipe", stderr: "pipe" });
+    const res = Bun.spawnSync(["security", ...args], {
+      stdout: "pipe",
+      stderr: "pipe",
+      ...(stdin === undefined ? {} : { stdin: Buffer.from(stdin) }),
+    });
     return { status: res.exitCode, stdout: res.stdout.toString(), stderr: res.stderr.toString() };
   } catch (err) {
     return { status: 127, stdout: "", stderr: err instanceof Error ? err.message : "security not runnable" };
@@ -48,11 +53,22 @@ export type KeychainKeyOptions = {
  */
 export const loadKeychainKey = (opts: KeychainKeyOptions): TokenKeyOutcome => {
   const { security, service, account, keyPath } = opts;
-  const read = classifyRead(security(["find-generic-password", "-s", service, "-a", account, "-w"]));
+  const find = ["find-generic-password", "-s", service, "-a", account, "-w"];
+  const read = classifyRead(security(find));
   if (read.kind === "unavailable") return { kind: "unavailable", cause: read.cause };
   if (read.kind === "found") {
     const key = parseKey(read.value);
     if (!key) throw new Error(`Keychain item ${service} is not a ${KEY_BYTES}-byte base64 key`);
+    // A leftover key file is either the same key (a migration that stopped before
+    // the delete: finish it) or a different one (two keys, one database: stop).
+    if (existsSync(keyPath)) {
+      const file = loadOrCreateKey(keyPath);
+      if (!file.equals(key)) {
+        throw new Error(`Keychain item ${service} and ${keyPath} hold different keys; remove the one that is wrong`);
+      }
+      unlinkSync(keyPath);
+      return { kind: "key", key, note: `finished moving the token key from ${keyPath} into the Keychain` };
+    }
     return { kind: "key", key };
   }
 
@@ -66,13 +82,23 @@ export const loadKeychainKey = (opts: KeychainKeyOptions): TokenKeyOutcome => {
   }
   const key = fromFile ? loadOrCreateKey(keyPath) : randomBytes(KEY_BYTES);
   const b64 = key.toString("base64");
-  const add = security(["add-generic-password", "-U", "-s", service, "-a", account, "-w", b64]);
+  // `security -i` reads the command from stdin, so the key is never in an argv.
+  const add = security(
+    ["-i"],
+    interactiveLine(["add-generic-password", "-U", "-s", service, "-a", account, "-w", b64]),
+  );
   if (add.status !== 0) return { kind: "unavailable", cause: causeOf(add, [b64]) };
-  const back = classifyRead(security(["find-generic-password", "-s", service, "-a", account, "-w"]));
-  const stored = back.kind === "found" ? parseKey(back.value) : undefined;
+  const back = classifyRead(security(find));
+  if (back.kind !== "found") {
+    // `-i` can exit 0 for a command that failed; an item that is not there did not land.
+    return { kind: "unavailable", cause: "the Keychain accepted no write for the token key" };
+  }
+  const stored = parseKey(back.value);
   if (!stored || !stored.equals(key)) {
+    // Never leave a wrong item behind: the next boot would trust it over the file.
+    security(["delete-generic-password", "-s", service, "-a", account]);
     throw new Error(
-      `Keychain item ${service} did not read back identical after writing${fromFile ? `; ${keyPath} was kept` : ""}`,
+      `Keychain item ${service} did not read back identical after writing; removed it${fromFile ? ` and kept ${keyPath}` : ""}`,
     );
   }
   if (fromFile) {

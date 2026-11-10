@@ -9,8 +9,16 @@ export type TokenKeySource = "file" | "keychain";
 /** What one `security` invocation returned. Never carries the arguments. */
 export type SecurityResult = { status: number; stdout: string; stderr: string };
 
-/** Runs `security <args>`. Injected so tests never touch a real Keychain. */
-export type SecurityRunner = (args: string[]) => SecurityResult;
+/**
+ * Runs `security <args>`, with `stdin` fed to it when given. Injected so tests
+ * never touch a real Keychain. Secrets go through `stdin` (with `-i`), never
+ * through args, which any local process can read while the command runs.
+ */
+export type SecurityRunner = (args: string[], stdin?: string) => SecurityResult;
+
+/** One command line for `security -i`, each word double-quoted. */
+export const interactiveLine = (words: string[]): string =>
+  `${words.map((w) => `"${w.replace(/(["\\])/g, "\\$1")}"`).join(" ")}\n`;
 
 /** A base64 AES-256 key, or undefined when the text is anything else. */
 export const parseKey = (b64: string): Buffer | undefined => {

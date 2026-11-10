@@ -20,3 +20,10 @@ describe("tokenKey", () => {
     expect(text).toBe("security exited 1: bad [redacted] here");
   });
 });
+
+import { interactiveLine } from "../../src/domain/tokenKey.ts";
+describe("interactiveLine", () => {
+  test("quotes every word and escapes quotes and backslashes", () => {
+    expect(interactiveLine(["add", "-s", 'a "b"', "c\\d"])).toBe('"add" "-s" "a \\"b\\"" "c\\\\d"\n');
+  });
+});

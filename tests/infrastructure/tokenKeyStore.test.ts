@@ -9,6 +9,7 @@ import { loadKeychainKey, resolveTokenKey } from "../../src/infrastructure/db/to
 type Fake = {
   run: SecurityRunner;
   calls: string[][];
+  stdins: (string | undefined)[];
   item: () => string | undefined;
 };
 
@@ -19,8 +20,14 @@ const fakeKeychain = (
 ): Fake => {
   let item = initial;
   const calls: string[][] = [];
-  const run: SecurityRunner = (args) => {
+  const stdins: (string | undefined)[] = [];
+  const run: SecurityRunner = (args, stdin) => {
     calls.push(args);
+    stdins.push(stdin);
+    if (args[0] === "delete-generic-password") {
+      item = undefined;
+      return { status: 0, stdout: "", stderr: "" };
+    }
     if (args[0] === "find-generic-password") {
       if (opts.readFail) return opts.readFail;
       return item === undefined
@@ -28,11 +35,11 @@ const fakeKeychain = (
         : { status: 0, stdout: `${item}\n`, stderr: "" };
     }
     if (opts.writeFail) return opts.writeFail;
-    const secret = args[args.indexOf("-w") + 1] ?? "";
+    const secret = /"-w" "([^"]*)"/.exec(stdin ?? "")?.[1] ?? "";
     item = opts.corruptWrite ? randomBytes(32).toString("base64") : secret;
     return { status: 0, stdout: "", stderr: "" };
   };
-  return { run, calls, item: () => item };
+  return { run, calls, stdins, item: () => item };
 };
 
 const setup = () => {
@@ -67,10 +74,12 @@ describe("keychain key source", () => {
     expect(out.kind === "key" && out.key.equals(key)).toBe(true);
     expect(kc.item()).toBe(key.toString("base64"));
     expect(existsSync(keyPath)).toBe(false);
-    expect(kc.calls.some((c) => c[0] === "add-generic-password" && c.includes("-U"))).toBe(true);
+    expect(kc.stdins.some((s) => s?.includes("add-generic-password") && s.includes('"-U"'))).toBe(true);
+    // the key travels on stdin only, never in an argument list
+    expect(kc.calls.flat().some((a) => a.includes(key.toString("base64")))).toBe(false);
   });
 
-  test("read-back mismatch aborts the boot and keeps the file", () => {
+  test("read-back mismatch aborts, removes the bad item and keeps the file", () => {
     const { keyPath } = setup();
     const key = randomBytes(32);
     writeFileSync(keyPath, key.toString("base64"));
@@ -79,6 +88,38 @@ describe("keychain key source", () => {
       /did not read back identical/,
     );
     expect(readFileSync(keyPath, "utf8")).toBe(key.toString("base64"));
+    expect(kc.item()).toBeUndefined();
+  });
+
+  test("an item and a leftover file holding the same key: the migration is finished", () => {
+    const { keyPath } = setup();
+    const key = randomBytes(32);
+    writeFileSync(keyPath, key.toString("base64"));
+    const kc = fakeKeychain(key.toString("base64"));
+    const out = loadKeychainKey({ ...base, keyPath, security: kc.run, hasSealedRows: () => true });
+    expect(out.kind === "key" && out.key.equals(key)).toBe(true);
+    expect(existsSync(keyPath)).toBe(false);
+  });
+
+  test("an item and a file holding different keys abort the boot and touch neither", () => {
+    const { keyPath } = setup();
+    const fileKey = randomBytes(32).toString("base64");
+    writeFileSync(keyPath, fileKey);
+    const item = randomBytes(32).toString("base64");
+    const kc = fakeKeychain(item);
+    expect(() => loadKeychainKey({ ...base, keyPath, security: kc.run, hasSealedRows: () => true })).toThrow(
+      /different keys/,
+    );
+    expect(readFileSync(keyPath, "utf8")).toBe(fileKey);
+    expect(kc.item()).toBe(item);
+  });
+
+  test("a write that exits 0 but lands nothing is unavailable, not a mint", () => {
+    const kc = fakeKeychain();
+    const silent: SecurityRunner = (args, stdin) => (args[0] === "-i" ? { status: 0, stdout: "", stderr: "" } : kc.run(args, stdin));
+    expect(loadKeychainKey({ ...base, ...setup(), security: silent, hasSealedRows: () => false }).kind).toBe(
+      "unavailable",
+    );
   });
 
   test("item missing, no file, empty database: a fresh key is minted into the Keychain", () => {
