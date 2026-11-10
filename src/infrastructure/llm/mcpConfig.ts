@@ -43,6 +43,21 @@ export const mcpConfigFor = (
   return JSON.stringify({ mcpServers: merged });
 };
 
+/**
+ * Local stdio servers in `~/.claude.json` (user scope) that `DB_MCP_SERVERS`
+ * does not name. A database server missing from that list is reachable by
+ * every role, so the host logs these at boot: some may be harmless, but each
+ * one is worth a look. Names may be given with or without the `mcp__` prefix.
+ */
+export const unlistedLocalMcpServers = (claudeJson: unknown, dbServers: readonly string[]): string[] => {
+  const user = asRecord(asRecord(claudeJson)?.mcpServers);
+  if (!user) return [];
+  const listed = new Set(dbServers.map((n) => n.trim().replace(/^mcp__/, "")));
+  return Object.entries(user)
+    .filter(([name, def]) => typeof asRecord(def)?.command === "string" && !listed.has(name))
+    .map(([name]) => name);
+};
+
 /** `~/.claude.json`, re-read only when it changes. Never written. */
 export const createClaudeJsonReader = (path: string = join(homedir(), ".claude.json")): (() => unknown) => {
   let cached: { stamp: string; value: unknown } | undefined;
