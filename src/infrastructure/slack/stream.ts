@@ -137,7 +137,7 @@ export const VISIBLE_STEP_SLOTS = 5;
  * (measured: `XX` then `YY` shows `XXYY`, and the same text twice shows it
  * twice), so a card taken over by another step cannot be given that step's
  * pointer. The file is the same for the whole thread, so it is sent once per
- * card, where it stays true for whichever step holds it, and the line number -
+ * card per message, where it stays true for whichever step holds it, and the line number -
  * the part that differs - goes in the title, which an update does replace.
  */
 const LOG_POINTER = /^(log at: .+?) - line (\d+)$/;
