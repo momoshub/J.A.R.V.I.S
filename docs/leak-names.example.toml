@@ -1,0 +1,8 @@
+# Template for the uncommitted names rule. Copy to ~/.jarvis/leak-names.toml (chmod 600)
+# and put the real people and brand names there. Never commit the real file.
+# CI reads the same content from the LEAK_NAMES_TOML Actions secret.
+[[rules]]
+id = "private-names"
+description = "real people or brand names"
+regex = '''(?i)\b(?:jane doe|acme secret project)\b'''
+keywords = ["jane", "acme"]

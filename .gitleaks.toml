@@ -1,0 +1,38 @@
+# Leak guard for this public repo. Extends the gitleaks default rules with two
+# project rules. A third rule (real people and brand names) is NOT committed, as
+# listing the names here would publish them: it is loaded from an uncommitted file
+# by bin/leak-scan.sh (see docs/leak-names.example.toml and the README).
+title = "jarvis leak guard"
+
+[extend]
+useDefault = true
+
+[allowlist]
+description = "this config names the patterns it hunts"
+paths = ['''^\.gitleaks\.toml$''', '''^docs/leak-names\.example\.toml$''']
+
+# (a) Slack ids that look real (U/C/D/G/W + 0 + 8-10 random chars).
+[[rules]]
+id = "slack-real-looking-id"
+description = "Slack user/channel/DM/group/workspace id that is not an obvious test fake"
+regex = '''\b[UCDGW]0[A-Z0-9]{8,10}\b'''
+keywords = ["u0", "c0", "d0", "g0", "w0"]
+
+  [rules.allowlist]
+  description = "fake shapes used in tests: a word, zero padding, a counter (U0OWNER0001, C0TEST0000N, U0NUISANCE) or 0123456789"
+  regexTarget = "match"
+  regexes = ['''^[UCDGW]0(?:[A-Z]{2,8}0*[0-9N]{0,4}|123456789)$''']
+
+# (b) the employer name: only the copyright lines may carry it.
+[[rules]]
+id = "employer-name"
+description = "employer name outside the copyright lines"
+regex = '''(?i)momos'''
+keywords = ["momos"]
+
+  [[rules.allowlists]]
+  description = "the copyright line in LICENSE, NOTICE and the README license line"
+  condition = "AND"
+  paths = ['''^(LICENSE|NOTICE|README\.md)$''']
+  regexTarget = "line"
+  regexes = ['''Copyright 2026 Momos\b''']
