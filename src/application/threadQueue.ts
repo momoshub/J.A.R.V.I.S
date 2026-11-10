@@ -22,7 +22,7 @@
 export type ThreadQueue = {
   /** Run `task` after anything already queued for `key`. */
   run: <T>(key: string, task: () => Promise<T>) => Promise<T>;
-  /** How many turns are waiting or running for `key`, for telling someone. */
+  /** How many turns are waiting or running for `key`, for callers that wait on a thread (workflow checks). */
   depth: (key: string) => number;
 };
 
