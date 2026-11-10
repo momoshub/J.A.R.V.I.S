@@ -46,16 +46,23 @@ jobs:
         working-directory: web
 
   # Secret scan with the gitleaks CLI (the action needs a licence for organisations).
-  # Push: the whole history. Pull request: only the commits it adds. False positives
-  # (test vectors, fake tokens) are allowlisted by value in .gitleaks.toml. Rules: .gitleaks.toml plus
-  # the private names rule from the LEAK_NAMES_TOML secret (skipped with a notice when unset,
-  # e.g. on fork PRs), both through bin/leak-scan.sh.
+  # Push: the whole history. Pull request: only the commits it adds. Both scan the diffs and,
+  # separately, the commit messages, file paths and annotated tag messages, which gitleaks git
+  # never reads. False positives (test vectors, fake tokens) are allowlisted by value in
+  # .gitleaks.toml. Rules: .gitleaks.toml plus the private names rule from the LEAK_NAMES_TOML
+  # secret, both through bin/leak-scan.sh. The secret is required wherever GitHub passes it
+  # (pushes, same-repo PRs), so a deleted or renamed secret fails instead of skipping names;
+  # only fork PRs skip it.
+  # The log is public: never -v, and LEAK_SCAN_QUIET keeps gitleaks' own output (a panic on a
+  # broken names regex prints every name) out of it. Locations only.
   gitleaks:
     runs-on: ubuntu-latest
     timeout-minutes: 10
     env:
       GITLEAKS_VERSION: 8.30.1
       LEAK_NAMES_TOML: ${{ secrets.LEAK_NAMES_TOML }}
+      LEAK_NAMES_REQUIRED: ${{ github.event_name == 'push' || github.event.pull_request.head.repo.full_name == github.repository }}
+      LEAK_SCAN_QUIET: "true"
     steps:
       - uses: actions/checkout@v4
         with:
@@ -64,23 +71,28 @@ jobs:
         run: |
           curl -sSfL "https://github.com/gitleaks/gitleaks/releases/download/v${GITLEAKS_VERSION}/gitleaks_${GITLEAKS_VERSION}_linux_x64.tar.gz" | tar -xz -C /usr/local/bin gitleaks
           gitleaks version
-      - name: scan history (push)
-        if: github.event_name == 'push'
-        # never -v here: the log is public, and a verbose finding prints the text around
-        # the match in clear (a second name on the line, an id next to it). Locations only.
+      - name: pick the range
+        run: |
+          if [ "${{ github.event_name }}" = pull_request ]; then
+            echo "LEAK_SCAN_RANGE=${{ github.event.pull_request.base.sha }}..${{ github.event.pull_request.head.sha }}" >> "$GITHUB_ENV"
+          else
+            git fetch -q --tags origin
+            echo "LEAK_SCAN_RANGE=HEAD" >> "$GITHUB_ENV"
+            echo "LEAK_SCAN_TAGS=$(git for-each-ref refs/tags --format='%(objectname)' | tr '\n' ' ')" >> "$GITHUB_ENV"
+          fi
+      - name: scan the diffs
         run: |
           set +e
-          bin/leak-scan.sh git . --redact --no-banner --report-format json --report-path leaks.json
+          bin/leak-scan.sh git . --redact --no-banner --report-format json --report-path leaks.json --log-opts="$LEAK_SCAN_RANGE"
           code=$?
           set -e
           jq -r '.[] | "\(.RuleID) \(.File):\(.StartLine) \(.Commit[0:8])"' leaks.json 2>/dev/null || true
           exit "$code"
-      - name: scan the PR range
-        if: github.event_name == 'pull_request'
+      - name: scan commit messages, file paths and tag messages
         run: |
           set +e
-          bin/leak-scan.sh git . --redact --no-banner --report-format json --report-path leaks.json --log-opts="${{ github.event.pull_request.base.sha }}..${{ github.event.pull_request.head.sha }}"
+          bin/leak-scan.sh meta --redact --no-banner --report-format json --report-path leaks-meta.json
           code=$?
           set -e
-          jq -r '.[] | "\(.RuleID) \(.File):\(.StartLine) \(.Commit[0:8])"' leaks.json 2>/dev/null || true
+          jq -r '.[] | "\(.RuleID) in a commit message, file path or tag message"' leaks-meta.json 2>/dev/null || true
           exit "$code"

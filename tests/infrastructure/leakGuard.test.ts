@@ -123,6 +123,58 @@ describe.skipIf(!HAS_GITLEAKS)("leak guard", () => {
     expect(r.out).toContain("BLOCKED");
   });
 
+  test("pre-push scans commits that are already on another remote but new to this one", () => {
+    const { repo, env } = makeRepo();
+    expect(sh(repo, "git init -q --bare ../backup.git && git remote add backup ../backup.git", env).code).toBe(0);
+    writeFileSync(join(repo, "leak.txt"), "const id = 'U07AB12" + "CD3E';\n");
+    expect(sh(repo, "git checkout -qb feat && git add leak.txt && git commit -qm leak --no-verify && git push -q --no-verify backup feat", env).code).toBe(0);
+    const r = sh(repo, "git push origin feat", env);
+    expect(r.code).not.toBe(0);
+    expect(r.out).toContain("BLOCKED");
+  });
+
+  test("pre-push blocks a leak in a commit message, a file path or an annotated tag message", () => {
+    const { repo, env } = makeRepo();
+    const id = "U07AB12" + "CD3E";
+    const msg = sh(repo, `git checkout -qb m && echo a > a.txt && git add a.txt && git commit -qm "asked in ${id}" --no-verify && git push origin m`, env);
+    expect(msg.code).not.toBe(0);
+    expect(msg.out).toContain("commit message, a file path or a tag message");
+    const path = sh(repo, `git checkout -q main && git checkout -qb p && mkdir -p notes && echo a > "notes/${EMP}.md" && git add notes && git commit -qm notes --no-verify && git push origin p`, env);
+    expect(path.code).not.toBe(0);
+    expect(path.out).toContain("employer-name");
+    const tag = sh(repo, `git checkout -q main && git tag -a v1 -m "owned by ${EMP}" && git push origin v1`, env);
+    expect(tag.code).not.toBe(0);
+    expect(tag.out).toContain("employer-name");
+  });
+
+  test("ids with any digit after the prefix are scanned, not dropped by a keyword prefilter", () => {
+    const { repo, env } = makeRepo();
+    for (const id of ["U3N4QJ" + "7KX", "C5ABCDE" + "FGH"]) {
+      writeFileSync(join(repo, "id.txt"), `owner: ${id}\n`);
+      const r = sh(repo, "bin/leak-scan.sh dir id.txt --no-banner --redact -v", env);
+      expect(r.out).toContain("slack-real-looking-id");
+    }
+  });
+
+  test("quiet mode (CI) keeps a broken names rule out of the log and fails", () => {
+    const { repo, env } = makeRepo();
+    writeFileSync(join(repo, "a.txt"), "hello\n");
+    const toml = `[[rules]]\nid = "private-names"\nregex = '''(?i)(jane doe|richard roe'''\n`;
+    const r = sh(repo, "bin/leak-scan.sh dir a.txt --no-banner", { ...env, LEAK_SCAN_QUIET: "true", LEAK_NAMES_TOML: toml });
+    expect(r.code).not.toBe(0);
+    expect(r.out.toLowerCase()).not.toContain("jane doe");
+    expect(r.out.toLowerCase()).not.toContain("richard roe");
+    expect(r.out).toContain("gitleaks failed");
+  });
+
+  test("a required names rule that is missing fails instead of skipping", () => {
+    const { repo, env } = makeRepo();
+    writeFileSync(join(repo, "a.txt"), "hello\n");
+    const r = sh(repo, "bin/leak-scan.sh dir a.txt --no-banner", { ...env, LEAK_NAMES_REQUIRED: "true", LEAK_NAMES_TOML: "" });
+    expect(r.code).not.toBe(0);
+    expect(r.out).toContain("required");
+  });
+
   test("pre-push skips with a warning when gitleaks is missing", () => {
     const { repo, env } = makeRepo();
     const r = sh(repo, `PATH=/usr/bin:/bin git push origin main`, env);

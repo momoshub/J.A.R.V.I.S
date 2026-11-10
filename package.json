@@ -16,7 +16,7 @@
     "web:dev": "cd web && bun run dev",
     "build:web": "cd web && bun install && bun run build",
     "hooks": "git config core.hooksPath .githooks",
-    "leak-scan": "bin/leak-scan.sh git . --redact --no-banner -v",
+    "leak-scan": "bin/leak-scan.sh git . --redact --no-banner -v --log-opts=HEAD && LEAK_SCAN_RANGE=HEAD bin/leak-scan.sh meta --redact --no-banner -v",
     "setup": "bun install && bun run build:web"
   },
   "dependencies": {

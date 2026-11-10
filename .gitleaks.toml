@@ -23,7 +23,8 @@ regexes = ['''GEZDGNBVGY3TQOJQ''', '''0123456789abcdef0123456789abcdef''', '''xo
 id = "slack-real-looking-id"
 description = "Slack id (user, channel, DM, team, bot, app, enterprise) that is not a test fake"
 regex = '''\b[UCDGWTBAE][0-9][A-Z0-9]{7,10}\b'''
-keywords = ["u0", "u1", "u2", "c0", "c1", "d0", "g0", "w0", "t0", "t1", "b0", "a0", "e0"]
+# no keywords: the prefilter would have to list every letter+digit pair, and a gap
+# silently skips files (U3.../C5... ids)
 
   [rules.allowlist]
   description = "the fake ids the tests use: a role word plus a counter (U0OWNER0001, U0PAL0007, C0TEST0000N, U0NUISANCE) and U0123456789. Explicit words, so a random real id does not slip through"
@@ -43,3 +44,8 @@ keywords = ["momos"]
   paths = ['''^(LICENSE|NOTICE|README\.md)$''']
   regexTarget = "line"
   regexes = ['''Copyright 2026 Momos\b''']
+
+  [[rules.allowlists]]
+  description = "commit messages: GitHub's own merge line names the org the repo lives in (the repo URL already shows it), and the commit that set the copyright holder says so"
+  regexTarget = "line"
+  regexes = ['''\bMerge pull request #[0-9]+ from momoshub/''', '''(?i)\bcopyright holder(:| is) Momos$''']

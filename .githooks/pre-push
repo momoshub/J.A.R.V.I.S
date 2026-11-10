@@ -16,8 +16,9 @@ while read -r local_ref local_sha remote_ref remote_sha; do
   [ "$local_sha" = "$zero" ] && continue
   if [ "$remote_sha" = "$zero" ] || ! git cat-file -e "$remote_sha^{commit}" 2>/dev/null; then
     # new branch, or a remote tip this clone has never fetched (a force-push after a
-    # rebase): scan every commit that no remote-tracking branch has
-    range="$local_sha --not --remotes"
+    # rebase): scan every commit this remote's tracking branches do not have. Only this
+    # remote: a commit already on a private remote is still new to the public one
+    range="$local_sha --not --remotes=$1"
   else
     range="$remote_sha..$local_sha"
   fi
@@ -30,6 +31,14 @@ while read -r local_ref local_sha remote_ref remote_sha; do
     continue
   fi
   if ! "$scan" git "$root" --redact --no-banner -v --log-opts="$range"; then
+    status=1
+  fi
+  # commit messages, file paths and an annotated tag's message are public too, and
+  # `gitleaks git` only reads the diffs
+  tags=""
+  case "$local_ref" in refs/tags/*) tags="$local_sha" ;; esac
+  if ! LEAK_SCAN_RANGE="$range" LEAK_SCAN_TAGS="$tags" "$scan" meta --redact --no-banner -v; then
+    echo "pre-push: the hit above is in a commit message, a file path or a tag message" >&2
     status=1
   fi
 done
