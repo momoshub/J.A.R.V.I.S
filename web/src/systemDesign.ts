@@ -239,7 +239,7 @@ export const DEPLOY: { w: number; h: number; boxes: DeployBox[]; links: DeployLi
     { id: "p2002", label: ":2001 loopback", sub: "DASHBOARD_PORT", x: 520, y: 190, w: 140, h: 46, kind: "port" },
     { id: "p2003", label: ":2003 loopback", sub: "GITHUB_APP_PORT", x: 520, y: 270, w: 140, h: 46, kind: "port" },
     { id: "inboxdb", label: "inbox.db", sub: "INBOX_DATABASE_PATH, WAL", x: 340, y: 106, w: 140, h: 46, kind: "file" },
-    { id: "botdb", label: "data/<bot>.db", sub: "committed", x: 340, y: 300, w: 140, h: 46, kind: "file" },
+    { id: "botdb", label: "bot.db", sub: "DATABASE_PATH, WAL", x: 340, y: 300, w: 140, h: 46, kind: "file" },
     { id: "funnel", label: "Tailscale Funnel", sub: "https://<host>/github", x: 520, y: 350, w: 140, h: 56, kind: "agent" },
     { id: "slack", label: "Slack", sub: "WSS + Web API", x: 760, y: 60, w: 200, h: 56, kind: "external" },
     { id: "anthropic", label: "Anthropic", sub: "model API", x: 760, y: 430, w: 200, h: 56, kind: "external" },
