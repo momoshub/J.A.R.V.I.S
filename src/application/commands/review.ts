@@ -358,7 +358,7 @@ export const REVIEW_COMMANDS: readonly CommandDef[] = [
     run: (ctx) => {
       const { deps, actor, rest, prefix } = ctx;
       const describe = (order: readonly string[]) =>
-        `I look for logs in this order: ${order.map((s) => `*${s}*`).join(" → ")}.\nNever: ${DENIED_LOG_SOURCES.map((s) => `*${s}*`).join(", ")} - it bills per GB scanned.`;
+        `I look for logs in this order: ${order.map((s) => `*${s}*`).join(" → ")}.\nNever by hand: ${DENIED_LOG_SOURCES.map((s) => `*${s}*`).join(", ")} - it bills per GB scanned. \`${prefix} cloudwatch help\` is the one allowed path.`;
 
       const wanted = rest.trim().toLowerCase();
       if (!wanted) return describe(logSourceOrder(deps.settings?.get(SETTING_KEYS.logSources)));

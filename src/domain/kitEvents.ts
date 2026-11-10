@@ -16,6 +16,8 @@
  * into `private_metadata` so the submission finds its way home.
  */
 
+import { CODE_ACTION_PREFIX } from "./cloudwatch.ts";
+
 export const KIT_PREFIX = "jv:";
 export const KIT_MODAL_PREFIX = "jv:modal:";
 /** Matches every action id and callback id the model owns. */
@@ -258,7 +260,9 @@ const idOf = (e: unknown): string | undefined =>
 
 const isKitElement = (e: unknown): boolean => {
   const id = idOf(e);
-  return !!id && KIT_PATTERN.test(id) && !isSettled(id);
+  // `jv:cloudwatch:` buttons are decided in code and are never an open question
+  // for the model, so a typed reply must not retire them.
+  return !!id && KIT_PATTERN.test(id) && !isSettled(id) && !id.startsWith(CODE_ACTION_PREFIX);
 };
 
 const blockHasKit = (b: KitBlock): boolean =>

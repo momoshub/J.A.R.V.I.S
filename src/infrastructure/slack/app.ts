@@ -15,6 +15,8 @@ import { respond, type RespondDeps } from "../../application/respond.ts";
 import { decideAccessRequest } from "../../application/accessRequests.ts";
 import { actOnMessageReaction, messageActionFor } from "../../application/messageReactions.ts";
 import { APPROVE_ACTION, decideCommandApproval, REJECT_ACTION } from "../../application/commandLimits.ts";
+import { decideCloudwatch } from "../../application/cloudwatch.ts";
+import { CODE_ACTION_PREFIX } from "../../domain/cloudwatch.ts";
 import { forHowLong } from "../../domain/runControl.ts";
 import { frontKeyOf } from "../../domain/workflowFront.ts";
 import { streamsToClose } from "../../application/runRegistry.ts";
@@ -678,6 +680,8 @@ export const createKitListeners = (
     const by = body.user?.id;
     const actionId = action.action_id ?? "";
     if (!by || !actionId) return;
+    // Handled in code by their own listener, never a turn for the model.
+    if (actionId.startsWith(CODE_ACTION_PREFIX)) return;
     const modal = body.view;
     const thread: KitThread | undefined = modal
       ? decodeKitMeta(modal.private_metadata).thread
@@ -984,6 +988,38 @@ export const createSlackApp = (config: SlackAppConfig, deps: Deps) => {
   };
   app.action({ action_id: APPROVE_ACTION }, onApprovalButton as never);
   app.action({ action_id: REJECT_ACTION }, onApprovalButton as never);
+
+  // Confirm / Cancel on a `cloudwatch` request. `jv:` like every element of
+  // ours, but decided HERE and never handed to the model (the kit listener
+  // skips `CODE_ACTION_PREFIX`): a press that ran a billed query by way of a
+  // model turn could be talked into running without one.
+  app.action(new RegExp(`^${CODE_ACTION_PREFIX}`), (async ({ ack, body, action, client }: Omit<ApprovalArgs, "body"> & { body: ApprovalArgs["body"] & { message?: { ts?: string; thread_ts?: string } }; client: KitClient }) => {
+    await ack();
+    const by = body.user?.id;
+    const value = action?.value;
+    if (!by || !value || !deps.cloudwatch) return;
+    try {
+      const outcome = await decideCloudwatch(deps.cloudwatch, { slackUserId: by, actionId: action.action_id ?? "", value });
+      log(`cloudwatch press ${outcome.kind} by ${by}`);
+      const channel = body.channel?.id;
+      const refusal =
+        outcome.kind === "refused"
+          ? `Only <@${outcome.requester}> or the owner can answer this CloudWatch request.`
+          : outcome.kind === "expired"
+            ? "That CloudWatch request expired, so nothing ran. Ask again."
+            : outcome.kind === "decided"
+              ? "That CloudWatch request was already answered."
+              : undefined;
+      // Told privately, so a stray press in a shared thread does not add noise.
+      if (refusal && channel) {
+        await client.chat
+          .postEphemeral?.({ channel, user: by, thread_ts: body.message?.thread_ts ?? body.message?.ts, text: refusal })
+          .catch(logAndIgnore("cloudwatch press notice"));
+      }
+    } catch (err) {
+      log(`cloudwatch press failed: ${err instanceof Error ? err.message : String(err)}`);
+    }
+  }) as never);
 
   // TODO(split): move tokenModal/totpModal to src/infrastructure/slack/credentialModals.ts
   // A token never travels as a Slack message: the button opens a modal, and a

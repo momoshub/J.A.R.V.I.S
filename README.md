@@ -117,6 +117,7 @@ Every command has two interfaces - use whichever you like. Both triggers are con
 | `ask <question>` | anyone | one-shot question to the brain |
 | `model [role\|subagent\|worker\|plan\|here\|#channel] [name\|default]` | anyone (setting: admins) | show the brain; admins pin a model per role or channel, or for subagents, Orca workers and planning |
 | `logsource [grafana,datadog\|default]` | anyone (setting: admins) | where it looks for logs - see [Investigating](#investigating) |
+| `cloudwatch [--group /log/group] [--last 15m \| --from <t> --to <t>] [--region r] [--limit n] <insights query>` (alias `cw`), `cloudwatch help`, `cloudwatch default <group\|reset>` | executer and up (owner runs it directly, executer and admin confirm first) | query CloudWatch Logs Insights directly - see [CloudWatch](#cloudwatch) |
 | `forget` | anyone | wipe the bot's memory of this channel |
 | `sys` (alias `vitals`) | admins | how the host, the bot and Orca are doing, as Block Kit: a verdict header, cpu/memory/swap/disk/host/bot/turns fields, the last hour's trend, then Orca's runtime, active runs, workers by status and a table of live workers (one "unreachable" line when Orca is down or slow). The message text keeps the plain report as the fallback |
 | `users` | admins | list the allowlist |
@@ -189,6 +190,32 @@ thread goes back to normal chat.
 Because it lives in a thread, start it with the message form (`//bot workflow ...`)
 rather than the slash command - a slash command has no thread to bind to.
 
+## CloudWatch
+
+`cloudwatch` is the only allowed way to query CloudWatch Logs (`X/jv cloudwatch help` prints this). Logs Insights bills per GB scanned, so a model that reaches for `aws logs` on its own turns an idle question into an invoice; that stays denied to every role, and this command runs the query from the bot itself (the host's `aws` CLI, an argv array, never a shell line).
+
+```
+X/jv cloudwatch --group /ecs/prod-api --last 15m fields @timestamp, @message | filter @message like /ERROR/ | sort @timestamp desc
+```
+
+- `--group /log/group[,/other]` one or more log groups (up to 10); optional once `cloudwatch default /log/group` is set (admin). Each must exist in the region, or nothing runs
+- `--last 15m|2h|3d|1w` (default 1h) or `--from <iso> --to <iso>` in UTC; `--region` (default `us-west-2`, or the `cloudwatch_region` setting); `--limit` rows asked of Insights (default 50, at most 1000)
+- everything after the flags is the Insights query; Slack's `&lt;` `&gt;` `&amp;` are put back
+
+| role | what happens |
+|---|---|
+| owner | the cost warning is posted, then the query runs straight away |
+| executer, admin | nothing runs. A message with the query, log group(s), range, region, the cost warning and **Confirm and run** / **Cancel** buttons is posted. Only the requester or the owner can press either (anyone else is told so privately). Cancel, or no answer for 15 minutes, means nothing ever runs. Confirm runs it and posts the result in the thread |
+| pal | refused, naming the roles that can |
+
+**Cost guard.** Before anything runs the bot reads each log group's stored size and retention (`describe-log-groups`) and estimates the scan as `storedBytes x range / retention` at $0.005 per GB. It is a rough estimate (stored bytes are compressed, a scan reads the original), good for telling 15 minutes from 3 weeks. A range over 3 weeks is flagged **costly**. The warning is shown to the owner and sits on the Confirm message.
+
+**Audit.** Every request is a row in `cloudwatch_requests` (migration v28): who asked and their role, query, groups, region, range, estimate, who confirmed it (or "owner, direct"), status (`pending`, `running`, `done`, `failed`, `cancelled`, `expired`), and the bytes actually scanned. The command is in the command log as well, and every run is a line in the activity log.
+
+**Output** is clipped for Slack: at most 25 rows, each cell and row cut, about 2.8k characters, secrets redacted, and a line saying how many rows were left out or that the limit was hit. A query is stopped (`stop-query`) when it runs past 3 minutes, because the scan is billed while it runs.
+
+The buttons carry `jv:cloudwatch:confirm` / `jv:cloudwatch:cancel` ids but are decided in code and never handed to the model like other `jv:` presses, so a model turn cannot confirm its own query.
+
 ## Investigating
 
 Asked what went wrong, the bot looks for logs, metrics and traces in a stated
@@ -205,11 +232,11 @@ order rather than reaching for whichever backend it noticed first:
    nothing - no such datasource, or the data does not reach back far enough. An
    empty result is an answer, not a reason to try the next one.
 
-**CloudWatch is never queried.** It bills per GB scanned, so an idle look there
-has an invoice attached. Sandboxed roles are denied `aws logs` and
-`aws cloudwatch` outright; full-access roles are held to it by the prompt, since
-nothing can be denied to them. If an answer only exists there, it says so and
-lets a person decide.
+**CloudWatch is never queried by hand.** It bills per GB scanned, so an idle look
+there has an invoice attached. A turn's own `aws logs` and `aws cloudwatch` are
+denied to every role (`ALWAYS_DISALLOW`). The one allowed path is the
+[`cloudwatch` command](#cloudwatch): the bot runs the Logs Insights query itself,
+behind a cost estimate and, for `executer` and `admin`, a Confirm button.
 
 The order is configuration:
 
@@ -970,7 +997,7 @@ Two more helpers are granted to every role for the same reason: `bin/slack-file.
 
 **Driving the desktop** goes through `bin/desktop.ts mac-ui|agent-desktop <args>`, which holds a desktop-wide lock per session (`JARVIS_DESKTOP_LOCK`, default `<tmpdir>/jarvis-desktop.lock`) so two threads never click into each other's windows. A busy screen exits 75; `desktop.ts free` exits 0 when the caller may act, `status` shows the holder, `release` gives it back. An idle lock lapses after 5 minutes.
 
-Some tools are **denied to every role, full access included** - `--disallowedTools` is honoured alongside `--dangerously-skip-permissions`, so these are real denials rather than a request in the prompt: the Slack MCP connectors (they post as whichever human authorised them, so the bot's reply arrives under someone else's name) and `aws logs` / `aws cloudwatch` (billed per GB; logs live in Grafana).
+Some tools are **denied to every role, full access included** - `--disallowedTools` is honoured alongside `--dangerously-skip-permissions`, so these are real denials rather than a request in the prompt: the Slack MCP connectors (they post as whichever human authorised them, so the bot's reply arrives under someone else's name) and `aws logs` / `aws cloudwatch` (billed per GB; logs live in Grafana; the `cloudwatch` command is the one guarded path, see [CloudWatch](#cloudwatch)).
 
 **Reacting** is granted to every role, including sandboxed ones, via `bin/slack-react.sh` - a helper that can only reach `reactions.add`. Sandboxed roles deliberately do *not* get a general `curl`: the bot's token is in the CLI's environment, so an arbitrary outbound request would be a way to send it somewhere.
 

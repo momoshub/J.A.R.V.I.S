@@ -41,6 +41,7 @@ import { ERRANDS_COMMANDS } from "./commands/errands.ts";
 import { REVIEW_COMMANDS } from "./commands/review.ts";
 import { RUNTIME_COMMANDS } from "./commands/runtime.ts";
 import { SLACK_COMMANDS } from "./commands/slack.ts";
+import { CLOUDWATCH_COMMANDS } from "./commands/cloudwatch.ts";
 export {
   DEFAULT_COMMAND_PREFIX,
   DEFAULT_SLASH_COMMAND,
@@ -111,6 +112,7 @@ export const COMMANDS: readonly CommandDef[] = [
   ...REVIEW_COMMANDS,
   ...RUNTIME_COMMANDS,
   ...SLACK_COMMANDS,
+  ...CLOUDWATCH_COMMANDS,
 ];
 
 const byName = new Map<string, CommandDef>();

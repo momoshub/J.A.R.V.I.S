@@ -36,6 +36,7 @@ import type { StuckWork } from "../../domain/stuckWork.ts";
 import type { FollowRepo } from "../../infrastructure/db/followRepo.ts";
 import type { WorkflowRepo } from "../../infrastructure/db/workflowRepo.ts";
 import type { CommandApprovalRepo } from "../../infrastructure/db/commandApprovalRepo.ts";
+import type { CloudwatchDeps } from "../cloudwatch.ts";
 import { SETTING_KEYS, type SettingsRepo } from "../../infrastructure/db/settingsRepo.ts";
 import { logAndIgnore } from "../ignoredError.ts";
 
@@ -128,6 +129,8 @@ export type CommandDeps = {
   workflows?: WorkflowRepo;
   /** Fresh CLI session id for a new workflow; injected for deterministic tests. */
   newSessionId?: () => string;
+  /** CloudWatch Logs Insights, for `cloudwatch`: the AWS port, the audit repo, the Confirm flow. */
+  cloudwatch?: CloudwatchDeps;
   /** Commands parked for approval once a limited role runs out of allowance. */
   commandApprovals?: CommandApprovalRepo;
   /** Settings, for per-person command allowances. */
