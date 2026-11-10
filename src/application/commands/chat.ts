@@ -7,7 +7,7 @@ import { summarizeOrca } from "../../domain/orcaStatus.ts";
 import { blockKitReply } from "../../domain/blockKit.ts";
 import { tokenFor } from "../claudeTokens.ts";
 import type { UserRole } from "../../domain/types.ts";
-import { NO_TOOLS, type ToolPolicy } from "../../domain/toolPolicy.ts";
+import { noTools, type ToolPolicy } from "../../domain/toolPolicy.ts";
 import { btwRules } from "../../domain/btwPrompt.ts";
 import { buildContextWindow } from "../../domain/conversation.ts";
 import { DEFAULT_SNUB_REPLY, formatSnubbed, parseSnubbed } from "../../domain/snub.ts";
@@ -185,7 +185,7 @@ export const CHAT_COMMANDS: readonly CommandDef[] = [
       const sandbox = deps.toolPolicy?.("pal", channelId);
       const policy: ToolPolicy = {
         skipPermissions: false,
-        disallowedTools: NO_TOOLS,
+        disallowedTools: deps.noTools ?? noTools([]),
         timeoutMs: BTW_TIMEOUT_MS,
         ...(sandbox?.cwd ? { cwd: sandbox.cwd } : {}),
       };

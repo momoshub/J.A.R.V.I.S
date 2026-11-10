@@ -139,6 +139,14 @@ export type CommandDeps = {
   draft?: DraftReply;
   /** Per-role CLI tool policy (sandbox/allow-list), for ask + review. */
   toolPolicy?: (role: UserRole, channelId?: string) => ToolPolicy;
+  /**
+   * `--disallowedTools` for a turn that may use no tools at all
+   * (`noTools(DB_MCP_SERVERS)`). Absent falls back to the list without the
+   * database servers, so the host must wire it.
+   */
+  noTools?: readonly string[];
+  /** GitHub owners whose PRs `review` posts non-blocking findings for (`REVIEW_EXTENDED_OWNERS`). */
+  reviewExtendedOwners?: readonly string[];
   /** Per-user Claude Code tokens. `review` requires one; everything else prefers one. */
   claudeTokens?: ClaudeTokenPort;
   /** Shared 2FA setup keys, for the `2fa` command. */

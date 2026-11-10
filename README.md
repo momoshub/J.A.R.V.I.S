@@ -66,6 +66,9 @@ Required / notable env (see `.env.example`):
 | `GITHUB_APP_ALLOWED_OWNERS` | repo owners the app acts for, comma list (default empty: the app acts for no owner until set) |
 | `GITHUB_APP_LABEL` | label that calls it on an issue/PR (default `jarvis`) |
 | `SELF_PR_AUTHOR` / `SELF_PR_REVIEWER` | gh logins for the bot's own PRs: the author opens the PR and answers reviews, the reviewer posts review comments, approves and merges. Both or neither, and not the same login (otherwise: one account) |
+| `REVIEW_EXTENDED_OWNERS` | GitHub owners, comma list (case-insensitive), whose PRs `review` also posts non-blocking findings for. Default empty: blockers only everywhere |
+| `DB_MCP_SERVERS` | names of the local database MCP servers on this host (as `claude mcp list` shows them, e.g. `pg-prod,clickhouse-ro`), comma list. **Security setting:** each is denied by name to every role that may not use databases (pal, executer, side questions), and a denial has to name the server, so a server missing here is reachable by EVERY role. Default empty denies nothing - list every database server you configure (at boot the activity log warns about local servers in `~/.claude.json` that are not listed) |
+| `EXECUTER_DB_MCP_SERVERS` | the subset of `DB_MCP_SERVERS` the executer role may query; list only servers whose credential is read-only on the server side. Default empty: executers get none |
 | `DASHBOARD_PORT` | dashboard port (local, loopback-only, no auth) |
 | `DASHBOARD_ALLOWED_ORIGINS` | extra browser origins allowed to POST (proxy/tunnel access) |
 | `DATABASE_PATH` | the live sqlite file (default `data/bot.db`). Put it **outside the git checkout**, `~/` works, e.g. `~/.jarvis/data/bot.db` - see [Where the database lives](#where-the-database-lives) |
@@ -132,7 +135,7 @@ Every command has two interfaces - use whichever you like. Both triggers are con
 | `token [remove\|who]` (alias `claude-token`) | anyone | add, replace or forget your own Claude Code token - see [Your own Claude token](#your-own-claude-token) |
 | `session [reset\|on\|off]` (alias `sess`) | anyone (on/off: admins) | the CLI session this thread is talking to - see [One session per thread](#one-session-per-thread) |
 | `ticket <what is wrong>` (aliases `bug`, `raise`) | anyone | raise a properly written, correctly routed ticket - see [Raising a ticket](#raising-a-ticket) |
-| `review <pr-url\|help\|prompt> [--policy first\|after] [what to look at]` (alias `rv`) | pal+ | review a PR: read it first, post a blockers-only comment on GitHub *and* back in the thread (PRs in `acme` repos also get the non-blocking findings as bullets); request changes on a blocker only, other repos drop non-blocking findings (big PRs are cloned + reviewed by child agents). Runs full-access. |
+| `review <pr-url\|help\|prompt> [--policy first\|after] [what to look at]` (alias `rv`) | pal+ | review a PR: read it first, post a blockers-only comment on GitHub *and* back in the thread (PRs owned by an account in `REVIEW_EXTENDED_OWNERS` also get the non-blocking findings as bullets); request changes on a blocker only, other repos drop non-blocking findings (big PRs are cloned + reviewed by child agents). Runs full-access. |
 | `bomb [categories] [count] <message-link>` (alias `br`) | admins | reaction-bomb a message. Combine categories with commas and set a count: `bomb money,face,negative 9 <link>`. Up to 23; `bomb help` lists every category |
 | `reply <message-link>` (alias `jrp`) | admins | draft and post an AI reply to a message |
 | `rm-msg <message-link>` (aliases `rmmsg`, `unsend`) | admins | delete a message the bot posted (a bot token cannot delete anyone else's) |
@@ -864,7 +867,7 @@ from anywhere but the host opens nothing.
 
 ## What a review comment looks like
 
-Blockers only (outside `acme` repos, see below). One line saying where it lands - good to merge, or what blocks -
+Blockers only (except for the owners in `REVIEW_EXTENDED_OWNERS`, see below). One line saying where it lands - good to merge, or what blocks -
 then one short bullet per blocker, worst first: what is wrong, one pointer
 (`file.ts:120` or an identifier, never a code block or a quoted line), why it
 matters. A clean PR gets that one line and the sign-off.
@@ -874,7 +877,8 @@ that would ship, missing or failing tests on a critical path, or failing CI.
 Everything else - design, cleanups, style, nits - is never posted, and never
 becomes a GitHub issue either: it is dropped.
 
-PRs in acme repos (GitHub owner `acme`, decided per PR from a full url or `owner/repo#N`) are the
+PRs owned by an account listed in `REVIEW_EXTENDED_OWNERS` (decided per PR from a full url or `owner/repo#N`; empty by
+default, so nobody gets this until you set it) are the
 exception: non-blocking findings (design risk, correctness, coding style, real
 cleanups) follow the blockers as bullets, worst first, under about 250 words for
 a normal PR, then one last "out of scope per the description: ... risk left

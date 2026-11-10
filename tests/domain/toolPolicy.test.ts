@@ -3,21 +3,34 @@ import {
   DATADOG_MCP_SERVER,
   DATADOG_READ_TOOLS,
   DATADOG_WRITE_TOOLS,
-  DB_MCP_SERVERS,
   EXECUTER_CODE_TOOLS,
-  EXECUTER_DB_SERVERS,
   mayUseNotion,
   mayUseOrca,
   NOTION_MCP_SERVER,
-  NO_TOOLS,
+  noTools,
   ORCA_DENY,
   PAL_TOOLS,
-  SANDBOX_DISALLOW,
+  sandboxDisallow,
+  dbServerTools,
+  executerDisallow,
   toolPolicyFor,
 } from "../../src/domain/toolPolicy.ts";
 
 const REACT = "/opt/jarvis/bin/slack-react.sh";
-const opts = { fullCwd: "/work", sandboxCwd: "/scratch", reactScript: REACT };
+// Sample host config: what DB_MCP_SERVERS / EXECUTER_DB_MCP_SERVERS would carry.
+const DB_NAMES = ["pg-prod", "pg-staging", "ch-ro", "ch-rw", "ch-cloud"];
+const EXEC_DB_NAMES = ["pg-prod", "pg-staging", "ch-ro"];
+const DB_MCP_SERVERS = dbServerTools(DB_NAMES);
+const EXECUTER_DB_SERVERS = dbServerTools(EXEC_DB_NAMES);
+const SANDBOX_DISALLOW = sandboxDisallow(DB_NAMES);
+const NO_TOOLS = noTools(DB_NAMES);
+const opts = {
+  fullCwd: "/work",
+  sandboxCwd: "/scratch",
+  reactScript: REACT,
+  dbServers: DB_NAMES,
+  executerDbServers: EXEC_DB_NAMES,
+};
 
 describe("toolPolicyFor", () => {
   test("owner and admin run unsandboxed in the working directory", () => {
@@ -110,13 +123,12 @@ describe("toolPolicyFor", () => {
 
   test("an executer queries the read-only databases, a pal queries none", () => {
     const exe = toolPolicyFor("executer", opts);
-    for (const db of ["mcp__pg-prod", "mcp__pg-prod-2", "mcp__pg-staging",
-      "mcp__clickhouse-sql-us-prod-ro", "mcp__clickhouse-sql-sg-prod-ro"]) {
+    for (const db of ["mcp__pg-prod", "mcp__pg-staging", "mcp__ch-ro"]) {
       expect(exe.allowedTools).toContain(db);
       expect(exe.disallowedTools).not.toContain(db);
     }
     // a write user, and an org-wide management key, so both stay denied
-    for (const db of ["mcp__clickhouse-sql-sg-stg-rw", "mcp__clickhouse-cloud-mgmt"]) {
+    for (const db of ["mcp__ch-rw", "mcp__ch-cloud"]) {
       expect(exe.allowedTools).not.toContain(db);
       expect(exe.disallowedTools).toContain(db);
     }
@@ -126,22 +138,20 @@ describe("toolPolicyFor", () => {
 
     const pal = toolPolicyFor("pal", opts);
     for (const db of DB_MCP_SERVERS) expect(pal.disallowedTools).toContain(db);
-    expect(DB_MCP_SERVERS).toContain("mcp__clickhouse-sql-sg-stg-rw");
+    expect(DB_MCP_SERVERS).toContain("mcp__ch-rw");
   });
 
-  test("every database server is named as the host config names it", () => {
-    // the list once said clickhouse-us-prod while the host ran
-    // clickhouse-sql-us-prod-ro: a denial of a name nobody uses denies nothing,
-    // and an executer's allow-list entry for it granted nothing either
-    expect([...DB_MCP_SERVERS].sort()).toEqual([
-      "mcp__clickhouse-cloud-mgmt",
-      "mcp__clickhouse-sql-sg-prod-ro",
-      "mcp__clickhouse-sql-sg-stg-rw",
-      "mcp__clickhouse-sql-us-prod-ro",
-      "mcp__pg-prod-2",
-      "mcp__pg-staging",
-      "mcp__pg-prod",
-    ]);
+  test("names are normalised to whole mcp__ servers, trimmed and de-duplicated", () => {
+    expect(dbServerTools([" pg-prod ", "mcp__pg-prod", "", "ch-ro"])).toEqual(["mcp__pg-prod", "mcp__ch-ro"]);
+    expect(dbServerTools([])).toEqual([]);
+  });
+
+  test("nothing configured denies nothing and grants an executer nothing", () => {
+    const bare = { sandboxCwd: "/scratch" };
+    expect(toolPolicyFor("pal", bare).disallowedTools?.some((t) => t.startsWith("mcp__pg"))).toBe(false);
+    expect(toolPolicyFor("executer", bare).allowedTools?.some((t) => t.startsWith("mcp__pg"))).toBe(false);
+    expect(noTools([])).not.toContain("mcp__pg-prod");
+    expect(executerDisallow([], [], [])).not.toContain("mcp__pg-prod");
   });
 
   test("pal can read github, notion and the web", () => {
@@ -273,10 +283,10 @@ describe("database MCP servers", () => {
   test("a sandboxed role is DENIED them, not merely not granted them", () => {
     // absence from an allow-list is not a denial - the allow-list does not
     // restrict at all, measured against the CLI
-    const pal = toolPolicyFor("pal", { sandboxCwd: "/tmp/box" });
+    const pal = toolPolicyFor("pal", { sandboxCwd: "/tmp/box", dbServers: DB_NAMES });
     for (const server of DB_MCP_SERVERS) expect(pal.disallowedTools).toContain(server);
     // an executer is granted the read-only ones and denied the rest
-    const exe = toolPolicyFor("executer", { sandboxCwd: "/tmp/box" });
+    const exe = toolPolicyFor("executer", { sandboxCwd: "/tmp/box", dbServers: DB_NAMES, executerDbServers: EXEC_DB_NAMES });
     for (const server of DB_MCP_SERVERS.filter((s) => !EXECUTER_DB_SERVERS.includes(s))) {
       expect(exe.disallowedTools).toContain(server);
     }
@@ -284,7 +294,7 @@ describe("database MCP servers", () => {
 
   test("full-access roles keep them - investigate is the reason they are here", () => {
     for (const role of ["admin", "owner"] as const) {
-      const p = toolPolicyFor(role, { fullCwd: "/tmp/full" });
+      const p = toolPolicyFor(role, { fullCwd: "/tmp/full", dbServers: DB_NAMES });
       for (const server of DB_MCP_SERVERS) {
         expect(p.disallowedTools ?? []).not.toContain(server);
       }

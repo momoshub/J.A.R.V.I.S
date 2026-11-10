@@ -14,6 +14,13 @@ import { parseSelfPrAccounts, RESTART_TURN_BUDGET_MS, type SelfPrAccounts } from
 /** Where the GitHub App's credentials live by default: outside the repo, never in `.env`. */
 export const GITHUB_APP_DIR = join(homedir(), ".config", "jarvis", "github-app");
 
+/** `a, b,,c` -> `["a", "b", "c"]`; unset is empty. */
+const parseList = (raw: string | undefined): string[] =>
+  (raw ?? "")
+    .split(",")
+    .map((s) => s.trim())
+    .filter(Boolean);
+
 const boolFromString = (def: boolean) =>
   z
     .enum(["true", "false"])
@@ -155,6 +162,21 @@ const schema = z
     // comments, approves and merges. Both or neither; unset keeps whatever gh is active.
     SELF_PR_AUTHOR: z.string().optional(),
     SELF_PR_REVIEWER: z.string().optional(),
+
+    // GitHub owners (comma separated, case-insensitive) whose PRs `review`
+    // posts non-blocking findings for, on top of the blockers every review
+    // posts. Empty: blockers only, everywhere.
+    REVIEW_EXTENDED_OWNERS: z.string().optional(),
+
+    // Local database MCP servers on this host (comma separated names as in
+    // `claude mcp list`, e.g. `pg-prod,clickhouse-ro`). Each is denied BY NAME to
+    // every role that may not query databases - a denial has to name the
+    // server, so a server missing here is reachable by every role. Empty
+    // denies nothing: list every database server you configure.
+    DB_MCP_SERVERS: z.string().optional(),
+    // The subset of DB_MCP_SERVERS the executer role may query. Only list
+    // servers whose credential is read only on the server side. Empty: none.
+    EXECUTER_DB_MCP_SERVERS: z.string().optional(),
   })
   .refine((env) => env.LLM_PROVIDER !== "anthropic" || !!env.ANTHROPIC_API_KEY, {
     message: "ANTHROPIC_API_KEY is required when LLM_PROVIDER=anthropic",
@@ -222,6 +244,12 @@ export type AppConfig = {
   };
   /** Who opens the bot's own PRs and who reviews and merges them; unset is one account. */
   selfPrAccounts?: SelfPrAccounts;
+  /** GitHub owners whose PRs get non-blocking review findings too; empty is none. */
+  reviewExtendedOwners: string[];
+  /** Local database MCP servers denied by name to roles that may not use databases; empty denies none. */
+  dbMcpServers: string[];
+  /** The subset of `dbMcpServers` the executer role may query; empty is none. */
+  executerDbMcpServers: string[];
 };
 
 /** A short human label for the active model, shown on the dashboard. */
@@ -295,5 +323,8 @@ export const loadConfig = (source: Record<string, string | undefined> = process.
     ...((accounts) => (accounts ? { selfPrAccounts: accounts } : {}))(
       parseSelfPrAccounts(env.SELF_PR_AUTHOR, env.SELF_PR_REVIEWER),
     ),
+    reviewExtendedOwners: parseList(env.REVIEW_EXTENDED_OWNERS),
+    dbMcpServers: parseList(env.DB_MCP_SERVERS),
+    executerDbMcpServers: parseList(env.EXECUTER_DB_MCP_SERVERS),
   };
 };

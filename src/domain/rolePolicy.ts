@@ -14,7 +14,7 @@
  * a bad save can never lock the owner out of their own bot.
  */
 import type { AllowedUser, UserRole } from "./types.ts";
-import { DB_MCP_SERVERS, PAL_TOOLS } from "./toolPolicy.ts";
+import { dbServerTools, PAL_TOOLS } from "./toolPolicy.ts";
 
 export type RolePolicy = {
   readonly role: UserRole;
@@ -84,12 +84,12 @@ const serverOf = (tool: string): string | undefined =>
   tool.startsWith("mcp__") ? tool.slice("mcp__".length).split("__")[0] || undefined : undefined;
 
 /**
- * MCP servers the dashboard offers: the database servers the code knows, the
+ * MCP servers the dashboard offers: the database servers the host configures (`DB_MCP_SERVERS`), the
  * connectors the read-only tool set names, and anything a policy already
  * denies (so a server typed in by hand stays visible once saved).
  */
-export const knownMcpServers = (policies: readonly RolePolicy[]): string[] => {
-  const fromTools = [...DB_MCP_SERVERS, ...PAL_TOOLS.filter((t) => t.startsWith("mcp__"))]
+export const knownMcpServers = (policies: readonly RolePolicy[], dbServers: readonly string[] = []): string[] => {
+  const fromTools = [...dbServerTools(dbServers), ...PAL_TOOLS.filter((t) => t.startsWith("mcp__"))]
     .map(serverOf)
     .filter((s): s is string => !!s);
   const fromPolicies = policies.flatMap((p) => p.deniedMcpServers);

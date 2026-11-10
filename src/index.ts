@@ -64,7 +64,8 @@ import { createInnerChild, steerViaRespond } from "./application/innerChild.ts";
 import { decideAccess } from "./domain/access.ts";
 import { createDriftRepo } from "./infrastructure/db/driftRepo.ts";
 import { createSelfIssueRepo } from "./infrastructure/db/selfIssueRepo.ts";
-import { NO_TOOLS } from "./domain/toolPolicy.ts";
+import { noTools } from "./domain/toolPolicy.ts";
+import { createClaudeJsonReader, unlistedLocalMcpServers } from "./infrastructure/llm/mcpConfig.ts";
 import { createReminderSender } from "./application/reminders.ts";
 import { createShellCheck } from "./infrastructure/system/shellCheck.ts";
 import { createOrcaCli, createOrcaTerminal } from "./infrastructure/system/orcaTerminal.ts";
@@ -230,6 +231,16 @@ const main = async () => {
   // Activity log to the logs/ folder: every command (and message) is recorded,
   // failed commands additionally land in errors.log.
   const activity = createActivityLog(config.logDir);
+  // A database MCP server missing from DB_MCP_SERVERS is reachable by every
+  // role, and nothing else notices - so say so, loudly, at boot.
+  {
+    const unlisted = unlistedLocalMcpServers(createClaudeJsonReader()(), config.dbMcpServers);
+    if (unlisted.length > 0) {
+      activity.line(
+        `WARNING: local MCP servers not in DB_MCP_SERVERS (reachable by every role if they reach a database): ${unlisted.join(", ")}`,
+      );
+    }
+  }
   const workflows = createWorkflowRepo(db);
   // One CLI session per Slack thread, so a follow-up keeps the context the last
   // turn built instead of starting the conversation over.
@@ -354,6 +365,8 @@ const main = async () => {
       githubAppScript,
       models: modelsForRoles(),
       protectedPaths: [repoPath],
+      dbServers: config.dbMcpServers,
+      executerDbServers: config.executerDbMcpServers,
       executerTools: (settings.get(SETTING_KEYS.executerTools) ?? "")
         .split(/[,\n]/)
         .map((s) => s.trim())
@@ -611,6 +624,8 @@ const main = async () => {
     restartScript,
     repoPath,
     selfPrAccounts: config.selfPrAccounts,
+    reviewExtendedOwners: config.reviewExtendedOwners,
+    noTools: noTools(config.dbMcpServers),
     draft,
     toolPolicy,
     // A person's own Claude Code credential: required by `review`, used by every
@@ -721,6 +736,7 @@ const main = async () => {
       requestRestart,
       uiAccess: uiAccess.read,
       users: userStore,
+      dbMcpServers: config.dbMcpServers,
       rolePolicies,
       messages,
       learnings,
@@ -1055,7 +1071,7 @@ const main = async () => {
     sourceDir: repoPath,
     restartScript,
     selfPrAccounts: config.selfPrAccounts,
-    noTools: NO_TOOLS,
+    noTools: noTools(config.dbMcpServers),
     enabled: () =>
       !!innerChildChannel() && settings.get(SETTING_KEYS.innerChild)?.trim().toLowerCase() !== "off",
     cursor: {

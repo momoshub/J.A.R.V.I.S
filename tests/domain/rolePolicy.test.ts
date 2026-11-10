@@ -72,8 +72,8 @@ describe("role policy", () => {
     expect(parse({ enabled: undefined })).toMatchObject({ policy: { enabled: true } });
   });
 
-  test("known MCP servers come from the code's lists and from what policies already deny", () => {
-    const servers = knownMcpServers([{ ...defaultRolePolicy("pal"), deniedMcpServers: ["custom-db"] }]);
+  test("known MCP servers come from the configured database list, the code's connectors and what policies already deny", () => {
+    const servers = knownMcpServers([{ ...defaultRolePolicy("pal"), deniedMcpServers: ["custom-db"] }], ["pg-prod"]);
     expect(servers).toContain("pg-prod");
     expect(servers).toContain("claude_ai_Notion");
     expect(servers).toContain("custom-db");

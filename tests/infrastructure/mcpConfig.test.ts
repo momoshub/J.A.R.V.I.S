@@ -5,8 +5,7 @@ import { join } from "node:path";
 import {
   UNAUTHENTICATED_MCP_SERVERS,
   createClaudeJsonReader,
-  mcpConfigFor,
-} from "../../src/infrastructure/llm/mcpConfig.ts";
+  mcpConfigFor, unlistedLocalMcpServers } from "../../src/infrastructure/llm/mcpConfig.ts";
 
 const servers = (json: string | undefined): string[] =>
   Object.keys((JSON.parse(json ?? "{}") as { mcpServers: object }).mcpServers);
@@ -52,5 +51,26 @@ describe("createClaudeJsonReader", () => {
     expect(read()).toEqual({ mcpServers: { a: {}, b: {} } });
     writeFileSync(path, "{not json");
     expect(read()).toBeUndefined();
+  });
+});
+
+describe("unlistedLocalMcpServers", () => {
+  const json = {
+    mcpServers: {
+      "pg-prod": { command: "dbhub" },
+      "ch-ro": { type: "stdio", command: "uvx" },
+      notion: { type: "http", url: "https://example.com/mcp" },
+    },
+  };
+
+  test("names local stdio servers the database list does not cover", () => {
+    expect(unlistedLocalMcpServers(json, [])).toEqual(["pg-prod", "ch-ro"]);
+    expect(unlistedLocalMcpServers(json, ["pg-prod"])).toEqual(["ch-ro"]);
+    expect(unlistedLocalMcpServers(json, ["mcp__pg-prod", " ch-ro "])).toEqual([]);
+  });
+
+  test("an unreadable or empty config names nothing", () => {
+    expect(unlistedLocalMcpServers(undefined, [])).toEqual([]);
+    expect(unlistedLocalMcpServers({}, [])).toEqual([]);
   });
 });

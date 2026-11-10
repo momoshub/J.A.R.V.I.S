@@ -58,6 +58,7 @@ const ports = (over: Partial<DashboardPorts> = {}) => {
       remove: (k) => void settings.delete(k),
       list: () => [...settings].map(([key, value]) => ({ key, value })),
     },
+    dbMcpServers: ["pg-prod"],
     ...over,
   };
   return { p, users, settings, learnings, cleared, app: createDashboardService(p) };

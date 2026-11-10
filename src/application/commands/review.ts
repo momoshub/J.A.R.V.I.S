@@ -120,7 +120,7 @@ export const REVIEW_COMMANDS: readonly CommandDef[] = [
     ownHelp: true,
     minRole: "pal",
     usage: "<pr-url> [pr-url...] [--policy first|after] [what to look at]",
-    summary: "review a PR: blockers-only comment on GitHub and here (acme repos: non-blocking findings too)",
+    summary: "review a PR: blockers-only comment on GitHub and here (owners set in REVIEW_EXTENDED_OWNERS: non-blocking findings too)",
     run: async (ctx) => {
       const { deps, actor, args, prefix, reply, channelId } = ctx;
       if (args.length === 0) return `Which PR? \`${prefix} review <pr-url>\``;
@@ -144,7 +144,7 @@ export const REVIEW_COMMANDS: readonly CommandDef[] = [
       // What the review is actually about, before anything expensive happens.
       if (rest.length === 1 && /^(help|\?|--help|prompt|how)$/i.test(rest[0] ?? "")) {
         const wantPrompt = /^prompt$/i.test(rest[0] ?? "");
-        const text = reviewHelp(prefix, wantPrompt, reviewAgentsOf(deps), botNameOf(deps));
+        const text = reviewHelp(prefix, wantPrompt, reviewAgentsOf(deps), botNameOf(deps), undefined, deps.reviewExtendedOwners);
         // The real prompt is longer than one Slack message, and a post that is
         // too long simply fails to land - which looks like being ignored.
         return wantPrompt ? clip(text) : text;
@@ -243,7 +243,7 @@ export const REVIEW_COMMANDS: readonly CommandDef[] = [
         }
 
         const params = {
-          system: reviewPrompt(targets, name, await account, approvedUpFront, reviewAgentsOf(deps), note),
+          system: reviewPrompt(targets, name, await account, approvedUpFront, reviewAgentsOf(deps), note, deps.reviewExtendedOwners),
           messages: [{ role: "user" as const, content: `review ${targets.join(" ")}${note ? `\n\n${note}` : ""}` }],
           assistantName: name,
           policy,

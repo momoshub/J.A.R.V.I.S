@@ -90,7 +90,7 @@ export const SLACK_CONNECTOR_WRITES: readonly string[] = [
 /**
  * Orca starts workers with full permissions on the host Mac, so any role that
  * could run it would step out of its own sandbox. Denied by name to every role
- * but owner - an allow-list never refuses (see NO_TOOLS), only a denial does.
+ * but owner - an allow-list never refuses (see noTools), only a denial does.
  * Both the bare name and the installed paths, because a rule matches the
  * command as typed: the symlink the bot uses and the app's own binary.
  */
@@ -111,7 +111,8 @@ export const ALWAYS_DISALLOW: readonly string[] = [
 ];
 
 /**
- * Local database MCP servers configured on the host.
+ * Local database MCP servers configured on the host: `DB_MCP_SERVERS` in the
+ * environment, passed in by the caller (the domain reads no config).
  *
  * These are NOT claude.ai connectors, and the difference matters: a
  * `claude setup-token` credential strips the claude.ai ones (verified - zero
@@ -119,37 +120,21 @@ export const ALWAYS_DISALLOW: readonly string[] = [
  * loads whatever credential the turn holds. Measured after installing these: a
  * setup-token turn ran `select 1` against the production read replica and got
  * its row back. So every turn reaches production SQL unless something refuses
- * it, and an allow-list does not refuse (see NO_TOOLS).
+ * it, and an allow-list does not refuse (see noTools).
  *
  * They must be named one by one. A bare `mcp__` prefix denies NOTHING -
  * measured with exactly that flag, and the query ran anyway - so a denial has
- * to name the server. Which means this list does not maintain itself: a new
+ * to name the server. Which means the list does not maintain itself: a new
  * database server added to `~/.claude.json` is reachable by every role until
- * its name is added here.
+ * its name is added to `DB_MCP_SERVERS`. An empty list denies nothing.
  */
-export const DB_MCP_SERVERS: readonly string[] = [
-  "mcp__pg-prod",
-  "mcp__pg-prod-2",
-  "mcp__pg-staging",
-  "mcp__clickhouse-sql-us-prod-ro",
-  "mcp__clickhouse-sql-sg-prod-ro",
-  "mcp__clickhouse-sql-sg-stg-rw",
-  "mcp__clickhouse-cloud-mgmt",
-];
-
-/**
- * The database servers an executer may query: only those whose credential is
- * read only on the server side (dbhub `readonly = true`, ClickHouse readonly
- * users). `clickhouse-sql-sg-stg-rw` logs in as a write user, and
- * `clickhouse-cloud-mgmt` reaches every service in the org with the host
- * login's key, so both stay denied.
- */
-export const EXECUTER_DB_SERVERS: readonly string[] = [
-  "mcp__pg-prod",
-  "mcp__pg-prod-2",
-  "mcp__pg-staging",
-  "mcp__clickhouse-sql-us-prod-ro",
-  "mcp__clickhouse-sql-sg-prod-ro",
+export const dbServerTools = (names: readonly string[]): readonly string[] => [
+  ...new Set(
+    names
+      .map((n) => n.trim())
+      .filter(Boolean)
+      .map((n) => (n.startsWith("mcp__") ? n : `mcp__${n}`)),
+  ),
 ];
 
 /**
@@ -231,13 +216,13 @@ export const mayUseNotion = (role: UserRole, floor: UserRole = DEFAULT_NOTION_FL
  * simply wrote it back and looked like it had run the command. Count the
  * `tool_use` blocks.
  */
-export const NO_TOOLS: readonly string[] = [
+export const noTools = (dbServers: readonly string[]): readonly string[] => [
   "Bash", "Task", "Agent",
   "Read", "Write", "Edit", "MultiEdit", "NotebookEdit", "NotebookRead",
   "Glob", "Grep", "LS", "TodoWrite",
   "WebFetch", "WebSearch",
   // A side question running a production query is the opposite of an aside.
-  ...DB_MCP_SERVERS,
+  ...dbServerTools(dbServers),
   NOTION_MCP_SERVER,
   DATADOG_MCP_SERVER,
 ];
@@ -247,17 +232,17 @@ export const NO_TOOLS: readonly string[] = [
  * databases.
  *
  * The database servers are here rather than merely absent from `PAL_TOOLS`
- * because absence is not a denial - that is the whole lesson of `NO_TOOLS`.
+ * because absence is not a denial - that is the whole lesson of `noTools`.
  * A `pal` is the lowest trust level the bot has and most of the workspace is
  * one; arbitrary SQL against the production replica is not theirs to run, and
  * `investigate` (host login, admin-gated) is the route when it is needed.
  */
-export const SANDBOX_DISALLOW: readonly string[] = [
+export const sandboxDisallow = (dbServers: readonly string[]): readonly string[] => [
   ...ALWAYS_DISALLOW,
   ...ORCA_DENY,
   "Write", "Edit", "MultiEdit", "NotebookEdit",
   "Bash(aws secretsmanager:*)", "Bash(aws ssm get-parameter:*)", "Bash(aws kms:*)",
-  ...DB_MCP_SERVERS,
+  ...dbServerTools(dbServers),
 ];
 
 /**
@@ -320,8 +305,14 @@ const FILE_WRITES: readonly string[] = ["Write", "Edit", "MultiEdit", "NotebookE
  * Sandbox denials minus the read-only databases and the file writes an
  * executer is granted, plus the paths and pushes it stays out of.
  */
-export const executerDisallow = (protectedPaths: readonly string[] = []): readonly string[] => [
-  ...SANDBOX_DISALLOW.filter((t) => !EXECUTER_DB_SERVERS.includes(t) && !FILE_WRITES.includes(t)),
+export const executerDisallow = (
+  protectedPaths: readonly string[] = [],
+  dbServers: readonly string[] = [],
+  executerDbServers: readonly string[] = [],
+): readonly string[] => [
+  ...sandboxDisallow(dbServers).filter(
+    (t) => !dbServerTools(executerDbServers).includes(t) && !FILE_WRITES.includes(t),
+  ),
   "NotebookEdit",
   ...NO_FORCE_PUSH,
   ...protectedWrites(["~/.claude", ...protectedPaths]),
@@ -337,6 +328,17 @@ export type ToolPolicyOptions = {
   readonly executerTools?: readonly string[];
   /** Absolute paths an executer may not write: the bot's own source. */
   readonly protectedPaths?: readonly string[];
+  /**
+   * Local database MCP servers (`DB_MCP_SERVERS`), denied to every sandboxed
+   * role by name. Absent or empty denies none - see `dbServerTools`.
+   */
+  readonly dbServers?: readonly string[];
+  /**
+   * The subset of `dbServers` an executer may query (`EXECUTER_DB_MCP_SERVERS`):
+   * only servers whose credential is read only on the server side. Absent
+   * means an executer gets none.
+   */
+  readonly executerDbServers?: readonly string[];
   /**
    * Absolute path of the reaction helper. Sandboxed roles get exactly this
    * script rather than a general `curl`, so the bot can react in every
@@ -467,7 +469,7 @@ const basePolicyFor = (role: UserRole, opts: ToolPolicyOptions): ToolPolicy => {
         allowedTools: withHelpers(
           [
             ...(opts.executerTools && opts.executerTools.length > 0 ? opts.executerTools : PAL_TOOLS),
-            ...EXECUTER_DB_SERVERS,
+            ...dbServerTools(opts.executerDbServers ?? []),
             ...EXECUTER_CODE_TOOLS,
             ...executerBrowserTools(opts),
             ...notionAllow(role, opts),
@@ -475,7 +477,7 @@ const basePolicyFor = (role: UserRole, opts: ToolPolicyOptions): ToolPolicy => {
           ],
           opts,
         ),
-        disallowedTools: executerDisallow(opts.protectedPaths),
+        disallowedTools: executerDisallow(opts.protectedPaths, opts.dbServers, opts.executerDbServers),
         model: modelOf("executer", opts),
       };
     case "pal":
@@ -484,7 +486,7 @@ const basePolicyFor = (role: UserRole, opts: ToolPolicyOptions): ToolPolicy => {
         skipPermissions: false,
         cwd: opts.sandboxCwd,
         allowedTools: withHelpers([...PAL_TOOLS, ...notionAllow(role, opts), ...DATADOG_READ_TOOLS], opts),
-        disallowedTools: SANDBOX_DISALLOW,
+        disallowedTools: sandboxDisallow(opts.dbServers ?? []),
         model: modelOf("pal", opts),
       };
   }
