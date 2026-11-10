@@ -1106,7 +1106,7 @@ CI (`.github/workflows/ci.yml`) runs both, the e2e suite (secret `JARVIS_E2E_SLA
 
 This repo is public. GitHub secret scanning with push protection catches provider tokens; the leak guard adds project rules on top, using [gitleaks](https://github.com/gitleaks/gitleaks) (`brew install gitleaks`):
 
-- `.gitleaks.toml` extends the default rules with a Slack id rule (real-looking `U`/`C`/`D`/`G`/`W` ids are flagged, the obvious fakes used in tests such as `U0OWNER0001` are allowed) and an employer-name rule (only the copyright lines may carry it).
+- `.gitleaks.toml` extends the default rules with a Slack id rule (real-looking user, channel, DM, group, workspace, team, bot, app and enterprise ids - `U`/`C`/`D`/`G`/`W`/`T`/`B`/`A`/`E`, legacy ids without the leading 0 included - are flagged, the obvious fakes used in tests such as `U0OWNER0001` are allowed) and an employer-name rule (only the copyright lines may carry it).
 - A third rule for real people and brand names is **not committed**, since listing the names would publish them. Copy `docs/leak-names.example.toml` to `~/.jarvis/leak-names.toml` (`chmod 600`) and fill it in. CI reads the same content from the `LEAK_NAMES_TOML` Actions secret. Without it the scan still runs and prints a notice.
 - `bin/leak-scan.sh <gitleaks args>` runs gitleaks with the config plus the names file; `bun run leak-scan` scans the whole history.
 - CI runs it on every push and pull request. Known false positives are allowlisted by value in `.gitleaks.toml` (not by fingerprint, which a history rewrite breaks).
