@@ -414,7 +414,8 @@ export const createSlackStream = (
   const grouped = (event: Extract<LlmStreamEvent, { type: "tool" }>): LlmStreamEvent | undefined => {
     if (event.status === "in_progress") {
       if (groupOf.has(event.id)) return event;
-      const key = event.command ?? `${event.title}\n${event.details ?? ""}`;
+      // details is a log pointer that differs per call, so it is no part of the key
+      const key = event.command ?? event.title;
       const g = groups.get(key);
       if (!g) {
         const fresh = { id: event.id, title: event.title, details: event.details, count: 1, open: 1, failed: false };

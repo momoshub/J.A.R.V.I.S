@@ -21,11 +21,13 @@ import type {
   LlmUsage,
   ToolTrace,
   ToolTraceSink,
+  TraceSpot,
   UsagePayer,
   UsageSink,
 } from "../../application/ports.ts";
 import type { PromptMessage } from "../../domain/types.ts";
 import type { ToolPolicy } from "../../domain/toolPolicy.ts";
+import { runsOrcaWorkerStart } from "../../domain/threadBackground.ts";
 import { isNoiseTool, redactPaths, redactSecrets } from "../../domain/toolVisibility.ts";
 import { stopProcess } from "./killTree.ts";
 import { ignoreQuietly } from "../../application/ignoredError.ts";
@@ -137,16 +139,59 @@ export const isReactCall = (name: string, inputJson: string): boolean => {
   return segments.length > 0 && segments.every((x) => /^(?:\w+=\S*\s+)*(?:bash\s+)?\S*slack-react\.sh(?:\s|$)/.test(x));
 };
 
+/** Built-in tools whose name alone says little: [emoji, plain-English step]. */
+const TOOL_STEPS: Record<string, readonly [string, string]> = {
+  Read: ["📖", "Reading a file"],
+  Edit: ["✏️", "Editing a file"],
+  MultiEdit: ["✏️", "Editing a file"],
+  Write: ["✏️", "Editing a file"],
+  NotebookEdit: ["✏️", "Editing a notebook"],
+  Grep: ["🔎", "Searching the code"],
+  Glob: ["🔎", "Looking for files"],
+  WebFetch: ["🌐", "Fetching a page"],
+  WebSearch: ["🌐", "Searching the web"],
+};
+
+/** `mcp__claude_ai_Slack__slack_read_thread` -> "Slack slack_read_thread". */
+const mcpStep = (name: string): string => {
+  const [, server = "", ...tool] = name.split("__");
+  const label = [server.replace(/^claude_ai_/, ""), tool.join("__")].filter(Boolean).join(" ");
+  return label || "a connected tool";
+};
+
+/** The model's own one-line description of a step, scrubbed for a channel. */
+const describedStep = (input: Record<string, unknown>): string | undefined => {
+  const d = input.description;
+  return typeof d === "string" && d.trim() ? redactPaths(redactSecrets(d.trim().replace(/\s+/g, " "))) : undefined;
+};
+
+const str = (v: unknown): string => (typeof v === "string" ? v : "");
+
+/** A memory write or read: the notes folder of the adapter, or the learnings API. */
+const touchesMemory = (name: string, input: Record<string, unknown>): boolean =>
+  name === "Bash"
+    ? /\/api\/learnings\b/i.test(str(input.command))
+    : /\/memory\//.test(str(input.file_path)) && ["Read", "Edit", "MultiEdit", "Write"].includes(name);
+
 /**
- * Turn a tool_use name + accumulated input JSON into a short card title/details.
+ * Turn a tool_use name + accumulated input JSON into a card: a title in the
+ * shape `<Name>: <emoji> <what>` that says the step in plain English, and
+ * `details` that says where the full record is (`log at: <file> - line <n>`,
+ * the per-thread trace, when the sink reported one). The command, path or query
+ * behind a step is never shown.
  *
- * `command` carries the Bash command in full: the card text is clipped for Slack,
- * but consumers that match on what ran (the review command's progress lines) need
- * the whole thing - a `gh pr review` can sit past 200 chars, after a heredoc body.
+ * Names: Run (Bash), Agent, FAgent (a forked agent), WAgent (an Orca worker or
+ * a Workflow agent), Memory, Skill, MCP, and Tool for every other built-in.
+ *
+ * `command` carries the Bash command in full: it is never shown, but consumers
+ * that match on what ran (the review command's progress lines, the stream's
+ * grouping and hidden-action check) need the whole thing - a `gh pr review` can
+ * sit past 200 chars, after a heredoc body.
  */
 export const summarizeTool = (
   name: string,
   jsonStr: string,
+  spot?: TraceSpot,
 ): { title: string; details?: string; command?: string } => {
   let input: Record<string, unknown> = {};
   try {
@@ -154,21 +199,35 @@ export const summarizeTool = (
   } catch {
     // partial/invalid json - fall back to the name only
   }
-  if (name === "Bash" && typeof input.command === "string") {
-    // The card is posted into a channel, so scrub anything credential-shaped
-    // and the host's own paths from what is shown. `command` stays whole: it
-    // is only ever matched on.
-    const shown = redactPaths(redactSecrets(input.command));
-    return {
-      title: truncate(`run: ${shown}`, 200),
-      details: truncate(shown, 256),
-      command: input.command,
-    };
+  const described = describedStep(input);
+  let label: string;
+  const command = name === "Bash" && typeof input.command === "string" ? input.command : undefined;
+  if (touchesMemory(name, input)) {
+    label = `Memory: 🧠 ${described ?? (name === "Read" ? "Reading a memory note" : "Updating memory")}`;
+  } else if (name === "Bash") {
+    label =
+      command !== undefined && runsOrcaWorkerStart(command)
+        ? `WAgent: 👷 ${described ?? "Starting a worker agent"}`
+        : `Run: 🏃 ${described ?? "Running a command"}`;
+  } else if (name === "Agent" || name === "Task") {
+    label =
+      input.subagent_type === "fork"
+        ? `FAgent: 🍴 ${described ?? "Running a forked agent"}`
+        : `Agent: 🧩 ${described ?? "Running a helper agent"}`;
+  } else if (name === "Workflow") {
+    label = `WAgent: 👷 ${described ?? "Running a workflow"}`;
+  } else if (name === "Skill") {
+    label = `Skill: 📘 ${str(input.skill).trim() || "Using a skill"}`;
+  } else if (name.startsWith("mcp__")) {
+    label = `MCP: 🔌 ${mcpStep(name)}`;
+  } else {
+    const [emoji, what] = TOOL_STEPS[name] ?? ["🔧", `Using ${name}`];
+    label = `Tool: ${emoji} ${what}`;
   }
-  const firstString = Object.values(input).find((v) => typeof v === "string") as string | undefined;
   return {
-    title: truncate(name, 200),
-    details: firstString ? truncate(redactPaths(redactSecrets(firstString)), 256) : undefined,
+    title: truncate(label, 200),
+    ...(spot ? { details: `log at: ${spot.file} - line ${spot.line}` } : {}),
+    ...(command !== undefined ? { command } : {}),
   };
 };
 
@@ -447,12 +506,13 @@ export const createClaudeCliLlm = (config: ClaudeCliConfig = {}): LlmPort => {
 
     // The full record, for the thread's debug log. Like `emit`, a logger that
     // throws must never cost the run its stdout.
-    const trace = (t: ToolTrace): void => {
-      if (!config.onToolTrace) return;
+    const trace = (t: ToolTrace): TraceSpot | undefined => {
+      if (!config.onToolTrace) return undefined;
       try {
-        config.onToolTrace(t, bill);
+        return config.onToolTrace(t, bill) || undefined;
       } catch {
         // a debug log is never worth the answer
+        return undefined;
       }
     };
 
@@ -563,9 +623,9 @@ export const createClaudeCliLlm = (config: ClaudeCliConfig = {}): LlmPort => {
           flush();
         } else if (ev.type === "content_block_stop" && typeof index === "number") {
           const tb = toolByIndex.get(index);
-          if (tb) trace({ kind: "call", id: tb.id, name: tb.name, input: tb.json });
+          const spot = tb ? trace({ kind: "call", id: tb.id, name: tb.name, input: tb.json }) : undefined;
           if (tb && !isNoiseTool(tb.name)) {
-            const { title, details, command } = summarizeTool(tb.name, tb.json);
+            const { title, details, command } = summarizeTool(tb.name, tb.json, spot);
             cardById.set(tb.id, { title, command });
             emit({ type: "tool", id: tb.id, title, details, command, status: "in_progress" });
           }

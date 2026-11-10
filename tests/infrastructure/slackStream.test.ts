@@ -36,8 +36,8 @@ describe("createSlackStream", () => {
     const f = fakeStreamer();
     const s = createSlackStream(f.make);
     s.sink({ type: "text", delta: "Hello " });
-    s.sink({ type: "tool", id: "t1", title: "run: ls", details: "ls", status: "in_progress" });
-    s.sink({ type: "tool", id: "t1", title: "run: ls", status: "complete" });
+    s.sink({ type: "tool", id: "t1", title: "Run: 🏃 Listing files", details: "ls", status: "in_progress" });
+    s.sink({ type: "tool", id: "t1", title: "Run: 🏃 Listing files", status: "complete" });
     s.sink({ type: "text", delta: "world" });
     const ok = await s.finish();
     expect(ok).toBe(true);
@@ -48,48 +48,59 @@ describe("createSlackStream", () => {
     expect(toolCall.chunks[0]).toMatchObject({
       type: "task_update",
       id: "t1",
-      title: "run: ls",
+      title: "Run: 🏃 Listing files",
       status: "in_progress",
       details: "ls",
     });
     expect(f.appends[3]).toEqual({ markdown_text: "world" });
   });
 
+  test("a repeated step with a different log line per call still shares one card", async () => {
+    const f = fakeStreamer();
+    const s = createSlackStream(f.make);
+    s.sink({ type: "tool", id: "t1", title: "Tool: 📖 Reading a file", details: "log at: l.jsonl - line 3", status: "in_progress" });
+    s.sink({ type: "tool", id: "t2", title: "Tool: 📖 Reading a file", details: "log at: l.jsonl - line 9", status: "in_progress" });
+    await s.finish();
+    const calls = f.appends.flatMap((a) => (a as { chunks?: Array<Record<string, unknown>> }).chunks ?? []);
+    expect(calls.map((c) => c.id)).toEqual(["t1", "t1"]);
+    expect(calls[1]).toMatchObject({ title: "Tool: 📖 Reading a file (2 runs)" });
+  });
+
   test("repeats of the same step share one card that counts the runs", async () => {
     const f = fakeStreamer();
     const s = createSlackStream(f.make);
-    s.sink({ type: "tool", id: "t1", title: "run: query", status: "in_progress" });
-    s.sink({ type: "tool", id: "t1", title: "run: query", status: "complete" });
-    s.sink({ type: "tool", id: "t2", title: "run: query", status: "in_progress" });
-    s.sink({ type: "tool", id: "t3", title: "run: query", status: "in_progress" });
-    s.sink({ type: "tool", id: "t2", title: "run: query", status: "complete" });
-    s.sink({ type: "tool", id: "t3", title: "run: query", status: "error" });
-    s.sink({ type: "tool", id: "t4", title: "run: ls", status: "in_progress" });
+    s.sink({ type: "tool", id: "t1", title: "Querying a database", status: "in_progress" });
+    s.sink({ type: "tool", id: "t1", title: "Querying a database", status: "complete" });
+    s.sink({ type: "tool", id: "t2", title: "Querying a database", status: "in_progress" });
+    s.sink({ type: "tool", id: "t3", title: "Querying a database", status: "in_progress" });
+    s.sink({ type: "tool", id: "t2", title: "Querying a database", status: "complete" });
+    s.sink({ type: "tool", id: "t3", title: "Querying a database", status: "error" });
+    s.sink({ type: "tool", id: "t4", title: "Run: 🏃 Listing files", status: "in_progress" });
     await s.finish();
     const cards = f.appends.flatMap((a) => (a.chunks ?? []) as Array<Record<string, unknown>>);
     expect(cards.map((c) => [c.id, c.title, c.status])).toEqual([
-      ["t1", "run: query", "in_progress"],
-      ["t1", "run: query", "complete"],
-      ["t1", "run: query (2 runs)", "in_progress"],
-      ["t1", "run: query (3 runs)", "in_progress"],
-      ["t1", "run: query (3 runs)", "error"],
-      ["t4", "run: ls", "in_progress"],
+      ["t1", "Querying a database", "in_progress"],
+      ["t1", "Querying a database", "complete"],
+      ["t1", "Querying a database (2 runs)", "in_progress"],
+      ["t1", "Querying a database (3 runs)", "in_progress"],
+      ["t1", "Querying a database (3 runs)", "error"],
+      ["t4", "Run: 🏃 Listing files", "in_progress"],
     ]);
   });
 
-  test("same tool with a different input is a different step", async () => {
+  test("different titles are different steps, whatever log line they point at", async () => {
     const f = fakeStreamer();
     const s = createSlackStream(f.make);
-    const sql = "mcp__pg-prod__execute_sql";
-    s.sink({ type: "tool", id: "q1", title: sql, details: "select 1", status: "in_progress" });
-    s.sink({ type: "tool", id: "q2", title: sql, details: "select 2", status: "in_progress" });
-    s.sink({ type: "tool", id: "q3", title: sql, details: "select 1", status: "in_progress" });
+    const sql = "MCP: 🔌 pg-prod execute_sql";
+    s.sink({ type: "tool", id: "q1", title: sql, details: "log at: l.jsonl - line 1", status: "in_progress" });
+    s.sink({ type: "tool", id: "q2", title: "Tool: 📖 Reading a file", details: "log at: l.jsonl - line 5", status: "in_progress" });
+    s.sink({ type: "tool", id: "q3", title: sql, details: "log at: l.jsonl - line 9", status: "in_progress" });
     await s.finish();
     const cards = f.appends.flatMap((a) => (a.chunks ?? []) as Array<Record<string, unknown>>);
     expect(cards.map((c) => [c.id, c.title, c.details])).toEqual([
-      ["q1", sql, "select 1"],
-      ["q2", sql, "select 2"],
-      ["q1", `${sql} (2 runs)`, "select 1"],
+      ["q1", sql, "log at: l.jsonl - line 1"],
+      ["q2", "Tool: 📖 Reading a file", "log at: l.jsonl - line 5"],
+      ["q1", `${sql} (2 runs)`, "log at: l.jsonl - line 1"],
     ]);
   });
 
@@ -378,7 +389,7 @@ describe("task cards against the wall", () => {
     const s = createSlackStream(f.make);
     s.sink({ type: "text", delta: "digging in" });
     for (let i = 0; i < 60; i++) {
-      s.sink({ type: "tool", id: `t${i}`, title: `run: query ${i}`, details: "q".repeat(400), status: "in_progress" });
+      s.sink({ type: "tool", id: `t${i}`, title: `Querying a database ${i}`, details: "q".repeat(400), status: "in_progress" });
     }
     s.sink({ type: "text", delta: "the answer" });
     const ok = await s.finish();
@@ -629,13 +640,13 @@ describe("a blocks chunk Slack rejects does not kill the stream", () => {
 describe("the steps a finished message showed", () => {
   test("each card counts once, however often it is updated", () => {
     const stream = createSlackStream(fakeStreamer().make);
-    stream.sink({ type: "tool", id: "a", title: "run: ls", status: "in_progress" });
-    stream.sink({ type: "tool", id: "a", title: "run: ls", status: "complete" });
+    stream.sink({ type: "tool", id: "a", title: "Run: 🏃 Listing files", status: "in_progress" });
+    stream.sink({ type: "tool", id: "a", title: "Run: 🏃 Listing files", status: "complete" });
     stream.sink({ type: "tool", id: "b", title: "run: cat x", status: "in_progress" });
     stream.sink({ type: "tool", id: "b", title: "run: cat x", status: "error" });
 
     expect(stream.steps).toEqual([
-      { title: "run: ls", failed: false },
+      { title: "Run: 🏃 Listing files", failed: false },
       { title: "run: cat x", failed: true },
     ]);
   });
@@ -643,8 +654,8 @@ describe("the steps a finished message showed", () => {
   test("the thinking placeholder is not a step anyone took", () => {
     const stream = createSlackStream(fakeStreamer().make);
     stream.showThinking("thinking…");
-    stream.sink({ type: "tool", id: "a", title: "run: ls", status: "complete" });
-    expect(stream.steps.map((s) => s.title)).toEqual(["run: ls"]);
+    stream.sink({ type: "tool", id: "a", title: "Run: 🏃 Listing files", status: "complete" });
+    expect(stream.steps.map((s) => s.title)).toEqual(["Run: 🏃 Listing files"]);
   });
 
   test("a turn that only talked has no steps to collapse", () => {

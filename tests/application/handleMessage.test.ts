@@ -164,7 +164,7 @@ describe("handleMessage", () => {
       complete: async () => "should not be called",
       stream: async (_params, sink) => {
         sink({ type: "text", delta: "Str" });
-        sink({ type: "tool", id: "t1", title: "run: ls", status: "in_progress" });
+        sink({ type: "tool", id: "t1", title: "Listing files", status: "in_progress" });
         sink({ type: "text", delta: "eamed" });
         return "Streamed";
       },

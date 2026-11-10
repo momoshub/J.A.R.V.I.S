@@ -28,6 +28,18 @@ describe("per-thread tool trace log", () => {
     expect(readFileSync(join(dir, "C1", "222.2.jsonl"), "utf8")).toContain('"t9"');
   });
 
+  test("reports where each line landed: a path relative to the root, and its line number", () => {
+    const root = mkdtempSync(join(tmpdir(), "root-"));
+    const dir = join(root, "logs", "threads");
+    const log = createToolTraceLog(dir, () => NOW, root);
+    expect(log({ kind: "call", id: "t1", name: "Bash", input: "{}" }, bill)).toEqual({ file: "logs/threads/C1/111.1.jsonl", line: 1 });
+    expect(log({ kind: "result", id: "t1", isError: false, output: "x" }, bill)).toEqual({ file: "logs/threads/C1/111.1.jsonl", line: 2 });
+    expect(log({ kind: "call", id: "t2", name: "Bash", input: "{}" }, { ...bill, threadTs: "222.2" })).toMatchObject({ line: 1 });
+    // a restarted process carries on from what is already in the file
+    const again = createToolTraceLog(dir, () => NOW, root);
+    expect(again({ kind: "call", id: "t3", name: "Bash", input: "{}" }, bill)).toMatchObject({ line: 3 });
+  });
+
   test("redacts secrets and clips a huge output", () => {
     const dir = mkdtempSync(join(tmpdir(), "trace-"));
     const log = createToolTraceLog(dir, () => NOW);

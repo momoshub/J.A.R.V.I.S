@@ -933,7 +933,7 @@ describe("dispatchCommand", () => {
       complete: async () => "unused",
       stream: async (_p, sink) => {
         const emit = (id: string, command: string) => {
-          const title = `run: ${command}`.slice(0, 200);
+          const title = "Running a command";
           sink({ type: "tool", id, title, command, status: "in_progress" });
           sink({ type: "tool", id, title, command, status: "complete" });
         };

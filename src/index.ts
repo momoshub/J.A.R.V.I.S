@@ -387,8 +387,9 @@ const main = async () => {
   // once there is a turn path to hand questions to).
   let orcaQuestions: { observe: ToolTraceSink } | undefined;
   const toolTrace: ToolTraceSink = (trace, bill) => {
-    traceLog(trace, bill);
+    const spot = traceLog(trace, bill);
     orcaQuestions?.observe(trace, bill);
+    return spot;
   };
   // The bot's own Orca terminal, so a turn can open Runs and start workers.
   // Every turn gets its handle - or, with Orca down, no handle at all, never
