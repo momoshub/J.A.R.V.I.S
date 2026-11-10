@@ -3,28 +3,28 @@ import { asReviewPolicy, authorRefOf, DEFAULT_REVIEW_POLICY, stricterPolicy, loo
 
 describe("repoOf", () => {
   test("reads owner/repo out of a PR url", () => {
-    expect(repoOf("https://github.com/acme/sql-runner/pull/905")).toBe(
-      "acme/sql-runner",
+    expect(repoOf("https://github.com/acme/report-exports/pull/905")).toBe(
+      "acme/report-exports",
     );
-    expect(repoOf("https://github.com/acme/sql-runner/pull/905/files")).toBe(
-      "acme/sql-runner",
+    expect(repoOf("https://github.com/acme/report-exports/pull/905/files")).toBe(
+      "acme/report-exports",
     );
-    expect(repoOf("HTTPS://GitHub.com/Acme/sql-runner/pull/1")).toBe("acme/sql-runner");
+    expect(repoOf("HTTPS://GitHub.com/Acme/Report-Exports/pull/1")).toBe("acme/report-exports");
   });
 
   test("undefined for anything that is not a PR url", () => {
-    expect(repoOf("https://github.com/acme/sql-runner")).toBeUndefined();
+    expect(repoOf("https://github.com/acme/report-exports")).toBeUndefined();
     expect(repoOf("hello")).toBeUndefined();
   });
 });
 
 describe("repoRefOf", () => {
   test("takes the shorthand people actually type", () => {
-    expect(repoRefOf("acme/sql-runner")).toBe("acme/sql-runner");
-    expect(repoRefOf("https://github.com/acme/sql-runner")).toBe("acme/sql-runner");
-    expect(repoRefOf("<https://github.com/acme/sql-runner/>")).toBe("acme/sql-runner");
-    expect(repoRefOf("https://github.com/acme/sql-runner/pull/905")).toBe(
-      "acme/sql-runner",
+    expect(repoRefOf("acme/report-exports")).toBe("acme/report-exports");
+    expect(repoRefOf("https://github.com/acme/report-exports")).toBe("acme/report-exports");
+    expect(repoRefOf("<https://github.com/acme/report-exports/>")).toBe("acme/report-exports");
+    expect(repoRefOf("https://github.com/acme/report-exports/pull/905")).toBe(
+      "acme/report-exports",
     );
   });
 

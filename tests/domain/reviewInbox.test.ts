@@ -40,20 +40,20 @@ describe("review inbox domain", () => {
   });
 
   test("names match without diacritics or case", () => {
-    expect(normaliseName("Sam Example")).toBe("sam example");
+    expect(normaliseName("Trần Văn Minh")).toBe("tran van minh");
     const people = [
-      { slackId: "U1", displayName: "Sam Example" },
+      { slackId: "U1", displayName: "Tran Van Minh" },
       { slackId: "U2", displayName: "Someone Else" },
     ];
-    expect(matchByName("thien-x", "Sam Example", people)).toBe("U1");
+    expect(matchByName("minh-x", "Trần Văn Minh", people)).toBe("U1");
   });
 
   test("two people with the same name is no answer", () => {
     const people = [
-      { slackId: "U1", displayName: "Pat Example" },
-      { slackId: "U2", displayName: "pat example" },
+      { slackId: "U1", displayName: "Sam Example" },
+      { slackId: "U2", displayName: "sam example" },
     ];
-    expect(matchByName("an", "Pat Example", people)).toBeUndefined();
+    expect(matchByName("an", "Sam Example", people)).toBeUndefined();
   });
 
   test("no name match is no answer", () => {

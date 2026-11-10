@@ -258,7 +258,7 @@ describe("answered questions lock", () => {
     const form = [
       { type: "actions", block_id: "f", elements: [
         { type: "radio_buttons", action_id: "jv:score", options: [opt("8"), opt("10")] },
-        { type: "static_select", action_id: "jv:pod", option_groups: [{ options: [opt("team")] }] },
+        { type: "static_select", action_id: "jv:pod", option_groups: [{ options: [opt("team-a")] }] },
         { type: "datepicker", action_id: "jv:date" },
         { type: "timepicker", action_id: "jv:time" },
         { type: "users_select", action_id: "jv:empty" },
@@ -267,7 +267,7 @@ describe("answered questions lock", () => {
     ];
     const picks = picksOf({ f: {
       "jv:score": { type: "radio_buttons", selected_option: { value: "10", text: { text: "10" } } },
-      "jv:pod": { type: "static_select", selected_option: { value: "team" } },
+      "jv:pod": { type: "static_select", selected_option: { value: "team-a" } },
       "jv:date": { type: "datepicker", selected_date: "2026-11-14" },
       "jv:time": { type: "timepicker", selected_time: "10:00" },
       "jv:empty": { type: "users_select", selected_user: null },
@@ -275,7 +275,7 @@ describe("answered questions lock", () => {
     const [actions] = retireKit(form, "sent", "jv:send", picks);
     const [score, pod, date, time, send] = (actions as { elements: Record<string, unknown>[] }).elements;
     expect(score).toEqual({ type: "radio_buttons", action_id: "jv:settled:score", options: [opt("8"), opt("10")], initial_option: opt("10") });
-    expect(pod).toHaveProperty("initial_option", opt("team"));
+    expect(pod).toHaveProperty("initial_option", opt("team-a"));
     expect(date).toEqual({ type: "datepicker", action_id: "jv:settled:date", initial_date: "2026-11-14" });
     expect(time).toEqual({ type: "timepicker", action_id: "jv:settled:time", initial_time: "10:00" });
     expect(send).toHaveProperty("action_id", "jv:settled:send");

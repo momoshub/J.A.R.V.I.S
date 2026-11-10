@@ -20,9 +20,9 @@ import { createMessageRepo } from "../src/infrastructure/db/messageRepo.ts";
 import type { LlmPort } from "../src/application/ports.ts";
 
 const TOKEN = process.env.SLACK_BOT_TOKEN ?? "";
-const CHANNEL = process.env.JARVIS_E2E_CHANNEL ?? "C0TEST00005";
+const CHANNEL = process.env.JARVIS_E2E_CHANNEL ?? "";
 const KEEP = process.env.JARVIS_E2E_KEEP === "1";
-const enabled = process.env.JARVIS_E2E === "1" && TOKEN !== "";
+const enabled = process.env.JARVIS_E2E === "1" && TOKEN !== "" && CHANNEL !== "";
 
 const cell = (text: string) => ({ type: "raw_text", text });
 /** The live incident: a table whose header cell is empty (Slack needs 1+ char). */

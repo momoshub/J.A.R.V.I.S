@@ -9,7 +9,7 @@ The session that wrote a PR never declares it done. A separate verifier (a fresh
 
 ## Setup
 
-- Verify the PR head, nothing else: `gh pr view <pr> --json headRefOid` and check it out in your own worktree (`git fetch`, `git worktree add .claude/worktrees/<name> <headRefOid>`). Never check out or edit in the main folder (/Users/kai/Workspaces/J.A.R.V.I.S.), never touch `data/*.db`.
+- Verify the PR head, nothing else: `gh pr view <pr> --json headRefOid` and check it out in your own worktree (`git fetch`, `git worktree add .claude/worktrees/<name> <headRefOid>`). Never check out or edit in the main checkout (the folder the bot runs from), never touch `data/*.db`.
 - Read the diff first (`gh pr diff <pr>`) and the PR body: what is the change supposed to do? Write that down as one sentence you can falsify.
 - `git diff --name-only origin/main`: `src/` changed with no `*.test.ts` and no doc is already a finding.
 
@@ -39,7 +39,7 @@ Run the real thing where you safely can; otherwise show the test that exercises 
 
 ## Evidence to attach (PR comment)
 
-Post one comment `[verify]` on the PR (as `lyluongthien`: `GH_TOKEN=$(gh auth token -u lyluongthien) gh pr comment <pr> ...`; empty token = stop, never `gh auth switch`) containing:
+Post one comment `[verify]` on the PR (as the `SELF_PR_REVIEWER` account: `GH_TOKEN=$(gh auth token -u "$SELF_PR_REVIEWER") gh pr comment <pr> ...`; empty token = stop, never `gh auth switch`) containing:
 
 - the head SHA you verified (`git rev-parse HEAD` in your worktree equals the PR's `headRefOid`)
 - the exact commands run and their trimmed output (typecheck, scoped and full `bun test` counts)

@@ -173,6 +173,6 @@ describe("usage line", () => {
   });
 
   test("project slug matches Claude Code's folder names", () => {
-    expect(projectSlug("/Users/kai/Workspaces/J.A.R.V.I.S.")).toBe("-Users-kai-Workspaces-J-A-R-V-I-S-");
+    expect(projectSlug("/Users/me/Workspaces/J.A.R.V.I.S.")).toBe("-Users-me-Workspaces-J-A-R-V-I-S-");
   });
 });

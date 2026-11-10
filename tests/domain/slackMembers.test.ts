@@ -14,19 +14,19 @@ describe("slack members", () => {
   });
 
   test("folding drops case and diacritics", () => {
-    expect(fold(" Lý Lương Thiện ")).toBe("ly luong thien");
+    expect(fold(" Lê Thị Hương ")).toBe("le thi huong");
     expect(fold("Đức")).toBe("duc");
   });
 
   test("an exact field beats a word start beats a substring", () => {
-    const thien = m({ id: "U1", realName: "Thiện Lý", handle: "thien", email: "thien@acme.com" });
-    expect(matchScore(thien, "thien")).toBe(3);
-    expect(matchScore(thien, "@ly")).toBe(2);
-    expect(matchScore(thien, "acme")).toBe(2);
-    expect(matchScore(thien, "hie")).toBe(1);
-    expect(matchScore(thien, "zzz")).toBe(0);
-    expect(matchScore(thien, "  ")).toBe(0);
-    expect(matchScore(thien, "u1")).toBe(3);
+    const minh = m({ id: "U1", realName: "Minh Trần", handle: "minh", email: "minh@acme.com" });
+    expect(matchScore(minh, "minh")).toBe(3);
+    expect(matchScore(minh, "@tr")).toBe(2);
+    expect(matchScore(minh, "acme")).toBe(2);
+    expect(matchScore(minh, "inh")).toBe(1);
+    expect(matchScore(minh, "zzz")).toBe(0);
+    expect(matchScore(minh, "  ")).toBe(0);
+    expect(matchScore(minh, "u1")).toBe(3);
   });
 
   test("search ranks, skips non-people, and caps", () => {

@@ -26,7 +26,7 @@ const SLACKBOT = "USLACKBOT";
 /** A deactivated account, a bot or an app user is never someone to add. */
 export const isPerson = (m: SlackMember): boolean => !m.deleted && !m.isBot && m.id !== SLACKBOT;
 
-/** Lower-cased and stripped of diacritics, so "thien" finds "Thiện". */
+/** Lower-cased and stripped of diacritics, so "minh" finds "Mình". */
 export const fold = (s: string): string =>
   s.normalize("NFD").replace(/\p{M}+/gu, "").replace(/đ/g, "d").replace(/Đ/g, "D").toLowerCase().trim();
 

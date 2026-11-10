@@ -28,8 +28,8 @@
 #
 # Every user id is NAMED before it is printed. The raw payload carries only
 # `user: U0ALEX00001` and `<@U0ALEX00001>` in the text, and a model handed that
-# fills in a name from memory: it once told a channel that "Jordan" asked a
-# question Alex Example had asked. Each distinct id is looked up once with
+# fills in a name from memory: it once named the wrong person as the
+# author of a message. Each distinct id is looked up once with
 # users.info, the message gets a `user_name` field and every mention becomes
 # `<@U…:name>`, the same shape inbound mentions already arrive in. An id that
 # cannot be resolved stays as it is, never guessed.

@@ -473,7 +473,7 @@ const STREAM_EVENTS = [
 describe("isReactCall", () => {
   test("only a Bash call that runs nothing but the react helper counts", () => {
     const cmd = (command: string) => JSON.stringify({ command });
-    expect(isReactCall("Bash", cmd("/Users/kai/Workspaces/J.A.R.V.I.S./bin/slack-react.sh C1 1.1 fire"))).toBe(true);
+    expect(isReactCall("Bash", cmd("/Users/me/Workspaces/J.A.R.V.I.S./bin/slack-react.sh C1 1.1 fire"))).toBe(true);
     expect(isReactCall("Bash", cmd("bash bin/slack-react.sh C1 1.1 fire 2>&1"))).toBe(true);
     expect(isReactCall("Bash", cmd("bin/slack-react.sh C1 1.1 fire && bin/slack-react.sh C1 1.1 eyes"))).toBe(true);
     expect(isReactCall("Bash", cmd("ls"))).toBe(false);
@@ -644,7 +644,7 @@ describe("createClaudeCliLlm.stream", () => {
     // short meta line after the tool result. The answer was held, the meta line
     // went out alone.
     const se = (event: unknown) => ({ type: "stream_event", event });
-    const react = JSON.stringify({ command: "/Users/kai/Workspaces/J.A.R.V.I.S./bin/slack-react.sh C1 1700000000.0001 fire" });
+    const react = JSON.stringify({ command: "/Users/me/Workspaces/J.A.R.V.I.S./bin/slack-react.sh C1 1700000000.0001 fire" });
     const events = [
       se({ type: "message_start" }),
       se({ type: "content_block_start", index: 0, content_block: { type: "text" } }),

@@ -56,14 +56,14 @@ describe("isNoiseTool", () => {
 
 describe("redactPaths", () => {
   test("the workspace root and home directory are shortened", () => {
-    expect(redactPaths("cd /Users/kai/Workspaces/acme-api && git grep x", "/Users/kai")).toBe(
+    expect(redactPaths("cd /Users/me/Workspaces/acme-api && git grep x", "/Users/me")).toBe(
       "cd $Workspaces/acme-api && git grep x",
     );
-    expect(redactPaths("cat /Users/kai/.claude/x.md", "/Users/kai")).toBe("cat ~/.claude/x.md");
+    expect(redactPaths("cat /Users/me/.claude/x.md", "/Users/me")).toBe("cat ~/.claude/x.md");
   });
 
   test("other paths are left alone", () => {
-    expect(redactPaths("grep -n foo /tmp/survey.js", "/Users/kai")).toBe("grep -n foo /tmp/survey.js");
+    expect(redactPaths("grep -n foo /tmp/survey.js", "/Users/me")).toBe("grep -n foo /tmp/survey.js");
     expect(redactPaths("ls /", "")).toBe("ls /");
   });
 });

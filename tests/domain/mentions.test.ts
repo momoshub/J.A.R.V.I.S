@@ -47,22 +47,22 @@ describe("hasContent", () => {
 describe("mentionedId", () => {
   test("reads every form a mention can arrive in", () => {
     expect(mentionedId("<@U123ABC>")).toBe("U123ABC");
-    expect(mentionedId("<@U123ABC|robin>")).toBe("U123ABC");
+    expect(mentionedId("<@U123ABC|casey>")).toBe("U123ABC");
     // the annotated form is what commands actually receive, because the
     // transport annotates before anything parses arguments
-    expect(mentionedId("<@U123ABC:Robin>")).toBe("U123ABC");
-    expect(mentionedId("<@U123ABC:Robin Example>")).toBe("U123ABC");
+    expect(mentionedId("<@U123ABC:Casey>")).toBe("U123ABC");
+    expect(mentionedId("<@U123ABC:Casey Lee>")).toBe("U123ABC");
     expect(mentionedId("U123ABC")).toBe("U123ABC");
     expect(mentionedId("W123ABC")).toBe("W123ABC");
   });
 
   test("what a mention annotates to still reads back", () => {
-    const annotated = annotateMentions("<@U123ABC>", () => "Robin");
+    const annotated = annotateMentions("<@U123ABC>", () => "Casey");
     expect(mentionedId(annotated)).toBe("U123ABC");
   });
 
   test("anything else is nobody", () => {
-    for (const junk of [undefined, "", "robin", "@robin", "<#C123>", "<@u123abc>", "hello <@U1> there"]) {
+    for (const junk of [undefined, "", "casey", "@casey", "<#C123>", "<@u123abc>", "hello <@U1> there"]) {
       expect(mentionedId(junk)).toBeUndefined();
     }
   });
