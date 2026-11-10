@@ -15,7 +15,7 @@
  */
 import { freemem, loadavg, cpus, totalmem, uptime } from "node:os";
 import { platform } from "node:process";
-import type { MemorySource, SystemReading } from "../../domain/systemStatus.ts";
+import type { Battery, BatteryState, MemorySource, SystemReading } from "../../domain/systemStatus.ts";
 
 const PROBE_TIMEOUT_MS = 4_000;
 
@@ -89,6 +89,53 @@ const disk = async (path: string): Promise<{ free: number; total: number } | und
   return total && available !== undefined ? { free: available * 1024, total: total * 1024 } : undefined;
 };
 
+/**
+ * `pmset -g batt`: ` -InternalBattery-0 (id=1)\t73%; discharging; 6:29 remaining present: true`.
+ * A desktop Mac prints no InternalBattery line, so it has no battery reading.
+ * "finishing charge" is still charging, and "AC attached" is plugged in but held.
+ */
+export const parsePmsetBattery = (out: string): Battery | undefined => {
+  const line = out.split("\n").find((l) => /InternalBattery/.test(l));
+  const m = line?.match(/(\d+)%;\s*([^;]+);\s*(?:(\d+):(\d+) remaining)?/);
+  if (!m?.[1] || !m[2]) return undefined;
+  const raw = m[2].trim().toLowerCase();
+  const state: BatteryState =
+    raw === "discharging"
+      ? "discharging"
+      : raw === "charged"
+        ? "charged"
+        : raw === "charging" || raw === "finishing charge"
+          ? "charging"
+          : "not charging";
+  // `0:00 remaining` while it is still working out an estimate is not an estimate.
+  const remainingS = m[3] && m[4] ? Number(m[3]) * 3600 + Number(m[4]) * 60 : undefined;
+  return { pct: Number(m[1]), state, ...(remainingS ? { remainingS } : {}) };
+};
+
+/** Linux sysfs: `capacity` and `status` (Charging, Discharging, Full, Not charging). */
+export const parseLinuxBattery = (capacity: string, status: string): Battery | undefined => {
+  const pct = Number(capacity.trim());
+  if (!capacity.trim() || !Number.isFinite(pct)) return undefined;
+  const raw = status.trim().toLowerCase();
+  const state: BatteryState =
+    raw === "charging" ? "charging" : raw === "discharging" ? "discharging" : raw === "full" ? "charged" : "not charging";
+  return { pct, state };
+};
+
+const macBattery = async (): Promise<Battery | undefined> => {
+  const out = await sh(["pmset", "-g", "batt"]);
+  return out ? parsePmsetBattery(out) : undefined;
+};
+
+const linuxBattery = async (): Promise<Battery | undefined> => {
+  try {
+    const dir = "/sys/class/power_supply/BAT0";
+    return parseLinuxBattery(await Bun.file(`${dir}/capacity`).text(), await Bun.file(`${dir}/status`).text());
+  } catch {
+    return undefined;
+  }
+};
+
 export type SystemProbeOptions = {
   /** Filesystem the disk figure is read for; the data directory matters most. */
   readonly dataDir?: string;
@@ -116,6 +163,7 @@ export const createSystemProbe = (opts: SystemProbeOptions = {}): SystemProbe =>
 
     const swapUsed = platform === "darwin" ? await macSwap() : platform === "linux" ? await linuxSwap() : undefined;
     const space = opts.dataDir ? await disk(opts.dataDir) : undefined;
+    const battery = platform === "darwin" ? await macBattery() : platform === "linux" ? await linuxBattery() : undefined;
     const runs = opts.runs?.();
 
     return {
@@ -130,6 +178,7 @@ export const createSystemProbe = (opts: SystemProbeOptions = {}): SystemProbe =>
       swapUsed,
       diskFree: space?.free,
       diskTotal: space?.total,
+      ...(battery ? { battery } : {}),
       hostUptimeS: uptime(),
       procRss: process.memoryUsage().rss,
       procUptimeS: process.uptime(),

@@ -26,6 +26,16 @@ export type MemorySource =
   /** The kernel's free-pages count. Misleading on both, so it is flagged. */
   | "free";
 
+/** What the power source is doing, as `pmset -g batt` (or Linux sysfs) says it. */
+export type BatteryState = "charging" | "discharging" | "charged" | "not charging";
+
+export type Battery = {
+  readonly pct: number;
+  readonly state: BatteryState;
+  /** Time left on battery or to full, when the OS has an estimate. */
+  readonly remainingS?: number;
+};
+
 /** One sample of the host and the process running on it. */
 export type SystemReading = {
   readonly at: number;
@@ -40,6 +50,8 @@ export type SystemReading = {
   readonly swapUsed?: number;
   readonly diskFree?: number;
   readonly diskTotal?: number;
+  /** Absent on a machine with no battery, or when it could not be read. */
+  readonly battery?: Battery;
   readonly hostUptimeS: number;
   /** Resident set of the bot process. */
   readonly procRss: number;
@@ -70,6 +82,9 @@ export const SWAP_WATCH = 2 * 1024 ** 3;
 export const SWAP_PROBLEM = 8 * 1024 ** 3;
 export const DISK_WATCH_PCT = 10;
 export const DISK_PROBLEM_PCT = 5;
+/** Only judged while discharging: a low battery on the charger is not a problem. */
+export const BATTERY_WATCH_PCT = 20;
+export const BATTERY_PROBLEM_PCT = 10;
 
 const worst = (a: VerdictLevel, b: VerdictLevel): VerdictLevel =>
   a === "problem" || b === "problem" ? "problem" : a === "watch" || b === "watch" ? "watch" : "ok";
@@ -144,6 +159,17 @@ export const verdictOf = (r: SystemReading): Verdict => {
     }
   }
 
+  // The host is a laptop: on battery and running low, it is about to go dark.
+  if (r.battery?.state === "discharging") {
+    if (r.battery.pct < BATTERY_PROBLEM_PCT) {
+      level = worst(level, "problem");
+      reasons.push(`on battery at ${r.battery.pct}% - the host is about to shut down`);
+    } else if (r.battery.pct < BATTERY_WATCH_PCT) {
+      level = worst(level, "watch");
+      reasons.push(`on battery at ${r.battery.pct}%`);
+    }
+  }
+
   // A socket that is not listening is the failure that looks like silence:
   // process up, launchd happy, nothing arriving.
   if (r.socket && !/connected|listening/i.test(r.socket)) {
@@ -187,6 +213,15 @@ export const trendOf = (history: readonly SystemReading[]): Trend | undefined =>
   };
 };
 
+/** `73%, discharging, 6h 29m left` - the battery as one short phrase. */
+export const batteryLine = (b: Battery): string => {
+  const left =
+    b.remainingS === undefined || b.state === "charged" || b.state === "not charging"
+      ? ""
+      : `, ${duration(b.remainingS)} ${b.state === "charging" ? "to full" : "left"}`;
+  return `${b.pct}%, ${b.state}${left}`;
+};
+
 const HEAD: Record<VerdictLevel, string> = {
   ok: ":large_green_circle: nothing abnormal",
   watch: ":large_yellow_circle: worth a look",
@@ -218,6 +253,7 @@ export const describeSystem = (
   if (r.diskFree !== undefined && r.diskTotal !== undefined) {
     lines.push(`*disk* ${human(r.diskFree)} free of ${human(r.diskTotal)} (${pct(r.diskFree, r.diskTotal).toFixed(0)}%)`);
   }
+  if (r.battery) lines.push(`*battery* ${batteryLine(r.battery)}`);
   lines.push(`*host* up ${duration(r.hostUptimeS)}`);
   lines.push(
     `*${opts.botName ?? "me"}* ${human(r.procRss)} resident, up ${duration(r.procUptimeS)}${

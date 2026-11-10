@@ -17,6 +17,7 @@ import {
   type OrcaSummary,
 } from "./orcaStatus.ts";
 import {
+  batteryLine,
   describeSystem,
   duration,
   human,
@@ -66,6 +67,7 @@ const hostBlocks = (r: SystemReading, opts: SystemReportOptions): Block[] => {
   if (r.diskFree !== undefined && r.diskTotal !== undefined) {
     grid.push(`*Disk*\n${human(r.diskFree)} free of ${human(r.diskTotal)} (${pct(r.diskFree, r.diskTotal).toFixed(0)}%)`);
   }
+  if (r.battery) grid.push(`*Battery*\n${batteryLine(r.battery)}`);
   grid.push(`*Host*\nup ${duration(r.hostUptimeS)}`);
   grid.push(
     `*${opts.botName ?? "Me"}*\n${human(r.procRss)} resident · up ${duration(r.procUptimeS)}${r.socket ? `\nsocket ${r.socket}` : ""}`,

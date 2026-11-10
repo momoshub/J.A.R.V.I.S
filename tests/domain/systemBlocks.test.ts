@@ -63,6 +63,14 @@ describe("systemReport", () => {
     expect(text).toBe(describeSystem(reading(), { botName: "Jarvis" }));
   });
 
+  test("a battery reading gets its own field, before Host", () => {
+    const { blocks, text } = systemReport(reading({ battery: { pct: 73, state: "discharging", remainingS: 23_340 } }));
+    const grid = fieldTexts(blocks[1]);
+    expect(grid.map((f) => f.split("\n")[0])).toEqual(["*CPU*", "*Memory*", "*Swap*", "*Disk*", "*Battery*", "*Host*", "*Me*", "*Turns*"]);
+    expect(grid[4]).toBe("*Battery*\n73%, discharging, 6h 29m left");
+    expect(text).toContain("*battery* 73%, discharging, 6h 29m left");
+  });
+
   test("a problem leads with its reasons, and the trend is a context line", () => {
     const busy = reading({ load1: 25 });
     const trend = trendOf([reading({ at: NOW - 600_000, load1: 5 }), busy]);
