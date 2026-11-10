@@ -122,6 +122,39 @@ export type SlackStream = {
 
 const THINKING_ID = "__thinking__";
 
+/**
+ * Step cards one streamed message holds while it runs. Slack has no way to
+ * take a card away (`task_update` has only pending / in_progress / complete /
+ * error), so the message gets a fixed set of this many slots, reused by the
+ * newest steps; see `slots` in `createSlackStream`. It only holds more when
+ * more steps than this are running at once - every step in progress is shown.
+ */
+export const VISIBLE_STEP_SLOTS = 5;
+
+/**
+ * The log pointer a tool event carries in `details`: `log at: <file> - line <n>`.
+ * Slack APPENDS a card's `details` on every update instead of replacing them
+ * (measured: `XX` then `YY` shows `XXYY`, and the same text twice shows it
+ * twice), so a card taken over by another step cannot be given that step's
+ * pointer. The file is the same for the whole thread, so it is sent once per
+ * card per message, where it stays true for whichever step holds it, and the line number -
+ * the part that differs - goes in the title, which an update does replace.
+ */
+const LOG_POINTER = /^(log at: .+?) - line (\d+)$/;
+
+/**
+ * A card title with the step's log line on the end, clipped to 200. A grouped
+ * card's title already ends in ` (N runs)`: that stays whole and the head of the
+ * title gives way, or a long one would lose the count.
+ */
+const withLogLine = (title: string, line: string): string => {
+  const suffix = ` · log line ${line}`;
+  if (title.length + suffix.length <= 200) return title + suffix;
+  const runs = /( \(\d+ runs\))$/.exec(title)?.[1] ?? "";
+  const head = title.slice(0, title.length - runs.length);
+  return `${head.slice(0, Math.max(0, 197 - suffix.length - runs.length))}...${runs}${suffix}`;
+};
+
 const errMsg = (e: unknown): string => (e instanceof Error ? e.message : String(e));
 
 export type SlackStreamOptions = {
@@ -190,9 +223,13 @@ export const createSlackStream = (
     return streamer;
   };
 
+  /** Slots whose log file already went out as `details` in the CURRENT message. */
+  const detailsIn = new Set<string>();
+
   /** Close the current message so the next append opens a fresh one. */
   const rollover = async (): Promise<void> => {
     if (!streamer) return;
+    detailsIn.clear();
     try {
       await streamer.stop();
     } catch {
@@ -248,6 +285,23 @@ export const createSlackStream = (
   const task = (chunk: TaskUpdateChunk) => {
     ensure();
     enqueue(() => send({ chunks: [chunk] }, cardCost(chunk)));
+  };
+
+  /**
+   * A step card. `file` is the log file to show as its `details`, sent once per
+   * message: Slack appends details, and a continuation message starts without
+   * the cards of the one before, so the choice is made here, in order with the
+   * appends, after any rollover this card causes.
+   */
+  const stepCard = (chunk: TaskUpdateChunk, file: string | undefined) => {
+    ensure();
+    enqueue(async () => {
+      const build = (): TaskUpdateChunk => (file && !detailsIn.has(chunk.id) ? { ...chunk, details: file } : chunk);
+      if (used > 0 && used + cardCost(build()) > STREAM_CHAR_BUDGET) await rollover();
+      const card = build();
+      if (card.details) detailsIn.add(chunk.id);
+      await send({ chunks: [card] }, cardCost(card));
+    });
   };
 
   /**
@@ -345,6 +399,54 @@ export const createSlackStream = (
     (pending as { unref?: () => void }).unref?.();
   };
 
+  /**
+   * The cards on screen, as reusable slots. Slack cannot remove a card, but a
+   * `task_update` with an id it already has rewrites that card in place (title,
+   * status, details; measured: it keeps its position). So the message holds
+   * `VISIBLE_STEP_SLOTS` cards, and once they all exist a step that starts
+   * takes over the slot of the oldest FINISHED one, under that slot's id: the
+   * older step is gone from the message, the newest five stay. A step in
+   * progress is never taken over, so every running step stays visible, and
+   * the slots grow past the limit only when more are running than there are
+   * slots. A slot keeps the id of the card that first opened it, so a turn
+   * with five steps or fewer is sent exactly as it was.
+   *
+   * It cannot also hold five FINISHED steps next to a running one: that is six
+   * cards, and with no way to remove the sixth the message would keep six once
+   * the step ends.
+   */
+  type Slot = { id: string; card: string; line: string | undefined; doneAt: number | undefined };
+  const slots: Slot[] = [];
+  const slotOf = new Map<string, Slot>();
+  /** Cards whose slot was taken over. A late finish for one must not show up as a card of its own. */
+  const evicted = new Set<string>();
+  let finishedCount = 0;
+
+  /** Where a tool card goes in the message: its slot, taking one over when all the slots are in use. */
+  const placeCard = (event: Extract<LlmStreamEvent, { type: "tool" }>): Slot => {
+    let slot = slotOf.get(event.id);
+    if (!slot) {
+      const finished = slots.filter((x) => x.doneAt !== undefined);
+      if (slots.length >= VISIBLE_STEP_SLOTS && finished.length > 0) {
+        const oldest = finished.reduce((a, b) => ((a.doneAt as number) <= (b.doneAt as number) ? a : b));
+        slotOf.delete(oldest.card);
+        evicted.add(oldest.card);
+        oldest.card = event.id;
+        oldest.line = undefined;
+        oldest.doneAt = undefined;
+        slot = oldest;
+      } else {
+        slot = { id: event.id, card: event.id, line: undefined, doneAt: undefined };
+        slots.push(slot);
+      }
+      slotOf.set(event.id, slot);
+      evicted.delete(event.id);
+    }
+    const done = event.status === "complete" || event.status === "error";
+    slot.doneAt = done ? (slot.doneAt ?? ++finishedCount) : undefined;
+    return slot;
+  };
+
   const forward = (event: LlmStreamEvent): void => {
     cancelPending(); // something arrived, so no placeholder is needed
     completeThinking(); // first real content ends the thinking step
@@ -365,13 +467,25 @@ export const createSlackStream = (
     if (event.id !== THINKING_ID) {
       shown.set(event.id, { title: event.title, failed: event.status === "error" });
     }
-    task({
-      type: "task_update",
-      id: event.id,
-      title: event.title,
-      status: event.status,
-      ...(event.details ? { details: event.details } : {}),
-    });
+    if (event.id === THINKING_ID) {
+      task({ type: "task_update", id: event.id, title: event.title, status: event.status });
+      return;
+    }
+    // A step whose card was taken over is over: a second finish for it is not a new card.
+    if (evicted.has(event.id) && event.status !== "in_progress") return;
+    const slot = placeCard(event);
+    const pointer = event.details ? LOG_POINTER.exec(event.details) : null;
+    // The finishing update has no pointer, and a title update replaces the old one.
+    if (pointer?.[2]) slot.line = pointer[2];
+    stepCard(
+      {
+        type: "task_update",
+        id: slot.id,
+        title: slot.line ? withLogLine(event.title, slot.line) : event.title,
+        status: event.status,
+      },
+      pointer?.[1],
+    );
   };
 
   /**
