@@ -1,6 +1,5 @@
-# Typecheck, tests and the real-Slack e2e suite on every PR and every push to main. The repo is private
-# on a free plan, so GitHub cannot require this check before a merge: the gate
-# is bin/merge-when-green.sh, which every self-fix merges through.
+# Typecheck, tests, a secret scan and (where secrets exist) the real-Slack e2e suite on every PR and
+# every push to main. The merge gate for self-fixes is bin/merge-when-green.sh.
 name: ci
 
 on:
@@ -24,9 +23,11 @@ jobs:
       - run: bun install --frozen-lockfile
       - run: bun run typecheck
       - run: bun test
-      # Real Slack, in the private test channel named by the JARVIS_E2E_CHANNEL repository variable (see README "Testing").
-      # A missing secret fails here: the suite would otherwise skip itself and pass.
+      # Real Slack, in a private test channel named by the JARVIS_E2E_CHANNEL repository variable (see README "Testing"). Secrets are never
+      # passed to fork PRs, so those skip this step. On a push or a same-repo PR a missing
+      # secret fails here: the suite would otherwise skip itself and pass.
       - name: e2e (real Slack)
+        if: github.event_name == 'push' || github.event.pull_request.head.repo.full_name == github.repository
         env:
           SLACK_BOT_TOKEN: ${{ secrets.JARVIS_E2E_SLACK_BOT_TOKEN }}
           JARVIS_E2E_CHANNEL: ${{ vars.JARVIS_E2E_CHANNEL }}
@@ -41,3 +42,26 @@ jobs:
         working-directory: web
       - run: bun run build
         working-directory: web
+
+  # Secret scan with the gitleaks CLI (the action needs a licence for organisations).
+  # Push: the whole history. Pull request: only the commits it adds. False positives
+  # (test vectors, fake tokens) are fingerprinted in .gitleaksignore.
+  gitleaks:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    env:
+      GITLEAKS_VERSION: 8.30.1
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: install gitleaks
+        run: |
+          curl -sSfL "https://github.com/gitleaks/gitleaks/releases/download/v${GITLEAKS_VERSION}/gitleaks_${GITLEAKS_VERSION}_linux_x64.tar.gz" | tar -xz -C /usr/local/bin gitleaks
+          gitleaks version
+      - name: scan history (push)
+        if: github.event_name == 'push'
+        run: gitleaks git . --redact --no-banner
+      - name: scan the PR range
+        if: github.event_name == 'pull_request'
+        run: gitleaks git . --redact --no-banner --log-opts="${{ github.event.pull_request.base.sha }}..${{ github.event.pull_request.head.sha }}"

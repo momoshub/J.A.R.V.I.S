@@ -3,7 +3,7 @@
   "version": "0.1.0",
   "description": "A configurable Slack agent bot powered by the Claude CLI, with SQLite memory, live streaming replies, and an admin dashboard",
   "type": "module",
-  "private": true,
+  "license": "Apache-2.0",
   "module": "src/index.ts",
   "scripts": {
     "start": "bun run src/index.ts",

@@ -122,7 +122,7 @@ no classes.
   token + `<slug>[bot]` identity) and gives that one git process the token in its
   environment (`GIT_CONFIG_*` `http.extraheader`), never in a url or a file.
 - **Self-update.** A fix lands through a PR that CI (`.github/workflows/ci.yml`)
-  passes, merged only by `bin/merge-when-green.sh` (exit 4 at once on a PR that
+  passes (typecheck, tests, the real-Slack e2e on non-fork runs, and a `gitleaks` secret scan whose known false positives live in `.gitleaksignore`), merged only by `bin/merge-when-green.sh` (exit 4 at once on a PR that
   conflicts with its base, which GitHub never runs CI on). When it touches runtime code
   (logic, commands, adapters, `bin/` scripts, or a mixed PR) a reviewer Orca worker
   reads it first, at most 2 rounds (rounds are PR comments, fixes are pushes); docs,
