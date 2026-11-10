@@ -130,6 +130,10 @@ export type HandleMessageDeps = {
   draft?: DraftReply;
   /** Per-role CLI tool policy (sandbox/allow-list) applied to the chat brain. */
   toolPolicy?: (role: UserRole, channelId?: string) => ToolPolicy;
+  /** `--disallowedTools` for a no-tools turn (`noTools(DB_MCP_SERVERS)`), for `btw`. */
+  noTools?: readonly string[];
+  /** GitHub owners whose PRs `review` posts non-blocking findings for. */
+  reviewExtendedOwners?: readonly string[];
   /** Per-user Claude Code tokens: a speaker's own turns run on their credential. */
   claudeTokens?: ClaudeTokenPort;
   /** Shared 2FA setup keys, for the `2fa` command. */

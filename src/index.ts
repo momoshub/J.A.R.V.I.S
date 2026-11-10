@@ -64,7 +64,7 @@ import { createInnerChild, steerViaRespond } from "./application/innerChild.ts";
 import { decideAccess } from "./domain/access.ts";
 import { createDriftRepo } from "./infrastructure/db/driftRepo.ts";
 import { createSelfIssueRepo } from "./infrastructure/db/selfIssueRepo.ts";
-import { NO_TOOLS } from "./domain/toolPolicy.ts";
+import { noTools } from "./domain/toolPolicy.ts";
 import { createReminderSender } from "./application/reminders.ts";
 import { createShellCheck } from "./infrastructure/system/shellCheck.ts";
 import { createOrcaCli, createOrcaTerminal } from "./infrastructure/system/orcaTerminal.ts";
@@ -354,6 +354,8 @@ const main = async () => {
       githubAppScript,
       models: modelsForRoles(),
       protectedPaths: [repoPath],
+      dbServers: config.dbMcpServers,
+      executerDbServers: config.executerDbMcpServers,
       executerTools: (settings.get(SETTING_KEYS.executerTools) ?? "")
         .split(/[,\n]/)
         .map((s) => s.trim())
@@ -611,6 +613,8 @@ const main = async () => {
     restartScript,
     repoPath,
     selfPrAccounts: config.selfPrAccounts,
+    reviewExtendedOwners: config.reviewExtendedOwners,
+    noTools: noTools(config.dbMcpServers),
     draft,
     toolPolicy,
     // A person's own Claude Code credential: required by `review`, used by every
@@ -720,6 +724,7 @@ const main = async () => {
       requestRestart,
       uiAccess: uiAccess.read,
       users: userStore,
+      dbMcpServers: config.dbMcpServers,
       rolePolicies,
       messages,
       learnings,
@@ -1054,7 +1059,7 @@ const main = async () => {
     sourceDir: repoPath,
     restartScript,
     selfPrAccounts: config.selfPrAccounts,
-    noTools: NO_TOOLS,
+    noTools: noTools(config.dbMcpServers),
     enabled: () =>
       !!innerChildChannel() && settings.get(SETTING_KEYS.innerChild)?.trim().toLowerCase() !== "off",
     cursor: {

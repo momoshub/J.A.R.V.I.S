@@ -32,6 +32,22 @@ describe("loadConfig", () => {
     expect(() => loadConfig({ ...base, OFFLINE_ALARM_CHANNEL: "#jarvis_status" })).toThrow(/channel id/);
   });
 
+  test("owner and database-server lists are comma lists, empty by default", () => {
+    const c = loadConfig(base);
+    expect(c.reviewExtendedOwners).toEqual([]);
+    expect(c.dbMcpServers).toEqual([]);
+    expect(c.executerDbMcpServers).toEqual([]);
+    const d = loadConfig({
+      ...base,
+      REVIEW_EXTENDED_OWNERS: " acme, other ,,",
+      DB_MCP_SERVERS: "pg-prod, ch-ro",
+      EXECUTER_DB_MCP_SERVERS: "ch-ro",
+    });
+    expect(d.reviewExtendedOwners).toEqual(["acme", "other"]);
+    expect(d.dbMcpServers).toEqual(["pg-prod", "ch-ro"]);
+    expect(d.executerDbMcpServers).toEqual(["ch-ro"]);
+  });
+
   test("applies defaults", () => {
     const c = loadConfig(base);
     expect(c.dashboardPort).toBe(2001);

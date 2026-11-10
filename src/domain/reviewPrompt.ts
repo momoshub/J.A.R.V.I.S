@@ -5,8 +5,9 @@
  * Task tool for child agents). The comment carries blockers only: a clean PR
  * gets one line and a non-blocking finding is never posted (the owner's call -
  * long comments buried the one point that mattered). Exception, decided per PR
- * url: PRs in acme repos (GitHub owner `acme`) also get the non-blocking
- * findings as bullets after the blockers, plus the out-of-scope warning bullet.
+ * url: PRs owned by a configured GitHub owner (`REVIEW_EXTENDED_OWNERS`) also
+ * get the non-blocking findings as bullets after the blockers, plus the
+ * out-of-scope warning bullet.
  * Non-blocking never makes flow B and never becomes an issue anywhere. Kept
  * terse on purpose: every word here is paid for on every review.
  *
@@ -44,16 +45,23 @@ const ownApprovalNote = (approvedUpFront: boolean, account: string): string =>
     ? `the approving review${account} on the PR was placed for you before you started: never mention it or count it as a sign-off`
     : "you have not approved this PR and will not, so never refer to an approval of your own";
 
-/** GitHub owner whose PRs get non-blocking findings in the comment. */
-export const ACME_OWNER = "acme";
-
 /**
- * Is this PR in a acme repo (owner `acme`, case-insensitive)? Reads a full
- * url or the `owner/repo#123` shorthand; a bare `#12` or `12` has no owner: false.
+ * Is this PR owned by one of `owners` (the configured extended-review owners,
+ * case-insensitive)? Reads a full url or the `owner/repo#123` shorthand; a bare
+ * `#12` or `12` has no owner: false. No owners configured: always false.
  */
-export const isAcmePr = (ref: string): boolean =>
-  (/^https?:\/\/github\.com\/([^/\s]+)\//i.exec(ref) ?? /^([^/\s#]+)\/[^/\s#]+#\d+$/.exec(ref.trim()))?.[1]?.toLowerCase() ===
-  ACME_OWNER;
+export const isExtendedOwnerPr = (ref: string, owners: readonly string[]): boolean => {
+  const owner = (
+    /^https?:\/\/github\.com\/([^/\s]+)\//i.exec(ref) ?? /^([^/\s#]+)\/[^/\s#]+#\d+$/.exec(ref.trim())
+  )?.[1]?.toLowerCase();
+  return !!owner && owners.some((o) => o.trim().toLowerCase() === owner);
+};
+
+/** The owners as a readable list for prose: `a`, `a` or `b`, `a`, `b` or `c`. */
+const ownerList = (owners: readonly string[]): string => {
+  const names = owners.map((o) => `\`${o}\``);
+  return names.length > 1 ? `${names.slice(0, -1).join(", ")} or ${names[names.length - 1]}` : (names[0] ?? "");
+};
 
 /** A PR counts as "big" (clone + child agents) past these thresholds. */
 export const BIG_PR_FILES = 5;
@@ -92,30 +100,30 @@ Start there and say what you found about it. It does not change anything else in
 };
 
 /** Step 4: what happens to non-blocking findings, per PR url. */
-const nonBlockingStep = (acme: readonly string[], prUrls: readonly string[]): string => {
+const nonBlockingStep = (extended: readonly string[], prUrls: readonly string[]): string => {
   const dropped =
     "4. NON-BLOCKING findings (design, cleanups, style, nits, gaps the description defers) never go in the comment and never become an issue: they are dropped. A gap the PR declares out of scope is never a blocker, but a problem the PR itself introduces is not out of scope.";
-  if (acme.length === 0) return dropped;
+  if (extended.length === 0) return dropped;
   const kept = `4. NON-BLOCKING findings (design risk, correctness, coding style, real cleanups) go in the comment as bullets after the blockers. They never make flow B and never become an issue. Nits that are pure noise are dropped.
    DECLARED OUT OF SCOPE (the description or a comment says it is deliberately not handled here): not a finding, never a request. ONE last bullet, "out of scope per the description: ... risk left standing", saying what is deferred and what risk stays. A warning only, never blocking. A problem the PR itself introduces is not out of scope.`;
-  if (acme.length === prUrls.length) return kept;
-  const rest = prUrls.filter((u) => !acme.includes(u));
-  return `4. The shape differs per PR. Acme PRs (non-blocking findings are posted):
-${acme.join("\n")}
+  if (extended.length === prUrls.length) return kept;
+  const rest = prUrls.filter((u) => !extended.includes(u));
+  return `4. The shape differs per PR. Extended-review PRs (non-blocking findings are posted):
+${extended.join("\n")}
    Every other PR (blockers only, non-blocking findings are never posted):
 ${rest.join("\n")}
-   For a acme PR:
+   For an extended-review PR:
    ${kept.replace(/\n/g, "\n   ")}
    For every other PR: non-blocking findings never go in the comment and never become an issue, they are dropped. A gap declared out of scope is never a blocker, but a problem the PR itself introduces is not out of scope.`;
 };
 
 /** Step 5 bullet rule, per PR url. */
-const bulletRule = (acme: readonly string[], prUrls: readonly string[]): string => {
+const bulletRule = (extended: readonly string[], prUrls: readonly string[]): string => {
   const base = `one "- " bullet per blocker, worst first, one or two lines: what is wrong, ONE pointer (\`file.ts:120\` or the identifier), why it matters. Never paste code, a diff or a quote of the code. No intro, no headings, no summary of the diff, nothing the description, commits or another reviewer already said. If the PR already landed, say so in line 1`;
-  if (acme.length === 0) return `then ${base}`;
+  if (extended.length === 0) return `then ${base}`;
   const extra = `then one "- " bullet per issue, worst first: blockers, then non-blocking findings, then the out-of-scope bullet last. One or two lines each: what is wrong, ONE pointer (\`file.ts:120\` or the identifier), why it matters. Never paste code, a diff or a quote of the code. No intro, no headings, no summary of the diff, nothing the description, commits or another reviewer already said. If the PR already landed, say so in line 1. Length: under 250 words for a normal PR, typically 3-6 bullets, a big PR may run longer, and blockers are never squeezed out`;
-  if (acme.length === prUrls.length) return extra;
-  return `for a acme PR (listed in step 4): ${extra}. For every other PR: ${base}`;
+  if (extended.length === prUrls.length) return extra;
+  return `for an extended-review PR (listed in step 4): ${extra}. For every other PR: ${base}`;
 };
 
 export const reviewPrompt = (
@@ -128,9 +136,11 @@ export const reviewPrompt = (
   maxAgents: number = DEFAULT_REVIEW_AGENTS,
   /** Free text the asker added, steering what the review looks at. */
   note?: string,
+  /** Owners whose PRs also get non-blocking findings (`REVIEW_EXTENDED_OWNERS`). */
+  extendedOwners: readonly string[] = [],
 ): string => {
   const many = prUrls.length > 1;
-  const acme = prUrls.filter(isAcmePr);
+  const extended = prUrls.filter((u) => isExtendedOwnerPr(u, extendedOwners));
   // The comment is posted by the gh account, so it is written in that person's
   // voice - the bot's own name stays on the Slack side of the job.
   const who = reviewer?.name?.trim() || reviewer?.login || botName;
@@ -169,11 +179,11 @@ For EACH PR, in order:
    One gh pr comment per PR. LATE FINDING (a child agent reporting after the comment is up): verify it; if blocking, run (a) unless the PR already carries it and post ONE short follow-up comment with just that finding. Never hold a verified blocker back. Otherwise step 4 applies.
    Write each body in the SAME shell command that posts it (heredoc to a file then --body-file, or inline --body). Never write a body in one command and post it in another: the posting command is what gets relayed to Slack.
 
-${nonBlockingStep(acme, prUrls)}
+${nonBlockingStep(extended, prUrls)}
 
 5. The comment, first person as ${who}${reviewer?.login ? ` (posted as ${reviewer.login})` : ""}, like a quick chat message:
    - line 1: where you land, "good to merge" or what blocks. A clean PR gets this line and the sign-off, nothing else
-   - ${bulletRule(acme, prUrls)}
+   - ${bulletRule(extended, prUrls)}
    - ${ownApprovalNote(approved.length > 0, account)}. Other reviewers' approvals and change requests DO count
    - style: no em dashes and no en dashes anywhere in the text (a hyphen, comma or colon instead), lowercase first word of each sentence and bullet unless it is "I", a proper noun or a code identifier, no full stop ending a paragraph or bullet, backticks only for a name or path, no * emphasis (GitHub and Slack render it differently)
    - tag people with GitHub tagging syntax - @login from the PR data, never a display name or a Slack <@ID> tag, never your own account
@@ -202,8 +212,10 @@ export const reviewHelp = (
   maxAgents: number,
   botName: string,
   sampleUrl = "https://github.com/owner/repo/pull/123",
+  /** Owners whose PRs also get non-blocking findings (`REVIEW_EXTENDED_OWNERS`). */
+  extendedOwners: readonly string[] = [],
 ): string => {
-  if (full) return reviewPrompt([sampleUrl], botName, undefined, [], maxAgents);
+  if (full) return reviewPrompt([sampleUrl], botName, undefined, [], maxAgents, undefined, extendedOwners);
   return [
     `*How I review a PR* - \`${prefix} review <pr-url>\``,
     "",
@@ -213,7 +225,9 @@ export const reviewHelp = (
     "    - nothing blocking: one short comment, done",
     "    - something blocking: request changes with a fixed marker, then one comment carrying the blockers",
     "*4.* the comment carries blockers only: one line saying where I land, then one short bullet per blocker. a clean PR gets just that line and the sign-off",
-    `*5.* non-blocking findings are never posted, and never become an issue - except on PRs in \`${ACME_OWNER}\` repos: there they follow the blockers as bullets (design risk, correctness, style, real cleanups), with one last "out of scope per the description" warning bullet. they never make me request changes`,
+    extendedOwners.length > 0
+      ? `*5.* non-blocking findings are never posted, and never become an issue - except on PRs in repos owned by ${ownerList(extendedOwners)}: there they follow the blockers as bullets (design risk, correctness, style, real cleanups), with one last "out of scope per the description" warning bullet. they never make me request changes`
+      : "*5.* non-blocking findings are never posted, and never become an issue",
     "*6.* a short wrap-up lands back in the thread with what I did and the headline blocker",
     "",
     "*approval* only after a clean review by default; a repo can opt in to up front, reversed if I find a blocker. `--policy first|after` changes it for one run",

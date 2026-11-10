@@ -44,6 +44,8 @@ export type DashboardDeps = {
   users: UserRepo;
   /** Per-role policy; the bot enforces from the same rows. */
   rolePolicies?: RolePolicyRepo;
+  /** Local database MCP servers (`DB_MCP_SERVERS`), offered for denial. */
+  dbMcpServers?: readonly string[];
   messages: MessageRepo;
   learnings: LearningsRepo;
   /**
@@ -204,6 +206,7 @@ export const createDashboard = (config: DashboardConfig, deps: DashboardDeps) =>
 
   const app = createDashboardService({
     ownerSlackId: config.ownerSlackId,
+    dbMcpServers: deps.dbMcpServers,
     clock: deps.clock,
     profile: deps.profile,
     users: deps.users,

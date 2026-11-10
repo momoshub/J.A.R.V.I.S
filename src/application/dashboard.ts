@@ -77,6 +77,8 @@ export type MemoryAdapterPort = {
 /** Only what the dashboard touches of each store, so any repo shape that fits will do. */
 export type DashboardPorts = {
   readonly ownerSlackId: string;
+  /** Local database MCP servers (`DB_MCP_SERVERS`), offered for denial. */
+  readonly dbMcpServers?: readonly string[];
   readonly clock: Clock;
   readonly profile: () => BotProfile;
   /** The RAW allowlist: the dashboard must see and edit members of a switched-off role too. */
@@ -400,7 +402,7 @@ export const createDashboardService = (p: DashboardPorts) => {
           .map((c) => c.name),
       })),
       tools: CORE_TOOLS,
-      mcpServers: knownMcpServers(policies),
+      mcpServers: knownMcpServers(policies, p.dbMcpServers),
       editable: !!p.rolePolicies,
       executerTools: p.settings.get(SETTING_KEYS.executerTools) ?? "",
       palTools: PAL_TOOLS,

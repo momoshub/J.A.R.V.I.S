@@ -33,7 +33,7 @@ export type RepoScope = {
 
 const NAME = /^[A-Za-z0-9._-]+$/;
 
-/** Parse `acme, other/repo` into orgs and repos, dropping anything malformed. */
+/** Parse `my-org, other/repo` into orgs and repos, dropping anything malformed. */
 export const parseRepoScope = (raw: string | undefined): RepoScope => {
   const orgs: string[] = [];
   const repos: string[] = [];

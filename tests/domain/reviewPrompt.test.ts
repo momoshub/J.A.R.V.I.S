@@ -2,7 +2,7 @@ import { describe, expect, test } from "bun:test";
 import {
   asAgentCap,
   DEFAULT_REVIEW_AGENTS,
-  isAcmePr,
+  isExtendedOwnerPr,
   REVIEW_AGENT_CEILING,
   reviewHelp,
   reviewPrompt,
@@ -154,28 +154,37 @@ describe("reviewPrompt comment shape", () => {
 });
 
 describe("reviewPrompt per-owner shape", () => {
-  const ACME = "https://github.com/acme/acme-be/pull/7";
-  const ACME_UPPER = "https://github.com/acme/x/pull/2";
+  const OWNERS = ["acme-corp"];
+  const EXT = "https://github.com/acme-corp/api/pull/7";
+  const EXT_UPPER = "https://github.com/Acme-Corp/x/pull/2";
+  const build = (urls: string[], reviewer?: { login: string; name: string }) =>
+    reviewPrompt(urls, "Bot", reviewer, urls, undefined, undefined, OWNERS);
 
-  test("isAcmePr matches the owner only, case-insensitive", () => {
-    expect(isAcmePr(ACME)).toBe(true);
-    expect(isAcmePr(ACME_UPPER)).toBe(true);
-    expect(isAcmePr(PR)).toBe(false);
-    expect(isAcmePr("https://github.com/o/acme/pull/1")).toBe(false);
-    expect(isAcmePr("https://github.com/acme-fork/r/pull/1")).toBe(false);
-    expect(isAcmePr("#12")).toBe(false);
-    expect(isAcmePr("12")).toBe(false);
+  test("isExtendedOwnerPr matches a configured owner only, case-insensitive", () => {
+    expect(isExtendedOwnerPr(EXT, OWNERS)).toBe(true);
+    expect(isExtendedOwnerPr(EXT_UPPER, OWNERS)).toBe(true);
+    expect(isExtendedOwnerPr(EXT, ["ACME-CORP"])).toBe(true);
+    expect(isExtendedOwnerPr(PR, OWNERS)).toBe(false);
+    expect(isExtendedOwnerPr("https://github.com/o/acme-corp/pull/1", OWNERS)).toBe(false);
+    expect(isExtendedOwnerPr("https://github.com/acme-corp-fork/r/pull/1", OWNERS)).toBe(false);
+    expect(isExtendedOwnerPr("#12", OWNERS)).toBe(false);
+    expect(isExtendedOwnerPr("12", OWNERS)).toBe(false);
   });
 
-  test("isAcmePr reads the owner/repo#N shorthand too", () => {
-    expect(isAcmePr("acme/acme-be#7")).toBe(true);
-    expect(isAcmePr("acme/x#2")).toBe(true);
-    expect(isAcmePr("o/acme#7")).toBe(false);
-    expect(isAcmePr("acme/x")).toBe(false);
+  test("no configured owners means no PR is extended", () => {
+    expect(isExtendedOwnerPr(EXT, [])).toBe(false);
+    expect(reviewPrompt([EXT], "Bot")).toContain("never go in the comment and never become an issue: they are dropped");
   });
 
-  test("a acme PR posts non-blocking bullets and the out-of-scope bullet", () => {
-    const p = reviewPrompt([ACME], "Bot");
+  test("isExtendedOwnerPr reads the owner/repo#N shorthand too", () => {
+    expect(isExtendedOwnerPr("acme-corp/api#7", OWNERS)).toBe(true);
+    expect(isExtendedOwnerPr("Acme-Corp/x#2", OWNERS)).toBe(true);
+    expect(isExtendedOwnerPr("o/acme-corp#7", OWNERS)).toBe(false);
+    expect(isExtendedOwnerPr("acme-corp/x", OWNERS)).toBe(false);
+  });
+
+  test("a configured owner's PR posts non-blocking bullets and the out-of-scope bullet", () => {
+    const p = build([EXT]);
     expect(p).toContain("NON-BLOCKING findings (design risk, correctness, coding style, real cleanups) go in the comment");
     expect(p).toContain("blockers, then non-blocking findings, then the out-of-scope bullet last");
     expect(p).toContain("out of scope per the description: ... risk left standing");
@@ -183,35 +192,41 @@ describe("reviewPrompt per-owner shape", () => {
     expect(p).toContain("blockers are never squeezed");
     expect(p).toContain("never make flow B and never become an issue");
     expect(p).toContain("Never open an issue");
-    expect(reviewPrompt([ACME_UPPER], "Bot")).toContain("go in the comment");
+    expect(build([EXT_UPPER])).toContain("go in the comment");
   });
 
   test("any other owner keeps the blockers-only text", () => {
-    const p = reviewPrompt([PR], "Bot");
+    const p = build([PR]);
     expect(p).toContain("never go in the comment and never become an issue: they are dropped");
     expect(p).toContain('one "- " bullet per blocker, worst first');
     expect(p).not.toContain("out of scope per the description");
     expect(p).not.toContain("under 250 words");
-    expect(p).not.toContain("Acme PRs");
+    expect(p).not.toContain("Extended-review PRs");
   });
 
   test("a mixed batch says which PR gets which shape", () => {
-    const p = reviewPrompt([ACME, PR], "Bot");
-    expect(p).toContain(`Acme PRs (non-blocking findings are posted):\n${ACME}`);
+    const p = build([EXT, PR]);
+    expect(p).toContain(`Extended-review PRs (non-blocking findings are posted):\n${EXT}`);
     expect(p).toContain(`Every other PR (blockers only, non-blocking findings are never posted):\n${PR}`);
     expect(p).toContain("For every other PR: non-blocking findings never go in the comment");
     expect(p).toContain("out of scope per the description");
   });
 
-  test("the acme prompt stays lean too", () => {
-    expect(reviewPrompt([ACME, PR], "Bot", { login: "kai", name: "Kai" }).length).toBeLessThan(9000);
+  test("the extended prompt stays lean too", () => {
+    expect(build([EXT, PR], { login: "kai", name: "Kai" }).length).toBeLessThan(9000);
   });
 });
 
 describe("reviewHelp", () => {
-  test("says acme repos get non-blocking findings", () => {
-    const h = reviewHelp("X", false, 3, "Bot");
-    expect(h).toContain("acme");
+  test("names the configured owners as getting non-blocking findings", () => {
+    const h = reviewHelp("X", false, 3, "Bot", undefined, ["acme-corp", "other-org"]);
+    expect(h).toContain("`acme-corp` or `other-org`");
     expect(h).toContain("out of scope per the description");
+  });
+
+  test("with no owners configured it says non-blocking findings are never posted", () => {
+    const h = reviewHelp("X", false, 3, "Bot");
+    expect(h).not.toContain("out of scope per the description");
+    expect(h).toContain("non-blocking findings are never posted, and never become an issue");
   });
 });

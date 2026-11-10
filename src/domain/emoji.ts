@@ -1,7 +1,7 @@
 /**
  * Reaction-bomb emoji categories (the `bomb` command). Shortcodes without
  * colons, as the Slack reactions.add API expects. Custom-workspace categories
- * (pepe, acme, meme) are omitted - they need a per-workspace emoji list.
+ * (pepe, meme) are omitted - they need a per-workspace emoji list.
  *
  * Each category carries at least `BOMB_SIZE` emoji wherever the subject matter
  * allows, so a bomb lands its full burst instead of exhausting the pool a third
