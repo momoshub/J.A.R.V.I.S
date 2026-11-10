@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import {
+  batteryLine,
   describeSystem,
   duration,
   human,
@@ -42,6 +43,22 @@ describe("duration", () => {
     expect(duration(45)).toBe("45s");
     expect(duration(3_600)).toBe("1h 0m");
     expect(duration(90_000)).toBe("1d 1h");
+  });
+});
+
+describe("battery", () => {
+  test("low only matters while discharging", () => {
+    expect(verdictOf(healthy({ battery: { pct: 15, state: "discharging" } })).level).toBe("watch");
+    expect(verdictOf(healthy({ battery: { pct: 5, state: "discharging" } })).level).toBe("problem");
+    expect(verdictOf(healthy({ battery: { pct: 5, state: "charging" } })).level).toBe("ok");
+    expect(verdictOf(healthy({ battery: { pct: 50, state: "discharging" } })).level).toBe("ok");
+  });
+
+  test("the line says the time left only when it means something", () => {
+    expect(batteryLine({ pct: 73, state: "discharging", remainingS: 23_340 })).toBe("73%, discharging, 6h 29m left");
+    expect(batteryLine({ pct: 41, state: "charging", remainingS: 3_900 })).toBe("41%, charging, 1h 5m to full");
+    expect(batteryLine({ pct: 100, state: "charged" })).toBe("100%, charged");
+    expect(describeSystem(healthy())).not.toContain("battery");
   });
 });
 

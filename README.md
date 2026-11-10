@@ -120,7 +120,7 @@ Every command has two interfaces - use whichever you like. Both triggers are con
 | `logsource [grafana,datadog\|default]` | anyone (setting: admins) | where it looks for logs - see [Investigating](#investigating) |
 | `cloudwatch [--group /log/group] [--last 15m \| --from <t> --to <t>] [--region r] [--limit n] <insights query>` (alias `cw`), `cloudwatch help`, `cloudwatch default <group\|reset>` | executer and up (owner runs it directly, executer and admin confirm first) | query CloudWatch Logs Insights directly - see [CloudWatch](#cloudwatch) |
 | `forget` | anyone | wipe the bot's memory of this channel |
-| `sys` (alias `vitals`) | admins | how the host, the bot and Orca are doing, as Block Kit: a verdict header, cpu/memory/swap/disk/host/bot/turns fields, the last hour's trend, then Orca's runtime, active runs, workers by status and a table of live workers (one "unreachable" line when Orca is down or slow). The message text keeps the plain report as the fallback |
+| `sys` (alias `vitals`) | admins | how the host, the bot and Orca are doing, as Block Kit: a verdict header, cpu/memory/swap/disk/battery/host/bot/turns fields, the last hour's trend, then Orca's runtime, active runs, workers by status and a table of live workers (one "unreachable" line when Orca is down or slow). The message text keeps the plain report as the fallback |
 | `users` | admins | list the allowlist |
 | `worker-cost <ctx_...\|run_...>` (alias `wcost`) | admins | tokens and list-price cost of an Orca worker, or every worker in a Run - see [What an Orca worker cost](#what-an-orca-worker-cost) |
 | `add @user [pal\|executer\|admin]` | admins (admin role: owner only) | grant access |
