@@ -1,6 +1,7 @@
 /**
  * The envelope every stored credential lives in: AES-256-GCM under a key kept
- * beside the database in its own 0600 file.
+ * beside the database in its own 0600 file (or, on macOS, a Keychain item: see
+ * `tokenKeyStore.ts`).
  *
  * Extracted from the token repo because a second kind of secret (TOTP seeds)
  * needs exactly the same treatment, and two copies of a crypto helper is one
@@ -14,9 +15,9 @@
 import { createCipheriv, createDecipheriv, randomBytes } from "node:crypto";
 import { chmodSync, existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname } from "node:path";
+import { KEY_BYTES } from "../../domain/tokenKey.ts";
 
 const ALGORITHM = "aes-256-gcm";
-const KEY_BYTES = 32;
 const IV_BYTES = 12;
 
 /**

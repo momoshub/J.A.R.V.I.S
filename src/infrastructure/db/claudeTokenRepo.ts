@@ -48,6 +48,12 @@ export const openTokenDatabase = (path: string): Database => {
   return db;
 };
 
+/** Whether any credential is sealed in the database: the guard against a fresh key. */
+export const tokenDatabaseHasRows = (db: Database): boolean =>
+  (db.query<{ n: number }, []>(
+    "SELECT (SELECT COUNT(*) FROM claude_tokens) + (SELECT COUNT(*) FROM totp_secrets) AS n",
+  ).get()?.n ?? 0) > 0;
+
 export const createClaudeTokenRepo = (
   db: Database,
   key: Buffer,
