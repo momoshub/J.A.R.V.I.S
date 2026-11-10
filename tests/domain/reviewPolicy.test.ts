@@ -9,7 +9,7 @@ describe("repoOf", () => {
     expect(repoOf("https://github.com/acme/sql-runner/pull/905/files")).toBe(
       "acme/sql-runner",
     );
-    expect(repoOf("HTTPS://GitHub.com/acme/sql-runner/pull/1")).toBe("acme/sql-runner");
+    expect(repoOf("HTTPS://GitHub.com/Acme/sql-runner/pull/1")).toBe("acme/sql-runner");
   });
 
   test("undefined for anything that is not a PR url", () => {
@@ -105,7 +105,7 @@ describe("looksLikePrRef", () => {
   test("accepts what people actually type for a PR", () => {
     expect(looksLikePrRef("https://github.com/o/r/pull/1")).toBe(true);
     expect(looksLikePrRef("<https://github.com/o/r/pull/1>")).toBe(true);
-    expect(looksLikePrRef("acme/acme-be#13600")).toBe(true);
+    expect(looksLikePrRef("acme/acme-api#13600")).toBe(true);
     expect(looksLikePrRef("o/r/pull/7")).toBe(true);
     expect(looksLikePrRef("#2149")).toBe(true);
     expect(looksLikePrRef("2149")).toBe(true);
@@ -116,7 +116,7 @@ describe("looksLikePrRef", () => {
     // own credential, to answer a question about how reviewing works
     expect(looksLikePrRef("help")).toBe(false);
     expect(looksLikePrRef("the")).toBe(false);
-    expect(looksLikePrRef("acme-be")).toBe(false);
+    expect(looksLikePrRef("acme-api")).toBe(false);
     expect(looksLikePrRef("")).toBe(false);
   });
 });

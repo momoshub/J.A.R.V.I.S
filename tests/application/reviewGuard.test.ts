@@ -1,12 +1,12 @@
 import { describe, expect, test } from "bun:test";
 import { createReviewGuard, prKey, REVIEW_COOLDOWN_MS } from "../../src/application/reviewGuard.ts";
 
-const PR = "https://github.com/acme/acme-fe/pull/8436";
+const PR = "https://github.com/acme/acme-web/pull/8436";
 
 describe("review guard", () => {
   test("the same PR written two ways is one key", () => {
-    expect(prKey(PR)).toBe(prKey("https://github.com/acme/acme-fe/pull/8436"));
-    expect(prKey(PR)).not.toBe(prKey("https://github.com/acme/acme-fe/pull/8437"));
+    expect(prKey(PR)).toBe(prKey("https://github.com/Acme/acme-web/pull/8436"));
+    expect(prKey(PR)).not.toBe(prKey("https://github.com/acme/acme-web/pull/8437"));
   });
 
   test("a second claim while the first runs gets the first one's thread", () => {

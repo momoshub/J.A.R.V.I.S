@@ -87,7 +87,7 @@ describe("loadConfig", () => {
     expect(g.webhookSecretPath).toMatch(/\.config\/jarvis\/github-app\/webhook-secret$/);
     expect(g.webhookSecret).toBeUndefined();
     expect(g.appId).toBeUndefined();
-    const o = loadConfig({ ...base, GITHUB_APP_ALLOWED_OWNERS: "acme, kai-at-acme", GITHUB_APP_PORT: "2010" }).githubApp;
+    const o = loadConfig({ ...base, GITHUB_APP_ALLOWED_OWNERS: "Acme, kai-at-acme", GITHUB_APP_PORT: "2010" }).githubApp;
     expect(o.allowedOwners).toEqual(["acme", "kai-at-acme"]);
     expect(o.port).toBe(2010);
   });

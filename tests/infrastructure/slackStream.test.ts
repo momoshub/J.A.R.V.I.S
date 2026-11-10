@@ -91,7 +91,7 @@ describe("createSlackStream", () => {
   test("different titles are different steps, whatever log line they point at", async () => {
     const f = fakeStreamer();
     const s = createSlackStream(f.make);
-    const sql = "MCP: 🔌 pg-prod execute_sql";
+    const sql = "MCP: 🔌 acme-pg-prod execute_sql";
     s.sink({ type: "tool", id: "q1", title: sql, details: "log at: l.jsonl - line 1", status: "in_progress" });
     s.sink({ type: "tool", id: "q2", title: "Tool: 📖 Reading a file", details: "log at: l.jsonl - line 5", status: "in_progress" });
     s.sink({ type: "tool", id: "q3", title: sql, details: "log at: l.jsonl - line 9", status: "in_progress" });

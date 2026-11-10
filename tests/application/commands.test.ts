@@ -1326,12 +1326,12 @@ describe("ticket", () => {
   test("an admin configures the sources; anyone can see them", async () => {
     const deps = withSettings();
     await dispatchCommand(deps, actor(), "C1", "ticket config tracker https://notion.so/roadmap");
-    await dispatchCommand(deps, actor(), "C1", "ticket config repos acme/acme-be, acme/adhoc");
+    await dispatchCommand(deps, actor(), "C1", "ticket config repos acme/acme-api, acme/adhoc");
     expect(deps.settings!.get("ticket_tracker")).toBe("https://notion.so/roadmap");
 
     const shown = await dispatchCommand(deps, actor(), "C1", "ticket config");
     expect(shown).toContain("https://notion.so/roadmap");
-    expect(shown).toContain("acme/acme-be");
+    expect(shown).toContain("acme/acme-api");
   });
 
   test("a pal can raise one but cannot reconfigure where they go", async () => {

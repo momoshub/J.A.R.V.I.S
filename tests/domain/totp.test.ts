@@ -48,14 +48,14 @@ describe("secondsLeft", () => {
 describe("parseOtpauth", () => {
   it("reads the account, issuer and parameters a QR encodes", () => {
     const cfg = parseOtpauth(
-      "otpauth://totp/acme:demo%40acme.io?secret=GEZDGNBVGY3TQOJQ&issuer=acme&algorithm=SHA256&digits=8&period=60",
+      "otpauth://totp/acme:demo%40example.com?secret=GEZDGNBVGY3TQOJQ&issuer=acme&algorithm=SHA256&digits=8&period=60",
     );
     expect(cfg).toEqual({
       secret: "GEZDGNBVGY3TQOJQ",
       digits: 8,
       period: 60,
       algorithm: "SHA256",
-      account: "demo@acme.io",
+      account: "demo@example.com",
       issuer: "acme",
     });
   });
@@ -103,7 +103,7 @@ describe("parseTotpInput", () => {
 describe("serialiseTotp", () => {
   it("round-trips a config through the uri form without losing anything", () => {
     const cfg = parseOtpauth(
-      "otpauth://totp/acme:demo%40acme.io?secret=GEZDGNBVGY3TQOJQ&issuer=acme&algorithm=SHA512&digits=7&period=45",
+      "otpauth://totp/acme:demo%40example.com?secret=GEZDGNBVGY3TQOJQ&issuer=acme&algorithm=SHA512&digits=7&period=45",
     );
     expect(parseOtpauth(serialiseTotp(cfg!))).toEqual(cfg!);
   });

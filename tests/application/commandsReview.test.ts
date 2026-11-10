@@ -315,7 +315,7 @@ describe("reviews run on the caller's own Claude token", () => {
   test("a word that is not a PR never reaches the brain", async () => {
     // the bug: `review help` ran a full review of a pull request called "help"
     const { deps, token } = withTokens({ [OWNER]: TOKEN });
-    for (const line of ["rv the", "rv acme-be", "rv please have a look"]) {
+    for (const line of ["rv the", "rv acme-api", "rv please have a look"]) {
       const out = await dispatchCommand(deps, actor(), "C1", line);
       expect(out).toContain("Which PR?");
     }
@@ -336,8 +336,8 @@ describe("reviews run on the caller's own Claude token", () => {
 
   test("a shorthand the brain can resolve is still allowed through", async () => {
     const { deps, sys } = withTokens({ [OWNER]: TOKEN });
-    await dispatchCommand(deps, actor(), "C1", "rv acme/acme-be#13600");
-    expect(sys()).toContain("acme/acme-be#13600");
+    await dispatchCommand(deps, actor(), "C1", "rv acme/acme-api#13600");
+    expect(sys()).toContain("acme/acme-api#13600");
   });
 
   test("token who lists the people who gave me one, and is admin-only", async () => {
@@ -524,7 +524,7 @@ describe("review fan-out cap", () => {
 
 describe("per-repo review policy", () => {
   const PR = "https://github.com/acme/sql-runner/pull/905";
-  const OTHER = "https://github.com/acme/acme-be/pull/1";
+  const OTHER = "https://github.com/acme/acme-api/pull/1";
 
   const withPolicy = (decision?: string) => {
     const deps = build();
@@ -588,7 +588,7 @@ describe("per-repo review policy", () => {
 
   test("a repo opted in to approve-first announces 'reviewing' before the approval", async () => {
     const { deps, calls, lines, reply } = withPolicy();
-    await dispatchCommand(deps, actor(), "C1", "review-policy acme/acme-be first");
+    await dispatchCommand(deps, actor(), "C1", "review-policy acme/acme-api first");
     await dispatchCommand(deps, actor(), "C1", `rv ${OTHER}`, { reply });
     expect(calls).toEqual([OTHER]);
     expect(lines[0]).toContain("reviewing");
@@ -623,7 +623,7 @@ describe("per-repo review policy", () => {
     expect(lines[lines.length - 1]).toContain("the review came back clean");
     expect(calls).toEqual([OTHER]); // approved only after
     // and the repo is still on its own policy for the next one
-    expect(deps.settings!.get("review_policy:acme/acme-be")).toBeUndefined();
+    expect(deps.settings!.get("review_policy:acme/acme-api")).toBeUndefined();
   });
 
   test("the flag is not mistaken for a PR or for the steering note", async () => {
@@ -658,8 +658,8 @@ describe("per-repo review policy", () => {
     const pal = actor({ slackId: "U0PAL0009", role: "pal" });
     deps.users.upsert(pal);
     expect(await dispatchCommand(deps, pal, "C1", "review-policy")).toContain("needs *admin*");
-    expect(await dispatchCommand(deps, pal, "C1", "review-policy acme/acme-be first")).toContain("needs *admin*");
-    expect(deps.settings!.get("review_policy:acme/acme-be")).toBeUndefined();
+    expect(await dispatchCommand(deps, pal, "C1", "review-policy acme/acme-api first")).toContain("needs *admin*");
+    expect(deps.settings!.get("review_policy:acme/acme-api")).toBeUndefined();
   });
 
   test("a pal's review never approves up front, whatever the repo is on", async () => {
@@ -689,7 +689,7 @@ describe("per-repo review policy", () => {
 
   test("several PRs share the run's policy, and the note is not eaten", async () => {
     const { deps, calls, lines, reply, sys } = withPolicy(undefined);
-    const second = "https://github.com/acme/acme-be/pull/2";
+    const second = "https://github.com/acme/acme-api/pull/2";
     await dispatchCommand(deps, actor(), "C1", `rv ${OTHER} --policy after ${second} check the migration`, {
       reply,
     });
@@ -726,7 +726,7 @@ describe("per-repo review policy", () => {
   test("the policy is per repo, so others are untouched", async () => {
     const { deps, calls, lines, reply } = withPolicy();
     await dispatchCommand(deps, actor(), "C1", "review-policy acme/sql-runner after");
-    await dispatchCommand(deps, actor(), "C1", "review-policy acme/acme-be first");
+    await dispatchCommand(deps, actor(), "C1", "review-policy acme/acme-api first");
 
     await dispatchCommand(deps, actor(), "C1", `rv ${OTHER}`, { reply });
     expect(lines[1]).toBe(`✅ approved ${OTHER}`); // still approved up front, after "reviewing"
@@ -764,7 +764,7 @@ describe("per-repo review policy", () => {
     expect(calls).toEqual([PR]); // approved only once the review came back clean
 
     // someone else's PR is still on the repo's policy (opted in to approve-first here)
-    await dispatchCommand(deps, actor(), "C1", "review-policy acme/acme-be first");
+    await dispatchCommand(deps, actor(), "C1", "review-policy acme/acme-api first");
     lines.length = 0;
     await dispatchCommand(deps, actor(), "C1", `rv ${OTHER}`, { reply });
     expect(lines[1]).toBe(`✅ approved ${OTHER}`);

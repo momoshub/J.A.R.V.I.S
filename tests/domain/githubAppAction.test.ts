@@ -21,7 +21,7 @@ describe("mayActAsApp", () => {
 });
 
 describe("planAction request shapes", () => {
-  const repo = "acme/acme-be";
+  const repo = "acme/acme-api";
   test("pr-create", () => {
     expect(ok({ action: "pr-create", repo, head: "fix/x", base: "master", title: "T", body: "B", draft: true })).toEqual([
       { method: "POST", path: `repos/${repo}/pulls`, body: { title: "T", head: "fix/x", base: "master", body: "B", draft: true } },

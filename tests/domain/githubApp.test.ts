@@ -45,11 +45,11 @@ describe("verifySignature", () => {
 
 describe("owner allowlist", () => {
   test("is case-insensitive and ignores blanks", () => {
-    const allowed = parseAllowedOwners(" acme, ,kai-at-acme ");
+    const allowed = parseAllowedOwners(" Acme, ,kai-at-acme ");
     expect(allowed).toEqual(["acme", "kai-at-acme"]);
     expect(isAllowedOwner("acme", [])).toBe(false);
     expect(isAllowedOwner("acme", allowed)).toBe(true);
-    expect(isAllowedOwner("acme", allowed)).toBe(true);
+    expect(isAllowedOwner("Acme", allowed)).toBe(true);
     expect(isAllowedOwner("stranger", allowed)).toBe(false);
     expect(isAllowedOwner("", allowed)).toBe(false);
   });

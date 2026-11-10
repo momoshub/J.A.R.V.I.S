@@ -50,14 +50,14 @@ describe("isNoiseTool", () => {
     expect(isNoiseTool("ToolSearch")).toBe(true);
     expect(isNoiseTool("TodoWrite")).toBe(true);
     expect(isNoiseTool("Bash")).toBe(false);
-    expect(isNoiseTool("mcp__pg-prod__execute_sql")).toBe(false);
+    expect(isNoiseTool("mcp__acme-pg-prod__execute_sql")).toBe(false);
   });
 });
 
 describe("redactPaths", () => {
   test("the workspace root and home directory are shortened", () => {
-    expect(redactPaths("cd /Users/kai/Workspaces/acme-be && git grep x", "/Users/kai")).toBe(
-      "cd $Workspaces/acme-be && git grep x",
+    expect(redactPaths("cd /Users/kai/Workspaces/acme-api && git grep x", "/Users/kai")).toBe(
+      "cd $Workspaces/acme-api && git grep x",
     );
     expect(redactPaths("cat /Users/kai/.claude/x.md", "/Users/kai")).toBe("cat ~/.claude/x.md");
   });

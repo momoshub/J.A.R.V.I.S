@@ -90,10 +90,10 @@ describe("createGithubAppClient: actions", () => {
 
   test("finds a repo's installation with the app JWT, once", async () => {
     const { client, calls } = setup();
-    expect(await client.installationOfRepo("acme/acme-be")).toBe(77);
-    expect(await client.installationOfRepo("acme/acme-be")).toBe(77);
+    expect(await client.installationOfRepo("acme/acme-api")).toBe(77);
+    expect(await client.installationOfRepo("Acme/acme-api")).toBe(77);
     expect(calls).toHaveLength(1);
-    expect(calls[0]?.url).toBe("https://api.github.com/repos/acme/acme-be/installation");
+    expect(calls[0]?.url).toBe("https://api.github.com/repos/acme/acme-api/installation");
     expect(calls[0]?.auth.split(".")).toHaveLength(3);
   });
 

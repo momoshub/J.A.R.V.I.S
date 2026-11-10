@@ -56,7 +56,7 @@ describe("role policy", () => {
         enabled: false,
         deniedCommands: "Ping, review, ping",
         deniedTools: "Bash(rm:*)\nWrite",
-        deniedMcpServers: ["mcp__pg-prod", "notion"],
+        deniedMcpServers: ["mcp__acme-pg-prod", "notion"],
       }),
     ).toEqual({
       ok: true,
@@ -65,7 +65,7 @@ describe("role policy", () => {
         enabled: false,
         deniedCommands: ["ping", "review"],
         deniedTools: ["Bash(rm:*)", "Write"],
-        deniedMcpServers: ["pg-prod", "notion"],
+        deniedMcpServers: ["acme-pg-prod", "notion"],
       },
     });
     // Anything but an explicit false keeps the role on.

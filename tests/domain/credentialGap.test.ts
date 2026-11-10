@@ -15,7 +15,7 @@ describe("credentialGapRules", () => {
   });
 
   test("a local database still connecting is waited for, not reported missing", () => {
-    // a turn said "pg-prod has no tools, sg-prod still connecting"
+    // a turn said "acme-pg-prod has no tools, sg-prod still connecting"
     // and asked a person to check the MCP setup - the servers were fine, the
     // turn simply started before they finished connecting
     expect(r).toContain("LOCAL database server");
