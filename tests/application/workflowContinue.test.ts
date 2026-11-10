@@ -59,7 +59,7 @@ const build = (reply: Reply) => {
     llm,
     clock: () => 42,
     ownerSlackId: OWNER,
-    botInfo: () => ({ botName: "Evie", model: "claude-cli (opus)" }),
+    botInfo: () => ({ botName: "Jarvis", model: "claude-cli (opus)" }),
     // the worker's session first, then the front's
     newSessionId: (() => {
       let n = 0;

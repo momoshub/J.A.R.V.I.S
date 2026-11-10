@@ -3,7 +3,7 @@
   "configVersion": 1,
   "workspaces": {
     "": {
-      "name": "ev-slack-bot",
+      "name": "jarvis",
       "dependencies": {
         "@anthropic-ai/sdk": "^0.71.0",
         "@slack/bolt": "^4.4.0",

@@ -125,7 +125,7 @@ export type SlackAppConfig = {
   thinkingDoneLabel: () => string;
   /** Silence before a thinking card appears; defaults to THINKING_AFTER_MS. */
   thinkingAfterMs?: number;
-  /** Message command prefix (e.g. "X/ev") and the Slack slash command name. */
+  /** Message command prefix (e.g. "X/jarvis") and the Slack slash command name. */
   commandPrefix: string;
   slashCommand: string;
   /**

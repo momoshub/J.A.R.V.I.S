@@ -116,8 +116,8 @@ describe("quiet PRs", () => {
   });
 
   test("one PR written two ways is one key", () => {
-    expect(prRef("https://github.com/Cute/E.V./pull/9")).toBe(prRef("https://github.com/cute/e.v./pull/9"));
-    expect(prRef("https://github.com/cute/e.v./pull/9")).toBe("cute/e.v.#9");
+    expect(prRef("https://github.com/Cute/J.A.R.V.I.S./pull/9")).toBe(prRef("https://github.com/cute/j.a.r.v.i.s./pull/9"));
+    expect(prRef("https://github.com/cute/j.a.r.v.i.s./pull/9")).toBe("cute/j.a.r.v.i.s.#9");
   });
 });
 
@@ -137,9 +137,9 @@ describe("traceStarts", () => {
   test("finds PRs its gh pr create printed", () => {
     const trace = [
       call("1", "GH_TOKEN=$(gh auth token -u a) gh pr create --title x --body y"),
-      result("1", "https://github.com/Cute/E.V./pull/92\n"),
+      result("1", "https://github.com/Cute/J.A.R.V.I.S./pull/92\n"),
     ].join("\n");
-    expect(traceStarts(trace).prs).toEqual(["cute/e.v.#92"]);
+    expect(traceStarts(trace).prs).toEqual(["cute/j.a.r.v.i.s.#92"]);
   });
 
   test("a PR or dispatch merely read is not a start", () => {

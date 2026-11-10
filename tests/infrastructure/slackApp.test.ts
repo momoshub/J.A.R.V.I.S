@@ -92,7 +92,7 @@ const build = (opts: {
     botToken: "x",
     appToken: "x",
     streamUpdates: opts.streamUpdates,
-    botName: "Evie",
+    botName: "Jarvis",
     thinkingLabel: () => "thinking..",
     thinkingDoneLabel: () => "done",
     commandPrefix: "//bot",

@@ -25,7 +25,7 @@ describe("canRaiseTickets", () => {
 
 describe("ticketPrompt", () => {
   test("reads the team's own pages instead of carrying their rules", () => {
-    const p = ticketPrompt("inbox is broken", "Evie", SOURCES);
+    const p = ticketPrompt("inbox is broken", "Jarvis", SOURCES);
     expect(p).toContain("READ FIRST, DECIDE SECOND");
     expect(p).toContain("https://notion.so/sop");
     expect(p).toContain("https://notion.so/pods");
@@ -34,14 +34,14 @@ describe("ticketPrompt", () => {
   });
 
   test("routes from the pod document, including its exceptions", () => {
-    const p = ticketPrompt("x", "Evie", SOURCES);
+    const p = ticketPrompt("x", "Jarvis", SOURCES);
     expect(p).toContain("Route it from the pod document, not from the name of the thing");
     expect(p).toContain("follow the exceptions the document states");
     expect(p).toContain("say which you chose and why");
   });
 
   test("insists on evidence rather than a restated complaint", () => {
-    const p = ticketPrompt("x", "Evie", SOURCES, { channelId: "C1", threadTs: "9.9" });
+    const p = ticketPrompt("x", "Jarvis", SOURCES, { channelId: "C1", threadTs: "9.9" });
     expect(p).toContain("channel C1, thread 9.9"); // go read the rest of it
     expect(p).toContain("open any screenshot");
     expect(p).toContain("Expected versus actual");
@@ -49,11 +49,11 @@ describe("ticketPrompt", () => {
   });
 
   test("is willing to decide it is not a ticket at all", () => {
-    expect(ticketPrompt("x", "Evie", SOURCES)).toContain("Decide whether it is even a ticket");
+    expect(ticketPrompt("x", "Jarvis", SOURCES)).toContain("Decide whether it is even a ticket");
   });
 
   test("opens a PR only for a genuinely small fix, in a listed repo", () => {
-    const p = ticketPrompt("x", "Evie", SOURCES);
+    const p = ticketPrompt("x", "Jarvis", SOURCES);
     expect(p).toContain("`acme/acme-api` - and nowhere else");
     expect(p).toContain("SMALL means obvious and low risk");
     expect(p).toContain("it is not small");
@@ -64,13 +64,13 @@ describe("ticketPrompt", () => {
   });
 
   test("with no repos configured it must not open a PR at all", () => {
-    const p = ticketPrompt("x", "Evie", { ...SOURCES, repoScope: parseRepoScope("") });
+    const p = ticketPrompt("x", "Jarvis", { ...SOURCES, repoScope: parseRepoScope("") });
     expect(p).toContain("do NOT open a PR");
     expect(p).not.toContain("SMALL means");
   });
 
   test("reports back short, with the gaps admitted", () => {
-    const p = ticketPrompt("x", "Evie", SOURCES);
+    const p = ticketPrompt("x", "Jarvis", SOURCES);
     expect(p).toContain("Keep it to three lines - this is a status, not the ticket again");
     // a gap still gets said, it just does not get a paragraph
     expect(p).toContain("a gap you could not fill");
@@ -80,26 +80,26 @@ describe("ticketPrompt", () => {
 
 describe("people fields", () => {
   test("an engineer never lands in the ops field", () => {
-    const p = ticketPrompt("x", "Evie", SOURCES);
+    const p = ticketPrompt("x", "Jarvis", SOURCES);
     expect(p).toContain("an engineer goes in the engineering field, never in the ops field");
     expect(p).toContain("They are not interchangeable");
     expect(p).toContain("not automatically ops");
   });
 
   test("it checks who someone is rather than assuming", () => {
-    const p = ticketPrompt("x", "Evie", SOURCES);
+    const p = ticketPrompt("x", "Jarvis", SOURCES);
     expect(p).toContain("their Slack profile title");
     expect(p).toContain("leave it blank and say so");
   });
 
   test("it reads the schema for the fields the SOP does not mention", () => {
-    expect(ticketPrompt("x", "Evie", SOURCES)).toContain("the SOP may only document some of them");
+    expect(ticketPrompt("x", "Jarvis", SOURCES)).toContain("the SOP may only document some of them");
   });
 });
 
 describe("the link", () => {
   test("goes into the thread the moment the ticket exists", () => {
-    const p = ticketPrompt("x", "Evie", SOURCES);
+    const p = ticketPrompt("x", "Jarvis", SOURCES);
     expect(p).toContain("post its link into the thread on its own");
     expect(p).toContain("do not save it for the summary at the end");
   });
@@ -124,14 +124,14 @@ describe("repo scope", () => {
   });
 
   test("an org grant makes the bot verify the repo is really under it", () => {
-    const p = ticketPrompt("x", "Evie", { tracker: "t", repoScope: parseRepoScope("acme") });
+    const p = ticketPrompt("x", "Jarvis", { tracker: "t", repoScope: parseRepoScope("acme") });
     expect(p).toContain("every repo in the *acme* org");
     expect(p).toContain("gh repo view <owner>/<repo> --json owner");
     expect(p).toContain("a name that merely looks similar is not good enough");
   });
 
   test("a plain repo list needs no such check", () => {
-    const p = ticketPrompt("x", "Evie", { tracker: "t", repoScope: parseRepoScope("acme/adhoc") });
+    const p = ticketPrompt("x", "Jarvis", { tracker: "t", repoScope: parseRepoScope("acme/adhoc") });
     expect(p).toContain("`acme/adhoc`");
     expect(p).not.toContain("gh repo view <owner>/<repo> --json owner");
   });
@@ -144,18 +144,18 @@ describe("repo scope", () => {
 
 describe("risk", () => {
   test("is measured, not adjectivised", () => {
-    const p = ticketPrompt("x", "Evie", SOURCES);
+    const p = ticketPrompt("x", "Jarvis", SOURCES);
     expect(p).toContain("Measure it, do not adjectivise it");
     expect(p).toContain("go and count");
     expect(p).toContain("blast radius");
   });
 
   test("is skipped for something trivial", () => {
-    expect(ticketPrompt("x", "Evie", SOURCES)).toContain("Skip it for a typo");
+    expect(ticketPrompt("x", "Jarvis", SOURCES)).toContain("Skip it for a typo");
   });
 
   test("a risk that contradicts the priority must be said out loud", () => {
-    const p = ticketPrompt("x", "Evie", SOURCES);
+    const p = ticketPrompt("x", "Jarvis", SOURCES);
     expect(p).toContain("does not match the priority");
     expect(p).toContain("a human should see it");
   });

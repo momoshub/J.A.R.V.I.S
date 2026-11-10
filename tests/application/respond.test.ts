@@ -436,7 +436,7 @@ describe("a turn started by a watch can actually DO things", () => {
       commandTickets: createCommandTickets(() => 1, () => "TICKET"),
       runScript: "/x/jarvis-run.sh",
       runUrl: "http://localhost/api/commands/run",
-      commandPrefix: "//ev",
+      commandPrefix: "//jarvis",
       watches: createWatchRepo(db),
     };
     return { deps, seen };
@@ -461,7 +461,7 @@ describe("a turn started by a watch can actually DO things", () => {
     const { deps, seen } = build2();
     await respond(deps, fired);
     expect(seen[0]?.system).toContain("/x/jarvis-run.sh");
-    expect(seen[0]?.system).toContain("//ev");
+    expect(seen[0]?.system).toContain("//jarvis");
   });
 
   test("it can set another watch, so a chain of waits does not need a person", async () => {

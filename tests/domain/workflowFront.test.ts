@@ -135,9 +135,9 @@ describe("worker side", () => {
   });
 
   test("prompts: the worker keeps status short, the front knows the steer marker", () => {
-    expect(workflowPrompt("Evie", "t")).toContain("said mid-task");
-    expect(workflowPrompt("Evie", "t")).toContain("Keep them short");
-    expect(frontPrompt("Evie", "rebuild the blog")).toContain("[steer]");
-    expect(frontPrompt("Evie", "rebuild the blog")).toContain("rebuild the blog");
+    expect(workflowPrompt("Jarvis", "t")).toContain("said mid-task");
+    expect(workflowPrompt("Jarvis", "t")).toContain("Keep them short");
+    expect(frontPrompt("Jarvis", "rebuild the blog")).toContain("[steer]");
+    expect(frontPrompt("Jarvis", "rebuild the blog")).toContain("rebuild the blog");
   });
 });

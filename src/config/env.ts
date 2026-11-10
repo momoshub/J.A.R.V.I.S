@@ -48,7 +48,7 @@ const schema = z
     BOT_THINKING_DONE_LABEL: z.string().default("✅"),
 
     // Command interfaces. COMMAND_PREFIX is the message trigger (e.g. "//bot" or
-    // "X/ev"); SLASH_COMMAND is the Slack slash command registered in the app.
+    // "X/jarvis"); SLASH_COMMAND is the Slack slash command registered in the app.
     COMMAND_PREFIX: z.string().default("//bot"),
     SLASH_COMMAND: z.string().default("/bot"),
 

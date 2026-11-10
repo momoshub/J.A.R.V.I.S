@@ -28,13 +28,13 @@ describe("SLACK_BREVITY", () => {
 
 describe("every prompt that writes to Slack carries the rules", () => {
   test("ordinary chat", () => {
-    const p = buildSystemPrompt({ botName: "Evie" });
+    const p = buildSystemPrompt({ botName: "Jarvis" });
     expect(p).toContain("mrkdwn, NOT Markdown");
     expect(p).toContain("one to three short lines");
   });
 
   test("the ticket report, with a fixed shape rather than prose", () => {
-    const p = ticketPrompt("x", "Evie", { tracker: "t" });
+    const p = ticketPrompt("x", "Jarvis", { tracker: "t" });
     expect(p).toContain("mrkdwn, NOT Markdown");
     expect(p).toContain("Keep it to three lines");
     expect(p).toContain("🎫 <ticket url|TICKET-ID");
@@ -42,7 +42,7 @@ describe("every prompt that writes to Slack carries the rules", () => {
   });
 
   test("the review close-out, without disturbing the GitHub house style", () => {
-    const p = reviewPrompt(["https://github.com/o/r/pull/1"], "Evie");
+    const p = reviewPrompt(["https://github.com/o/r/pull/1"], "Jarvis");
     expect(p).toContain("Close out in Slack, which renders differently from GitHub");
     expect(p).toContain("mrkdwn, NOT Markdown");
     // the comment that goes to GitHub keeps its own rules

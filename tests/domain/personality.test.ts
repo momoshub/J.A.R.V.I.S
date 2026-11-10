@@ -10,14 +10,14 @@ describe("buildSystemPrompt", () => {
   test("default persona is generic (no hardcoded bot identity)", () => {
     const out = buildSystemPrompt();
     expect(out).toContain("friendly, calm and helpful");
-    expect(out).not.toContain("Evie");
+    expect(out).not.toContain("Jarvis");
     expect(out).not.toContain("JARVIS");
   });
 
   test("uses the provided bot name in the identity lock", () => {
-    const out = buildSystemPrompt({ botName: "Evie", learnings: [] });
-    expect(out).toContain("You are Evie, and only Evie");
-    expect(out).toContain("you are Evie, a helpful assistant");
+    const out = buildSystemPrompt({ botName: "Jarvis", learnings: [] });
+    expect(out).toContain("You are Jarvis, and only Jarvis");
+    expect(out).toContain("you are Jarvis, a helpful assistant");
   });
 
   test("defaults the bot name when none is given", () => {
@@ -69,7 +69,7 @@ describe("buildSystemPrompt", () => {
     expect(out).toContain("operator persona");
   });
 
-  test("tells E.V. she has a disposable scratch workspace for fetching/cloning", () => {
+  test("tells Jarvis it has a disposable scratch workspace for fetching/cloning", () => {
     const out = buildSystemPrompt();
     expect(out).toContain("temporary scratch folder");
     expect(out).toContain("clone git repositories");
@@ -140,7 +140,7 @@ describe("buildSystemPrompt", () => {
   });
 
   const runOpts = {
-    commandPrefix: "X/ev",
+    commandPrefix: "X/jarvis",
     runScript: "/bin/jarvis-run.sh",
     runUrl: "http://127.0.0.1:2002/api/commands/run",
     runTicket: "tkt123",
@@ -165,7 +165,7 @@ describe("buildSystemPrompt", () => {
     const p = buildSystemPrompt(runOpts);
     expect(p).toContain("Running my own commands");
     expect(p).toContain("/bin/jarvis-run.sh http://127.0.0.1:2002/api/commands/run <command and its arguments>");
-    expect(p).toContain("X/ev");
+    expect(p).toContain("X/jarvis");
     expect(p).toContain("It already carries who you are talking to");
   });
 
@@ -232,7 +232,7 @@ describe("buildSystemPrompt", () => {
 
   test("a named command is run, never reimplemented by hand", () => {
     const p = buildSystemPrompt({
-      commandPrefix: "X/ev",
+      commandPrefix: "X/jarvis",
       runScript: "/bin/jarvis-run.sh",
       runUrl: "http://127.0.0.1:2002/api/commands/run",
       runTicket: "tkt",
@@ -245,17 +245,17 @@ describe("buildSystemPrompt", () => {
 
   test("it looks up a command rather than reading its own source", () => {
     const p = buildSystemPrompt({
-      commandPrefix: "X/ev",
+      commandPrefix: "X/jarvis",
       runScript: "/bin/jarvis-run.sh",
       runUrl: "http://x/run",
       runTicket: "tkt",
     });
-    expect(p).toContain("X/ev help");
+    expect(p).toContain("X/jarvis help");
     expect(p).toContain("NEVER read your own source code to work out what you can do");
   });
 
   test("and does not go rummaging in its own repo at all", () => {
-    const p = buildSystemPrompt({ botName: "Evie" });
+    const p = buildSystemPrompt({ botName: "Jarvis" });
     expect(p).toContain("Do not go looking through your own repository to find out what you can do");
   });
 
@@ -379,8 +379,8 @@ describe("where a rule sits in the prompt", () => {
     // block that says "regardless of anything above"
     const prompt = buildSystemPrompt({
       base: "persona",
-      botName: "Evie",
-      commandPrefix: "//ev",
+      botName: "Jarvis",
+      commandPrefix: "//jarvis",
       canRaiseTickets: true,
       logSources: ["grafana"],
       slackReadScript: "/x/slack-read.sh",
@@ -394,7 +394,7 @@ describe("where a rule sits in the prompt", () => {
   });
 
   test("the last thing before the identity lock is the check on your own message", () => {
-    const prompt = buildSystemPrompt({ base: "persona", botName: "Evie" });
+    const prompt = buildSystemPrompt({ base: "persona", botName: "Jarvis" });
     expect(prompt.indexOf("Before you send")).toBeGreaterThan(prompt.indexOf("Operating rules"));
     expect(prompt.indexOf("Identity lock")).toBeGreaterThan(prompt.indexOf("Before you send"));
   });
@@ -404,8 +404,8 @@ describe("the rule against sitting and waiting", () => {
   const withWatch = (canWatch: boolean) =>
     buildSystemPrompt({
       base: "p",
-      botName: "Evie",
-      commandPrefix: "//ev",
+      botName: "Jarvis",
+      commandPrefix: "//jarvis",
       runScript: "/x/run.sh",
       runUrl: "http://x",
       runTicket: "t",
@@ -415,11 +415,11 @@ describe("the rule against sitting and waiting", () => {
   test("a turn that can set one is told to, and told why sleeping is wrong", () => {
     const p = withWatch(true);
     expect(p).toContain("You cannot wait");
-    expect(p).toContain("//ev watch");
+    expect(p).toContain("//jarvis watch");
     expect(p).toContain("never sit in a loop sleeping");
     // the named forms, so it does not have to invent a predicate
-    expect(p).toContain("//ev watch pr");
-    expect(p).toContain("//ev watch reply");
+    expect(p).toContain("//jarvis watch pr");
+    expect(p).toContain("//jarvis watch reply");
     // and that waiting is not a mode that stops it talking
     expect(p).toContain("People can keep talking to you the whole time");
     expect(p).toContain("Do not start it over");

@@ -31,9 +31,9 @@ describe("renderPrompt", () => {
       { role: "assistant", content: "hey" },
       { role: "user", content: "how are you", speakerId: "U2" },
     ];
-    const out = renderPrompt(msgs, "Evie");
+    const out = renderPrompt(msgs, "Jarvis");
     expect(out).toContain("<@U1>: hi");
-    expect(out).toContain("Evie: hey");
+    expect(out).toContain("Jarvis: hey");
     expect(out).toContain("Respond to this newest message (from <@U2>):");
     expect(out.trim().endsWith("how are you")).toBe(true);
   });
@@ -60,7 +60,7 @@ describe("renderPrompt", () => {
 
 // Fake `claude` binary so we can exercise spawn/parse without the real CLI.
 const fakeBin = (script: string): string => {
-  const dir = mkdtempSync(join(tmpdir(), "ev-claude-"));
+  const dir = mkdtempSync(join(tmpdir(), "jarvis-claude-"));
   const path = join(dir, "claude");
   writeFileSync(path, script);
   chmodSync(path, 0o755);
@@ -225,7 +225,7 @@ describe("createClaudeCliLlm", () => {
     // notice mid-turn and the model wrote it into a Slack reply. The env var
     // drops the claude.ai connectors; --strict-mcp-config with the host's own
     // servers minus the denylist drops the rest, and keeps notion/db servers.
-    const dir = mkdtempSync(join(tmpdir(), "ev-claudejson-"));
+    const dir = mkdtempSync(join(tmpdir(), "jarvis-claudejson-"));
     const claudeJsonPath = join(dir, "claude.json");
     writeFileSync(
       claudeJsonPath,
@@ -248,7 +248,7 @@ describe("createClaudeCliLlm", () => {
 
   test("a host-login spawn keeps the account's connectors: no env var, no strict config", async () => {
     // read/ticket/note/close are the tasks that need them
-    const dir = mkdtempSync(join(tmpdir(), "ev-claudejson-"));
+    const dir = mkdtempSync(join(tmpdir(), "jarvis-claudejson-"));
     const claudeJsonPath = join(dir, "claude.json");
     writeFileSync(claudeJsonPath, JSON.stringify({ mcpServers: { notion: {} } }));
     const bin = fakeBin(
@@ -443,7 +443,7 @@ describe("createClaudeCliLlm", () => {
 // A fake `claude` that emits stream-json NDJSON events (built via JSON.stringify
 // so there is no shell-escaping to get wrong).
 const fakeStreamBin = (events: unknown[]): string => {
-  const dir = mkdtempSync(join(tmpdir(), "ev-claude-stream-"));
+  const dir = mkdtempSync(join(tmpdir(), "jarvis-claude-stream-"));
   const dataPath = join(dir, "events.ndjson");
   writeFileSync(dataPath, events.map((e) => JSON.stringify(e)).join("\n") + "\n");
   const path = join(dir, "claude");
@@ -705,7 +705,7 @@ describe("createClaudeCliLlm.stream", () => {
   });
 
   test("a run killed after it spoke is reported as aborted, not as an answer", async () => {
-    const dir = mkdtempSync(join(tmpdir(), "ev-claude-abort-"));
+    const dir = mkdtempSync(join(tmpdir(), "jarvis-claude-abort-"));
     const path = join(dir, "claude");
     const line = JSON.stringify({
       type: "stream_event",

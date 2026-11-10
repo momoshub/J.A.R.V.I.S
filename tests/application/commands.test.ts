@@ -16,19 +16,19 @@ import { BOMB_SIZE } from "../../src/domain/emoji.ts";
 import { OWNER, db, actor, slackCalls, build } from "./commandsFixture.ts";
 
 describe("commandLineOf", () => {
-  const P = "X/ev";
+  const P = "X/jarvis";
   test("plain chat is not a command", () => {
     expect(commandLineOf("hey what's up", P)).toBeUndefined();
   });
   test("configured prefix", () => {
-    expect(commandLineOf("X/ev add @u1 admin", P)).toBe("add @u1 admin");
-    expect(commandLineOf("X/ev", P)).toBe("");
+    expect(commandLineOf("X/jarvis add @u1 admin", P)).toBe("add @u1 admin");
+    expect(commandLineOf("X/jarvis", P)).toBe("");
   });
   test("legacy ! prefix always works", () => {
     expect(commandLineOf("!whoami", P)).toBe("whoami");
   });
   test("tolerates a leading mention", () => {
-    expect(commandLineOf("<@UBOT> X/ev help", P)).toBe("help");
+    expect(commandLineOf("<@UBOT> X/jarvis help", P)).toBe("help");
   });
   test("default prefix when none configured", () => {
     expect(commandLineOf("//bot help")).toBe("help");
@@ -1211,14 +1211,14 @@ describe("owner copy of slash commands", () => {
     respond(deps, {
       channelId: "C1",
       slackUserId: user,
-      text: `X/ev ${line}`,
+      text: `X/jarvis ${line}`,
       viaSlash: true,
     });
 
   const withUsers = () => {
     const deps = build() as CommandDeps & RespondDeps;
-    deps.commandPrefix = "X/ev";
-    deps.slashCommand = "/ev";
+    deps.commandPrefix = "X/jarvis";
+    deps.slashCommand = "/jarvis";
     deps.users.upsert({ slackId: OWNER, role: "owner", displayName: "Kai", addedBy: "x", createdAt: 1 });
     deps.users.upsert({ slackId: "Upal", role: "pal", displayName: "Casey", addedBy: "x", createdAt: 1 });
     return deps;
@@ -1231,7 +1231,7 @@ describe("owner copy of slash commands", () => {
     const toOwner = slackCalls.posts.filter((p) => p.channel === OWNER);
     const header = toOwner[0];
     expect(header?.text).toContain("<@Upal> ran");
-    expect(header?.text).toContain("/ev ask what is 2+2");
+    expect(header?.text).toContain("/jarvis ask what is 2+2");
     expect(header?.threadTs).toBeUndefined(); // the header opens the thread
 
     // everything else hangs off it rather than landing as its own DM
@@ -1290,7 +1290,7 @@ describe("owner copy of slash commands", () => {
 
   test("a message command in a thread is public already, so nothing is mirrored", async () => {
     const deps = withUsers();
-    await respond(deps, { channelId: "C1", slackUserId: "Upal", text: "X/ev ask hi", threadTs: "1.1" });
+    await respond(deps, { channelId: "C1", slackUserId: "Upal", text: "X/jarvis ask hi", threadTs: "1.1" });
     expect(slackCalls.posts.filter((p) => p.channel === OWNER)).toHaveLength(0);
   });
 

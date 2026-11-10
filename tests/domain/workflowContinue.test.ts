@@ -63,14 +63,14 @@ describe("createMarkerFilter", () => {
 
 describe("prompt and notice", () => {
   test("the workflow prompt explains the marker and when not to use it", () => {
-    const p = workflowPrompt("Evie", "rebuild the blog");
+    const p = workflowPrompt("Jarvis", "rebuild the blog");
     expect(p).toContain(CONTINUE_MARKER);
     expect(p).toMatch(/ONE meaningful step/);
     expect(p).toMatch(/Do NOT add that line when you have asked a question/);
   });
 
   test("the workflow worker spawns agents as Orca workers and waits across steps", () => {
-    const p = workflowPrompt("Evie", "rebuild the blog");
+    const p = workflowPrompt("Jarvis", "rebuild the blog");
     expect(p).toContain("Pick the run mode by the job's weight, never by habit");
     expect(p).toContain("never through the Workflow tool");
     expect(p).toContain("orca orchestration run-create");

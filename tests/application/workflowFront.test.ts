@@ -73,7 +73,7 @@ const build = (opts: { worker: (p: LlmCompleteParams) => string; front: (p: LlmC
     llm,
     clock: () => 1_000_000,
     ownerSlackId: OWNER,
-    botInfo: () => ({ botName: "Evie", model: "claude-cli (opus)" }),
+    botInfo: () => ({ botName: "Jarvis", model: "claude-cli (opus)" }),
     newSessionId: () => (n++ === 0 ? SESSION : FRONT),
     toolPolicy: () => ({ skipPermissions: true, cwd: "/work" }),
     threadQueue: createThreadQueue(),

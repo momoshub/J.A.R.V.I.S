@@ -255,13 +255,13 @@ describe("dashboard mutations", () => {
     const { dash, settings } = build();
     await dash.handle(
       postJson(`/api/identity`, {
-        name: "Evie",
+        name: "Jarvis",
         thinkingLabel: "☄️",
         thinkingDoneLabel: "🐦‍🔥",
         prompt: "You are terse.",
       }),
     );
-    expect(settings.get(SETTING_KEYS.botName)).toBe("Evie");
+    expect(settings.get(SETTING_KEYS.botName)).toBe("Jarvis");
     expect(settings.get(SETTING_KEYS.thinkingDoneLabel)).toBe("🐦‍🔥");
     expect(settings.get(SETTING_KEYS.systemPrompt)).toBe("You are terse.");
   });
