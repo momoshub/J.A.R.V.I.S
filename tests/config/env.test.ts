@@ -77,6 +77,16 @@ describe("loadConfig", () => {
     expect(loadConfig({ ...base, DATABASE_MIGRATE_FROM: " " }).databaseMigrateFrom).toBeUndefined();
   });
 
+  test("the token key defaults to a file; keychain is opt-in with a service name", () => {
+    const d = loadConfig(base);
+    expect(d.tokenKeySource).toBe("file");
+    expect(d.tokenKeyKeychainService).toBe("jarvis-token-key");
+    const k = loadConfig({ ...base, TOKEN_KEY_SOURCE: "keychain", TOKEN_KEY_KEYCHAIN_SERVICE: " my-svc " });
+    expect(k.tokenKeySource).toBe("keychain");
+    expect(k.tokenKeyKeychainService).toBe("my-svc");
+    expect(() => loadConfig({ ...base, TOKEN_KEY_SOURCE: "vault" })).toThrow();
+  });
+
   test("GitHub App defaults keep every secret in files outside the repo", () => {
     const g = loadConfig(base).githubApp;
     expect(g.port).toBe(2003);

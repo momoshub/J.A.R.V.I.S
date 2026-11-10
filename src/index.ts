@@ -11,7 +11,7 @@
 import { writeGuides } from "./infrastructure/system/guideWriter.ts";
 import { mkdirSync } from "node:fs";
 import { dirname, join } from "node:path";
-import { tmpdir } from "node:os";
+import { tmpdir, userInfo } from "node:os";
 import { loadConfig, modelLabel, type AppConfig } from "./config/env.ts";
 import { isSilenceNote } from "./domain/silence.ts";
 import { openDatabase } from "./infrastructure/db/client.ts";
@@ -25,9 +25,10 @@ import { createSystemProbe, createSystemTracker } from "./infrastructure/system/
 import { createTotpRepo } from "./infrastructure/db/totpRepo.ts";
 import {
   createClaudeTokenRepo,
-  loadOrCreateKey,
   openTokenDatabase,
+  tokenDatabaseHasRows,
 } from "./infrastructure/db/claudeTokenRepo.ts";
+import { resolveTokenKey, runSecurity } from "./infrastructure/db/tokenKeyStore.ts";
 import { createUserRepo } from "./infrastructure/db/userRepo.ts";
 import { createMessageRepo } from "./infrastructure/db/messageRepo.ts";
 import { createLearningsRepo } from "./infrastructure/db/learningsRepo.ts";
@@ -223,11 +224,27 @@ const main = async () => {
   // must never be able to reach git. Encrypted under a key kept beside it.
   adoptDatabase(config.tokenDatabasePath, config.tokenDatabaseMigrateFrom, { mode: 0o600, log: console.log });
   const tokenDb = openTokenDatabase(config.tokenDatabasePath);
-  const tokenKey = loadOrCreateKey(config.tokenKeyPath);
-  const claudeTokens = createClaudeTokenRepo(tokenDb, tokenKey);
+  const tokenKeyOutcome = resolveTokenKey({
+    source: config.tokenKeySource,
+    keyPath: config.tokenKeyPath,
+    security: runSecurity,
+    service: config.tokenKeyKeychainService,
+    account: userInfo().username,
+    hasSealedRows: () => tokenDatabaseHasRows(tokenDb),
+  });
+  if (tokenKeyOutcome.kind === "key" && tokenKeyOutcome.note) console.log(`[token-key] ${tokenKeyOutcome.note}`);
+  // A locked Keychain must not take the bot down: without the key, the stores
+  // stay unwired and the commands already answer "no store" for them.
+  if (tokenKeyOutcome.kind === "unavailable") {
+    console.error(
+      `[token-key] WARNING: per-user tokens and 2FA seeds are DISABLED until restart - ${tokenKeyOutcome.cause}`,
+    );
+  }
+  const tokenKey = tokenKeyOutcome.kind === "key" ? tokenKeyOutcome.key : undefined;
+  const claudeTokens = tokenKey ? createClaudeTokenRepo(tokenDb, tokenKey) : undefined;
   // Shared 2FA seeds live beside the tokens, under the same key: a seed is a
   // credential, so it gets the credential database rather than the committed one.
-  const totp = createTotpRepo(tokenDb, tokenKey);
+  const totp = tokenKey ? createTotpRepo(tokenDb, tokenKey) : undefined;
   // Activity log to the logs/ folder: every command (and message) is recorded,
   // failed commands additionally land in errors.log.
   const activity = createActivityLog(config.logDir);
@@ -958,7 +975,7 @@ const main = async () => {
     account: async () => (await deps.github?.whoami())?.login,
     githubName: ghRequests.githubName,
     users,
-    hasToken: (id) => claudeTokens.has(id),
+    hasToken: (id) => claudeTokens?.has(id) ?? false,
     post: async (channel, text, thread) => (await slackAdmin.post(channel, text, thread, SIGNATURES.reviewInbox))?.ts,
     runReview: async ({ actor, channelId, threadTs, line }) => {
       const reply = async (text: string) => void (await slackAdmin.post(channelId, text, threadTs, SIGNATURES.reviewInbox));

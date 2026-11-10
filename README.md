@@ -74,6 +74,9 @@ Required / notable env (see `.env.example`):
 | `DATABASE_PATH` | the live sqlite file (default `data/bot.db`). Put it **outside the git checkout**, `~/` works, e.g. `~/.jarvis/data/bot.db` - see [Where the database lives](#where-the-database-lives) |
 | `DATABASE_MIGRATE_FROM` | one-time move: when `DATABASE_PATH` does not exist and this file does, the first boot fills it with a consistent snapshot of this one (the old file is only read). Unset: nothing |
 | `TOKEN_DATABASE_PATH` / `TOKEN_DATABASE_MIGRATE_FROM` | the same pair for the token database (default `data/tokens.db`) |
+| `TOKEN_KEY_PATH` | the token database key file (default `data/tokens.key`) |
+| `TOKEN_KEY_SOURCE` | `file` (default: the key is `TOKEN_KEY_PATH`, unchanged) or `keychain` (macOS only: one Keychain item, see [Per-user tokens](#per-user-claude-tokens)) |
+| `TOKEN_KEY_KEYCHAIN_SERVICE` | the Keychain item's service name (default `jarvis-token-key`); the account is the login user |
 | `DATABASE_BACKUP_DIR` | where `bin/db-backup.ts` writes snapshots (default `~/.jarvis/backups`) |
 
 Env values for identity only **bootstrap a fresh database**. Once set, the DB values (edited from the dashboard) take precedence, so the code stays generic.
@@ -82,7 +85,7 @@ Env values for identity only **bootstrap a fresh database**. Once set, the DB va
 
 The live SQLite files must not sit in the git checkout: a `git stash`, `checkout`, `reset` or `rebase` there replaces the file under the open handle and the bot dies with a SQLite disk I/O error. Point `DATABASE_PATH` and `TOKEN_DATABASE_PATH` at a folder outside the repo (`~/.jarvis/data/`). To move an existing instance without copying by hand, also set `DATABASE_MIGRATE_FROM=data/<old>.db` (and `TOKEN_DATABASE_MIGRATE_FROM=data/tokens.db`): on boot, a missing (or 0-byte / table-less) destination is filled once with a consistent snapshot of the old file (`VACUUM INTO`, so the WAL is included and a running writer is fine). A relative source resolves against the checkout, not the working directory, and the resolved `to`/`from` are logged on every boot. If the source is configured but missing, the bot refuses to start rather than create an empty database. A destination that has tables is never touched, so the lines can stay in `.env`. The old file is only read, never changed or deleted.
 
-Backups: `bun bin/db-backup.ts [--keep N] [--commit]` writes a consistent snapshot of both databases to `DATABASE_BACKUP_DIR` (default `~/.jarvis/backups`, `<name>-<UTC stamp>.db`, newest 14 kept per database). To keep the old "the database is in git" property, make that folder a private git repository of its own and use `--commit`: the history lives in git, and the live file never does. Run it from cron or launchd, e.g. every 6 hours: `0 */6 * * * cd /path/to/repo && bun bin/db-backup.ts --commit`. The token database is ciphertext; its key (`TOKEN_KEY_PATH`) is not backed up, so keep a copy of it somewhere safe.
+Backups: `bun bin/db-backup.ts [--keep N] [--commit]` writes a consistent snapshot of both databases to `DATABASE_BACKUP_DIR` (default `~/.jarvis/backups`, `<name>-<UTC stamp>.db`, newest 14 kept per database). To keep the old "the database is in git" property, make that folder a private git repository of its own and use `--commit`: the history lives in git, and the live file never does. Run it from cron or launchd, e.g. every 6 hours: `0 */6 * * * cd /path/to/repo && bun bin/db-backup.ts --commit`. The token database is ciphertext; its key (`TOKEN_KEY_PATH`, or the Keychain item in keychain mode) is not backed up, so keep a copy of it somewhere safe.
 
 ## Run
 
@@ -864,6 +867,27 @@ Tokens live in their own database (`TOKEN_DATABASE_PATH`, default
 (default `data/tokens.key`). Keep the database outside the checkout like the main
 one; **the key is gitignored**, so a backup of it is ciphertext and a copy taken
 from anywhere but the host opens nothing.
+
+On macOS the key can live in the login Keychain instead of a file:
+`TOKEN_KEY_SOURCE=keychain` (service `TOKEN_KEY_KEYCHAIN_SERVICE`, default
+`jarvis-token-key`, account = the login user; read and written with the
+`security` CLI). First boot in that mode:
+
+- Item missing, key file present: the file key is copied into the Keychain, read
+  back and compared byte for byte, and only then is the file deleted. A mismatch
+  aborts the boot and keeps the file.
+- Item missing, no file: a fresh key is created only if the token database has no
+  rows. If it has rows, the boot fails: a new key over existing ciphertext would
+  orphan every token, so restore the key instead.
+- Keychain locked or unreachable (e.g. a reboot before login): the boot
+  **continues**, with per-user tokens and 2FA seeds switched off until the next
+  restart. Reviews then say there is nowhere to keep a token, and the log has one
+  `[token-key] WARNING` line naming the cause. Unlock the Keychain and restart.
+
+The secret is passed to `security` as an argument, so it is briefly visible to
+other processes of the same user; it is never logged. The key is not in git and
+not in `data/` any more, so back up the Keychain item (Keychain Access, or
+`security find-generic-password -s jarvis-token-key -w`) instead of a file.
 
 ## What a review comment looks like
 

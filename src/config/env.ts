@@ -105,6 +105,14 @@ const schema = z
     // Same one-time move as DATABASE_MIGRATE_FROM, for the token database.
     TOKEN_DATABASE_MIGRATE_FROM: z.string().optional(),
     TOKEN_KEY_PATH: z.string().default("data/tokens.key"),
+    // Where that key lives. `file` (default) is TOKEN_KEY_PATH. `keychain` keeps
+    // it in one macOS Keychain item instead (service below, account = the login
+    // user): a key file left at TOKEN_KEY_PATH is moved in on first boot and then
+    // deleted. Keychain locked or unreachable: boot continues with per-user
+    // tokens and 2FA seeds switched off. Item missing, no file, and the token
+    // database already has rows: boot fails rather than mint a key over them.
+    TOKEN_KEY_SOURCE: z.enum(["file", "keychain"]).default("file"),
+    TOKEN_KEY_KEYCHAIN_SERVICE: z.string().trim().min(1).default("jarvis-token-key"),
     // Folder for the activity/error logs (one JSON line per event).
     LOG_DIR: z.string().default("logs"),
     // Channel that gets the one restart notice listing the waiting threads.
@@ -223,6 +231,8 @@ export type AppConfig = {
   /** Old location of the token database, copied from once when `tokenDatabasePath` is missing. */
   tokenDatabaseMigrateFrom?: string;
   tokenKeyPath: string;
+  tokenKeySource: "file" | "keychain";
+  tokenKeyKeychainService: string;
   logDir: string;
   /** Channel for the restart notice listing waiting threads; unset is silent. */
   drainNoticeChannel?: string;
@@ -305,6 +315,8 @@ export const loadConfig = (source: Record<string, string | undefined> = process.
       ? { tokenDatabaseMigrateFrom: expandHome(env.TOKEN_DATABASE_MIGRATE_FROM.trim()) }
       : {}),
     tokenKeyPath: env.TOKEN_KEY_PATH,
+    tokenKeySource: env.TOKEN_KEY_SOURCE,
+    tokenKeyKeychainService: env.TOKEN_KEY_KEYCHAIN_SERVICE,
     logDir: env.LOG_DIR,
     ...(env.DRAIN_NOTICE_CHANNEL ? { drainNoticeChannel: env.DRAIN_NOTICE_CHANNEL } : {}),
     restartTurnBudgetMs: env.RESTART_TURN_BUDGET_MS,
