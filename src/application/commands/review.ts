@@ -120,7 +120,7 @@ export const REVIEW_COMMANDS: readonly CommandDef[] = [
     ownHelp: true,
     minRole: "pal",
     usage: "<pr-url> [pr-url...] [--policy first|after] [what to look at]",
-    summary: "review a PR: blockers-only comment on GitHub and here",
+    summary: "review a PR: blockers-only comment on GitHub and here (acme repos: non-blocking findings too)",
     run: async (ctx) => {
       const { deps, actor, args, prefix, reply, channelId } = ctx;
       if (args.length === 0) return `Which PR? \`${prefix} review <pr-url>\``;
