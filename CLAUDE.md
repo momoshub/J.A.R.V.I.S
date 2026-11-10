@@ -19,6 +19,8 @@ bun run setup         # install + build:web
 
 Always run `bun run typecheck` AND `bun test` before considering a change done. The `web/` app has its own `tsconfig`/deps - typecheck it with `cd web && bunx tsc --noEmit` after touching it, and rebuild (`bun run build:web`) since the bot serves `web/dist`. CI typechecks and builds `web/` too. `web/dist` is not committed and is read per request, so after a web-only merge run `bun run build:web` in the main folder - no restart needed.
 
+Verifying a PR (a separate verifier, never the writer; what to run and what evidence to post): `.claude/skills/verify/SKILL.md`.
+
 ## Architecture (clean, layered - dependencies point inward)
 
 - Two processes: `src/gateway.ts` holds the Slack socket and writes every envelope to `data/inbox.db`, and never restarts; `src/index.ts` is the bot (`SLACK_TRANSPORT=inbox`), reads the inbox, runs one turn per thread on its own `claude --resume` session, and is the one that restarts
