@@ -36,7 +36,7 @@ export type PromptGuide = {
 export const GUIDE_SUMMARIES: Readonly<Record<GuideSlug, string>> = {
   // the source order is a setting, so the real line comes from `investigateSummary`
   investigate:
-    "logs, metrics, traces, RUM - try the configured sources in order, NEVER cloudwatch. Read before any lookup into why something broke",
+    "logs, metrics, traces, RUM - try the configured sources in order, NEVER cloudwatch by hand (the `cloudwatch` command is the only allowed path). Read before any lookup into why something broke",
   tickets:
     "a NEW report of the product misbehaving is raised as a ticket with the `ticket` command, after searching the tracker for a duplicate. Read before raising one",
   "credential-gap":
@@ -89,7 +89,7 @@ export const guideFile = (guide: PromptGuide): string =>
 export const investigateSummary = (order: readonly string[]): string =>
   order.length === 0
     ? GUIDE_SUMMARIES.investigate
-    : `logs, metrics, traces, RUM - ${order.length > 1 ? `${order.join(", then ")}, each only when the one before has nothing` : order[0]}, NEVER cloudwatch. Read before any lookup into why something broke`;
+    : `logs, metrics, traces, RUM - ${order.length > 1 ? `${order.join(", then ")}, each only when the one before has nothing` : order[0]}, NEVER cloudwatch by hand (the \`cloudwatch\` command is the only allowed path). Read before any lookup into why something broke`;
 
 /** A block becomes a guide only when this turn would have rendered it at all. */
 export const asGuide = (slug: GuideSlug, block: string, summary?: string): PromptGuide | undefined =>

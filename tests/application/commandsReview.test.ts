@@ -818,7 +818,7 @@ describe("logsource", () => {
     const pal = actor({ slackId: "U0PAL0001", role: "pal" });
     const out = await dispatchCommand(deps, pal, "C1", "logsource");
     expect(out).toContain("*grafana* → *datadog*");
-    expect(out).toContain("Never: *cloudwatch*");
+    expect(out).toContain("Never by hand: *cloudwatch*");
   });
 
   test("an admin reorders it", async () => {

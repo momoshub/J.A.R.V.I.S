@@ -56,6 +56,10 @@ export const SETTING_KEYS = {
   orcaTerminalHandle: "orca_terminal_handle",
   /** JSON of stuck-work items already DMed to the owner, with when, so none repeats within hours. */
   stuckSweepSeen: "stuck_sweep_seen",
+  /** AWS region `cloudwatch` queries when none is given. Empty = us-west-2. */
+  cloudwatchRegion: "cloudwatch_region",
+  /** Log group(s) `cloudwatch` queries when none is given, comma separated. Empty = must be named. */
+  cloudwatchGroup: "cloudwatch_default_group",
 } as const;
 
 /** Model override for one role, e.g. `model:pal`. Empty means "use the default". */

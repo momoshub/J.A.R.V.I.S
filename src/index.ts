@@ -82,6 +82,8 @@ import { SIGNATURES } from "./domain/messageFooter.ts";
 import { WORKER_BILL_KIND } from "./application/workflow.ts";
 import { createAccessRequestRepo } from "./infrastructure/db/accessRequestRepo.ts";
 import { createCommandApprovalRepo } from "./infrastructure/db/commandApprovalRepo.ts";
+import { createCloudwatchRepo } from "./infrastructure/db/cloudwatchRepo.ts";
+import { createCloudwatchCli } from "./infrastructure/aws/cloudwatchCli.ts";
 import { createSettingsRepo, modelKey, SETTING_KEYS } from "./infrastructure/db/settingsRepo.ts";
 import { agentModelEnv, agentModelsOf, builtinAgentOverrides } from "./domain/agentModels.ts";
 import { loadBotProfile } from "./application/botProfile.ts";
@@ -234,6 +236,9 @@ const main = async () => {
   const threadSessions = createThreadSessionRepo(db);
   const accessRequests = createAccessRequestRepo(db);
   const commandApprovals = createCommandApprovalRepo(db);
+  const cloudwatchRepo = createCloudwatchRepo(db);
+  // A query still `running` lost its process in the last restart.
+  cloudwatchRepo.failRunning(Date.now());
   const commandTickets = createCommandTickets(() => Date.now(), undefined, config.commandTicketUses);
   const baseCommandLog = createCommandLogRepo(db);
   const commandLog: CommandLogRepo = {
@@ -576,6 +581,19 @@ const main = async () => {
     accessRequests,
     // A pal out of allowance has their command parked for approval.
     commandApprovals,
+    // `cloudwatch`: the only path to CloudWatch Logs Insights. The aws CLI runs
+    // here in the bot (a turn's own `aws logs` is denied), behind the cost
+    // warning, the Confirm / Cancel buttons and an audit row per request.
+    cloudwatch: {
+      aws: createCloudwatchCli(),
+      repo: cloudwatchRepo,
+      users,
+      slack: slackAdmin,
+      settings,
+      clock,
+      ownerSlackId: config.ownerSlackId,
+      log: (l) => activity.line(`cloudwatch: ${l}`),
+    },
     // Per-person allowances live here, set with the `limit` command.
     settings,
     // Where to look for logs, in order. Read per call so a change needs no restart.

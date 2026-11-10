@@ -55,7 +55,8 @@ describe("how-to guides", () => {
       expect(prompt).toContain(g.summary);
     }
     // the guards that must hold unread stay always on
-    expect(prompt).toContain("NEVER cloudwatch");
+    expect(prompt).toContain("NEVER cloudwatch by hand");
+    expect(prompt).toContain("`cloudwatch` command is the only allowed path");
     expect(prompt).toContain("set a `watch` instead");
     // the commands themselves and the closing rules are still there
     expect(prompt).toContain("Running my own commands");
@@ -71,7 +72,8 @@ describe("how-to guides", () => {
     );
     expect(datadog?.summary).toContain("datadog");
     expect(datadog?.summary).not.toContain("grafana");
-    expect(datadog?.summary).toContain("NEVER cloudwatch");
+    expect(datadog?.summary).toContain("NEVER cloudwatch by hand");
+    expect(datadog?.summary).toContain("`cloudwatch` command is the only allowed path");
   });
 
   test("the block-kit line also points an incoming event at the guide", () => {

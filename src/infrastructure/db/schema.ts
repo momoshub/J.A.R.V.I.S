@@ -99,6 +99,51 @@ export const migrate = (db: Database): void => {
   migrateDriftEvents(db);
   migrateOrcaQuestions(db);
   migrateWorkerUsage(db);
+  migrateCloudwatchRequests(db);
+};
+
+/**
+ * Migration v28: CloudWatch Logs Insights requests (`cloudwatch` command).
+ *
+ * One row per request, which is both the parked Confirm / Cancel state and the
+ * audit log: who asked, the query, the range, who confirmed it and what the
+ * scan came to. `status` runs pending -> running -> done|failed, or ends at
+ * cancelled|expired without ever running.
+ */
+const migrateCloudwatchRequests = (db: Database): void => {
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS cloudwatch_requests (
+      id              INTEGER PRIMARY KEY AUTOINCREMENT,
+      requested_by    TEXT NOT NULL,
+      requester_role  TEXT NOT NULL,
+      channel_id      TEXT NOT NULL,
+      thread_ts       TEXT NOT NULL DEFAULT '',
+      mode            TEXT NOT NULL,
+      region          TEXT NOT NULL,
+      log_groups      TEXT NOT NULL,
+      query           TEXT NOT NULL,
+      start_ms        INTEGER NOT NULL,
+      end_ms          INTEGER NOT NULL,
+      row_limit       INTEGER NOT NULL,
+      estimate_bytes  INTEGER NOT NULL DEFAULT 0,
+      costly          INTEGER NOT NULL DEFAULT 0,
+      status          TEXT NOT NULL,
+      confirmed_by    TEXT NOT NULL DEFAULT '',
+      notice_channel  TEXT NOT NULL DEFAULT '',
+      notice_ts       TEXT NOT NULL DEFAULT '',
+      scanned_bytes   INTEGER,
+      records_matched INTEGER,
+      error           TEXT NOT NULL DEFAULT '',
+      created_at      INTEGER NOT NULL,
+      decided_at      INTEGER,
+      finished_at     INTEGER
+    );
+  `);
+  db.exec("CREATE INDEX IF NOT EXISTS idx_cloudwatch_requests_status ON cloudwatch_requests (status, created_at);");
+  const { user_version } = db.query<{ user_version: number }, []>("PRAGMA user_version").get() ?? {
+    user_version: 0,
+  };
+  if (user_version < 28) db.exec("PRAGMA user_version = 28;");
 };
 
 /**

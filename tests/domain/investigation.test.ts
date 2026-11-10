@@ -66,12 +66,13 @@ describe("investigationRules", () => {
     expect(investigationRules(["grafana"])).toContain("debug-with-grafana");
   });
 
-  test("cloudwatch is refused whatever the order is", () => {
+  test("cloudwatch is refused by hand whatever the order is, and the command is the one allowed path", () => {
     for (const order of [["grafana"], ["datadog"], ["datadog", "grafana"]]) {
       const r = investigationRules(order);
-      for (const denied of DENIED_LOG_SOURCES) expect(r).toContain(`NEVER query ${denied}`);
+      for (const denied of DENIED_LOG_SOURCES) expect(r).toContain(`NEVER query ${denied} by hand`);
       expect(r).toContain("bills per GB scanned");
-      expect(r).toContain("let a person decide");
+      expect(r).toContain("`cloudwatch` command is the only allowed path");
+      expect(r).toContain("confirm");
     }
   });
 

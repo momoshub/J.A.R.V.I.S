@@ -598,6 +598,21 @@ describe("Block Kit the brain built", () => {
     expect(r.posted).toEqual([{ channel: "C1", text: "done" }]);
   });
 
+  test("a cloudwatch Confirm / Cancel press is acked but never becomes a turn for the model", async () => {
+    const r = rig();
+    for (const id of ["jv:cloudwatch:confirm", "jv:cloudwatch:cancel"]) {
+      await r.onKitAction({
+        ack: r.ack,
+        client: r.client,
+        body: { user: { id: "U2" }, channel: { id: "C1" }, message: { ts: "200.2", thread_ts: "100.1" } },
+        action: { action_id: id, type: "button", value: "7" },
+      });
+    }
+    expect(r.acks).toHaveLength(2);
+    expect(r.turns).toEqual([]);
+    expect(r.opened).toEqual([]);
+  });
+
   const choice = [
     { type: "section", text: { type: "mrkdwn", text: "Which?" } },
     { type: "actions", elements: [{ type: "button", action_id: "jv:a", text: { type: "plain_text", text: "Option A" }, value: "a" }] },

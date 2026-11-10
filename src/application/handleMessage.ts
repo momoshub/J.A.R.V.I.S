@@ -40,6 +40,7 @@ import type { FollowRepo } from "../infrastructure/db/followRepo.ts";
 import type { WorkflowRepo } from "../infrastructure/db/workflowRepo.ts";
 import type { AccessRequestRepo } from "../infrastructure/db/accessRequestRepo.ts";
 import type { CommandApprovalRepo } from "../infrastructure/db/commandApprovalRepo.ts";
+import type { CloudwatchDeps } from "./cloudwatch.ts";
 import type { SettingsRepo } from "../infrastructure/db/settingsRepo.ts";
 import { requestAccess } from "./accessRequests.ts";
 import type { CommandTickets } from "./commandTickets.ts";
@@ -178,6 +179,8 @@ export type HandleMessageDeps = {
   accessRequests?: AccessRequestRepo;
   /** Commands parked for approval once a limited role runs out of allowance. */
   commandApprovals?: CommandApprovalRepo;
+  /** CloudWatch Logs Insights for the `cloudwatch` command and its Confirm / Cancel buttons. */
+  cloudwatch?: CloudwatchDeps;
   /** Settings, for per-person command allowances. */
   settings?: SettingsRepo;
   /** Observability backends in preference order; empty means none configured. */
