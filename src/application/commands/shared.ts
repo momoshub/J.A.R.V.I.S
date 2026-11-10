@@ -113,7 +113,7 @@ export type CommandDeps = {
     keepSession?: boolean;
     /** A workflow step the bot started itself, not a human message. */
     autoContinue?: boolean;
-    /** Started by the bot, nobody typed it: no "yours is next" notice. */
+    /** Started by the bot, nobody typed it. */
     unprompted?: boolean;
   }) => Promise<void>;
   /** Timer for a workflow's next step; injected so tests need not wait. */

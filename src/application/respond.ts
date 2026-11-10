@@ -16,7 +16,7 @@ import { frontKeyOf, steeredMessage } from "../domain/workflowFront.ts";
 import { SIGNATURES } from "../domain/messageFooter.ts";
 import { requestAccess } from "./accessRequests.ts";
 import { reviewRequestIn } from "../domain/reviewRequest.ts";
-import { busyNotice, nameOfRequest } from "../domain/runControl.ts";
+import { nameOfRequest } from "../domain/runControl.ts";
 import { sessionThreadKey } from "../domain/agentSession.ts";
 import { isRestartCut, type RunRegistry } from "./runRegistry.ts";
 import type { ThreadQueue } from "./threadQueue.ts";
@@ -46,51 +46,6 @@ export type RespondDeps = HandleMessageDeps & Pick<FrontDeps, "workerCalls"> & {
 };
 
 const RANK: Record<UserRole, number> = { pal: 0, executer: 1, admin: 2, owner: 3 };
-
-/**
- * Tell a thread it is busy.
- *
- * It used to carry its own Stop and Never-mind buttons. Slack now draws a
- * native stop control on any session the bot is streaming into
- * (`agent_session_stopped`), so a second pair of buttons beside it was two
- * mechanisms for one job - and the home-made one was the weaker, since it only
- * existed on this notice and only while somebody was queued behind a turn.
- * The sentence was always the part that mattered.
- *
- * It names the running turn by a link to the message that asked for it, and
- * returns where it landed: the notice is only true while the turn waits, so
- * the queued turn takes it down when it starts.
- */
-const announceBusy = async (
-  deps: RespondDeps,
-  inbound: InboundMessage,
-  key: string,
-): Promise<PostedRef | undefined> => {
-  const running = deps.runs?.current(key);
-  try {
-    const link =
-      running?.messageTs && deps.slack?.permalink
-        ? await deps.slack.permalink(running.channelId, running.messageTs)
-        : undefined;
-    const text = running
-      ? busyNotice(running, deps.clock(), link)
-      : "⏳ still on the one before this, I will pick it up next";
-    return (await deps.slack?.post(inbound.channelId, text, inbound.threadTs)) || undefined;
-  } catch {
-    // A notice that cannot be posted must not take the turn down with it.
-    return undefined;
-  }
-};
-
-/** Take a busy notice down. Best-effort: a stale notice is not worth a failed turn. */
-const clearBusy = async (deps: RespondDeps, notice: PostedRef | undefined): Promise<void> => {
-  if (!notice) return;
-  try {
-    await deps.slack?.remove(notice.channel, notice.ts);
-  } catch {
-    // already gone, or not ours to delete
-  }
-};
 
 export const respond = async (
   deps: RespondDeps,
@@ -154,13 +109,7 @@ export const respond = async (
       ...(workflowThread ? { background: true } : {}),
       ...(inbound.inboxRowId !== undefined ? { inboxRowId: inbound.inboxRowId } : {}),
     });
-    // The "still working on ..." notice this message got, if it had to wait.
-    let busy: PostedRef | undefined;
-
     const chatTurn = async (): Promise<HandleResult> => {
-      // Its turn has come (or it was called off), so "yours is next" is no
-      // longer true. The answer lands as a new message; the notice goes.
-      await clearBusy(deps, busy);
       // Called off while it waited its turn, so it never spawns anything.
       if (tracked?.signal.aborted) return { kind: "ignored" };
       tracked?.running();
@@ -281,22 +230,10 @@ export const respond = async (
 
     // Chat and workflow turns share the thread's one session, so they take it
     // in turns. Commands are left free: a review is its own process, and
-    // queueing one behind a long chat turn would make it look dead.
+    // queueing one behind a long chat turn would make it look dead. A message
+    // that waits behind a running turn says nothing: it queues and runs in turn.
     const queue = deps.threadQueue;
     if (!queue) return chatTurn();
-    if (queue.depth(key) > 0) {
-      // Say so rather than going quiet, and offer the two things a person who
-      // just sent a follow-up actually wants: end the one in the way, or take
-      // this one back. Doing nothing still queues it, which is the old
-      // behaviour and the right default.
-      // Not when following: nobody asked, so nobody is waiting on a place in
-      // the queue, and "yours is next" in a channel is noise about the bot's
-      // own scheduling rather than anything the thread needs.
-      // Nor for a workflow's own next step or a watch handing the thread back:
-      // nobody typed either, so "yours is next" would be addressed to no one.
-      if (inbound.autoContinue || inbound.unprompted) busy = undefined;
-      else if (!inbound.following) busy = await announceBusy(deps, inbound, key);
-    }
     return queue.run(key, chatTurn);
   }
 

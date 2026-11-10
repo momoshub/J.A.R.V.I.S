@@ -594,27 +594,13 @@ A process environment cannot be stale: it was set when the turn began.
 A chat turn can run for the better part of an hour, so there is a way to end one
 that is going the wrong way instead of waiting it out.
 
-Send anything while a turn is running and the busy notice carries the two things
-a person sending a follow-up actually wants:
+Send anything while a turn is running and the thread says nothing: the message
+queues silently and runs when its turn comes. There is no "still working on ...
+yours is next" notice. To end the running turn, press Slack's own stop button on
+the session, or use `//bot stop`.
 
-```
-⏳ still working on *the escalation plans* (3m so far) - yours is next
-   [ Stop that one ]  [ Never mind ]
-```
-
-- **Stop that one** kills the running turn. The CLI child is killed exactly as
-  the timeout kills one, and the queued message then runs as normal.
-- **Never mind** takes the message you just sent back off the queue, before it
-  has spawned anything.
-
-Only a message somebody typed gets the notice. A watch handing the thread back,
-a workflow's next step or a followed thread queue the same way but silently,
-since nobody is waiting on their place in line.
-- Clicking neither still queues it, which is the old behaviour and the right
-  default.
-
-`//bot stop` does the same from a thread without needing a new message, which is
-the case buttons cannot cover: a turn going wrong while you have nothing to add.
+`//bot stop` ends the turn from a thread without needing a new message: a turn
+going wrong while you have nothing to add.
 It also ends the background agents the thread's turns started outside their
 own process - `claude --bg` sessions and Orca workers, from this turn or an
 earlier one - and says what it stopped ("stopped the turn, and 1 background

@@ -2,7 +2,7 @@
  * How a stopped or waiting turn is described out loud.
  *
  * Pure wording, kept out of the transport so the same sentences serve a button
- * click, a `stop` command and the queue notice - and so they can be asserted on
+ * click and a `stop` command - and so they can be asserted on
  * without a Slack in the way.
  */
 
@@ -12,25 +12,6 @@ export const forHowLong = (ms: number): string => {
   if (secs < 60) return `${secs}s`;
   const mins = Math.round(secs / 60);
   return mins < 60 ? `${mins}m` : `${Math.round((mins / 60) * 10) / 10}h`;
-};
-
-/**
- * What the thread is told when a new message lands on a busy turn.
- *
- * It names what is already running, because "still on the one before this" does
- * not say which one, and in a thread with several asks in flight that is the
- * only thing the reader actually needs.
- */
-export const busyNotice = (
-  running: { what: string; startedAt: number },
-  now: number,
-  link?: string,
-): string => {
-  // A link to the message beats a quote of it: the quote is cut at 48
-  // characters, the link is one click to the whole ask. `<`, `>` and `|`
-  // would break Slack's link syntax, so the label drops them.
-  const named = link ? `<${link}|${running.what.replace(/[<>|]/g, "")}>` : `*${running.what}*`;
-  return `⏳ still working on ${named} (${forHowLong(now - running.startedAt)} so far) - yours is next`;
 };
 
 /** What the thread is told once a turn has been stopped. */

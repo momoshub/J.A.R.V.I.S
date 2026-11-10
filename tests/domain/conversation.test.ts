@@ -169,7 +169,7 @@ describe("reactableMessages", () => {
 describe("endAtTrigger", () => {
   const at = (ts: string, content: string, role: "user" | "assistant" = "user") => ({ slackTs: ts, content, role });
 
-  test("drops the busy notice and later asks posted after a queued message", () => {
+  test("drops a notice left in an old thread and later asks posted after a queued message", () => {
     const thread = [
       at("1", "delete a"),
       at("2", "deleted that one", "assistant"),
