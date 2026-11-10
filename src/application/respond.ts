@@ -278,8 +278,8 @@ export const respond = async (
     : undefined;
 
   // A slash command is invisible to everyone but its caller, so the owner gets
-  // their own copy of anything that actually did something. One invocation is
-  // one DM thread: a header saying who ran what, and everything else hanging
+  // their own copy of anything that actually did something, in
+  // SLASH_MIRROR_CHANNEL when set, else their DM. One invocation is one thread: a header saying who ran what, and everything else hanging
   // off it, so a busy day is a list of runs rather than a wall of fragments.
   const mirror =
     deps.slack && inbound.viaSlash && actor.slackId !== deps.ownerSlackId && notifiesOwner(line);
@@ -292,12 +292,12 @@ export const respond = async (
         // Guard the header against a second caller slipping in while it posts.
         if (opening) return;
         opening = true;
-        root = await deps.slack!.postDm(
-          deps.ownerSlackId,
-          `📋 <@${actor.slackId}> ran \`${deps.slashCommand ?? "/bot"} ${line}\``,
-          SIGNATURES.command,
-        );
-        if (!root) return; // could not open the DM, so there is no thread to fill
+        const header = `📋 <@${actor.slackId}> ran \`${deps.slashCommand ?? "/bot"} ${line}\``;
+        // A mirror channel keeps the owner's DM for the owner's own talk.
+        root = deps.slashMirrorChannel
+          ? ((await deps.slack!.post(deps.slashMirrorChannel, header, undefined, SIGNATURES.command)) ?? undefined)
+          : await deps.slack!.postDm(deps.ownerSlackId, header, SIGNATURES.command);
+        if (!root) return; // could not post the header, so there is no thread to fill
       }
       await deps.slack!.post(root.channel, text, root.ts, SIGNATURES.command);
     } catch {

@@ -628,6 +628,7 @@ const main = async () => {
     commandTickets,
     commandPrefix: config.commandPrefix,
     slashCommand: config.slashCommand,
+    ...(config.slashMirrorChannel ? { slashMirrorChannel: config.slashMirrorChannel } : {}),
   };
 
   // Whether the desktop will take orders from us. Probed rather than assumed:

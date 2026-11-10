@@ -120,6 +120,15 @@ const schema = z
       .optional()
       .or(z.string().trim().length(0).transform(() => undefined)),
 
+    // Channel that gets the owner's copy of other people's slash commands (a
+    // header per run, the output in its thread). Unset: the owner's DM.
+    SLASH_MIRROR_CHANNEL: z
+      .string()
+      .trim()
+      .regex(/^[CG][A-Z0-9]+$/, "SLASH_MIRROR_CHANNEL must be a channel id like C0123ABC, not a name")
+      .optional()
+      .or(z.string().trim().length(0).transform(() => undefined)),
+
     // GitHub App: people call the bot from an issue/PR (mention or label) and
     // the answer is posted back there as the app. Started only when the app id,
     // the private key and the webhook secret can all be found.
@@ -198,6 +207,8 @@ export type AppConfig = {
   restartTurnBudgetMs: number;
   /** Channel the offline alarm posts to when the host drops off; unset is off. */
   offlineAlarmChannel?: string;
+  /** Channel for the owner's copy of other people's slash commands; unset is the owner's DM. */
+  slashMirrorChannel?: string;
   githubApp: {
     appId?: string;
     privateKeyPath: string;
@@ -269,6 +280,7 @@ export const loadConfig = (source: Record<string, string | undefined> = process.
     ...(env.DRAIN_NOTICE_CHANNEL ? { drainNoticeChannel: env.DRAIN_NOTICE_CHANNEL } : {}),
     restartTurnBudgetMs: env.RESTART_TURN_BUDGET_MS,
     ...(env.OFFLINE_ALARM_CHANNEL ? { offlineAlarmChannel: env.OFFLINE_ALARM_CHANNEL } : {}),
+    ...(env.SLASH_MIRROR_CHANNEL ? { slashMirrorChannel: env.SLASH_MIRROR_CHANNEL } : {}),
     githubApp: {
       ...(env.GITHUB_APP_ID?.trim() ? { appId: env.GITHUB_APP_ID.trim() } : {}),
       privateKeyPath: env.GITHUB_APP_PRIVATE_KEY_PATH,
