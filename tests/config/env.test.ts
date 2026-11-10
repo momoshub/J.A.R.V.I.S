@@ -64,9 +64,9 @@ describe("loadConfig", () => {
   test("GitHub App defaults keep every secret in files outside the repo", () => {
     const g = loadConfig(base).githubApp;
     expect(g.port).toBe(2003);
-    expect(g.slug).toBe("jarvis-at-acme");
+    expect(g.slug).toBe("jarvis");
     expect(g.label).toBe("jarvis");
-    expect(g.allowedOwners).toEqual(["acme"]);
+    expect(g.allowedOwners).toEqual([]);
     expect(g.privateKeyPath).toMatch(/\.config\/jarvis\/github-app\/private-key\.pem$/);
     expect(g.webhookSecretPath).toMatch(/\.config\/jarvis\/github-app\/webhook-secret$/);
     expect(g.webhookSecret).toBeUndefined();

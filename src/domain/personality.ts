@@ -282,6 +282,8 @@ export const commandRules = (
   orca = true,
   /** Absolute path of `bin/github-app.sh`; empty when the GitHub App is not wired. */
   githubAppScript = "",
+  /** The GitHub App's slug, named in the prompt text. */
+  githubAppSlug = "",
 ): string => {
   if (!runScript || !runUrl || !canRun) return "";
   return `
@@ -307,7 +309,7 @@ Running my own commands (when a request is really one):
 - "remind me", "nhắc anh", "ping <@someone> at 3pm" is the \`remind\` command - it posts the reminder by itself at that time, with no turn and no tokens. Turn the time into its words, read in the host's clock: \`${prefix} remind [me|<@someone>] in 2h <what>\`, \`at 15:00 [today|tomorrow] <what>\`, \`tomorrow 9am <what>\`, \`on 2026-12-01 [at 10:00] <what>\`. \`remind list\` and \`remind cancel <id>\` manage them. Never promise to remember it yourself - you will not be running then.
 - For an ordinary question, answer it yourself. This is only for requests that map onto a real command.${
     githubAppScript
-      ? `\n- To act on GitHub AS THE APP (jarvis-at-acme) - open or edit a PR, comment, approve / request changes / comment-review, close or reopen, merge, add or remove labels, request reviewers - use \`${githubAppScript} <action> <owner/repo> ...\` (actions: pr-create, comment, review, pr-edit, pr-close, pr-reopen, pr-merge, labels-add, labels-remove, reviewers-request, and for commits \`git <owner/repo> <dir> -- <git args>\` and \`push <owner/repo> <dir> <branch> [--force-with-lease]\`, which run git as the app's bot identity and token; run it with no arguments for the usage). Write any body to a file first and pass the path. Pass no ticket: it comes from this turn's environment, and the bot only acts when the person you are talking to is an admin or the owner - otherwise it says so, relay that. It prints GitHub's JSON (url, number) or GitHub's own error. Use it only when someone asked for the app's identity (or the instance's rules say commits and PRs go out as the app); \`gh\` is the host human's.`
+      ? `\n- To act on GitHub AS THE APP${githubAppSlug ? ` (${githubAppSlug})` : ""} - open or edit a PR, comment, approve / request changes / comment-review, close or reopen, merge, add or remove labels, request reviewers - use \`${githubAppScript} <action> <owner/repo> ...\` (actions: pr-create, comment, review, pr-edit, pr-close, pr-reopen, pr-merge, labels-add, labels-remove, reviewers-request, and for commits \`git <owner/repo> <dir> -- <git args>\` and \`push <owner/repo> <dir> <branch> [--force-with-lease]\`, which run git as the app's bot identity and token; run it with no arguments for the usage). Write any body to a file first and pass the path. Pass no ticket: it comes from this turn's environment, and the bot only acts when the person you are talking to is an admin or the owner - otherwise it says so, relay that. It prints GitHub's JSON (url, number) or GitHub's own error. Use it only when someone asked for the app's identity (or the instance's rules say commits and PRs go out as the app); \`gh\` is the host human's.`
       : ""
   }${
     waiting ? waitingRules(prefix, orca) : ""
@@ -361,6 +363,8 @@ export type BuildSystemPromptOptions = PromptContext & {
   readonly runScript?: string;
   /** absolute path of the GitHub App action helper */
   readonly githubAppScript?: string;
+  /** the GitHub App's slug (`GITHUB_APP_SLUG`), named in the prompt */
+  readonly githubAppSlug?: string;
   /** absolute path of the Slack file downloader */
   readonly fileScript?: string;
   /** the bot's own Slack id, so it recognises itself in a mention */
@@ -486,6 +490,7 @@ export const buildSystemPromptParts = (
     options.canWatch === true && !guided,
     orca,
     options.githubAppScript ?? "",
+    options.githubAppSlug ?? "",
   );
   const waiting =
     options.canWatch === true && commands ? waitingRules(options.commandPrefix ?? "//bot", orca) : "";

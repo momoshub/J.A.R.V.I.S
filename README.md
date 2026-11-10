@@ -62,8 +62,8 @@ Required / notable env (see `.env.example`):
 | `GITHUB_APP_PRIVATE_KEY_PATH` | app private key (default `~/.config/jarvis/github-app/private-key.pem`) |
 | `GITHUB_APP_WEBHOOK_SECRET_PATH` / `GITHUB_APP_WEBHOOK_SECRET` | webhook secret file (default `~/.config/jarvis/github-app/webhook-secret`), or the value itself |
 | `GITHUB_APP_PORT` | loopback port of the webhook listener (default `2003`) |
-| `GITHUB_APP_SLUG` | app slug, `@<slug>` calls it (default `jarvis-at-acme`) |
-| `GITHUB_APP_ALLOWED_OWNERS` | repo owners the app acts for, comma list (default `acme`) |
+| `GITHUB_APP_SLUG` | app slug, `@<slug>` calls it (default `jarvis`) |
+| `GITHUB_APP_ALLOWED_OWNERS` | repo owners the app acts for, comma list (default empty: the app acts for no owner until set) |
 | `GITHUB_APP_LABEL` | label that calls it on an issue/PR (default `jarvis`) |
 | `SELF_PR_AUTHOR` / `SELF_PR_REVIEWER` | gh logins for the bot's own PRs: the author opens the PR and answers reviews, the reviewer posts review comments, approves and merges. Both or neither, and not the same login (otherwise: one account) |
 | `DASHBOARD_PORT` | dashboard port (local, loopback-only, no auth) |
@@ -730,7 +730,7 @@ thread back in", silently. A genuine failure still surfaces.
 
 A GitHub App lets people call the bot where the work is. Mention it in an
 issue or PR comment, a review comment or a submitted review
-(`@jarvis-at-acme why does this fail?`), or add the `jarvis` label to an issue
+(`@<slug> why does this fail?`), or add the `jarvis` label to an issue
 or PR. It puts 👀 on the comment, posts the request into a Slack channel
 (`github-app channel #channel`, else the review inbox channel) and runs a turn
 in that post's thread **as the person who called**, matched like the review
@@ -761,7 +761,7 @@ bin/github-app.sh push <owner/repo> <local-repo-dir> <branch> [--force-with-leas
 ```
 
 `git` runs `git -C <dir> <args>` **as the app**: commits and cherry-picks are
-committed by `jarvis-at-acme[bot]` (`<id>+jarvis-at-acme[bot]@users.noreply.github.com`,
+committed by `<slug>[bot]` (`<id>+<slug>[bot]@users.noreply.github.com`,
 no GPG signing; the id is looked up once with `GET /users/<slug>[bot]`), and
 anything that talks to github.com (fetch, pull, push, ls-remote; an ssh remote
 is read as https) carries a fresh installation token. `push` pushes one branch

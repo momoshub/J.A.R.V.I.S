@@ -142,10 +142,11 @@ const schema = z
     // Loopback port of the webhook listener (Tailscale Funnel proxies to it).
     GITHUB_APP_PORT: z.coerce.number().int().positive().default(2003),
     // App slug: `@<slug>` in a comment calls it, `<slug>[bot]` is itself.
-    GITHUB_APP_SLUG: z.string().default("jarvis-at-acme"),
+    GITHUB_APP_SLUG: z.string().default("jarvis"),
     // The app is public, so it only acts for repositories owned by these
-    // accounts (comma separated). Everything else is logged and ignored.
-    GITHUB_APP_ALLOWED_OWNERS: z.string().default("acme"),
+    // accounts (comma separated). Everything else is logged and ignored, so
+    // the empty default acts for no owner until this is set.
+    GITHUB_APP_ALLOWED_OWNERS: z.string().default(""),
     // Label that calls the app when added to an issue or PR.
     GITHUB_APP_LABEL: z.string().default("jarvis"),
 

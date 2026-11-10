@@ -625,6 +625,7 @@ const main = async () => {
     commandBudget: () => config.commandTicketUses,
     runScript,
     githubAppScript,
+    githubAppSlug: config.githubApp.slug,
     commandTickets,
     commandPrefix: config.commandPrefix,
     slashCommand: config.slashCommand,

@@ -154,6 +154,13 @@ describe("buildSystemPrompt", () => {
     expect(buildSystemPrompt(runOpts)).not.toContain("github-app.sh");
   });
 
+  test("names the configured GitHub App slug, never a hardcoded one", () => {
+    const p = buildSystemPrompt({ ...runOpts, githubAppScript: "/x/bin/github-app.sh", githubAppSlug: "my-app" });
+    expect(p).toContain("AS THE APP (my-app)");
+    expect(p).not.toContain("acme");
+    expect(buildSystemPrompt({ ...runOpts, githubAppScript: "/x/bin/github-app.sh" })).toContain("AS THE APP -");
+  });
+
   test("offers to run a real command when a chat request is one", () => {
     const p = buildSystemPrompt(runOpts);
     expect(p).toContain("Running my own commands");
