@@ -29,14 +29,15 @@ while pos < len(out):
         encoding = "utf-16"
     else:
         # where the NULs fall, not how many: UTF-16 puts them on one side only (LE odd,
-        # BE even) whatever the script, a binary file has them on both
+        # BE even) whatever the script, a binary file has them on both. 90%, not all: an
+        # emoji's low surrogate can put a NUL on the other side
         odd_nul = data[1::2].count(0)
         even_nul = data[0::2].count(0)
         total = odd_nul + even_nul
         if total >= 4 and len(data) % 2 == 0:
-            if odd_nul / total >= 0.98:
+            if odd_nul / total >= 0.9:
                 encoding = "utf-16-le"
-            elif even_nul / total >= 0.98:
+            elif even_nul / total >= 0.9:
                 encoding = "utf-16-be"
     if encoding:
         sys.stdout.write(data.decode(encoding, errors="replace") + "\n")
