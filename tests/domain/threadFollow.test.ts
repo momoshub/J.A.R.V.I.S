@@ -113,6 +113,7 @@ describe("being asked to follow somebody else's thread", () => {
   test("silence is still the common outcome, whoever started it", () => {
     const p = buildSystemPrompt({ learnings: [], following: true });
     expect(p).toContain("MOST replies here do not need you at all");
+    expect(p).toContain("FIRST decide who the newest message is for");
     expect(p).toContain("never ANNOUNCE the silence");
   });
 });
