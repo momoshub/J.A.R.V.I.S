@@ -22,6 +22,7 @@ import {
   readyMessage,
   type WatchState,
 } from "../domain/watch.ts";
+import { decodeGate, type GateSpec } from "../domain/ciGate.ts";
 import type { Watch, WatchRepo } from "../infrastructure/db/watchRepo.ts";
 import type { Clock } from "./ports.ts";
 import { logAndIgnore } from "./ignoredError.ts";
@@ -33,6 +34,16 @@ export type CheckResult = {
   readonly output: string;
   /** Set when the command could not be run at all. */
   readonly error?: string;
+};
+
+/**
+ * The code half of a CI gate. A row whose check is a gate spec (`ci-gate:...`)
+ * is not shell and hands back no turn: the gate polls GitHub, acts on the PR
+ * itself and says so in the thread. Same timer, same deadline, same durability.
+ */
+export type WatchGate = {
+  step: (spec: GateSpec, w: Watch) => Promise<"pending" | "done">;
+  stop: (spec: GateSpec, w: Watch, why: "deadline" | "errors") => Promise<void>;
 };
 
 export type WatcherDeps = {
@@ -51,6 +62,8 @@ export type WatcherDeps = {
     /** Nobody typed it: the bot started this turn itself. */
     unprompted?: boolean;
   }) => Promise<void>;
+  /** Runs the rows that guard a PR's CI; without it such a row is settled failed. */
+  gate?: WatchGate;
   /** Say something in the thread without spending a turn. */
   say?: (channelId: string, text: string, threadTs: string) => Promise<void>;
   /**
@@ -135,6 +148,35 @@ export const createWatcher = (deps: WatcherDeps): Watcher => {
         deps.say?.(w.channelId, `Stopped waiting: whoever set this watch is no longer allowed to run it.`, w.threadTs) ??
         Promise.resolve()
       ).catch(logAndIgnore("watch stopped notice"));
+      return;
+    }
+
+    const spec = decodeGate(w.check);
+    if (spec) {
+      if (!deps.gate) {
+        deps.watches.settle(w.id, "failed", now, "no CI gate wired");
+        return;
+      }
+      try {
+        if ((await deps.gate.step(spec, w)) === "done") {
+          deps.watches.settle(w.id, "fired", deps.clock());
+          return;
+        }
+        deps.watches.reschedule(w.id, now + w.everyMs, now);
+      } catch (e) {
+        const msg = e instanceof Error ? e.message : String(e);
+        log(`ci gate ${w.id}: ${msg}`);
+        deps.watches.reschedule(w.id, now + w.everyMs, now, msg);
+        if (w.errors + 1 >= MAX_CONSECUTIVE_ERRORS) {
+          deps.watches.settle(w.id, "failed", now, msg);
+          await deps.gate.stop(spec, w, "errors").catch(logAndIgnore("ci gate stop"));
+          return;
+        }
+      }
+      if (now >= w.deadlineAt) {
+        deps.watches.settle(w.id, "expired", now);
+        await deps.gate.stop(spec, w, "deadline").catch(logAndIgnore("ci gate stop"));
+      }
       return;
     }
 

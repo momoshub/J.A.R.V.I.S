@@ -158,7 +158,7 @@ Every command has two interfaces - use whichever you like. Both triggers are con
 | `token [remove\|who]` (alias `claude-token`) | anyone | add, replace or forget your own Claude Code token - see [Your own Claude token](#your-own-claude-token) |
 | `session [reset\|on\|off]` (alias `sess`) | anyone (on/off: admins) | the CLI session this thread is talking to - see [One session per thread](#one-session-per-thread) |
 | `ticket <what is wrong>` (aliases `bug`, `raise`) | anyone | raise a properly written, correctly routed ticket - see [Raising a ticket](#raising-a-ticket) |
-| `review <pr-url\|help\|prompt> [--policy first\|after] [what to look at]` (alias `rv`) | pal+ | review a PR: read it first, post a blockers-only comment on GitHub *and* back in the thread (PRs owned by an account in `REVIEW_EXTENDED_OWNERS` also get the non-blocking findings as bullets); request changes on a blocker only, other repos drop non-blocking findings (big PRs are cloned + reviewed by child agents). Runs full-access. |
+| `review <pr-url\|help\|prompt> [--policy first\|after] [what to look at]` (alias `rv`) | pal+ | review a PR: read it first, post a blockers-only comment on GitHub *and* back in the thread (PRs owned by an account in `REVIEW_EXTENDED_OWNERS` also get the non-blocking findings as bullets); request changes on a blocker only, other repos drop non-blocking findings (big PRs are cloned + reviewed by child agents). CI is read first: red requests changes before the review, a running CI gets a watcher (see [CI comes first](#ci-comes-first)). Runs full-access. |
 | `bomb [categories] [count] <message-link>` (alias `br`) | admins | reaction-bomb a message. Combine categories with commas and set a count: `bomb money,face,negative 9 <link>`. Up to 23; `bomb help` lists every category |
 | `reply <message-link>` (alias `jrp`) | admins | draft and post an AI reply to a message |
 | `rm-msg <message-link>` (aliases `rmmsg`, `unsend`) | admins | delete a message the bot posted (a bot token cannot delete anyone else's) |
@@ -481,6 +481,27 @@ nothing is approved (so the review is not written as a formality), and once it
 finishes the approval is decided by **asking GitHub** for the PR's review
 decision rather than inferring it - `CHANGES_REQUESTED` means no approval, and
 it says so in the thread.
+
+### CI comes first
+
+Whichever policy it is on, `review` reads the PR's checks before anything else:
+
+| CI | `first` | `after` |
+|---|---|---|
+| red | request changes at once (the body and the thread name the failing checks), then review and comment as usual. Never approved | the same |
+| green | approve up front, then review | review, then approve if it came back clean |
+| running | start a CI watcher, approve up front, then review. If CI later goes red the watcher requests changes | start a CI watcher, review. At the end: clean and CI green approves, a blocker or red requests changes, CI still running waits for the watcher - green approves, red requests changes |
+
+A blocker found by the review still requests changes on top of that, exactly as
+before. The watcher is a row on the same timer as `watch` (so it shows in
+`watch list`), runs outside any turn, polls once a minute and gives up after an
+hour (it says so, and approves nothing). It is idempotent: it will not
+approve or request changes twice, it does not request changes on a PR that is
+merged or closed, and it never approves while the review is still being
+written. A watcher cut loose by a bot restart waits out its hour and does not
+approve, since whether the review had finished is only known in memory. A PR
+GitHub cannot be read for, or one without checks, goes the old way; no checks at
+all counts as green. `watch cancel` in the thread ends the watcher too.
 
 Policies are configuration, in the database: no repository is named anywhere in
 this codebase, which matters because it is open.

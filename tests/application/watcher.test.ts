@@ -272,3 +272,91 @@ describe("watcher, when the database itself fails", () => {
     expect(errors).toEqual([swapped]);
   });
 });
+
+describe("watcher: CI gate rows", () => {
+  const gateCheck = 'ci-gate:{"url":"https://github.com/o/r/pull/1","policy":"approve-after"}';
+
+  test("a gate row is stepped by the gate, never run as shell, and hands back no turn", async () => {
+    add({ check: gateCheck, note: "CI gate" });
+    turns = [];
+    let shell = 0;
+    const steps: string[] = [];
+    const w = createWatcher({
+      watches,
+      clock: () => now,
+      check: async () => ((shell += 1), { code: 0, output: "" }),
+      runTurn: async (r) => void turns.push({ ...r }),
+      gate: {
+        step: async (spec) => (steps.push(spec.url), steps.length < 2 ? "pending" : "done"),
+        stop: async () => {},
+      },
+    });
+    now += EVERY;
+    await w.tick();
+    expect(watches.waiting()).toHaveLength(1);
+    now += EVERY;
+    await w.tick();
+    expect(steps).toHaveLength(2);
+    expect(shell).toBe(0);
+    expect(turns).toEqual([]);
+    expect(watches.waiting()).toHaveLength(0);
+    expect(watches.get(1)?.state).toBe("fired");
+  });
+
+  test("past its deadline the gate is told why, and the row expires", async () => {
+    add({ check: gateCheck, deadlineAt: now + 2 * EVERY });
+    const stopped: string[] = [];
+    const w = createWatcher({
+      watches,
+      clock: () => now,
+      check: async () => ({ code: 0, output: "" }),
+      runTurn: async () => {},
+      gate: { step: async () => "pending", stop: async (_s, _w, why) => void stopped.push(why) },
+    });
+    now += EVERY;
+    await w.tick();
+    expect(stopped).toEqual([]);
+    now += EVERY;
+    await w.tick();
+    expect(stopped).toEqual(["deadline"]);
+    expect(watches.get(1)?.state).toBe("expired");
+  });
+
+  test("a gate that keeps throwing is given up on after the same streak as any check", async () => {
+    add({ check: gateCheck, deadlineAt: now + 100 * EVERY });
+    const stopped: string[] = [];
+    const w = createWatcher({
+      watches,
+      clock: () => now,
+      check: async () => ({ code: 0, output: "" }),
+      runTurn: async () => {},
+      gate: {
+        step: async () => {
+          throw new Error("gh is down");
+        },
+        stop: async (_s, _w, why) => void stopped.push(why),
+      },
+    });
+    for (let i = 0; i < MAX_CONSECUTIVE_ERRORS; i++) {
+      now += EVERY;
+      await w.tick();
+    }
+    expect(stopped).toEqual(["errors"]);
+    expect(watches.get(1)?.state).toBe("failed");
+  });
+
+  test("with no gate wired the row is settled failed, not run as a shell command", async () => {
+    add({ check: gateCheck });
+    let shell = 0;
+    const w = createWatcher({
+      watches,
+      clock: () => now,
+      check: async () => ((shell += 1), { code: 0, output: "" }),
+      runTurn: async () => {},
+    });
+    now += EVERY;
+    await w.tick();
+    expect(shell).toBe(0);
+    expect(watches.get(1)?.state).toBe("failed");
+  });
+});

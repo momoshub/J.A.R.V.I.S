@@ -24,6 +24,7 @@ import { type ToolPolicy } from "../../domain/toolPolicy.ts";
 import type { BackgroundAgentsPort, Clock, LlmPort } from "../ports.ts";
 import type { SlackAdminPort } from "../slackAdmin.ts";
 import type { GitHubPort } from "../github.ts";
+import type { CiGate } from "../ciGate.ts";
 import type { DraftReply } from "../draftReply.ts";
 import type { MessageRepo } from "../../infrastructure/db/messageRepo.ts";
 import type { UserRepo } from "../../infrastructure/db/userRepo.ts";
@@ -128,6 +129,8 @@ export type CommandDeps = {
   slack?: SlackAdminPort;
   /** GitHub actions the bot takes itself - the up-front approve in `review`. */
   github?: GitHubPort;
+  /** CI gate of `review`: look at the checks first, watch a running CI. Absent: no CI gate. */
+  ciGate?: CiGate;
   /** Long-running workflow sessions bound to a thread. */
   workflows?: WorkflowRepo;
   /** Fresh CLI session id for a new workflow; injected for deterministic tests. */
