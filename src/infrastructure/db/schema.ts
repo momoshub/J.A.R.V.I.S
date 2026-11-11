@@ -100,6 +100,24 @@ export const migrate = (db: Database): void => {
   migrateOrcaQuestions(db);
   migrateWorkerUsage(db);
   migrateCloudwatchRequests(db);
+  migrateAccessReplay(db);
+};
+
+/**
+ * Migration v29: what an access request needs to be answered once approved.
+ *
+ * `text` is the whole message (`asked` stays the clipped excerpt shown to the
+ * owner) and `message_ts` finds the original in Slack. Both default to empty,
+ * so a request opened before this simply is not replayed.
+ */
+const migrateAccessReplay = (db: Database): void => {
+  const cols = db.query<{ name: string }, []>("PRAGMA table_info(access_requests)").all();
+  if (!cols.some((c) => c.name === "text")) {
+    db.exec("ALTER TABLE access_requests ADD COLUMN text TEXT NOT NULL DEFAULT ''");
+  }
+  if (!cols.some((c) => c.name === "message_ts")) {
+    db.exec("ALTER TABLE access_requests ADD COLUMN message_ts TEXT NOT NULL DEFAULT ''");
+  }
 };
 
 /**

@@ -308,6 +308,7 @@ export const handleMessage = async (
         channelId: inbound.channelId,
         threadTs: inbound.threadTs,
         text,
+        messageTs: inbound.messageTs,
       },
       decision.reason,
     );

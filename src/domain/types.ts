@@ -154,8 +154,12 @@ export type AccessRequest = {
   /** Where they spoke, so the answer reaches them there. */
   readonly channelId: string;
   readonly threadTs: string;
-  /** What they said, quoted to the owner for context. */
+  /** What they said, quoted to the owner for context (clipped). */
   readonly asked: string;
+  /** What they said, whole. Empty on a request opened before replay existed. */
+  readonly text: string;
+  /** Slack ts of that message, so approval can fetch and answer the original. Empty on old rows. */
+  readonly messageTs: string;
   /** The DM the owner reacts on. */
   readonly noticeChannel: string;
   readonly noticeTs: string;

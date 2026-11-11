@@ -249,6 +249,7 @@ export const respond = async (
         channelId: inbound.channelId,
         threadTs: inbound.threadTs,
         text: inbound.text,
+        messageTs: inbound.messageTs,
       },
       decision.reason,
     );
