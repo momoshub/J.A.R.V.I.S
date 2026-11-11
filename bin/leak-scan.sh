@@ -6,7 +6,7 @@
 #     commit messages and file paths of the commits selected by $LEAK_SCAN_RANGE
 #     (rev-list args, word-split), the ref names in $LEAK_SCAN_REFS and the name and
 #     message of the tag objects in $LEAK_SCAN_TAGS, any text in $LEAK_SCAN_TEXT, and the
-#     decoded text of any UTF-16 blob the range adds (bin/leak-utf16.py)
+#     decoded text of any UTF-16 or compressed blob the range adds (bin/leak-blobs.py)
 # Every scan runs twice (see "Two passes" below) and fails if either finds something.
 # Names rule source, first found: $LEAK_NAMES_TOML (content, used by CI), then
 # $LEAK_NAMES_FILE or ~/.jarvis/leak-names.toml. Absent: a notice and the rest still
@@ -73,10 +73,10 @@ if [ "${1:-}" = "meta" ]; then
         /^ / { print substr($0, 2); next }
         { print }'
       git -c core.quotePath=false log --diff-merges=first-parent --name-only --format= $LEAK_SCAN_RANGE --
-      # UTF-16 text reads as bytes with NULs between characters, so no rule matches it:
-      # every blob the range adds is checked and a UTF-16 one is fed in decoded
+      # UTF-16 text and compressed files (zip, office documents, gzip, bzip2, xz) hide
+      # their text from gitleaks: every blob the range adds goes through leak-blobs.py
       git log --diff-merges=first-parent --raw --no-abbrev --format= $LEAK_SCAN_RANGE -- |
-        awk '/^:/ && $4 !~ /^0+$/ { print $4 }' | sort -u | python3 "$root/bin/leak-utf16.py"
+        awk '/^:/ && $4 !~ /^0+$/ { print $4 }' | sort -u | python3 "$root/bin/leak-blobs.py"
     fi
     # branch and tag names are public once pushed
     for r in ${LEAK_SCAN_REFS:-}; do printf '%s\n' "$r"; done

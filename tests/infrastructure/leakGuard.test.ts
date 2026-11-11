@@ -26,7 +26,7 @@ const makeRepo = () => {
   mkdirSync(join(repo, "bin"), { recursive: true });
   cpSync(join(ROOT, ".githooks"), join(repo, ".githooks"), { recursive: true });
   cpSync(join(ROOT, "bin", "leak-scan.sh"), join(repo, "bin", "leak-scan.sh"));
-  cpSync(join(ROOT, "bin", "leak-utf16.py"), join(repo, "bin", "leak-utf16.py"));
+  cpSync(join(ROOT, "bin", "leak-blobs.py"), join(repo, "bin", "leak-blobs.py"));
   cpSync(join(ROOT, ".gitleaks.toml"), join(repo, ".gitleaks.toml"));
   chmodSync(join(repo, "bin", "leak-scan.sh"), 0o755);
   chmodSync(join(repo, ".githooks", "pre-push"), 0o755);
@@ -434,6 +434,25 @@ describe.skipIf(!HAS_GITLEAKS && !process.env.CI)("leak guard", () => {
       const name = `odd${i++}.log`;
       writeFileSync(join(repo, name), buf);
       const r = sh(repo, `git checkout -q main && git checkout -qB m-${name.replace(".log", "")} && git add ${name} && git commit -qm o --no-verify && git push origin HEAD`, env);
+      expect(r.code).not.toBe(0);
+      expect(r.out).toContain("slack-real-looking-id");
+      sh(repo, "git checkout -q main", env);
+    }
+  });
+
+  test("pre-push reads inside zip (xlsx) and gzip files", () => {
+    const { repo, env } = makeRepo();
+    const id = "U07AB12" + "CD3E";
+    const py = `import zipfile,gzip,sys
+with zipfile.ZipFile("customers.xlsx","w",zipfile.ZIP_DEFLATED) as z:
+    z.writestr("xl/sharedStrings.xml","<sst><si><t>owner ${id} at ${EMP}</t></si></sst>")
+with gzip.open("dump.json.gz","wt") as f:
+    f.write('{"user":"${id}"}')
+`;
+    writeFileSync(join(repo, "..", "mk.py"), py);
+    expect(sh(repo, `python3 ../mk.py`, env).code).toBe(0);
+    for (const f of ["customers.xlsx", "dump.json.gz"]) {
+      const r = sh(repo, `git checkout -q main && git checkout -qB z-${f.split(".")[0]} && git add ${f} && git commit -qm z --no-verify && git push origin HEAD`, env);
       expect(r.code).not.toBe(0);
       expect(r.out).toContain("slack-real-looking-id");
       sh(repo, "git checkout -q main", env);
