@@ -30,6 +30,7 @@ export const SIGNATURES = {
   command: "command",
   watch: "watch",
   reminder: "reminder",
+  loop: "loop",
   reviewInbox: "review inbox",
   githubApp: "GitHub app",
   offlineAlarm: "offline alarm",

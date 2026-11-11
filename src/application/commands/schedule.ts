@@ -1,4 +1,4 @@
-/** Things that run later or on their own: follow, watch, remind, mindful. */
+/** Things that run later or on their own: follow, watch, remind, loop, mindful. */
 
 import { parseMessageLink } from "../../domain/slackLinks.ts";
 import { builtinCheck, humanDuration, parseWatchArgs } from "../../domain/watch.ts";
@@ -9,6 +9,7 @@ import {
   type LiveRun,
   type MindfulView,
 } from "../../domain/mindful.ts";
+import { MAX_LOOPS_PER_USER, nextRun, parseLoopArgs, scheduleText } from "../../domain/loop.ts";
 import { type CommandDef, RANK, parseWindow } from "./shared.ts";
 
 export const SCHEDULE_COMMANDS: readonly CommandDef[] = [
@@ -209,6 +210,65 @@ export const SCHEDULE_COMMANDS: readonly CommandDef[] = [
         ? "you"
         : parsed.targets.map((t) => `<@${t}>`).join(" ");
       return `⏰ I will remind ${who} ${formatWhen(parsed.dueAt, offset)} (${humanLead(parsed.dueAt - now)}) ${threadTs ? "in this thread" : "here"}. (\`${prefix} remind cancel ${r.id}\`)`;
+    },
+  },
+  {
+    name: "loop",
+    // Every fire is a model turn with nobody present, so it spends tokens
+    // unattended - a standing decision, not a one-off request.
+    minRole: "admin",
+    usage: "every <monday 9am | day at 18:00 | 6h | week> <prompt> | every <schedule> -- <shell command> (owner) | list | cancel <id>",
+    summary: "on a schedule, run a prompt as a real turn (or, owner only, a shell command); runs report to your DM",
+    run: async ({ deps, actor, args, rest, prefix, threadTs, channelId, fromBrainRun }) => {
+      if (!deps.loops) return "I have nowhere to keep a loop right now.";
+      const now = deps.clock();
+      const offset = deps.tzOffsetMinutes?.() ?? -new Date(now).getTimezoneOffset();
+      const sub = (args[0] ?? "").toLowerCase();
+
+      if (sub === "list" && args.length === 1) {
+        // Yours, wherever you ask: a loop reports to its creator's DM, not to a thread.
+        const rows = deps.loops.activeBy(actor.slackId, 30);
+        if (rows.length === 0) return "You have no loops.";
+        return rows
+          .map(
+            (l) =>
+              `- #${l.id} ${l.command ? "script" : "prompt"} ${l.schedule} - next ${formatWhen(l.nextAt, offset)} (${humanLead(l.nextAt - now)}): ${l.command ? `\`${l.command.slice(0, 80)}\`` : l.prompt.slice(0, 80)}`,
+          )
+          .join("\n");
+      }
+
+      if ((sub === "cancel" || sub === "stop" || sub === "rm") && args.length === 2) {
+        const id = Number((args[1] ?? "").replace(/^#/, ""));
+        const l = Number.isInteger(id) ? deps.loops.get(id) : undefined;
+        if (!l || l.state !== "active") return `There is no active loop #${args[1]}.`;
+        if (l.createdBy !== actor.slackId && actor.role !== "owner") {
+          return `#${l.id} is not yours to cancel - ask <@${l.createdBy}>.`;
+        }
+        deps.loops.settle(l.id, "cancelled", now);
+        return `cancelled loop #${l.id}`;
+      }
+
+      const parsed = parseLoopArgs(rest);
+      if (!parsed.ok) {
+        return `${parsed.error}. \`${prefix} loop every monday 9am search the web for new slang and update my slang learning\``;
+      }
+      // Arbitrary shell as the bot, on a timer, outside any turn: the owner's alone.
+      if (parsed.command && actor.role !== "owner") {
+        return "A script loop runs shell, so it is *owner* only. A prompt loop (`loop every <schedule> <prompt>`) is open to you.";
+      }
+      // A turn may read untrusted pages; it must never leave behind shell that outlives it. Only a line the owner typed creates one.
+      if (parsed.command && fromBrainRun) {
+        return "I never create a script loop from my own turn, only from a line the owner types. A prompt loop is fine.";
+      }
+      if (deps.loops.activeBy(actor.slackId, MAX_LOOPS_PER_USER + 1).length >= MAX_LOOPS_PER_USER) {
+        return `You already have ${MAX_LOOPS_PER_USER} loops. \`${prefix} loop list\`, then \`${prefix} loop cancel <id>\`.`;
+      }
+      const nextAt = nextRun(parsed.schedule, now, offset);
+      const l = deps.loops.add(
+        { channelId, threadTs: threadTs ?? "", createdBy: actor.slackId, schedule: scheduleText(parsed.schedule), prompt: parsed.prompt, command: parsed.command, nextAt },
+        now,
+      );
+      return `🔁 loop #${l.id}: ${l.schedule}, first run ${formatWhen(nextAt, offset)} (${humanLead(nextAt - now)}). ${parsed.command ? "Each run is a shell command with no turn; only a failure is sent to your DM." : "Each run starts a turn in your DM with me, as you."} (\`${prefix} loop cancel ${l.id}\`)`;
     },
   },
   {
