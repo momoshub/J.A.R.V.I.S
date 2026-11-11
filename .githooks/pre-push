@@ -14,6 +14,12 @@ while read -r local_ref local_sha remote_ref remote_sha; do
   [ -n "${local_sha:-}" ] || continue
   # deleting a ref pushes no commits
   [ "$local_sha" = "$zero" ] && continue
+  # a ref that peels to a blob or a tree carries content no commit scan sees
+  if [ "$(git cat-file -t "$local_sha^{}" 2>/dev/null)" != commit ]; then
+    echo "pre-push: $local_ref points at a $(git cat-file -t "$local_sha^{}" 2>/dev/null || echo "missing object"), not a commit; only commits and tags of commits are pushed, blocking" >&2
+    status=1
+    continue
+  fi
   if [ "$remote_sha" = "$zero" ] || ! git cat-file -e "$remote_sha^{commit}" 2>/dev/null; then
     # new branch, or a remote tip this clone has never fetched (a force-push after a
     # rebase): scan every commit this remote's tracking branches do not have. Only this

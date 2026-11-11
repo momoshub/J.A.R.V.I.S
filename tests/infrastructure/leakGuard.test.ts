@@ -272,6 +272,36 @@ describe.skipIf(!HAS_GITLEAKS && !process.env.CI)("leak guard", () => {
     expect(sh(repo, "bin/leak-scan.sh dir k.txt --no-banner --redact -v", env).out).not.toContain("slack-real-looking-id");
   });
 
+  test("pre-push blocks a tag that points at a blob or a tree", () => {
+    const { repo, env } = makeRepo();
+    const blob = sh(repo, `printf 'owner U07AB12${"CD3E"}\\n' | git hash-object -w --stdin`, env).out.trim();
+    const r = sh(repo, `git update-ref refs/tags/t ${blob} && git push origin t`, env);
+    expect(r.code).not.toBe(0);
+    expect(r.out).toContain("not a commit");
+    const tree = sh(repo, "git rev-parse HEAD^{tree}", env).out.trim();
+    expect(sh(repo, `git update-ref refs/tags/tr ${tree} && git push origin tr`, env).code).not.toBe(0);
+  });
+
+  test("an id right after a string escape is flagged", () => {
+    const { repo, env } = makeRepo();
+    for (const text of [`"hey\\nU07AB12${"CD3E"}"`, `x\\tC07AB12${"CD3E"}`, `\\u00a0U07AB12${"CD3E"}`]) {
+      writeFileSync(join(repo, "j.txt"), `${text}\n`);
+      expect(sh(repo, "bin/leak-scan.sh dir j.txt --no-banner --redact -v", env).out).toContain("slack-real-looking-id");
+    }
+  });
+
+  test("a default git pull merge line passes, extra text on it does not", () => {
+    const { repo, env } = makeRepo();
+    const org = EMP.toLowerCase() + "hub";
+    const ok = `Merge branch 'main' of github.com:${org}/J.A.R.V.I.S`;
+    const okInto = `Merge branch 'main' of https://github.com/${org}/J.A.R.V.I.S into feat/x`;
+    for (const [line, clean] of [[ok, true], [okInto, true], [`${ok} ${EMP} notes`, false]] as const) {
+      const r = sh(repo, `git checkout -q main && git checkout -qB pl && git commit -q --allow-empty -m "${line}" --no-verify && LEAK_SCAN_RANGE=main..pl bin/leak-scan.sh meta --no-banner --redact -v`, env);
+      if (clean) expect(r.out).not.toContain("employer-name");
+      else expect(r.out).toContain("employer-name");
+    }
+  });
+
   test("pre-push skips with a warning when gitleaks is missing", () => {
     const { repo, env } = makeRepo();
     const r = sh(repo, `PATH=/usr/bin:/bin git push origin main`, env);

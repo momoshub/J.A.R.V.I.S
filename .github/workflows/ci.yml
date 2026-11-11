@@ -73,9 +73,13 @@ jobs:
       LEAK_NAMES_REQUIRED: ${{ github.event_name == 'push' || github.event.pull_request.head.repo.full_name == github.repository }}
       LEAK_SCAN_QUIET: "true"
     steps:
+      # depth 1 and a quiet fetch of the rest: a full checkout prints one line per
+      # branch and tag, and a ref name can hold the very name the scan exists to keep out
       - uses: actions/checkout@v4
         with:
-          fetch-depth: 0
+          fetch-depth: 1
+      - name: fetch every branch and tag, quietly
+        run: git fetch -q --unshallow --tags origin '+refs/heads/*:refs/remotes/origin/*' > /dev/null 2>&1
       - name: install gitleaks
         run: |
           curl -sSfL "https://github.com/gitleaks/gitleaks/releases/download/v${GITLEAKS_VERSION}/gitleaks_${GITLEAKS_VERSION}_linux_x64.tar.gz" | tar -xz -C /usr/local/bin gitleaks
@@ -87,7 +91,6 @@ jobs:
           else
             # every public ref, not just the pushed one: a push of more than three tags
             # starts no workflow, so what only those reach is caught on the next push
-            git fetch -q --tags origin '+refs/heads/*:refs/remotes/origin/*'
             echo "LEAK_SCAN_RANGE=--all" >> "$GITHUB_ENV"
             echo "LEAK_SCAN_TAGS=$(git for-each-ref refs/tags --format='%(objectname)' | tr '\n' ' ')" >> "$GITHUB_ENV"
           fi
@@ -109,6 +112,9 @@ jobs:
             LEAK_SCAN_REFS="$(git for-each-ref refs/remotes/origin refs/tags --format='%(refname:lstrip=2)' | sed 's#^origin/##' | grep -vx HEAD | tr '\n' ' ')"
           fi
           export LEAK_SCAN_REFS
+          # a ref that peels to a blob or a tree is content no commit scan reads
+          odd=$(git for-each-ref refs/remotes/origin refs/tags --format='%(objectname)' | while read -r o; do [ "$(git cat-file -t "$o^{}")" = commit ] || echo x; done | wc -l)
+          if [ "$odd" -ne 0 ]; then echo "$odd ref(s) point at something other than a commit"; exit 1; fi
           set +e
           bin/leak-scan.sh meta --redact --no-banner --report-format json --report-path leaks-meta.json
           code=$?

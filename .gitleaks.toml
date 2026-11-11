@@ -20,12 +20,13 @@ regexes = ['''GEZDGNBVGY3TQOJQ''', '''0123456789abcdef0123456789abcdef''', '''xo
 # (a) Slack ids that look real: user/channel/DM/group/workspace/team/bot/app/
 # enterprise ids (U C D G W T B A E), a digit, then 7-10 more upper-case chars.
 # That also covers legacy ids without the leading 0. Bounded by any non-alphanumeric
-# (not \b, which treats _ as a word character and missed owner_U... and C..._history);
+# (not \b, which treats _ as a word character and missed owner_U... and C..._history)
+# or a string escape (\n, \t, \u00a0 in JSON fixtures and captured payloads);
 # the id itself is the secret group, so the allowlist below sees the id alone.
 [[rules]]
 id = "slack-real-looking-id"
 description = "Slack id (user, channel, DM, team, bot, app, enterprise) that is not a test fake"
-regex = '''(?m)(?:^|[^A-Za-z0-9])([UCDGWTBAE][0-9][A-Z0-9]{7,10})(?:_|\b)'''
+regex = '''(?m)(?:^|[^A-Za-z0-9]|\\[nrtbfv]|\\u[0-9A-Fa-f]{4})([UCDGWTBAE][0-9][A-Z0-9]{7,10})(?:_|\b)'''
 secretGroup = 1
 # no keywords: the prefilter would have to list every letter+digit pair, and a gap
 # silently skips files (U3.../C5... ids)
@@ -50,9 +51,9 @@ keywords = ["momos"]
   regexes = ['''Copyright 2026 Momos\b''']
 
   [[rules.allowlists]]
-  description = "commit messages: GitHub's own merge line names the org the repo lives in (the repo URL already shows it), and the commit that set the copyright holder says so. Whole lines only, so extra text on the line is still flagged"
+  description = "commit messages: GitHub's merge line and a default git pull merge line name the org the repo lives in (the repo URL already shows it), and the commit that set the copyright holder says so. Whole lines only, so extra text on the line is still flagged"
   regexTarget = "line"
-  regexes = ['''(?m)^Merge pull request #[0-9]+ from momoshub/[A-Za-z0-9._/-]+$''', '''(?m)^(?:Copyright holder: Momos|docs: copyright holder is Momos)$''']
+  regexes = ['''(?m)^Merge pull request #[0-9]+ from momoshub/[A-Za-z0-9._/-]+$''', '''(?m)^Merge branch '[^'\n]+' of (?:https://|git@)?github\.com[:/]momoshub/J\.A\.R\.V\.I\.S(?:\.git)?(?: into [^\s']+)?$''', '''(?m)^(?:Copyright holder: Momos|docs: copyright holder is Momos)$''']
 
   [[rules.allowlists]]
   description = "this config's own pattern lines (regex, regexes, keywords), which have to spell out what they hunt. Whole lines only: a trailing comment, a description or any other line here is still scanned (by the no-defaults pass, since gitleaks' defaults skip this file)"
