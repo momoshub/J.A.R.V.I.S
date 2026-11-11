@@ -43,6 +43,7 @@ import type { WorkflowRepo } from "../infrastructure/db/workflowRepo.ts";
 import type { AccessRequestRepo } from "../infrastructure/db/accessRequestRepo.ts";
 import type { CommandApprovalRepo } from "../infrastructure/db/commandApprovalRepo.ts";
 import type { CloudwatchDeps } from "./cloudwatch.ts";
+import type { LoopApprovalDeps } from "./loopApproval.ts";
 import type { SettingsRepo } from "../infrastructure/db/settingsRepo.ts";
 import { requestAccess } from "./accessRequests.ts";
 import type { CommandTickets } from "./commandTickets.ts";
@@ -96,6 +97,8 @@ export type HandleMessageDeps = {
   reminders?: ReminderRepo;
   /** Recurring prompts, for the `loop` command. */
   loops?: LoopRepo;
+  /** Owner approval of a script loop a turn wrote, and its Approve / Reject buttons. */
+  loopApproval?: LoopApprovalDeps;
   /** Dispatched Orca tasks with no live worker and quiet PRs on the bot's own repo, for `mindful`. */
   stuckWork?: () => Promise<StuckWork>;
   /** The workspace domain, so `mindful` can print clickable thread links. */

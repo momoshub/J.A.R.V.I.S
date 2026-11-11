@@ -1,12 +1,18 @@
 import { describe, expect, test } from "bun:test";
 import {
+  LOOP_ACTION_PREFIX,
+  LOOP_APPROVE_ACTION,
+  LOOP_REJECT_ACTION,
   MIN_INTERVAL_MS,
   MIN_SCRIPT_INTERVAL_MS,
+  PENDING_TTL_MS,
+  approvalText,
   loopTurnText,
   nextRun,
   parseLoopArgs,
   parseSchedule,
   scheduleText,
+  settledLoopText,
 } from "../../src/domain/loop.ts";
 
 // Thu 05/11/2026 17:30 at +07:00.
@@ -78,6 +84,28 @@ describe("parseLoopArgs: script mode", () => {
   });
   test("needs a command after --", () => {
     expect(parseLoopArgs("every 1h --").ok).toBe(false);
+  });
+});
+
+describe("script loop approval text", () => {
+  test("shows the exact schedule and command, and never lets the command close its own fence", () => {
+    const t = approvalText(7, "every 15m", "echo ```; rm -rf x");
+    expect(t).toContain("#7");
+    expect(t).toContain("every 15m");
+    expect(t).toContain(`echo ${"'".repeat(3)}; rm -rf x`);
+    expect(t.match(/```/g)).toHaveLength(2);
+    expect(t).toContain("24h");
+  });
+  test("the buttons are jv: ids, and a pending loop lives 24h", () => {
+    expect(LOOP_APPROVE_ACTION).toBe("jv:loop:approve");
+    expect(LOOP_REJECT_ACTION).toBe("jv:loop:reject");
+    expect(LOOP_APPROVE_ACTION.startsWith(LOOP_ACTION_PREFIX)).toBe(true);
+    expect(PENDING_TTL_MS).toBe(86_400_000);
+  });
+  test("settled text says what was decided", () => {
+    expect(settledLoopText("approved", 3, "U1")).toContain("approved by <@U1>");
+    expect(settledLoopText("rejected", 3)).toContain("deleted");
+    expect(settledLoopText("expired", 3)).toContain("expired");
   });
 });
 

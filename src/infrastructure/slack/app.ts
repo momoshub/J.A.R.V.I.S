@@ -16,6 +16,8 @@ import { decideAccessRequest, type ReplayRequest } from "../../application/acces
 import { actOnMessageReaction, messageActionFor } from "../../application/messageReactions.ts";
 import { APPROVE_ACTION, decideCommandApproval, REJECT_ACTION } from "../../application/commandLimits.ts";
 import { decideCloudwatch } from "../../application/cloudwatch.ts";
+import { decideLoop } from "../../application/loopApproval.ts";
+import { LOOP_ACTION_PREFIX } from "../../domain/loop.ts";
 import { CODE_ACTION_PREFIX } from "../../domain/cloudwatch.ts";
 import { forHowLong } from "../../domain/runControl.ts";
 import { frontKeyOf } from "../../domain/workflowFront.ts";
@@ -681,7 +683,7 @@ export const createKitListeners = (
     const actionId = action.action_id ?? "";
     if (!by || !actionId) return;
     // Handled in code by their own listener, never a turn for the model.
-    if (actionId.startsWith(CODE_ACTION_PREFIX)) return;
+    if (actionId.startsWith(CODE_ACTION_PREFIX) || actionId.startsWith(LOOP_ACTION_PREFIX)) return;
     const modal = body.view;
     const thread: KitThread | undefined = modal
       ? decodeKitMeta(modal.private_metadata).thread
@@ -1018,6 +1020,36 @@ export const createSlackApp = (config: SlackAppConfig, deps: Deps) => {
       }
     } catch (err) {
       log(`cloudwatch press failed: ${err instanceof Error ? err.message : String(err)}`);
+    }
+  }) as never);
+
+  // Approve / Reject on a script loop a turn wrote. Decided HERE and never
+  // handed to the model (the kit listener skips `LOOP_ACTION_PREFIX`): a press
+  // that went through a model turn could be talked into approving its own shell.
+  app.action(new RegExp(`^${LOOP_ACTION_PREFIX}`), (async ({ ack, body, action, client }: Omit<ApprovalArgs, "body"> & { body: ApprovalArgs["body"] & { message?: { ts?: string; thread_ts?: string } }; client: KitClient }) => {
+    await ack();
+    const by = body.user?.id;
+    const value = action?.value;
+    if (!by || !value || !deps.loopApproval) return;
+    try {
+      const outcome = await decideLoop(deps.loopApproval, { slackUserId: by, actionId: action.action_id ?? "", value });
+      log(`loop press ${outcome.kind} by ${by}`);
+      const channel = body.channel?.id;
+      const refusal =
+        outcome.kind === "refused"
+          ? "Only the owner can approve or reject a script loop."
+          : outcome.kind === "expired"
+            ? "That script loop expired with no answer and was deleted. Ask me again."
+            : outcome.kind === "decided"
+              ? "That script loop was already answered."
+              : undefined;
+      if (refusal && channel) {
+        await client.chat
+          .postEphemeral?.({ channel, user: by, thread_ts: body.message?.thread_ts ?? body.message?.ts, text: refusal })
+          .catch(logAndIgnore("loop press notice"));
+      }
+    } catch (err) {
+      log(`loop press failed: ${err instanceof Error ? err.message : String(err)}`);
     }
   }) as never);
 

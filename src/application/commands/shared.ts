@@ -35,6 +35,7 @@ import type { TurnLogRepo } from "../../infrastructure/db/turnLogRepo.ts";
 import type { WatchRepo } from "../../infrastructure/db/watchRepo.ts";
 import type { ReminderRepo } from "../../infrastructure/db/reminderRepo.ts";
 import type { LoopRepo } from "../../infrastructure/db/loopRepo.ts";
+import type { LoopApprovalDeps } from "../loopApproval.ts";
 import type { StuckWork } from "../../domain/stuckWork.ts";
 import type { FollowRepo } from "../../infrastructure/db/followRepo.ts";
 import type { WorkflowRepo } from "../../infrastructure/db/workflowRepo.ts";
@@ -100,6 +101,8 @@ export type CommandDeps = {
   reminders?: ReminderRepo;
   /** Recurring prompts, fired as turns on a timer outside any turn. */
   loops?: LoopRepo;
+  /** Owner approval of a script loop a turn wrote: the Approve / Reject DM and the pending row. */
+  loopApproval?: LoopApprovalDeps;
   /** Minutes east of UTC that reminder times are read in. Defaults to the host's. */
   tzOffsetMinutes?: () => number;
   /** Dispatched Orca tasks with no live worker and quiet PRs on the bot's own repo, for `mindful`. */

@@ -133,6 +133,10 @@ const migrateLoops = (db: Database): void => {
     );
   `);
   db.exec("CREATE INDEX IF NOT EXISTS idx_loops_due ON loops (state, next_at);");
+  // A script loop a turn wrote waits as `pending`; these remember its Approve / Reject message.
+  const cols = db.query<{ name: string }, []>("PRAGMA table_info(loops)").all().map((c) => c.name);
+  if (!cols.includes("notice_channel")) db.exec("ALTER TABLE loops ADD COLUMN notice_channel TEXT NOT NULL DEFAULT ''");
+  if (!cols.includes("notice_ts")) db.exec("ALTER TABLE loops ADD COLUMN notice_ts TEXT NOT NULL DEFAULT ''");
   const { user_version } = db.query<{ user_version: number }, []>("PRAGMA user_version").get() ?? {
     user_version: 0,
   };
