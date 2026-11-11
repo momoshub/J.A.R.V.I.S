@@ -219,7 +219,7 @@ export const SCHEDULE_COMMANDS: readonly CommandDef[] = [
     minRole: "admin",
     usage: "every <monday 9am | day at 18:00 | 6h | week> <prompt> | every <schedule> -- <shell command> (owner) | list | cancel <id>",
     summary: "on a schedule, run a prompt as a real turn (or, owner only, a shell command); runs report to your DM",
-    run: async ({ deps, actor, args, rest, prefix, threadTs, channelId }) => {
+    run: async ({ deps, actor, args, rest, prefix, threadTs, channelId, fromBrainRun }) => {
       if (!deps.loops) return "I have nowhere to keep a loop right now.";
       const now = deps.clock();
       const offset = deps.tzOffsetMinutes?.() ?? -new Date(now).getTimezoneOffset();
@@ -255,6 +255,10 @@ export const SCHEDULE_COMMANDS: readonly CommandDef[] = [
       // Arbitrary shell as the bot, on a timer, outside any turn: the owner's alone.
       if (parsed.command && actor.role !== "owner") {
         return "A script loop runs shell, so it is *owner* only. A prompt loop (`loop every <schedule> <prompt>`) is open to you.";
+      }
+      // A turn may read untrusted pages; it must never leave behind shell that outlives it. Only a line the owner typed creates one.
+      if (parsed.command && fromBrainRun) {
+        return "I never create a script loop from my own turn, only from a line the owner types. A prompt loop is fine.";
       }
       if (deps.loops.activeBy(actor.slackId, MAX_LOOPS_PER_USER + 1).length >= MAX_LOOPS_PER_USER) {
         return `You already have ${MAX_LOOPS_PER_USER} loops. \`${prefix} loop list\`, then \`${prefix} loop cancel <id>\`.`;

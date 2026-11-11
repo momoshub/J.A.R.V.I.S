@@ -62,6 +62,10 @@ describe("parseLoopArgs: script mode", () => {
     expect(p.command).toBe("curl -s 'https://x.test/a  b' | jq .ok");
     expect(p.prompt).toBe("");
   });
+  test("decodes Slack escapes and unwraps links", () => {
+    const p = ok("every 15m -- test -f x &amp;&amp; curl -s <https://x.test/a?b=1&amp;c=2> &gt; /tmp/y &lt; <https://x.test|x.test>");
+    expect(p.command).toBe("test -f x && curl -s https://x.test/a?b=1&c=2 > /tmp/y < https://x.test");
+  });
   test("works after a clock schedule", () => {
     const p = ok("every monday 9am -- ./sync.sh --all");
     expect(p.schedule).toEqual({ kind: "weekly", weekday: 1, minutes: 540 });

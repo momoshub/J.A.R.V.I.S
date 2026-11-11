@@ -265,6 +265,14 @@ describe("loop command", () => {
     expect(l.active()[0]?.command).toBe("./sync.sh");
   });
 
+  test("a script loop is never created from the bot's own turn", async () => {
+    const { deps, l } = mk();
+    const out = await dispatchCommand(deps, OWNER_ACTOR, "C1", "loop every 5m -- true", { fromBrainRun: true });
+    expect(out).toContain("never create a script loop");
+    expect(l.active()).toHaveLength(0);
+    expect(await dispatchCommand(deps, OWNER_ACTOR, "C1", "loop every 6h check slang", { fromBrainRun: true })).toContain("loop #");
+  });
+
   test("a bad schedule explains itself and stores nothing", async () => {
     const { deps, l } = mk();
     const out = await dispatchCommand(deps, ADMIN, "C1", "loop every 10m too fast");

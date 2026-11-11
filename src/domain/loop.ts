@@ -10,6 +10,7 @@
  *
  * Times are read in the host's offset, injected, exactly like `remind`.
  */
+import { unescapeSlack } from "./cloudwatch.ts";
 import { localMidnight, parseClock, parseSpan } from "./reminder.ts";
 
 /** Anything faster is a runaway, not a schedule. */
@@ -100,6 +101,14 @@ const readSchedule = (words: readonly string[]): { schedule: Schedule; used: num
 };
 
 /**
+ * Slack hands a command over as mrkdwn: `&`, `<`, `>` escaped and links wrapped
+ * as `<url>` / `<url|label>`. Unwrap the links first (their brackets are real),
+ * then unescape, so the stored shell is what was typed.
+ */
+export const unslackShell = (text: string): string =>
+  unescapeSlack(text.replace(/<((?:https?|mailto):[^|>\s]+)(?:\|[^>]*)?>/g, "$1"));
+
+/**
  * `every monday 9am <prompt>`, `every day at 18:00 <prompt>`, `every 6h <prompt>`,
  * `every week <prompt>`; or, for a script, `every 15m -- <shell command>`. The
  * schedule is the shortest prefix that reads as one; everything after it is
@@ -117,7 +126,7 @@ export const parseLoopArgs = (rest: string): ParsedLoop => {
   }
   if (script) {
     // Everything after the first standalone `--`, spacing and quoting intact.
-    const command = rest.slice(rest.search(/(^|\s)--(\s|$)/)).replace(/^\s*--/, "").trim();
+    const command = unslackShell(rest.slice(rest.search(/(^|\s)--(\s|$)/)).replace(/^\s*--/, "").trim());
     if (!command) return { ok: false, error: "say which command to run each time" };
     if (command.length > MAX_PROMPT_CHARS) {
       return { ok: false, error: `keep the command under ${MAX_PROMPT_CHARS} characters` };
