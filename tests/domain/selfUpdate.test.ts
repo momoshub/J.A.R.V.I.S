@@ -127,10 +127,15 @@ describe("selfUpdateRules with no skill to read (the full block)", () => {
     expect(STANDALONE_REVIEW_RULE).toContain("a request-changes review when the verdict is changes, an approving review (with its comments, if any) when it is clean");
     expect(STANDALONE_REVIEW_RULE).toContain("`gh pr review <pr> --request-changes|--approve --body-file <file>`");
     expect(STANDALONE_REVIEW_RULE).toContain("pulls/<pr>/reviews --input <json>");
+    // one account cannot request changes on or approve its own PR: the body's VERDICT line is the verdict
+    expect(STANDALONE_REVIEW_RULE).toContain("when the PR's author and the reviewer are one account");
+    expect(STANDALONE_REVIEW_RULE).toContain("`--comment` / `event` = `COMMENT`");
+    expect(STANDALONE_REVIEW_RULE).toContain("the verdict is the body's `VERDICT:` line, in both modes");
+    expect(STANDALONE_REVIEW_RULE).not.toContain("its state is the verdict");
     expect(STANDALONE_REVIEW_RULE).toContain("`comments` = `[{path, line, side, body}]`");
-    // the writer polls review state, not comments: APPROVED = clean, CHANGES_REQUESTED = changes
+    // the writer polls reviews, not comments, and reads the verdict from the body
     expect(STANDALONE_REVIEW_RULE).toContain("polls `gh pr view <pr> --json reviews`");
-    expect(STANDALONE_REVIEW_RULE).toContain("`APPROVED` = clean, `CHANGES_REQUESTED` = changes");
+    expect(STANDALONE_REVIEW_RULE).toContain("`APPROVED` / `CHANGES_REQUESTED` / `COMMENTED`, is only a hint");
     expect(STANDALONE_REVIEW_RULE).toContain("answers each review point");
     expect(STANDALONE_REVIEW_RULE).toContain("inline review thread may also be answered in the thread itself");
     expect(STANDALONE_REVIEW_RULE).not.toContain("`[review round N]` comment");
