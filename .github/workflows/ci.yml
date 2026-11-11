@@ -62,7 +62,8 @@ jobs:
   # (pushes, same-repo PRs), so a deleted or renamed secret fails instead of skipping names;
   # only fork PRs skip it.
   # The log is public: never -v, and LEAK_SCAN_QUIET keeps gitleaks' own output (a panic on a
-  # broken names regex prints every name) out of it. Locations only.
+  # broken names regex prints every name) out of it. Rule, commit and line only: a file path
+  # or a ref name can hold the very name that was caught.
   gitleaks:
     runs-on: ubuntu-latest
     timeout-minutes: 10
@@ -80,18 +81,14 @@ jobs:
           curl -sSfL "https://github.com/gitleaks/gitleaks/releases/download/v${GITLEAKS_VERSION}/gitleaks_${GITLEAKS_VERSION}_linux_x64.tar.gz" | tar -xz -C /usr/local/bin gitleaks
           gitleaks version
       - name: pick the range
-        env:
-          HEAD_REF: ${{ github.head_ref }}
         run: |
           if [ "${{ github.event_name }}" = pull_request ]; then
             echo "LEAK_SCAN_RANGE=${{ github.event.pull_request.base.sha }}..${{ github.event.pull_request.head.sha }}" >> "$GITHUB_ENV"
-            echo "LEAK_SCAN_REFS=$HEAD_REF" >> "$GITHUB_ENV"
           else
             # every public ref, not just the pushed one: a push of more than three tags
             # starts no workflow, so what only those reach is caught on the next push
             git fetch -q --tags origin '+refs/heads/*:refs/remotes/origin/*'
             echo "LEAK_SCAN_RANGE=--all" >> "$GITHUB_ENV"
-            echo "LEAK_SCAN_REFS=$(git for-each-ref refs/remotes/origin refs/tags --format='%(refname:lstrip=2)' | sed 's#^origin/##' | grep -vx HEAD | tr '\n' ' ')" >> "$GITHUB_ENV"
             echo "LEAK_SCAN_TAGS=$(git for-each-ref refs/tags --format='%(objectname)' | tr '\n' ' ')" >> "$GITHUB_ENV"
           fi
       - name: scan the diffs
@@ -100,10 +97,18 @@ jobs:
           bin/leak-scan.sh git . --redact --no-banner --report-format json --report-path leaks.json "--log-opts=$LEAK_SCAN_RANGE"
           code=$?
           set -e
-          jq -r '.[] | "\(.RuleID) \(.File):\(.StartLine) \(.Commit[0:8])"' leaks.json 2>/dev/null || true
+          jq -r '.[] | "\(.RuleID) commit \(.Commit[0:8]) line \(.StartLine)"' leaks.json 2>/dev/null || true
           exit "$code"
-      - name: scan commit messages, file paths and tag messages
+      - name: scan commit messages, file paths, ref names and tag messages
         run: |
+          # ref names are read here, never through $GITHUB_ENV or an env: block, which the
+          # public log prints on every later run
+          if [ "${{ github.event_name }}" = pull_request ]; then
+            LEAK_SCAN_REFS="$(jq -r '.pull_request.head.ref' "$GITHUB_EVENT_PATH")"
+          else
+            LEAK_SCAN_REFS="$(git for-each-ref refs/remotes/origin refs/tags --format='%(refname:lstrip=2)' | sed 's#^origin/##' | grep -vx HEAD | tr '\n' ' ')"
+          fi
+          export LEAK_SCAN_REFS
           set +e
           bin/leak-scan.sh meta --redact --no-banner --report-format json --report-path leaks-meta.json
           code=$?

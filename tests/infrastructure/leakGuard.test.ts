@@ -245,6 +245,33 @@ describe.skipIf(!HAS_GITLEAKS && !process.env.CI)("leak guard", () => {
     }
   });
 
+  test("pre-push scans what a merge commit adds and a file .gitattributes marks binary", () => {
+    const { repo, env } = makeRepo();
+    const id = "U07AB12" + "CD3E";
+    expect(sh(repo, "git checkout -qb side && echo s > s.txt && git add s.txt && git commit -qm s --no-verify && git checkout -q main && echo m > m.txt && git add m.txt && git commit -qm m --no-verify", env).code).toBe(0);
+    expect(sh(repo, "git merge -q --no-commit side", env).code).toBe(0);
+    writeFileSync(join(repo, "evil.txt"), `owner ${id}\n`);
+    const merge = sh(repo, "git add evil.txt && git commit -qm merge --no-verify && git push origin main", env);
+    expect(merge.code).not.toBe(0);
+    expect(merge.out).toContain("slack-real-looking-id");
+    expect(sh(repo, "git reset -q --hard origin/main && git checkout -qb bin", env).code).toBe(0);
+    writeFileSync(join(repo, ".gitattributes"), "notes.txt -diff\n");
+    writeFileSync(join(repo, "notes.txt"), `owner ${id} at ${EMP}\n`);
+    const binary = sh(repo, "git add -A && git commit -qm notes --no-verify && git push origin bin", env);
+    expect(binary.code).not.toBe(0);
+    expect(binary.out).toContain("slack-real-looking-id");
+  });
+
+  test("an id next to an underscore or inside a key is flagged, fakes stay allowed", () => {
+    const { repo, env } = makeRepo();
+    for (const text of [`owner_U07AB12${"CD3E"}`, `C07AB12${"CD3E"}_history`, `SLACK_CHANNEL_C07AB12${"CD3E"}=1`]) {
+      writeFileSync(join(repo, "k.txt"), `${text}\n`);
+      expect(sh(repo, "bin/leak-scan.sh dir k.txt --no-banner --redact -v", env).out).toContain("slack-real-looking-id");
+    }
+    writeFileSync(join(repo, "k.txt"), "OWNER_U0OWNER0001 U0123456789_x\n");
+    expect(sh(repo, "bin/leak-scan.sh dir k.txt --no-banner --redact -v", env).out).not.toContain("slack-real-looking-id");
+  });
+
   test("pre-push skips with a warning when gitleaks is missing", () => {
     const { repo, env } = makeRepo();
     const r = sh(repo, `PATH=/usr/bin:/bin git push origin main`, env);

@@ -56,7 +56,7 @@ if [ "${1:-}" = "meta" ]; then
   {
     if [ -n "${LEAK_SCAN_RANGE:-}" ]; then
       git log --format=%B $LEAK_SCAN_RANGE --
-      git -c core.quotePath=false log --name-only --format= $LEAK_SCAN_RANGE --
+      git -c core.quotePath=false log --diff-merges=first-parent --name-only --format= $LEAK_SCAN_RANGE --
     fi
     # branch and tag names are public once pushed
     for r in ${LEAK_SCAN_REFS:-}; do printf '%s\n' "$r"; done
@@ -70,6 +70,20 @@ if [ "${1:-}" = "meta" ]; then
 elif [ "${1:-}" = stdin ]; then
   cat > "$tmp/stdin.txt"
   input="$tmp/stdin.txt"
+fi
+# git mode: a merge commit's own changes (conflict resolutions, edits made while
+# merging) show only against its first parent, and a path .gitattributes marks as
+# binary shows no diff at all, so both are forced on for every range
+if [ "${1:-}" = git ]; then
+  fixed=()
+  prev=""
+  for a in "$@"; do
+    if [ "$prev" = "--log-opts" ]; then a="--diff-merges=first-parent --text $a"; fi
+    case "$a" in --log-opts=*) a="--log-opts=--diff-merges=first-parent --text ${a#--log-opts=}" ;; esac
+    fixed+=("$a")
+    prev="$a"
+  done
+  set -- "${fixed[@]}"
 fi
 # the bare pass writes its report next to the full one, merged afterwards
 report=""

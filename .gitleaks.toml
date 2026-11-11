@@ -13,25 +13,27 @@ description = "known fake secrets in tests"
 # types, this file included, so bin/leak-scan.sh also runs these rules without it
 # the known fake secrets in tests, by value, so a history rewrite (new SHAs) does
 # not break the scan the way .gitleaksignore fingerprints do: the RFC 6238 seed,
-# a made-up DASHBOARD_TOKEN, a made-up xoxb fed to the redactor and the user id
-# Slack's own API docs use as their example
+# a made-up DASHBOARD_TOKEN and a made-up xoxb fed to the redactor
 regexTarget = "match"
-regexes = ['''GEZDGNBVGY3TQOJQ''', '''0123456789abcdef0123456789abcdef''', '''xoxb-123456789012-abcdefghijkl''', '''^U024BE7LH$''']
+regexes = ['''GEZDGNBVGY3TQOJQ''', '''0123456789abcdef0123456789abcdef''', '''xoxb-123456789012-abcdefghijkl''']
 
 # (a) Slack ids that look real: user/channel/DM/group/workspace/team/bot/app/
 # enterprise ids (U C D G W T B A E), a digit, then 7-10 more upper-case chars.
-# That also covers legacy ids without the leading 0 (U024BE7LH).
+# That also covers legacy ids without the leading 0. Bounded by any non-alphanumeric
+# (not \b, which treats _ as a word character and missed owner_U... and C..._history);
+# the id itself is the secret group, so the allowlist below sees the id alone.
 [[rules]]
 id = "slack-real-looking-id"
 description = "Slack id (user, channel, DM, team, bot, app, enterprise) that is not a test fake"
-regex = '''\b[UCDGWTBAE][0-9][A-Z0-9]{7,10}\b'''
+regex = '''(?m)(?:^|[^A-Za-z0-9])([UCDGWTBAE][0-9][A-Z0-9]{7,10})(?:_|\b)'''
+secretGroup = 1
 # no keywords: the prefilter would have to list every letter+digit pair, and a gap
 # silently skips files (U3.../C5... ids)
 
   [rules.allowlist]
-  description = "the fake ids the tests use: a role word plus a counter (U0OWNER0001, U0PAL0007, C0TEST0000N, U0NUISANCE) and U0123456789. Explicit words, so a random real id does not slip through"
-  regexTarget = "match"
-  regexes = ['''^[UCDGW]0(?:OWNER|PAL|ALEX|TEST|BOT|DEV|USER|REVIEW|EXE|GONE|SNUBBED|ADMIN|TEAM|NUISANCE|OTHER|DM|STRANGE)[0-9N]*$''', '''^U0123456789$''']
+  description = "the fake ids the tests use: a role word plus a counter (U0OWNER0001, U0PAL0007, C0TEST0000N, U0NUISANCE), U0123456789, and the user id Slack's own API docs use as their example. Explicit words, so a random real id does not slip through"
+  regexTarget = "secret"
+  regexes = ['''^[UCDGW]0(?:OWNER|PAL|ALEX|TEST|BOT|DEV|USER|REVIEW|EXE|GONE|SNUBBED|ADMIN|TEAM|NUISANCE|OTHER|DM|STRANGE)[0-9N]*$''', '''^U0123456789$''', '''^U024BE7LH$''']
 
 # (b) the employer name: only the copyright lines may carry it.
 [[rules]]
