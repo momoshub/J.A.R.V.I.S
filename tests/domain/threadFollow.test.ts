@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { couldFollowThread, followSkipReason, followVerdict, isFollowOffReaction, isOneOnOneThread, mentionsBot, shouldFollowThread, startsAutoFollow } from "../../src/domain/threadFollow.ts";
+import { addressedToOther, couldFollowThread, followSkipReason, followVerdict, isFollowOffReaction, isOneOnOneThread, mentionsBot, shouldFollowThread, startsAutoFollow } from "../../src/domain/threadFollow.ts";
 import { buildSystemPrompt } from "../../src/domain/personality.ts";
 import { promptFingerprint } from "../../src/domain/promptFingerprint.ts";
 
@@ -186,8 +186,34 @@ describe("followSkipReason", () => {
     expect(followSkipReason(reply({ text: "<@UBOT> hi" }), BOT)).toBe("tagged");
   });
 
+  test("a reply that tags only somebody else is theirs, not the bot's", () => {
+    expect(followSkipReason(reply({ text: "where did you get that <@U2:Kai> =]]" }), BOT, "Jarvis")).toBe("tags-other");
+    expect(couldFollowThread(reply({ text: "<@U2> ?" }), BOT, "Jarvis")).toBe(false);
+  });
+
+  test("a reply that tags somebody else but names the bot is still a candidate", () => {
+    expect(followSkipReason(reply({ text: "<@U2> ask jarvis, he knows" }), BOT, "Jarvis")).toBeUndefined();
+  });
+
   test("a group DM reply is a candidate like any channel reply", () => {
     expect(followSkipReason(reply({ channel_type: "mpim" }), BOT)).toBeUndefined();
+  });
+});
+
+describe("addressedToOther", () => {
+  test("no tag, or only the bot's tag, is not addressed to anyone else", () => {
+    expect(addressedToOther("what about the allowlist?", BOT, "Jarvis")).toBe(false);
+    expect(addressedToOther("<@UBOT> hi", BOT, "Jarvis")).toBe(false);
+  });
+
+  test("a tag for another person is, unless the bot is named in words", () => {
+    expect(addressedToOther("<@U2> where did you get that", BOT, "Jarvis")).toBe(true);
+    expect(addressedToOther("<@U2> and Jarvis, check this", BOT, "Jarvis")).toBe(false);
+    expect(addressedToOther("<@U2> jarvisish", BOT, "Jarvis")).toBe(true);
+  });
+
+  test("without a bot name, any other tag counts", () => {
+    expect(addressedToOther("<@W2> look", BOT)).toBe(true);
   });
 });
 
