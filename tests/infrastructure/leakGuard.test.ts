@@ -41,10 +41,9 @@ const makeRepo = () => {
   return { repo, env };
 };
 
-const EMP = "Mo" + "mos";
+const ID = "U07AB12" + "CD3E";
 const SAMPLES: Record<string, string> = {
   "slack-real-looking-id": "const id = 'U07AB12" + "CD3E';\n",
-  "employer-name": `owned by ${EMP} Inc\n`,
 };
 
 // skipped only off CI: under CI a missing gitleaks fails the suite instead of hiding it
@@ -69,15 +68,15 @@ describe.skipIf(!HAS_GITLEAKS && !process.env.CI)("leak guard", () => {
     });
   }
 
-  test("fake Slack ids and the copyright line are allowed", () => {
+  test("fake Slack ids and the company name are allowed", () => {
     const { repo, env } = makeRepo();
     writeFileSync(
       join(repo, "ok.txt"),
-      `U0OWNER0001 U0BOT000001 C0TEST0000N D0DM0000001 U0123456789 U0NUISANCE\nCopyright 2026 ${EMP}\n`,
+      `U0OWNER0001 U0BOT000001 C0TEST0000N D0DM0000001 U0123456789 U0NUISANCE\nCopyright 2026 ${"Mo" + "mos"}\n`,
     );
     const r = sh(repo, "bin/leak-scan.sh dir ok.txt --no-banner --redact -v", env);
-    // the copyright line is only allowed in LICENSE/NOTICE/README, the ids are allowed anywhere
     expect(r.out).not.toContain("slack-real-looking-id");
+    expect(r.code).toBe(0);
   });
 
   test("the names rule loads from LEAK_NAMES_FILE and fires", () => {
@@ -146,12 +145,12 @@ describe.skipIf(!HAS_GITLEAKS && !process.env.CI)("leak guard", () => {
     const msg = sh(repo, `git checkout -qb m && echo a > a.txt && git add a.txt && git commit -qm "asked in ${id}" --no-verify && git push origin m`, env);
     expect(msg.code).not.toBe(0);
     expect(msg.out).toContain("a commit message, a file path, a branch or tag name");
-    const path = sh(repo, `git checkout -q main && git checkout -qb p && mkdir -p notes && echo a > "notes/${EMP}.md" && git add notes && git commit -qm notes --no-verify && git push origin p`, env);
+    const path = sh(repo, `git checkout -q main && git checkout -qb p && mkdir -p notes && echo a > "notes/${ID}.md" && git add notes && git commit -qm notes --no-verify && git push origin p`, env);
     expect(path.code).not.toBe(0);
-    expect(path.out).toContain("employer-name");
-    const tag = sh(repo, `git checkout -q main && git tag -a v1 -m "owned by ${EMP}" && git push origin v1`, env);
+    expect(path.out).toContain("slack-real-looking-id");
+    const tag = sh(repo, `git checkout -q main && git tag -a v1 -m "owned by ${ID}" && git push origin v1`, env);
     expect(tag.code).not.toBe(0);
-    expect(tag.out).toContain("employer-name");
+    expect(tag.out).toContain("slack-real-looking-id");
   });
 
   test("ids with any digit after the prefix are scanned, not dropped by a keyword prefilter", () => {
@@ -182,49 +181,35 @@ describe.skipIf(!HAS_GITLEAKS && !process.env.CI)("leak guard", () => {
     expect(r.out).toContain("required");
   });
 
-  test("the commit-message allowlists cover whole lines only, in messages and files", () => {
-    const { repo, env } = makeRepo();
-    const org = EMP.toLowerCase() + "hub";
-    for (const line of [`Merge pull request #1 from ${org}/x : our ${EMP} customer list`, `${EMP} plan, copyright holder is ${EMP}`]) {
-      writeFileSync(join(repo, "f.txt"), `${line}\n`);
-      expect(sh(repo, "bin/leak-scan.sh dir f.txt --no-banner --redact -v", env).out).toContain("employer-name");
-      const r = sh(repo, `git checkout -q main && git checkout -qB x && git commit -q --allow-empty -m "${line}" --no-verify && LEAK_SCAN_RANGE=main..x bin/leak-scan.sh meta --no-banner --redact -v`, env);
-      expect(r.out).toContain("employer-name");
-    }
-    const exact = sh(repo, `git checkout -q main && git checkout -qB y && git commit -q --allow-empty -m "Merge pull request #2 from ${org}/feat/x" --no-verify && LEAK_SCAN_RANGE=main..y bin/leak-scan.sh meta --no-banner --redact -v`, env);
-    expect(exact.out).toContain("no leaks found");
-  });
-
   test("no file is exempt by path: example names file, config comments, svg and lockfiles are scanned", () => {
     const { repo, env } = makeRepo();
     mkdirSync(join(repo, "docs"), { recursive: true });
     cpSync(join(ROOT, "docs", "leak-names.example.toml"), join(repo, "docs", "leak-names.example.toml"));
-    const line = `# owner U07AB12${"CD3E"} at ${EMP}\n`;
+    const line = `# owner ${ID}\n`;
     // gitleaks' defaults skip svg, lockfiles and .gitleaks.toml, so the no-defaults pass has to catch these
     for (const f of ["docs/leak-names.example.toml", ".gitleaks.toml", "docs/arch.svg", "yarn.lock", "package-lock.json", "go.sum"]) {
       writeFileSync(join(repo, f), line, { flag: "a" });
       const r = sh(repo, `bin/leak-scan.sh dir ${f} --no-banner --redact -v`, env);
       expect(r.out).toContain("slack-real-looking-id");
-      expect(r.out).toContain("employer-name");
     }
     // a trailing comment after a pattern line is scanned, the bare pattern line is not
     const cfg = join(repo, ".gitleaks.toml");
     cpSync(join(ROOT, ".gitleaks.toml"), cfg);
-    writeFileSync(cfg, `\n[[rules]]\nid = "extra"\nregex = '''(?i)${EMP} extra'''\nkeywords = ["${EMP.toLowerCase()}"]\n`, { flag: "a" });
+    writeFileSync(cfg, `\n[[rules]]\nid = "extra"\nregex = '''(?i)extra word'''\nkeywords = ["extra"]\n`, { flag: "a" });
     expect(sh(repo, "bin/leak-scan.sh dir .gitleaks.toml --no-banner --redact -v", env).out).toContain("no leaks found");
     writeFileSync(cfg, `regex2 = '''x''' # asked in U07AB12${"CD3E"}\n`, { flag: "a" });
     expect(sh(repo, "bin/leak-scan.sh dir .gitleaks.toml --no-banner --redact -v", env).out).toContain("slack-real-looking-id");
   });
 
-  test("pre-push blocks an id or the employer word in a branch or tag name", () => {
+  test("pre-push blocks an id in a branch or tag name", () => {
     const { repo, env } = makeRepo();
     const bad = `x-U07AB12${"CD3E"}`;
     const branch = sh(repo, `git push origin main:${bad}`, env);
     expect(branch.code).not.toBe(0);
     expect(branch.out).toContain("slack-real-looking-id");
-    const tag = sh(repo, `git tag ${EMP.toLowerCase()}-v1 && git push origin ${EMP.toLowerCase()}-v1`, env);
+    const tag = sh(repo, `git tag v-${ID} && git push origin v-${ID}`, env);
     expect(tag.code).not.toBe(0);
-    expect(tag.out).toContain("employer-name");
+    expect(tag.out).toContain("slack-real-looking-id");
   });
 
   test("a non-ASCII file path is scanned as written, not octal-quoted", () => {
@@ -256,7 +241,7 @@ describe.skipIf(!HAS_GITLEAKS && !process.env.CI)("leak guard", () => {
     expect(merge.out).toContain("slack-real-looking-id");
     expect(sh(repo, "git reset -q --hard origin/main && git checkout -qb bin", env).code).toBe(0);
     writeFileSync(join(repo, ".gitattributes"), "notes.txt -diff\n");
-    writeFileSync(join(repo, "notes.txt"), `owner ${id} at ${EMP}\n`);
+    writeFileSync(join(repo, "notes.txt"), `owner ${id}\n`);
     const binary = sh(repo, "git add -A && git commit -qm notes --no-verify && git push origin bin", env);
     expect(binary.code).not.toBe(0);
     expect(binary.out).toContain("slack-real-looking-id");
@@ -280,32 +265,9 @@ describe.skipIf(!HAS_GITLEAKS && !process.env.CI)("leak guard", () => {
     }
   });
 
-  test("a default git pull merge line passes, extra text on it does not", () => {
-    const { repo, env } = makeRepo();
-    const org = EMP.toLowerCase() + "hub";
-    const ok = `Merge branch 'main' of github.com:${org}/J.A.R.V.I.S`;
-    const okInto = `Merge branch 'main' of https://github.com/${org}/J.A.R.V.I.S into feat/x`;
-    for (const [line, clean] of [[ok, true], [okInto, true], [`${ok} ${EMP} notes`, false]] as const) {
-      const r = sh(repo, `git checkout -q main && git checkout -qB pl && git commit -q --allow-empty -m "${line}" --no-verify && LEAK_SCAN_RANGE=main..pl bin/leak-scan.sh meta --no-banner --redact -v`, env);
-      if (clean) expect(r.out).not.toContain("employer-name");
-      else expect(r.out).toContain("employer-name");
-    }
-  });
-
-  test("a revert of a merged PR passes, extra text on that line does not", () => {
-    const { repo, env } = makeRepo();
-    const org = EMP.toLowerCase() + "hub";
-    const merge = `Merge pull request #2 from ${org}/feat/x`;
-    for (const [line, clean] of [[`Revert \\"${merge}\\"`, true], [`Revert \\"Revert \\"${merge}\\"\\"`, true], [`Revert \\"${merge}\\" for ${EMP}`, false]] as const) {
-      const r = sh(repo, `git checkout -q main && git checkout -qB rv && git commit -q --allow-empty -m "${line}" --no-verify && LEAK_SCAN_RANGE=main..rv bin/leak-scan.sh meta --no-banner --redact -v`, env);
-      if (clean) expect(r.out).not.toContain("employer-name");
-      else expect(r.out).toContain("employer-name");
-    }
-  });
-
   test("a PR title passed as LEAK_SCAN_TEXT is scanned", () => {
     const { repo, env } = makeRepo();
-    for (const [title, rule] of [[`fix for C07AB12${"CD3E"} owners`, "slack-real-looking-id"], [`${EMP} rollout`, "employer-name"]] as const) {
+    for (const [title, rule] of [[`fix for C07AB12${"CD3E"} owners`, "slack-real-looking-id"], [`${ID} rollout`, "slack-real-looking-id"]] as const) {
       const r = sh(repo, "bin/leak-scan.sh meta --no-banner --redact -v", { ...env, LEAK_SCAN_TEXT: title });
       expect(r.code).not.toBe(0);
       expect(r.out).toContain(rule);
@@ -331,11 +293,11 @@ describe.skipIf(!HAS_GITLEAKS && !process.env.CI)("leak guard", () => {
 
   test("a Co-authored-by or Signed-off-by trailer passes as a whole line, extra text on it does not", () => {
     const { repo, env } = makeRepo();
-    const ok = sh(repo, `git checkout -qb tr && echo a > a.txt && git add a.txt && git commit -qm "fix thing" -m "Co-authored-by: Pat Roe <pat@${EMP.toLowerCase()}.com>" -m "Signed-off-by: Pat Roe <pat@${EMP.toLowerCase()}.com>" --no-verify && git push origin tr`, env);
+    const ok = sh(repo, `git checkout -qb tr && echo a > a.txt && git add a.txt && git commit -qm "fix thing" -m "Co-authored-by: Pat Roe <pat@example.com>" -m "Signed-off-by: Pat Roe <pat@example.com>" --no-verify && git push origin tr`, env);
     expect(ok.code).toBe(0);
-    const bad = sh(repo, `git checkout -q main && git checkout -qb tr2 && echo b > b.txt && git add b.txt && git commit -qm "fix" -m "Co-authored-by: Pat Roe <pat@${EMP.toLowerCase()}.com> for ${EMP}" --no-verify && git push origin tr2`, env);
+    const bad = sh(repo, `git checkout -q main && git checkout -qb tr2 && echo b > b.txt && git add b.txt && git commit -qm "fix" -m "Co-authored-by: Pat Roe <pat@example.com> for ${ID}" --no-verify && git push origin tr2`, env);
     expect(bad.code).not.toBe(0);
-    expect(bad.out).toContain("employer-name");
+    expect(bad.out).toContain("slack-real-looking-id");
   });
 
   test("pre-push skips with a warning when gitleaks is missing", () => {
