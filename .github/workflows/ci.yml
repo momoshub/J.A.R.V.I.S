@@ -1,11 +1,13 @@
 # Typecheck, tests, a secret scan and (where secrets exist) the real-Slack e2e suite on every PR and
-# every push to main. The merge gate for self-fixes is bin/merge-when-green.sh.
+# every push to main. The secret scan also runs on a push of any branch or tag, so a push that
+# skipped the local hook is still caught. The merge gate for self-fixes is bin/merge-when-green.sh.
 name: ci
 
 on:
   pull_request:
   push:
-    branches: [main]
+    branches: ['**']
+    tags: ['**']
 
 concurrency:
   group: ci-${{ github.ref }}
@@ -13,6 +15,7 @@ concurrency:
 
 jobs:
   checks:
+    if: github.event_name == 'pull_request' || github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
@@ -46,7 +49,7 @@ jobs:
         working-directory: web
 
   # Secret scan with the gitleaks CLI (the action needs a licence for organisations).
-  # Push: the whole history. Pull request: only the commits it adds. Both scan the diffs and,
+  # Push (any branch or tag): the whole history from the pushed ref, plus every tag. Pull request: only the commits it adds. Both scan the diffs and,
   # separately, the commit messages, file paths and annotated tag messages, which gitleaks git
   # never reads. False positives (test vectors, fake tokens) are allowlisted by value in
   # .gitleaks.toml. Rules: .gitleaks.toml plus the private names rule from the LEAK_NAMES_TOML

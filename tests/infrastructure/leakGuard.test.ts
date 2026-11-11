@@ -104,7 +104,7 @@ describe.skipIf(!HAS_GITLEAKS)("leak guard", () => {
   test("real ids of every kind are flagged, including ones a loose fake pattern would pass", () => {
     const { repo, env } = makeRepo();
     // letters-then-digits user ids, team/bot ids and a legacy id without the leading 0
-    for (const id of ["U0ABCDE" + "FG12", "U0ABCDE" + "FGH1", "T07AB12" + "CD3E", "B07AB12" + "CD3E", "U024B" + "E7LH"]) {
+    for (const id of ["U0ABCDE" + "FG12", "U0ABCDE" + "FGH1", "T07AB12" + "CD3E", "B07AB12" + "CD3E", "U025C" + "F8MJ"]) {
       writeFileSync(join(repo, "id.txt"), `const id = '${id}';\n`);
       const r = sh(repo, "bin/leak-scan.sh dir id.txt --no-banner --redact -v", env);
       expect(r.out).toContain("slack-real-looking-id");
@@ -173,6 +173,58 @@ describe.skipIf(!HAS_GITLEAKS)("leak guard", () => {
     const r = sh(repo, "bin/leak-scan.sh dir a.txt --no-banner", { ...env, LEAK_NAMES_REQUIRED: "true", LEAK_NAMES_TOML: "" });
     expect(r.code).not.toBe(0);
     expect(r.out).toContain("required");
+  });
+
+  test("the commit-message allowlists cover whole lines only, in messages and files", () => {
+    const { repo, env } = makeRepo();
+    const org = EMP.toLowerCase() + "hub";
+    for (const line of [`Merge pull request #1 from ${org}/x : our ${EMP} customer list`, `${EMP} plan, copyright holder is ${EMP}`]) {
+      writeFileSync(join(repo, "f.txt"), `${line}\n`);
+      expect(sh(repo, "bin/leak-scan.sh dir f.txt --no-banner --redact -v", env).out).toContain("employer-name");
+      const r = sh(repo, `git checkout -q main && git checkout -qB x && git commit -q --allow-empty -m "${line}" --no-verify && LEAK_SCAN_RANGE=main..x bin/leak-scan.sh meta --no-banner --redact -v`, env);
+      expect(r.out).toContain("employer-name");
+    }
+    const exact = sh(repo, `git checkout -q main && git checkout -qB y && git commit -q --allow-empty -m "Merge pull request #2 from ${org}/feat/x" --no-verify && LEAK_SCAN_RANGE=main..y bin/leak-scan.sh meta --no-banner --redact -v`, env);
+    expect(exact.out).toContain("no leaks found");
+  });
+
+  test("no file is exempt by path: an edited example names file or a config comment is still scanned", () => {
+    const { repo, env } = makeRepo();
+    mkdirSync(join(repo, "docs"), { recursive: true });
+    cpSync(join(ROOT, "docs", "leak-names.example.toml"), join(repo, "docs", "leak-names.example.toml"));
+    const line = `# owner U07AB12${"CD3E"} at ${EMP}\n`;
+    writeFileSync(join(repo, "docs", "leak-names.example.toml"), line, { flag: "a" });
+    const ex = sh(repo, "bin/leak-scan.sh dir docs/leak-names.example.toml --no-banner --redact -v", env);
+    expect(ex.out).toContain("slack-real-looking-id");
+    expect(ex.out).toContain("employer-name");
+    // gitleaks' default allowlist skips .gitleaks.toml, so the meta scan reads its added lines
+    writeFileSync(join(repo, ".gitleaks.toml"), line, { flag: "a" });
+    const cfg = sh(repo, "git checkout -qb c && git commit -qam cfg --no-verify && LEAK_SCAN_RANGE=main..c bin/leak-scan.sh meta --no-banner --redact -v", env);
+    expect(cfg.out).toContain("slack-real-looking-id");
+    expect(cfg.out).toContain("employer-name");
+    // the config's own pattern lines stay allowed
+    expect(sh(repo, "git checkout -qb d main", env).code).toBe(0);
+    writeFileSync(join(repo, ".gitleaks.toml"), `\n[[rules]]\nid = "extra"\nregex = '''(?i)${EMP} extra'''\nkeywords = ["${EMP.toLowerCase()}"]\n`, { flag: "a" });
+    const ok = sh(repo, "git commit -qam pat --no-verify && LEAK_SCAN_RANGE=main..d bin/leak-scan.sh meta --no-banner --redact -v", env);
+    expect(ok.out).toContain("no leaks found");
+  });
+
+  test("a non-ASCII file path is scanned as written, not octal-quoted", () => {
+    const { repo, env } = makeRepo();
+    const names = join(repo, "..", "names.toml");
+    writeFileSync(names, `[[rules]]\nid = "private-names"\nregex = '''(?i)renée roe'''\n`);
+    const r = sh(repo, `git checkout -qb u && mkdir -p notes && echo a > "notes/renée roe.md" && git add notes && git commit -qm notes --no-verify && LEAK_SCAN_RANGE=main..u bin/leak-scan.sh meta --no-banner --redact -v`, { ...env, LEAK_NAMES_FILE: names });
+    expect(r.out).toContain("private-names");
+  });
+
+  test("a required names source with no [[rules]] regex fails", () => {
+    const { repo, env } = makeRepo();
+    writeFileSync(join(repo, "a.txt"), "hello\n");
+    for (const toml of [" ", "\n\n", "regex = '''(?i)jane doe'''\n"]) {
+      const r = sh(repo, "bin/leak-scan.sh dir a.txt --no-banner", { ...env, LEAK_NAMES_REQUIRED: "true", LEAK_NAMES_TOML: toml });
+      expect(r.code).not.toBe(0);
+      expect(r.out).toContain("no [[rules]] with a regex");
+    }
   });
 
   test("pre-push skips with a warning when gitleaks is missing", () => {

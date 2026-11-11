@@ -8,13 +8,15 @@ title = "jarvis leak guard"
 useDefault = true
 
 [allowlist]
-description = "this config names the patterns it hunts"
-paths = ['''^\.gitleaks\.toml$''', '''^docs/leak-names\.example\.toml$''']
+description = "known fake secrets in tests"
+# no path is exempt here. gitleaks' own default allowlist skips this file, so
+# bin/leak-scan.sh meta scans its added lines itself, minus the pattern lines
 # the known fake secrets in tests, by value, so a history rewrite (new SHAs) does
 # not break the scan the way .gitleaksignore fingerprints do: the RFC 6238 seed,
-# a made-up DASHBOARD_TOKEN and a made-up xoxb fed to the redactor
+# a made-up DASHBOARD_TOKEN, a made-up xoxb fed to the redactor and the user id
+# Slack's own API docs use as their example
 regexTarget = "match"
-regexes = ['''GEZDGNBVGY3TQOJQ''', '''0123456789abcdef0123456789abcdef''', '''xoxb-123456789012-abcdefghijkl''']
+regexes = ['''GEZDGNBVGY3TQOJQ''', '''0123456789abcdef0123456789abcdef''', '''xoxb-123456789012-abcdefghijkl''', '''^U024BE7LH$''']
 
 # (a) Slack ids that look real: user/channel/DM/group/workspace/team/bot/app/
 # enterprise ids (U C D G W T B A E), a digit, then 7-10 more upper-case chars.
@@ -46,6 +48,6 @@ keywords = ["momos"]
   regexes = ['''Copyright 2026 Momos\b''']
 
   [[rules.allowlists]]
-  description = "commit messages: GitHub's own merge line names the org the repo lives in (the repo URL already shows it), and the commit that set the copyright holder says so"
+  description = "commit messages: GitHub's own merge line names the org the repo lives in (the repo URL already shows it), and the commit that set the copyright holder says so. Whole lines only, so extra text on the line is still flagged"
   regexTarget = "line"
-  regexes = ['''\bMerge pull request #[0-9]+ from momoshub/''', '''(?i)\bcopyright holder(:| is) Momos$''']
+  regexes = ['''(?m)^Merge pull request #[0-9]+ from momoshub/[A-Za-z0-9._/-]+$''', '''(?m)^(?:Copyright holder: Momos|docs: copyright holder is Momos)$''']

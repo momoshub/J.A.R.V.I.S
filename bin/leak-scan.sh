@@ -3,7 +3,7 @@
 # Usage:
 #   bin/leak-scan.sh <gitleaks args...>        e.g. bin/leak-scan.sh git . --no-banner
 #   bin/leak-scan.sh meta <gitleaks args...>   scan what `gitleaks git` never sees: the
-#     commit messages and file paths of the commits selected by $LEAK_SCAN_RANGE
+#     commit messages, file paths and .gitleaks.toml lines added by the commits selected by $LEAK_SCAN_RANGE
 #     (rev-list args, word-split) and the messages of the tag objects in $LEAK_SCAN_TAGS
 # Names rule source, first found: $LEAK_NAMES_TOML (content, used by CI), then
 # $LEAK_NAMES_FILE or ~/.jarvis/leak-names.toml. Absent: a notice and the rest still
@@ -20,6 +20,16 @@ if [ -n "${LEAK_NAMES_TOML:-}" ]; then
   names="$tmp/names.toml"
 fi
 cfg="$root/.gitleaks.toml"
+# a names source with no [[rules]] table carrying a regex (whitespace, a bare
+# `regex = ...` that would land under [extend]) loads no names rule at all
+if [ -f "$names" ] && ! awk '/^[[:space:]]*\[\[rules\]\]/ { r = 1 } r && /^[[:space:]]*regex[[:space:]]*=/ { ok = 1 } END { exit !ok }' "$names"; then
+  if [ "${LEAK_NAMES_REQUIRED:-}" = "true" ]; then
+    echo "leak-scan: the names rule is required here but its source has no [[rules]] with a regex" >&2
+    exit 1
+  fi
+  echo "leak-scan: the names file ($names) has no [[rules]] with a regex; the private names rule is skipped" >&2
+  names=/nonexistent
+fi
 if [ -f "$names" ]; then
   { printf '[extend]\npath = "%s"\n\n' "$cfg"; cat "$names"; } > "$tmp/config.toml"
   cfg="$tmp/config.toml"
@@ -36,7 +46,11 @@ if [ "${1:-}" = "meta" ]; then
   {
     if [ -n "${LEAK_SCAN_RANGE:-}" ]; then
       git log --format=%B $LEAK_SCAN_RANGE --
-      git log --name-only --format= $LEAK_SCAN_RANGE --
+      git -c core.quotePath=false log --name-only --format= $LEAK_SCAN_RANGE --
+      # gitleaks' default allowlist skips .gitleaks.toml, so its added lines are
+      # scanned here, minus the pattern lines that have to spell out what they hunt
+      git log -p --format= $LEAK_SCAN_RANGE -- .gitleaks.toml |
+        grep -E '^\+' | grep -vE '^\+\+\+ |^\+[[:space:]]*(regex|regexes|keywords)[[:space:]]*=' | cut -c2- || true
     fi
     for t in ${LEAK_SCAN_TAGS:-}; do
       [ "$(git cat-file -t "$t")" = tag ] && git cat-file tag "$t" | sed '1,/^$/d'
