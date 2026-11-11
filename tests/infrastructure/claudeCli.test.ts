@@ -261,6 +261,23 @@ describe("createClaudeCliLlm", () => {
     expect(out).not.toContain("--mcp-config");
   });
 
+  test("a host-login spawn drops a connector switch-off inherited from the parent env", async () => {
+    // the host process can itself run inside a bot turn, which sets it to false
+    const prev = process.env.ENABLE_CLAUDEAI_MCP_SERVERS;
+    process.env.ENABLE_CLAUDEAI_MCP_SERVERS = "false";
+    try {
+      const bin = fakeBin(
+        `#!/usr/bin/env bash\ncat > /dev/null\necho "{\\"type\\":\\"result\\",\\"subtype\\":\\"success\\",\\"is_error\\":false,\\"result\\":\\"[$ENABLE_CLAUDEAI_MCP_SERVERS]\\"}"`,
+      );
+      const llm = createClaudeCliLlm({ binPath: bin });
+      expect(await llm.complete({ system: "s", messages: [{ role: "user", content: "hi" }], useHostLogin: true })).toBe("[]");
+      expect(await llm.complete({ system: "s", messages: [{ role: "user", content: "hi" }] })).toBe("[false]");
+    } finally {
+      if (prev === undefined) delete process.env.ENABLE_CLAUDEAI_MCP_SERVERS;
+      else process.env.ENABLE_CLAUDEAI_MCP_SERVERS = prev;
+    }
+  });
+
   test("an unreadable host config leaves MCP config alone instead of loading nothing", async () => {
     const bin = fakeBin(
       `#!/usr/bin/env bash\ncat > /dev/null\necho "{\\"type\\":\\"result\\",\\"subtype\\":\\"success\\",\\"is_error\\":false,\\"result\\":\\"[$ENABLE_CLAUDEAI_MCP_SERVERS][$*]\\"}"`,
