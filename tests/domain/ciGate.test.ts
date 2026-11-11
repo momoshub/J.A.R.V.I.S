@@ -51,6 +51,18 @@ describe("ciStatusOf", () => {
     expect(ciStatusOf([{ context: "ci/x", state: "SUCCESS" }]).verdict).toBe("green");
   });
 
+  test("a superseded run does not count: the newest run of each check wins", () => {
+    const old = { name: "checks", workflowName: "CI", status: "COMPLETED", conclusion: "CANCELLED", startedAt: "2026-11-11T10:00:00Z" };
+    const skipped = { name: "checks", workflowName: "CI", status: "COMPLETED", conclusion: "SKIPPED", startedAt: "2026-11-11T10:05:00Z" };
+    const fresh = { name: "checks", workflowName: "CI", status: "COMPLETED", conclusion: "SUCCESS", startedAt: "2026-11-11T10:10:00Z" };
+    expect(ciStatusOf([old, skipped, fresh]).verdict).toBe("green");
+    expect(ciStatusOf([fresh, old]).verdict).toBe("green"); // order of listing does not matter
+    // and the other way round: the newest run failing is red even with an older pass
+    expect(ciStatusOf([{ ...old, conclusion: "SUCCESS" }, { ...fresh, conclusion: "FAILURE" }])).toEqual({ verdict: "red", failed: ["checks"] });
+    // the same name in another workflow is another check
+    expect(ciStatusOf([fresh, { ...old, workflowName: "Other" }]).verdict).toBe("red");
+  });
+
   test("garbage entries never throw and never read as a failure", () => {
     expect(ciStatusOf([{ name: 5, status: null, conclusion: {} }]).verdict).toBe("green");
   });

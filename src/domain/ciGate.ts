@@ -32,6 +32,9 @@ export type RollupEntry = {
   readonly status?: unknown;
   readonly conclusion?: unknown;
   readonly state?: unknown;
+  readonly workflowName?: unknown;
+  readonly startedAt?: unknown;
+  readonly completedAt?: unknown;
 };
 
 const FAILED_CONCLUSIONS = new Set(["FAILURE", "TIMED_OUT", "CANCELLED", "ACTION_REQUIRED", "STARTUP_FAILURE"]);
@@ -40,16 +43,35 @@ const PENDING_STATES = new Set(["PENDING", "EXPECTED"]);
 
 const upper = (v: unknown): string => (typeof v === "string" ? v.toUpperCase() : "");
 
+const stamp = (e: RollupEntry): string =>
+  typeof e.startedAt === "string" ? e.startedAt : typeof e.completedAt === "string" ? e.completedAt : "";
+
+/**
+ * The rollup lists every run on the head commit, including ones a later run
+ * replaced (a cancelled run beside the re-run that passed). Only the newest
+ * entry of each check (workflow + name) counts; on a tie the later one listed.
+ */
+const latestPerCheck = (rollup: readonly RollupEntry[]): RollupEntry[] => {
+  const newest = new Map<string, RollupEntry>();
+  rollup.forEach((e, i) => {
+    const name = typeof e.name === "string" && e.name ? e.name : typeof e.context === "string" ? e.context : `#${i}`;
+    const key = `${typeof e.workflowName === "string" ? e.workflowName : ""}|${name}`;
+    const seen = newest.get(key);
+    if (!seen || stamp(e) >= stamp(seen)) newest.set(key, e);
+  });
+  return [...newest.values()];
+};
+
 /**
  * Classify a rollup. A check run carries `status` + `conclusion`, a commit
  * status carries `state`. Failed beats running: a PR with one red check and
  * ten still going is red already, and waiting for the rest only delays the
  * news. A skipped, neutral or stale check is not a failure.
  */
-export const ciStatusOf = (rollup: readonly RollupEntry[]): CiStatus => {
+export const ciStatusOf = (all: readonly RollupEntry[]): CiStatus => {
   const failed: string[] = [];
   let running = false;
-  for (const e of rollup) {
+  for (const e of latestPerCheck(all)) {
     const name = typeof e.name === "string" && e.name ? e.name : typeof e.context === "string" ? e.context : "check";
     const conclusion = upper(e.conclusion);
     const status = upper(e.status);
