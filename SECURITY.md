@@ -10,4 +10,4 @@ If you spot a leaked secret, personal data or an internal name in the repo or it
 
 Contributions are scanned by gitleaks in CI and, when you enable the local hook with `bun run hooks`, before every push. See "Keeping private data out of the repo" in the README. Use made-up values in tests and examples.
 
-Commit author, committer and tagger identities (names and emails, work addresses included) are not scanned: they are public on any git host, and the existing history keeps them as an accepted exception rather than being rewritten.
+Commit author, committer and tagger identities and `Co-authored-by`/`Signed-off-by` trailers (names and emails, work addresses included) are not scanned: they are public on any git host, and the existing history keeps them as an accepted exception rather than being rewritten.

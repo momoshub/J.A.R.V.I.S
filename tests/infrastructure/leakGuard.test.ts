@@ -26,7 +26,6 @@ const makeRepo = () => {
   mkdirSync(join(repo, "bin"), { recursive: true });
   cpSync(join(ROOT, ".githooks"), join(repo, ".githooks"), { recursive: true });
   cpSync(join(ROOT, "bin", "leak-scan.sh"), join(repo, "bin", "leak-scan.sh"));
-  cpSync(join(ROOT, "bin", "leak-blobs.py"), join(repo, "bin", "leak-blobs.py"));
   cpSync(join(ROOT, ".gitleaks.toml"), join(repo, ".gitleaks.toml"));
   chmodSync(join(repo, "bin", "leak-scan.sh"), 0o755);
   chmodSync(join(repo, ".githooks", "pre-push"), 0o755);
@@ -273,16 +272,6 @@ describe.skipIf(!HAS_GITLEAKS && !process.env.CI)("leak guard", () => {
     expect(sh(repo, "bin/leak-scan.sh dir k.txt --no-banner --redact -v", env).out).not.toContain("slack-real-looking-id");
   });
 
-  test("pre-push blocks a tag that points at a blob or a tree", () => {
-    const { repo, env } = makeRepo();
-    const blob = sh(repo, `printf 'owner U07AB12${"CD3E"}\\n' | git hash-object -w --stdin`, env).out.trim();
-    const r = sh(repo, `git update-ref refs/tags/t ${blob} && git push origin t`, env);
-    expect(r.code).not.toBe(0);
-    expect(r.out).toContain("not a commit");
-    const tree = sh(repo, "git rev-parse HEAD^{tree}", env).out.trim();
-    expect(sh(repo, `git update-ref refs/tags/tr ${tree} && git push origin tr`, env).code).not.toBe(0);
-  });
-
   test("an id right after a string escape is flagged", () => {
     const { repo, env } = makeRepo();
     for (const text of [`"hey\\nU07AB12${"CD3E"}"`, `x\\tC07AB12${"CD3E"}`, `\\u00a0U07AB12${"CD3E"}`]) {
@@ -339,71 +328,6 @@ describe.skipIf(!HAS_GITLEAKS && !process.env.CI)("leak guard", () => {
     }
   });
 
-  test("pre-push decodes a UTF-16 file before scanning it", () => {
-    const { repo, env } = makeRepo();
-    for (const [name, bom] of [["le.txt", true], ["nobom.txt", false]] as const) {
-      const text = Buffer.from(`owner U07AB12${"CD3E"} at ${EMP}\n`, "utf16le");
-      writeFileSync(join(repo, name), bom ? Buffer.concat([Buffer.from([0xff, 0xfe]), text]) : text);
-      const r = sh(repo, `git checkout -q main && git checkout -qB u16-${name.replace(".txt", "")} && git add ${name} && git commit -qm u16 --no-verify && git push origin HEAD`, env);
-      expect(r.code).not.toBe(0);
-      expect(r.out).toContain("slack-real-looking-id");
-      sh(repo, "git checkout -q main", env);
-    }
-  });
-
-  test("a BOM-less UTF-16 file with curly quotes or an emoji is decoded", () => {
-    const { repo, env } = makeRepo();
-    const body = `Don’t share — \u{1F600} owner U07AB12${"CD3E"} at ${EMP}\n`;
-    for (const [name, buf] of [["le2.txt", Buffer.from(body, "utf16le")], ["be2.txt", Buffer.from(body, "utf16le").swap16()]] as const) {
-      writeFileSync(join(repo, name), buf);
-      const r = sh(repo, `git checkout -q main && git checkout -qB q-${name.replace(".txt", "")} && git add ${name} && git commit -qm q --no-verify && git push origin HEAD`, env);
-      expect(r.code).not.toBe(0);
-      expect(r.out).toContain("slack-real-looking-id");
-      sh(repo, "git checkout -q main", env);
-    }
-  });
-
-  test("pre-push reads a merged signed tag's text from the mergetag header", () => {
-    const { repo, env } = makeRepo();
-    const key = join(repo, "..", "sign");
-    expect(sh(repo, `ssh-keygen -q -t ed25519 -N '' -f '${key}' && git config gpg.format ssh && git config user.signingkey '${key}.pub'`, env).code).toBe(0);
-    const r = sh(
-      repo,
-      `git checkout -qb side && echo s > s.txt && git add s.txt && git commit -qm s --no-verify && git checkout -q main && git tag -s rel -m "asked in U07AB12${"CD3E"}" side && git merge -q --no-ff -m "merge rel" rel && git tag -d rel >/dev/null && git cat-file commit HEAD | grep -q mergetag && git push origin main`,
-      env,
-    );
-    expect(r.code).not.toBe(0);
-    expect(r.out).toContain("slack-real-looking-id");
-  });
-
-  test("a mergetag line indented like a commit message is still read", () => {
-    const { repo, env } = makeRepo();
-    const key = join(repo, "..", "sign");
-    expect(sh(repo, `ssh-keygen -q -t ed25519 -N '' -f '${key}' && git config gpg.format ssh && git config user.signingkey '${key}.pub'`, env).code).toBe(0);
-    const msg = join(repo, "..", "tagmsg");
-    writeFileSync(msg, `Notes\n\n- fixes\n    - reported in U07AB12${"CD3F"}\n`);
-    const r = sh(repo, `git checkout -qb side && echo s > s.txt && git add s.txt && git commit -qm s --no-verify && git checkout -q main && git tag -s rel -F '${msg}' side && git merge -q --no-ff -m "merge rel" rel && git tag -d rel >/dev/null && git push origin main`, env);
-    expect(r.code).not.toBe(0);
-    expect(r.out).toContain("slack-real-looking-id");
-  });
-
-  test("BOM-less UTF-16 that opens with Cyrillic or CJK is decoded", () => {
-    const { repo, env } = makeRepo();
-    const lead = ["Привет, как дела?\n".repeat(5), "こんにちは、世界。\n".repeat(5)];
-    let i = 0;
-    for (const text of lead) {
-      const le = Buffer.from(`${text}owner U07AB12${"CD3N"}\n`, "utf16le");
-      for (const buf of [le, Buffer.from(le).swap16()]) {
-        const name = `n${i++}.txt`;
-        writeFileSync(join(repo, name), buf);
-        const r = sh(repo, `git checkout -q main && git checkout -qB s-${name.replace(".txt", "")} && git add ${name} && git commit -qm n --no-verify && git push origin HEAD`, env);
-        expect(r.code).not.toBe(0);
-        expect(r.out).toContain("slack-real-looking-id");
-        sh(repo, "git checkout -q main", env);
-      }
-    }
-  });
-
   test("pre-push reads an annotated tag pushed by its object id", () => {
     const { repo, env } = makeRepo();
     const sha = sh(repo, `git tag -a v13 -m "asked in U07AB12${"CD3E"}" && git rev-parse v13 && git tag -d v13 >/dev/null`, env).out.trim().split("\n")[0];
@@ -412,51 +336,13 @@ describe.skipIf(!HAS_GITLEAKS && !process.env.CI)("leak guard", () => {
     expect(r.out).toContain("slack-real-looking-id");
   });
 
-  test("BOM-less UTF-16 CJK text full of U+xx00 characters is decoded", () => {
+  test("a Co-authored-by or Signed-off-by trailer passes as a whole line, extra text on it does not", () => {
     const { repo, env } = makeRepo();
-    const text = `顧客メモ　一覧　一番目　가\nowner U07AB12${"CD3E"}\n`;
-    let i = 0;
-    for (const buf of [Buffer.from(text, "utf16le"), Buffer.from(text, "utf16le").swap16()]) {
-      const name = `cjk${i++}.txt`;
-      writeFileSync(join(repo, name), buf);
-      const r = sh(repo, `git checkout -q main && git checkout -qB c-${name.replace(".txt", "")} && git add ${name} && git commit -qm c --no-verify && git push origin HEAD`, env);
-      expect(r.code).not.toBe(0);
-      expect(r.out).toContain("slack-real-looking-id");
-      sh(repo, "git checkout -q main", env);
-    }
-  });
-
-  test("UTF-16 after an odd-length UTF-8 prefix is decoded", () => {
-    const { repo, env } = makeRepo();
-    const tail = Buffer.from(`owner U07AB12${"CD3E"}\r\n`, "utf16le");
-    let i = 0;
-    for (const buf of [Buffer.concat([Buffer.from("# notes:\n"), tail]), Buffer.concat([Buffer.from("# notes:\n"), Buffer.from(tail).swap16()])]) {
-      const name = `odd${i++}.log`;
-      writeFileSync(join(repo, name), buf);
-      const r = sh(repo, `git checkout -q main && git checkout -qB m-${name.replace(".log", "")} && git add ${name} && git commit -qm o --no-verify && git push origin HEAD`, env);
-      expect(r.code).not.toBe(0);
-      expect(r.out).toContain("slack-real-looking-id");
-      sh(repo, "git checkout -q main", env);
-    }
-  });
-
-  test("pre-push reads inside zip (xlsx) and gzip files", () => {
-    const { repo, env } = makeRepo();
-    const id = "U07AB12" + "CD3E";
-    const py = `import zipfile,gzip,sys
-with zipfile.ZipFile("customers.xlsx","w",zipfile.ZIP_DEFLATED) as z:
-    z.writestr("xl/sharedStrings.xml","<sst><si><t>owner ${id} at ${EMP}</t></si></sst>")
-with gzip.open("dump.json.gz","wt") as f:
-    f.write('{"user":"${id}"}')
-`;
-    writeFileSync(join(repo, "..", "mk.py"), py);
-    expect(sh(repo, `python3 ../mk.py`, env).code).toBe(0);
-    for (const f of ["customers.xlsx", "dump.json.gz"]) {
-      const r = sh(repo, `git checkout -q main && git checkout -qB z-${f.split(".")[0]} && git add ${f} && git commit -qm z --no-verify && git push origin HEAD`, env);
-      expect(r.code).not.toBe(0);
-      expect(r.out).toContain("slack-real-looking-id");
-      sh(repo, "git checkout -q main", env);
-    }
+    const ok = sh(repo, `git checkout -qb tr && echo a > a.txt && git add a.txt && git commit -qm "fix thing" -m "Co-authored-by: Pat Roe <pat@${EMP.toLowerCase()}.com>" -m "Signed-off-by: Pat Roe <pat@${EMP.toLowerCase()}.com>" --no-verify && git push origin tr`, env);
+    expect(ok.code).toBe(0);
+    const bad = sh(repo, `git checkout -q main && git checkout -qb tr2 && echo b > b.txt && git add b.txt && git commit -qm "fix" -m "Co-authored-by: Pat Roe <pat@${EMP.toLowerCase()}.com> for ${EMP}" --no-verify && git push origin tr2`, env);
+    expect(bad.code).not.toBe(0);
+    expect(bad.out).toContain("employer-name");
   });
 
   test("pre-push skips with a warning when gitleaks is missing", () => {

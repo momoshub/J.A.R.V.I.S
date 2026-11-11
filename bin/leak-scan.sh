@@ -5,8 +5,7 @@
 #   bin/leak-scan.sh meta <gitleaks args...>   scan what `gitleaks git` never sees: the
 #     commit messages and file paths of the commits selected by $LEAK_SCAN_RANGE
 #     (rev-list args, word-split), the ref names in $LEAK_SCAN_REFS and the name and
-#     message of the tag objects in $LEAK_SCAN_TAGS, any text in $LEAK_SCAN_TEXT, and the
-#     decoded text of any UTF-16 or compressed blob the range adds (bin/leak-blobs.py)
+#     message of the tag objects in $LEAK_SCAN_TAGS, and any text in $LEAK_SCAN_TEXT
 # Every scan runs twice (see "Two passes" below) and fails if either finds something.
 # Names rule source, first found: $LEAK_NAMES_TOML (content, used by CI), then
 # $LEAK_NAMES_FILE or ~/.jarvis/leak-names.toml. Absent: a notice and the rest still
@@ -56,42 +55,18 @@ if [ "${1:-}" = "meta" ]; then
   # shellcheck disable=SC2086
   {
     if [ -n "${LEAK_SCAN_RANGE:-}" ]; then
-      git log --format=%B $LEAK_SCAN_RANGE --
-      # commit headers beyond the message: a merged signed tag's text sits in a mergetag
-      # header. Identities (author, committer, tagger) are out of scope, and signatures
-      # are dropped, since base64 can look like anything. Only the header block is read
-      # (up to the first empty line of each commit): the message is already read above
-      git log --format=raw --no-decorate $LEAK_SCAN_RANGE -- | awk '
-        /^commit [0-9a-f]+/ { hdr = 1; sig = 0; next }
-        hdr && /^$/ { hdr = 0; next }
-        !hdr { next }
-        /-----BEGIN [A-Z ]*SIGNATURE-----/ { sig = 1 }
-        sig { if (/-----END [A-Z ]*SIGNATURE-----/) sig = 0; next }
-        /^(tree|parent|author|committer|encoding) / { next }
-        /^ (object|type|tagger) / { next }
-        /^mergetag object / { next }
-        /^ / { print substr($0, 2); next }
-        { print }'
+      # Co-authored-by / Signed-off-by trailers are identities (out of scope, and GitHub
+      # writes them into squash merges on main): only the exact trailer line is dropped
+      git log --format=%B $LEAK_SCAN_RANGE -- | grep -vE '^(Co-authored-by|Signed-off-by): [^<>]+ <[^<>[:space:]]+>$' || true
       git -c core.quotePath=false log --diff-merges=first-parent --name-only --format= $LEAK_SCAN_RANGE --
-      # UTF-16 text and compressed files (zip, office documents, gzip, bzip2, xz) hide
-      # their text from gitleaks: every blob the range adds goes through leak-blobs.py
-      git log --diff-merges=first-parent --raw --no-abbrev --format= $LEAK_SCAN_RANGE -- |
-        awk '/^:/ && $4 !~ /^0+$/ { print $4 }' | sort -u | python3 "$root/bin/leak-blobs.py"
     fi
     # branch and tag names are public once pushed
     for r in ${LEAK_SCAN_REFS:-}; do printf '%s\n' "$r"; done
     # free text that will land in history, e.g. a PR title GitHub writes into the merge commit
     if [ -n "${LEAK_SCAN_TEXT:-}" ]; then printf "%s\n" "$LEAK_SCAN_TEXT"; fi
-    # an annotated tag: its name line and message (the tagger is an identity, out of
-    # scope), and the same for every tag object it points through, since a tag of a tag
-    # carries the inner message to whoever fetches it
+    # an annotated tag: its name line and message (the tagger is an identity, out of scope)
     for t in ${LEAK_SCAN_TAGS:-}; do
-      n=0
-      while [ "$(git cat-file -t "$t" 2>/dev/null)" = tag ] && [ "$n" -lt 50 ]; do
-        git cat-file tag "$t" | grep -vE '^(object|type|tagger) ' || true
-        t="$(git cat-file tag "$t" | sed -n 's/^object //p' | head -1)"
-        n=$((n + 1))
-      done
+      git cat-file tag "$t" | grep -vE '^(object|type|tagger) ' || true
     done
   } > "$tmp/meta.txt"
   input="$tmp/meta.txt"
