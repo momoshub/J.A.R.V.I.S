@@ -60,4 +60,4 @@ keywords = ["momos"]
   condition = "AND"
   paths = ['''^\.gitleaks\.toml$''']
   regexTarget = "line"
-  regexes = ['''(?m)^\s*(?:regex|regexes|keywords)\s*=\s*\[?\s*(?:'{3}[^'\n]*'{3}|"[^"\n]*")(?:\s*,\s*(?:'{3}[^'\n]*'{3}|"[^"\n]*"))*\s*\]?\s*$''']
+  regexes = ['''(?m)^\s*(?:regex|regexes|keywords)\s*=\s*\[?\s*(?:'{3}.*?'{3}|"[^"\n]*")(?:\s*,\s*(?:'{3}.*?'{3}|"[^"\n]*"))*\s*\]?\s*$''']
