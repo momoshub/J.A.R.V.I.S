@@ -61,7 +61,7 @@ if [ "${1:-}" = "meta" ]; then
       # UTF-16 text reads as bytes with NULs between characters, so no rule matches it:
       # every blob the range adds is checked and a UTF-16 one is fed in decoded
       git log --diff-merges=first-parent --raw --no-abbrev --format= $LEAK_SCAN_RANGE -- |
-        awk '/^:/ { print $4 }' | grep -v '^0*$' | sort -u | python3 "$root/bin/leak-utf16.py"
+        awk '/^:/ && $4 !~ /^0+$/ { print $4 }' | sort -u | python3 "$root/bin/leak-utf16.py"
     fi
     # branch and tag names are public once pushed
     for r in ${LEAK_SCAN_REFS:-}; do printf '%s\n' "$r"; done
