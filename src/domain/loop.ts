@@ -34,13 +34,17 @@ export const LOOP_ACTION_PREFIX = "jv:loop:";
 export const LOOP_APPROVE_ACTION = `${LOOP_ACTION_PREFIX}approve`;
 export const LOOP_REJECT_ACTION = `${LOOP_ACTION_PREFIX}reject`;
 
+/** Slack reads `<url|label>`, `<!channel>`, `<@U…>` and `&…;` even inside a code fence, so the shell is shown escaped. */
+const escapeForSlack = (text: string): string =>
+  text.replaceAll("&", "&amp;").replaceAll("<", "&lt;").replaceAll(">", "&gt;");
+
 /** The approval DM: the exact shell and schedule, so what is approved is what runs. */
 export const approvalText = (id: number, schedule: string, command: string, ttlMs: number = PENDING_TTL_MS): string =>
   [
     `🔐 I wrote a script loop (#${id}) and it needs your OK before it ever runs.`,
     `schedule: ${schedule}`,
     "command (runs as me, with no turn):",
-    `\`\`\`${command.replaceAll("```", "'''")}\`\`\``,
+    `\`\`\`${escapeForSlack(command.replaceAll("```", "'''"))}\`\`\``,
     `Approve starts it, Reject deletes it. No answer in ${Math.round(ttlMs / 3_600_000)}h also deletes it.`,
   ].join("\n");
 

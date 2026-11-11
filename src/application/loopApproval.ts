@@ -96,17 +96,26 @@ export const proposeScriptLoop = async (
 
 export type LoopPressOutcome =
   | { kind: "approved" | "rejected"; id: number }
-  | { kind: "refused" }
+  | { kind: "refused" | "forged" }
   | { kind: "expired" | "decided" | "unknown" };
 
-/** An Approve or Reject press. Only the owner counts. */
+/**
+ * An Approve or Reject press. Only the owner counts, and only on the approval
+ * DM this loop was posted with, never edited since: a turn can post its own
+ * `jv:loop:approve` button anywhere, and `chat.update` its own DM to show a
+ * different command than the one stored.
+ */
 export const decideLoop = async (
   deps: LoopApprovalDeps,
-  press: { slackUserId: string; actionId: string; value: string },
+  press: { slackUserId: string; actionId: string; value: string; channel?: string; messageTs?: string; edited?: boolean },
 ): Promise<LoopPressOutcome> => {
   if (press.actionId !== LOOP_APPROVE_ACTION && press.actionId !== LOOP_REJECT_ACTION) return { kind: "unknown" };
   const l = deps.loops.get(Number(press.value));
   if (!l || !l.command) return { kind: "unknown" };
+  if (!l.noticeChannel || !l.noticeTs || press.channel !== l.noticeChannel || press.messageTs !== l.noticeTs || press.edited) {
+    deps.log?.(`loop ${l.id} press refused: not the untouched approval DM`);
+    return { kind: "forged" };
+  }
   if (press.slackUserId !== deps.ownerSlackId) return { kind: "refused" };
   if (l.state !== "pending") return { kind: "decided" };
   const now = deps.clock();

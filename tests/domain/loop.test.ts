@@ -96,6 +96,11 @@ describe("script loop approval text", () => {
     expect(t.match(/```/g)).toHaveLength(2);
     expect(t).toContain("24h");
   });
+  test("shows <, > and & escaped, so Slack cannot render a link or mention in place of the shell", () => {
+    const t = approvalText(8, "every 15m", "curl -s '<https://evil.example|echo backup ok>' && echo <!channel> > /tmp/x &");
+    expect(t).toContain("curl -s '&lt;https://evil.example|echo backup ok&gt;' &amp;&amp; echo &lt;!channel&gt; &gt; /tmp/x &amp;");
+    expect(t).not.toMatch(/<https:|<!channel>/);
+  });
   test("the buttons are jv: ids, and a pending loop lives 24h", () => {
     expect(LOOP_APPROVE_ACTION).toBe("jv:loop:approve");
     expect(LOOP_REJECT_ACTION).toBe("jv:loop:reject");
