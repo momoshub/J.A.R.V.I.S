@@ -351,6 +351,31 @@ describe.skipIf(!HAS_GITLEAKS && !process.env.CI)("leak guard", () => {
     }
   });
 
+  test("a BOM-less UTF-16 file with curly quotes or an emoji is decoded", () => {
+    const { repo, env } = makeRepo();
+    const body = `Don’t share — \u{1F600} owner U07AB12${"CD3E"} at ${EMP}\n`;
+    for (const [name, buf] of [["le2.txt", Buffer.from(body, "utf16le")], ["be2.txt", Buffer.from(body, "utf16le").swap16()]] as const) {
+      writeFileSync(join(repo, name), buf);
+      const r = sh(repo, `git checkout -q main && git checkout -qB q-${name.replace(".txt", "")} && git add ${name} && git commit -qm q --no-verify && git push origin HEAD`, env);
+      expect(r.code).not.toBe(0);
+      expect(r.out).toContain("slack-real-looking-id");
+      sh(repo, "git checkout -q main", env);
+    }
+  });
+
+  test("pre-push reads a merged signed tag's text from the mergetag header", () => {
+    const { repo, env } = makeRepo();
+    const key = join(repo, "..", "sign");
+    expect(sh(repo, `ssh-keygen -q -t ed25519 -N '' -f '${key}' && git config gpg.format ssh && git config user.signingkey '${key}.pub'`, env).code).toBe(0);
+    const r = sh(
+      repo,
+      `git checkout -qb side && echo s > s.txt && git add s.txt && git commit -qm s --no-verify && git checkout -q main && git tag -s rel -m "asked in U07AB12${"CD3E"}" side && git merge -q --no-ff -m "merge rel" rel && git tag -d rel >/dev/null && git cat-file commit HEAD | grep -q mergetag && git push origin main`,
+      env,
+    );
+    expect(r.code).not.toBe(0);
+    expect(r.out).toContain("slack-real-looking-id");
+  });
+
   test("pre-push skips with a warning when gitleaks is missing", () => {
     const { repo, env } = makeRepo();
     const r = sh(repo, `PATH=/usr/bin:/bin git push origin main`, env);
