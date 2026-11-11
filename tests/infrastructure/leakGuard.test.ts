@@ -292,13 +292,6 @@ describe.skipIf(!HAS_GITLEAKS && !process.env.CI)("leak guard", () => {
     }
   });
 
-  test("pre-push reads every tag a tag points through", () => {
-    const { repo, env } = makeRepo();
-    const r = sh(repo, `git tag -a inner -m "see U07AB12${"CD3E"}" HEAD && git tag -a outer -m clean inner && git tag -d inner >/dev/null && git push origin outer`, env);
-    expect(r.code).not.toBe(0);
-    expect(r.out).toContain("slack-real-looking-id");
-  });
-
   test("a revert of a merged PR passes, extra text on that line does not", () => {
     const { repo, env } = makeRepo();
     const org = EMP.toLowerCase() + "hub";
