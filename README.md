@@ -807,6 +807,53 @@ In the `acme` org, every PR is committed and opened as the app
 (`git` + `push` + `pr-create` above); review comments and the merge are done as
 `kai-at-acme`.
 
+**Orca workers** outlive the turn that started them, and a turn's ticket is
+gone after 20 minutes, so a worker gets its own scoped one. In the turn (admin or
+owner, through the run helper; the command refuses anything that is not the
+brain's own run bridge, so a typed line, a schedule, an errand or the menu never
+mint one):
+
+```
+worker-ticket <owner/repo> pending [pr-create|comment|pr-edit|git|push|labels-add|reviewers-request ...] [--ttl 3h]
+worker-ticket bind <id> <ctx_...>      # after worker-start prints the dispatch id
+worker-ticket revoke <id|ctx_...>
+```
+
+The result holds `JARVIS_RUN_TICKET_FILE=<path>`, **never the token**: the token
+is written once to a mode-0600 file in a 0700 folder
+(`~/.config/jarvis/worker-tickets/<id>`) and the worker brief carries only the
+path, to `export` before `bin/github-app.sh` (the helper reads the first line of
+that file; the brain never reads, prints or posts it, and the file is deleted
+when the ticket ends). The ticket works for that one repo and those actions only
+(default `pr-create`, `comment`, `pr-edit`; never review, merge or close), cannot
+run any command, is checked against the minting person's role on every call,
+expires in 3 hours (max 6) and ends when the worker finishes or dies (the turn's
+`watch worker`), on `worker-ticket revoke`, or at expiry. Tickets are rows in
+`worker_tickets` (only the sha-256 of the token), so they survive a restart; a
+sweep at boot and every 5 minutes ends the expired ones. No new setting.
+
+**Pushing is not part of the default grant.** A worker pushes with the
+org's own one-shot human credential (the `kai-at-acme` of the rule above; where
+the app has Contents read-only it cannot push anyway); only the PR, comment and
+edit actions go through the app. `git` / `push` (the `git-auth` action) stay an
+explicit opt-in for an org where the app has Contents write. Its token is minted
+per ticket, never cached or shared, limited to that one repository and to
+`metadata: read` plus `contents` at the level the installation itself holds
+(asking for more than the installation has is a 422), so it cannot approve,
+merge, label or comment on its own. It is revoked at GitHub
+(`DELETE /installation/token`) when the ticket ends.
+
+What is still not covered, said plainly: the held GitHub token lives in the
+bot's memory, so after a bot restart the token minted before it can no longer be
+revoked and runs out on its own (at most 1h from its mint, one repository,
+contents/metadata only); a token the worker copied somewhere is only killed by
+the events above, and `watch worker` polls every 3 minutes, so a worker that
+dies is noticed up to that late; and the token file is protected by file mode and
+by the tool policy (pal and executer may not `Read` `~/.config/jarvis/**`), not
+by the OS: an Orca worker runs as the same host user as the bot, so any other
+process of that user, or a turn that reaches a shell, can read it for as long as
+the ticket lives.
+
 It only acts on owners in `GITHUB_APP_ALLOWED_OWNERS`. It posts to `/api/github-app/action` with the turn's ticket (from
 `JARVIS_RUN_TICKET`, never an argument); the bot resolves it to the person the
 turn runs as, refuses unless they are admin or owner, logs the call in the

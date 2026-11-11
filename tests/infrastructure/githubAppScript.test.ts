@@ -45,6 +45,14 @@ describe("github-app.sh", () => {
     });
   }, SLOW);
 
+  test("a worker reads its ticket from the file JARVIS_RUN_TICKET_FILE names, never from an argument", async () => {
+    const f = file("jvwk_fromfile\n");
+    const r = await run(["comment", "o/r", "5", file("hi")], { JARVIS_RUN_TICKET: "", JARVIS_RUN_TICKET_FILE: f });
+    expect(r.json()).toMatchObject({ ticket: "jvwk_fromfile", action: "comment" });
+    const none = await run(["comment", "o/r", "5", file("hi")], { JARVIS_RUN_TICKET: "", JARVIS_RUN_TICKET_FILE: "/nonexistent/x" });
+    expect(none.code).toBe(3);
+  }, SLOW);
+
   test("the other actions", async () => {
     expect((await run(["comment", "o/r", "5", file("hi")])).json()).toMatchObject({ action: "comment", number: 5, body: "hi" });
     expect((await run(["review", "o/r", "5", "APPROVE"])).json()).toMatchObject({ action: "review", event: "APPROVE" });

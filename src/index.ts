@@ -12,7 +12,7 @@ import { writeGuides } from "./infrastructure/system/guideWriter.ts";
 import { mkdirSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { tmpdir, userInfo } from "node:os";
-import { loadConfig, modelLabel, type AppConfig } from "./config/env.ts";
+import { loadConfig, modelLabel, WORKER_TICKET_DIR, type AppConfig } from "./config/env.ts";
 import { isSilenceNote } from "./domain/silence.ts";
 import { openDatabase } from "./infrastructure/db/client.ts";
 import { adoptDatabase } from "./infrastructure/db/location.ts";
@@ -119,6 +119,9 @@ import { createDashboard } from "./infrastructure/dashboard/server.ts";
 import { runForBrain } from "./application/brainRun.ts";
 import { dispatchCommand, isQuietCommand } from "./application/commands.ts";
 import { createCommandTickets, refusalMessage } from "./application/commandTickets.ts";
+import { createWorkerTickets, revokeOnWorkerEnd } from "./application/workerTickets.ts";
+import { createWorkerTicketRepo } from "./infrastructure/db/workerTicketRepo.ts";
+import { createWorkerTicketFiles } from "./infrastructure/system/workerTicketFiles.ts";
 import { createActivityLog } from "./infrastructure/logger.ts";
 import type { CommandLogRepo } from "./infrastructure/db/commandLogRepo.ts";
 import type { LlmPort, ToolTraceSink, UsageSink } from "./application/ports.ts";
@@ -175,6 +178,8 @@ const buildLlm = (
  * one never outlives the chat turn waiting on it.
  */
 const RUN_HANDOFF_MS = 20_000;
+/** How often expired worker tickets are ended (files deleted, GitHub tokens revoked). */
+const WORKER_TICKET_SWEEP_MS = 5 * 60_000;
 
 /**
  * How often the watcher looks for a due check. Slightly under the fastest
@@ -268,6 +273,15 @@ const main = async () => {
   // A query still `running` lost its process in the last restart.
   cloudwatchRepo.failRunning(Date.now());
   const commandTickets = createCommandTickets(() => Date.now(), undefined, config.commandTicketUses);
+  // Scoped GitHub App tickets for Orca workers; revoked when `watch worker` sees the worker end.
+  // Persisted by hash; the token itself is only ever in a 0600 file the brief names by path.
+  const workerTickets = createWorkerTickets(() => Date.now(), {
+    repo: createWorkerTicketRepo(db),
+    files: createWorkerTicketFiles(WORKER_TICKET_DIR),
+  });
+  // Tickets that expired while the bot was down: delete their files and rows now, and on a timer.
+  workerTickets.sweep();
+  setInterval(() => workerTickets.sweep(), WORKER_TICKET_SWEEP_MS).unref();
   const baseCommandLog = createCommandLogRepo(db);
   const commandLog: CommandLogRepo = {
     ...baseCommandLog,
@@ -516,6 +530,7 @@ const main = async () => {
     reminders,
     slackWaitScript,
     orcaWorkerWait,
+    workerTickets,
     workerUsage: {
       measure: (id) => measureWorker(id, { orca: createOrcaCli("orca", WORKER_USAGE_ORCA_TIMEOUT_MS) }),
       dispatchesOf: async (runId) =>
@@ -810,7 +825,8 @@ const main = async () => {
         const user = users.get(ctx.actor);
         if (!user) throw new Error("whoever asked is not on the access list");
 
-        const opts = { prefix: config.commandPrefix, slash: config.slashCommand, threadTs: ctx.threadTs };
+        // `fromBrainRun` is what lets `worker-ticket` mint: it exists only on this path, after a turn ticket redeemed.
+        const opts = { prefix: config.commandPrefix, slash: config.slashCommand, threadTs: ctx.threadTs, fromBrainRun: true };
         return runForBrain({
           quiet: isQuietCommand(line),
           start: (reply) => dispatchCommand(deps, user, ctx.channel, line, reply ? { ...opts, reply } : opts),
@@ -936,7 +952,12 @@ const main = async () => {
     mayRun: (id) => id === config.ownerSlackId || !!users.get(id),
     log: (msg) => console.error(`[watch] ${msg}`),
     // A `watch worker` that fired printed the worker's usage; keep it.
-    onFired: keepWorkerUsage(workerUsageRepo, orcaWorkerWait[1] ?? "", clock),
+    onFired: (w, output) => {
+      keepWorkerUsage(workerUsageRepo, orcaWorkerWait[1] ?? "", clock)(w, output);
+      // A worker that finished or died keeps no GitHub App ticket.
+      const n = revokeOnWorkerEnd(workerTickets, orcaWorkerWait[1] ?? "")(w, output);
+      if (n > 0) console.error(`[worker-ticket] revoked ${n} on worker end`);
+    },
     onError: onDbError,
   });
   // A worker's `orca orchestration ask` lands in the bot's own Orca terminal,
@@ -1047,11 +1068,16 @@ const main = async () => {
         if (!resolved.ok) throw new Error(refusalMessage(resolved.reason, resolved.limit));
         return { actor: resolved.ctx.actor, channel: resolved.ctx.channel };
       },
+      resolveWorker: workerTickets.redeem,
       users,
       github: appClient,
       audit: commandLog,
       allowedOwners: config.githubApp.allowedOwners,
       slug: config.githubApp.slug,
+    });
+    // A ticket that ends (revoked, worker done, expired) takes its GitHub token with it.
+    workerTickets.onEnd((id) => {
+      githubActions?.endWorker(id).catch((e: unknown) => console.error(`[worker-ticket] could not revoke the GitHub token of ${id}: ${String(e)}`));
     });
     app.recover();
     webhookServer = startWebhookServer({

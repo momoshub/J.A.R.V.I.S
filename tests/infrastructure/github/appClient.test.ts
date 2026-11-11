@@ -56,6 +56,66 @@ describe("createGithubAppClient", () => {
     expect(calls.length).toBe(2);
   });
 
+  describe("worker tokens", () => {
+    const setupWorker = (contents: unknown = "read", status = 200) => {
+      const calls: { url: string; method: string; auth: string; body?: string }[] = [];
+      const fetchFn: FetchLike = async (url, init) => {
+        const headers = init.headers as Record<string, string>;
+        calls.push({ url, method: String(init.method), auth: headers.Authorization ?? "", body: init.body as string | undefined });
+        if (url.endsWith("/app/installations/42")) return Response.json({ permissions: contents ? { contents, issues: "write" } : { issues: "write" } });
+        if (url.endsWith("/access_tokens")) {
+          return Response.json({ token: `ghs_${calls.length}`, expires_at: new Date(NOW + 3_600_000).toISOString() }, { status: 201 });
+        }
+        if (url.endsWith("/installation/token")) return new Response("", { status });
+        return Response.json({});
+      };
+      return { calls, client: createGithubAppClient({ appId: "1", privateKey, userAgent: "t", fetch: fetchFn, clock: () => NOW }) };
+    };
+    const bodyOf = (calls: { url: string; body?: string }[]) =>
+      JSON.parse(calls.find((c) => c.url.endsWith("/access_tokens"))?.body ?? "{}");
+
+    test("asks for one repository and only what git needs: metadata read plus the installation's own contents level", async () => {
+      const { client, calls } = setupWorker("read");
+      expect((await client.mintWorkerToken(42, "Acme/Repo")).token).toStartWith("ghs_");
+      expect(bodyOf(calls)).toEqual({ repositories: ["Repo"], permissions: { contents: "read", metadata: "read" } });
+    });
+
+    test("never asks for more contents than the installation has, and never for issues or pull_requests", async () => {
+      const read = setupWorker("read");
+      await read.client.mintWorkerToken(42, "a/b");
+      expect(bodyOf(read.calls).permissions.contents).toBe("read");
+      const write = setupWorker("write");
+      await write.client.mintWorkerToken(42, "a/b");
+      expect(Object.keys(bodyOf(write.calls).permissions).sort()).toEqual(["contents", "metadata"]);
+      expect(bodyOf(write.calls).permissions.contents).toBe("write");
+    });
+
+    test("an installation with no contents permission is a plain error, not a 422", async () => {
+      const { client, calls } = setupWorker(null);
+      await expect(client.mintWorkerToken(42, "a/b")).rejects.toThrow("no contents permission");
+      expect(calls.some((c) => c.url.endsWith("/access_tokens"))).toBe(false);
+    });
+
+    test("is minted fresh every time, never cached or shared", async () => {
+      const { client, calls } = setupWorker("read");
+      const a = await client.mintWorkerToken(42, "a/b");
+      const b = await client.mintWorkerToken(42, "a/b");
+      expect(a.token).not.toBe(b.token);
+      expect(calls.filter((c) => c.url.endsWith("/access_tokens")).length).toBe(2);
+    });
+
+    test("revoking DELETEs /installation/token with that very token; an already-dead one is fine", async () => {
+      const { client, calls } = setupWorker("read");
+      await client.revokeInstallationToken("ghs_x");
+      expect(calls[0]).toMatchObject({ url: "https://api.github.com/installation/token", method: "DELETE", auth: "Bearer ghs_x" });
+      await client.revokeInstallationToken("ghs_dead");
+      const gone = setupWorker("read", 401);
+      await gone.client.revokeInstallationToken("ghs_dead");
+      const broken = setupWorker("read", 500);
+      await expect(broken.client.revokeInstallationToken("ghs_y")).rejects.toThrow("500");
+    });
+  });
+
   test("comments and reacts with the installation token", async () => {
     const { client, calls } = setup();
     const url = await client.comment(42, "o/r", 1, "hello");

@@ -17,6 +17,7 @@ import {
   menuRunActionId,
 } from "../domain/commandMenu.ts";
 import { SIGNATURES } from "../domain/messageFooter.ts";
+import { redactSecrets } from "../domain/toolVisibility.ts";
 import { allowanceFor, holdForApproval, type CommandLimitDeps } from "./commandLimits.ts";
 import { isTimeout } from "../domain/threadSession.ts";
 import { asksForHelp, commandHelp } from "../domain/commandHelp.ts";
@@ -193,6 +194,13 @@ export type DispatchOptions = {
   preApproved?: boolean;
   /** Destination sink for progress + direct results (thread or DM). */
   reply?: (text: string) => Promise<void>;
+  /**
+   * Set ONLY by the brain's run bridge (`/api/commands/run`, after it redeemed a
+   * turn ticket). Commands that hand a credential to the brain (`worker-ticket`)
+   * refuse without it, so a schedule, an errand, the command menu or a typed line
+   * can never be the caller.
+   */
+  fromBrainRun?: boolean;
 };
 
 /** Run a command line (e.g. "add @U1 admin") on behalf of `actor`. */
@@ -216,7 +224,11 @@ export const dispatchCommand = async (
   const args = rest.length ? rest.split(/\s+/) : [];
 
   const log = (command: string, ok: boolean, result: string) =>
-    deps.commandLog?.add({ slackUserId: actor.slackId, command, args: rest, channelId, ok, result }, deps.clock());
+    // A result may carry a credential the brain has to see (`worker-ticket`); the log never does.
+    deps.commandLog?.add(
+      { slackUserId: actor.slackId, command, args: rest, channelId, ok, result: redactSecrets(result) },
+      deps.clock(),
+    );
 
   const command = unnamedReview ? byName.get("review") : byName.get(name);
   if (!command) {
@@ -291,6 +303,7 @@ export const dispatchCommand = async (
       prefix,
       slash,
       reply: opts.reply,
+      fromBrainRun: opts.fromBrainRun === true,
       trivialCommands: TRIVIAL_COMMANDS,
     });
     log(command.name, true, result);

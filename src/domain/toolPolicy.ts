@@ -242,6 +242,8 @@ export const sandboxDisallow = (dbServers: readonly string[]): readonly string[]
   ...ORCA_DENY,
   "Write", "Edit", "MultiEdit", "NotebookEdit",
   "Bash(aws secretsmanager:*)", "Bash(aws ssm get-parameter:*)", "Bash(aws kms:*)",
+  // The bot's own config dir: the GitHub App's key and the worker ticket files (the bearer token of an Orca worker).
+  "Read(~/.config/jarvis/**)",
   ...dbServerTools(dbServers),
 ];
 

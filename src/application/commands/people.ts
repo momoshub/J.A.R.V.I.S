@@ -4,6 +4,8 @@ import { validateRemoval, validateRoleChange } from "../../domain/access.ts";
 import type { UserRole } from "../../domain/types.ts";
 import { spendReport } from "../../domain/spendReport.ts";
 import { workerCostReport } from "../workerCost.ts";
+import { humanDuration } from "../../domain/watch.ts";
+import { parseWorkerTicketArgs } from "../../domain/workerTicket.ts";
 import { type Context, type CommandDef, slackIdOf, roleOf, parseWindow, recordsOf } from "./shared.ts";
 import { logAndIgnore } from "../ignoredError.ts";
 
@@ -78,6 +80,59 @@ export const PEOPLE_COMMANDS: readonly CommandDef[] = [
       const target = args[0] ?? "";
       if (!target) return `\`${prefix} worker-cost <ctx_...|run_...>\``;
       return workerCostReport(target, deps.workerUsage, deps.clock());
+    },
+  },
+  {
+    name: "worker-ticket",
+    aliases: ["wticket"],
+    // Same gate as acting as the app (`mayActAsApp`): the ticket can never carry more than its minter has.
+    minRole: "admin",
+    usage: "<owner/repo> <ctx_...|pending> [pr-create|comment|pr-edit|git|push|labels-add|reviewers-request ...] [--ttl 3h] | bind <id> <ctx_...> | revoke <id|ctx_...>",
+    summary: "mint a scoped GitHub App ticket for an Orca worker (one repo, a few actions, hours, revoked when it ends)",
+    // The token goes back to the brain and nowhere else.
+    quiet: true,
+    run: ({ deps, actor, args, prefix, fromBrainRun, channelId, threadTs }) => {
+      const tickets = deps.workerTickets;
+      if (!tickets) return "I cannot mint worker tickets here.";
+      const sub = (args[0] ?? "").toLowerCase();
+
+      if (sub === "bind") {
+        const [, id = "", dispatch = ""] = args;
+        if (!id || !/^ctx_[A-Za-z0-9_-]+$/.test(dispatch)) return `\`${prefix} worker-ticket bind <id> <ctx_...>\``;
+        const r = tickets.bind(id, actor.slackId, dispatch);
+        return r.ok ? `Ticket ${id} is bound to ${dispatch}; it now works until that worker ends or its TTL runs out.` : r.error;
+      }
+      if (sub === "revoke") {
+        const target = args[1] ?? "";
+        if (!target) return `\`${prefix} worker-ticket revoke <id|ctx_...>\``;
+        const n = target.startsWith("ctx_") ? tickets.revoke(target) : tickets.revokeId(target, actor.slackId) ? 1 : 0;
+        return n > 0 ? `Revoked ${n} worker ticket${n === 1 ? "" : "s"} for ${target}.` : `No live worker ticket for ${target}.`;
+      }
+
+      // Positive gate: only the brain's own run bridge (a turn ticket at /api/commands/run) may mint (bind and revoke only ever narrow, so anyone allowed may use them).
+      // A schedule, an errand, the command menu or a typed line has no such marker.
+      if (!fromBrainRun) return "I only mint a worker ticket for my own turn, never from a typed line, a schedule or a menu. Ask me for the work and I will mint it myself.";
+      const parsed = parseWorkerTicketArgs(args);
+      if (!parsed.ok) return `${parsed.error}. \`${prefix} worker-ticket <owner/repo> <ctx_...|pending> [actions...] [--ttl 3h]\``;
+      const { req, clamped } = parsed;
+      const { id, file } = tickets.issue({
+        actor: actor.slackId,
+        channel: channelId,
+        threadTs,
+        repo: req.repo,
+        actions: req.actions,
+        ttlMs: req.ttlMs,
+      });
+      const bound = req.dispatchId === "pending" ? undefined : tickets.bind(id, actor.slackId, req.dispatchId);
+      if (bound && !bound.ok) return bound.error;
+      return [
+        `JARVIS_RUN_TICKET_FILE=${file}`,
+        `Worker ticket ${id} for ${req.repo}: ${req.actions.join(", ")}; good for ${humanDuration(req.ttlMs)}${clamped ? " (capped)" : ""} from ${bound ? "now" : "the bind"}, revoked when the worker ends.`,
+        bound
+          ? `Bound to ${req.dispatchId}.`
+          : `Not usable yet: after worker-start prints its dispatch id, run \`${prefix} worker-ticket bind ${id} <ctx_...>\` (pending tickets lapse in 10 minutes).`,
+        "The token is in that file (mode 0600), not here. Put ONLY the path in the worker's brief, to export as JARVIS_RUN_TICKET_FILE before bin/github-app.sh; never read or print the file. It cannot run commands, other repos or other actions, and the file is deleted when the worker ends. Pushing is not part of it: the worker pushes with the one-shot human credential.",
+      ].join("\n");
     },
   },
   {

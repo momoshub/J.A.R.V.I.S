@@ -32,6 +32,18 @@ const opts = {
   executerDbServers: EXEC_DB_NAMES,
 };
 
+describe("the bot's config dir (GitHub App key, worker ticket files)", () => {
+  test("pal and executer cannot Read it; owner and admin are not restricted", () => {
+    expect(SANDBOX_DISALLOW).toContain("Read(~/.config/jarvis/**)");
+    for (const role of ["pal", "executer"] as const) {
+      expect(toolPolicyFor(role, opts).disallowedTools).toContain("Read(~/.config/jarvis/**)");
+    }
+    for (const role of ["owner", "admin"] as const) {
+      expect(toolPolicyFor(role, opts).disallowedTools ?? []).not.toContain("Read(~/.config/jarvis/**)");
+    }
+  });
+});
+
 describe("toolPolicyFor", () => {
   test("owner and admin run unsandboxed in the working directory", () => {
     for (const role of ["owner", "admin"] as const) {

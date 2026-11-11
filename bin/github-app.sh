@@ -30,8 +30,9 @@
 # cherry-picked commit keeps its original author (add --reset-author to
 # change it).
 #
-# The ticket comes from JARVIS_RUN_TICKET in this process's environment, never
-# from an argument. The bot resolves it to whoever this turn runs as and only
+# The ticket comes from JARVIS_RUN_TICKET in this process's environment (or, for
+# an Orca worker, from the file JARVIS_RUN_TICKET_FILE names), never from an
+# argument. The bot resolves it to whoever this turn runs as and only
 # acts if that person is an admin or the owner. The app's private key never
 # reaches the turn; the bot holds it. (For a plain answer on the issue a GitHub
 # call came from, github-app-comment.sh needs no role.)
@@ -46,6 +47,11 @@ if [ "$#" -lt 2 ]; then
 fi
 
 ticket=${JARVIS_RUN_TICKET:-}
+# An Orca worker is handed the PATH of a 0600 file holding its worker ticket,
+# never the token: the path is all a brief or spec ever contains.
+if [ -z "$ticket" ] && [ -n "${JARVIS_RUN_TICKET_FILE:-}" ]; then
+  ticket=$(head -n 1 "$JARVIS_RUN_TICKET_FILE" 2>/dev/null | tr -d '[:space:]')
+fi
 if [ -z "$ticket" ]; then
   echo "no ticket in this turn's environment - I cannot act on GitHub here" >&2
   exit 3
