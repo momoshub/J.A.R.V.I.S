@@ -400,12 +400,15 @@ const connectorArgs = (config: ClaudeCliConfig, policy?: ToolPolicy, useHostLogi
  *
  * `useHostLogin` REMOVES the token rather than merely omitting it: the bot's own
  * credential is in `process.env`, so leaving it there would win and the run
- * would once again have no connectors.
+ * would once again have no connectors. The same goes for an inherited
+ * `ENABLE_CLAUDEAI_MCP_SERVERS=false`.
  */
 const hostLoginEnv = (oauthToken?: string, useHostLogin?: boolean): Record<string, string | undefined> => {
   const env: Record<string, string | undefined> = { ...process.env, IS_SANDBOX: "1" };
   if (useHostLogin) {
     delete env.CLAUDE_CODE_OAUTH_TOKEN;
+    // a parent that is itself a bot turn carries the connector switch-off; drop it too
+    delete env.ENABLE_CLAUDEAI_MCP_SERVERS;
     return env;
   }
   // The account's claude.ai connectors are never wanted in a bot turn.
