@@ -197,6 +197,72 @@ describe("decideAccessRequest", () => {
   });
 });
 
+describe("decideAccessRequest replay", () => {
+  const notice = { channel: `D-${OWNER}`, ts: "notice-1" };
+  const asking = { ...who, text: "yes rồi bro @Jarvis, ".repeat(30), messageTs: "100.2" };
+
+  test("✅ replays the whole original message once, and drops the canned line", async () => {
+    const { deps, posts } = build();
+    await requestAccess(deps, asking, "nope");
+    const replayed: { text: string; messageTs: string; threadTs: string; channelId: string }[] = [];
+    const replay = async (r: { text: string; messageTs: string; threadTs: string; channelId: string }) => {
+      replayed.push(r);
+    };
+
+    const out = await decideAccessRequest(deps, { slackUserId: OWNER, reaction: "white_check_mark", ...notice }, replay);
+    // a second reaction (same or another emoji) must not replay it again
+    await decideAccessRequest(deps, { slackUserId: OWNER, reaction: "white_check_mark", ...notice }, replay);
+    await decideAccessRequest(deps, { slackUserId: OWNER, reaction: "heavy_check_mark", ...notice }, replay);
+
+    expect(out).toMatchObject({ kind: "approved", replayed: true });
+    expect(replayed).toHaveLength(1);
+    expect(replayed[0]).toMatchObject({ text: asking.text, messageTs: "100.2", threadTs: "100.1", channelId: "C1" });
+    expect(replayed[0]!.text.length).toBeGreaterThan(200); // not the clipped excerpt
+    expect(deps.users.get(STRANGER)?.role).toBe(GRANTED_ROLE); // allowed before the replay runs
+    expect(posts.some((p) => p.channel === "C1")).toBe(false);
+  });
+
+  test("❌ does not replay", async () => {
+    const { deps, posts } = build();
+    await requestAccess(deps, asking, "nope");
+    let calls = 0;
+    const out = await decideAccessRequest(deps, { slackUserId: OWNER, reaction: "x", ...notice }, async () => {
+      calls += 1;
+    });
+
+    expect(out.kind).toBe("rejected");
+    expect(calls).toBe(0);
+    expect(posts.find((p) => p.channel === "C1")?.text).toContain("said no");
+  });
+
+  test("a failing replay falls back to the old line and still approves", async () => {
+    const { deps, posts } = build();
+    await requestAccess(deps, asking, "nope");
+    const out = await decideAccessRequest(deps, { slackUserId: OWNER, reaction: "white_check_mark", ...notice }, async () => {
+      throw new Error("slack down");
+    });
+
+    expect(out).toMatchObject({ kind: "approved", replayed: false });
+    expect(deps.users.get(STRANGER)?.role).toBe(GRANTED_ROLE);
+    expect(posts.find((p) => p.channel === "C1")?.text).toContain("you are in");
+  });
+
+  test("with no replay wired, the old line is posted", async () => {
+    const { deps, posts } = build();
+    await requestAccess(deps, asking, "nope");
+    await decideAccessRequest(deps, { slackUserId: OWNER, reaction: "white_check_mark", ...notice });
+    expect(posts.find((p) => p.channel === "C1")?.text).toContain("you are in");
+  });
+
+  test("a message without a ts is stored with an empty one, so old and tsless rows read the same", async () => {
+    const { deps } = build();
+    await requestAccess(deps, who, "nope");
+    const stored = deps.accessRequests.pendingFor(STRANGER);
+    expect(stored?.messageTs).toBe("");
+    expect(stored?.text).toBe(who.text);
+  });
+});
+
 describe("a stranger speaking", () => {
   test("gets the request flow rather than the old refusal, and is answered once approved", async () => {
     const { deps, posts } = build();

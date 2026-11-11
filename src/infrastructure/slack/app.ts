@@ -12,7 +12,7 @@
 import { App } from "@slack/bolt";
 import type { WebClient } from "@slack/web-api";
 import { respond, type RespondDeps } from "../../application/respond.ts";
-import { decideAccessRequest } from "../../application/accessRequests.ts";
+import { decideAccessRequest, type ReplayRequest } from "../../application/accessRequests.ts";
 import { actOnMessageReaction, messageActionFor } from "../../application/messageReactions.ts";
 import { APPROVE_ACTION, decideCommandApproval, REJECT_ACTION } from "../../application/commandLimits.ts";
 import { decideCloudwatch } from "../../application/cloudwatch.ts";
@@ -1346,7 +1346,7 @@ export const createSlackApp = (config: SlackAppConfig, deps: Deps) => {
   // TODO(split): move reaction handlers to src/infrastructure/slack/reactionHandlers.ts
   // The owner reacting on an access-request notice decides it; the owner
   // reacting on one of the bot's messages moves or deletes it.
-  app.event("reaction_added", async ({ event }) => {
+  app.event("reaction_added", async ({ event, client, context }) => {
     const e = event as {
       user?: string;
       reaction?: string;
@@ -1382,14 +1382,39 @@ export const createSlackApp = (config: SlackAppConfig, deps: Deps) => {
       log(`follow-off reaction failed: ${err instanceof Error ? err.message : String(err)}`);
     }
     try {
-      const outcome = await decideAccessRequest(deps, {
-        slackUserId: e.user,
-        reaction: e.reaction,
-        channel: e.item.channel,
-        ts: e.item.ts,
-      });
+      // An approved person's original message is answered through the same
+      // intake an allowed user's message takes, fetched by ts so it is the
+      // whole text and not the excerpt the owner was shown.
+      const replay: ReplayRequest = async (req) => {
+        const original = req.messageTs ? await deps.slack?.lookup?.(req.channelId, req.messageTs) : undefined;
+        if (original?.userId && original.userId !== req.slackUserId) throw new Error("original message is not theirs");
+        const text = original?.text.trim() || req.text;
+        if (!text) throw new Error("nothing stored to answer");
+        const messageTs = req.messageTs || syntheticTs();
+        await handle({
+          channelId: req.channelId,
+          userId: req.slackUserId,
+          teamId: context.teamId,
+          text,
+          threadTs: req.threadTs || messageTs,
+          messageTs,
+          client: asClient(client),
+          say: (m) =>
+            client.chat.postMessage({
+              channel: req.channelId,
+              text: m.text,
+              thread_ts: m.thread_ts ?? (req.threadTs || messageTs),
+              ...(m.blocks ? { blocks: m.blocks } : {}),
+            }),
+        });
+      };
+      const outcome = await decideAccessRequest(
+        deps,
+        { slackUserId: e.user, reaction: e.reaction, channel: e.item.channel, ts: e.item.ts },
+        replay,
+      );
       if (outcome.kind !== "ignored") {
-        log(`access ${outcome.kind} for ${outcome.request.slackUserId}`);
+        log(`access ${outcome.kind} for ${outcome.request.slackUserId}${outcome.kind === "approved" ? (outcome.replayed ? ", original message answered" : ", replay fell back to the ack") : ""}`);
       }
     } catch (err) {
       log(`access request failed: ${err instanceof Error ? err.message : String(err)}`);

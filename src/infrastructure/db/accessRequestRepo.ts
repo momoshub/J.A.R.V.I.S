@@ -16,6 +16,8 @@ type Row = {
   channel_id: string;
   thread_ts: string;
   asked: string;
+  text: string;
+  message_ts: string;
   notice_channel: string;
   notice_ts: string;
   status: string;
@@ -30,6 +32,8 @@ const toRequest = (row: Row): AccessRequest => ({
   channelId: row.channel_id,
   threadTs: row.thread_ts,
   asked: row.asked,
+  text: row.text ?? "",
+  messageTs: row.message_ts ?? "",
   noticeChannel: row.notice_channel,
   noticeTs: row.notice_ts,
   status: row.status === "pending" ? "pending" : row.status === "approved" ? "approved" : "rejected",
@@ -43,6 +47,8 @@ export type NewAccessRequest = {
   channelId: string;
   threadTs: string;
   asked: string;
+  text?: string;
+  messageTs?: string;
 };
 
 export type AccessRequestRepo = {
@@ -67,8 +73,8 @@ export type AccessRequestRepo = {
 
 export const createAccessRequestRepo = (db: DbClient): AccessRequestRepo => {
   const insertStmt = db.query(
-    `INSERT INTO access_requests (slack_user_id, display_name, channel_id, thread_ts, asked, status, created_at)
-     VALUES ($slackUserId, $displayName, $channelId, $threadTs, $asked, 'pending', $at)
+    `INSERT INTO access_requests (slack_user_id, display_name, channel_id, thread_ts, asked, text, message_ts, status, created_at)
+     VALUES ($slackUserId, $displayName, $channelId, $threadTs, $asked, $text, $messageTs, 'pending', $at)
      RETURNING *`,
   );
   const pendingStmt = db.query<Row, [string]>(
@@ -102,6 +108,8 @@ export const createAccessRequestRepo = (db: DbClient): AccessRequestRepo => {
           $channelId: req.channelId,
           $threadTs: req.threadTs,
           $asked: req.asked,
+          $text: req.text ?? "",
+          $messageTs: req.messageTs ?? "",
           $at: at,
         }) as Row,
       ),

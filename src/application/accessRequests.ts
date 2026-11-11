@@ -3,8 +3,9 @@
  *
  * Someone the bot does not know used to get a flat "you are not on my access
  * list". Now the owner is asked: they get a DM with who spoke and what they
- * said, and their reaction decides it. ✅ adds the person as `pal` and tells
- * them where they asked; ❌ declines, in the same place.
+ * said, and their reaction decides it. ✅ adds the person as `pal` and then
+ * answers what they asked, as a normal turn, where they asked it (a short
+ * ack stands in if that cannot be done); ❌ declines, in the same place.
  *
  * The request lives in the database, so the owner can take their time and a
  * restart does not strand anyone waiting.
@@ -54,6 +55,8 @@ export type Requester = {
   channelId: string;
   threadTs?: string;
   text: string;
+  /** Slack ts of the message, so approval can answer the original. */
+  messageTs?: string;
 };
 
 /** The owner plus every admin, owner first, without repeats. */
@@ -108,6 +111,8 @@ export const requestAccess = async (
       channelId: who.channelId,
       threadTs: who.threadTs ?? "",
       asked: clip(who.text),
+      text: who.text,
+      messageTs: who.messageTs ?? "",
     },
     deps.clock(),
   );
@@ -138,8 +143,15 @@ export type ReactionOnNotice = {
   ts: string;
 };
 
+/**
+ * Answer the message an approved person asked, as the turn it would have been
+ * had they been on the list. Throws when it cannot - the caller falls back to
+ * the plain "you are in" line.
+ */
+export type ReplayRequest = (request: AccessRequest) => Promise<void>;
+
 export type AccessDecision =
-  | { kind: "approved"; request: AccessRequest }
+  | { kind: "approved"; request: AccessRequest; replayed: boolean }
   | { kind: "rejected"; request: AccessRequest }
   | { kind: "ignored" };
 
@@ -151,6 +163,7 @@ export type AccessDecision =
 export const decideAccessRequest = async (
   deps: AccessRequestDeps,
   event: ReactionOnNotice,
+  replay?: ReplayRequest,
 ): Promise<AccessDecision> => {
   if (!deps.accessRequests || !deps.slack) return { kind: "ignored" };
   // The owner always counts, even before they are in the allowlist.
@@ -195,11 +208,24 @@ export const decideAccessRequest = async (
       .catch(logAndIgnore("access request decision notice"));
   }
 
-  const toThem = approve
-    ? `<@${request.slackUserId}> you are in ✅ ask me anything.`
-    : `<@${request.slackUserId}> sorry, the owner said no this time.`;
-  await deps.slack
-    .post(request.channelId, toThem, request.threadTs || undefined)
-    .catch(logAndIgnore("access request reply to requester"));
-  return { kind: approve ? "approved" : "rejected", request };
+  // The real answer is the welcome: run what they asked, and say nothing else.
+  // Decided and granted above, so a failure here can only fall back, never undo.
+  let replayed = false;
+  if (approve && replay) {
+    try {
+      await replay(request);
+      replayed = true;
+    } catch (err) {
+      logAndIgnore("access request replay")(err);
+    }
+  }
+  if (!replayed) {
+    const toThem = approve
+      ? `<@${request.slackUserId}> you are in ✅ ask me anything.`
+      : `<@${request.slackUserId}> sorry, the owner said no this time.`;
+    await deps.slack
+      .post(request.channelId, toThem, request.threadTs || undefined)
+      .catch(logAndIgnore("access request reply to requester"));
+  }
+  return approve ? { kind: "approved", request, replayed } : { kind: "rejected", request };
 };
