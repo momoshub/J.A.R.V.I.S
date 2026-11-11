@@ -26,6 +26,7 @@ const makeRepo = () => {
   mkdirSync(join(repo, "bin"), { recursive: true });
   cpSync(join(ROOT, ".githooks"), join(repo, ".githooks"), { recursive: true });
   cpSync(join(ROOT, "bin", "leak-scan.sh"), join(repo, "bin", "leak-scan.sh"));
+  cpSync(join(ROOT, "bin", "leak-utf16.py"), join(repo, "bin", "leak-utf16.py"));
   cpSync(join(ROOT, ".gitleaks.toml"), join(repo, ".gitleaks.toml"));
   chmodSync(join(repo, "bin", "leak-scan.sh"), 0o755);
   chmodSync(join(repo, ".githooks", "pre-push"), 0o755);
@@ -328,6 +329,26 @@ describe.skipIf(!HAS_GITLEAKS && !process.env.CI)("leak guard", () => {
       expect(r.out).toContain(rule);
     }
     expect(sh(repo, "bin/leak-scan.sh meta --no-banner --redact -v", { ...env, LEAK_SCAN_TEXT: "leak guard: scan ref names" }).out).toContain("no leaks found");
+  });
+
+  test("user group and file ids are flagged", () => {
+    const { repo, env } = makeRepo();
+    for (const text of [`Hey <!subteam^S07AB12${"CD3E"}> please`, `file F07AB12${"CD3E"} uploaded`]) {
+      writeFileSync(join(repo, "s.txt"), `${text}\n`);
+      expect(sh(repo, "bin/leak-scan.sh dir s.txt --no-banner --redact -v", env).out).toContain("slack-real-looking-id");
+    }
+  });
+
+  test("pre-push decodes a UTF-16 file before scanning it", () => {
+    const { repo, env } = makeRepo();
+    for (const [name, bom] of [["le.txt", true], ["nobom.txt", false]] as const) {
+      const text = Buffer.from(`owner U07AB12${"CD3E"} at ${EMP}\n`, "utf16le");
+      writeFileSync(join(repo, name), bom ? Buffer.concat([Buffer.from([0xff, 0xfe]), text]) : text);
+      const r = sh(repo, `git checkout -q main && git checkout -qB u16-${name.replace(".txt", "")} && git add ${name} && git commit -qm u16 --no-verify && git push origin HEAD`, env);
+      expect(r.code).not.toBe(0);
+      expect(r.out).toContain("slack-real-looking-id");
+      sh(repo, "git checkout -q main", env);
+    }
   });
 
   test("pre-push skips with a warning when gitleaks is missing", () => {

@@ -5,7 +5,8 @@
 #   bin/leak-scan.sh meta <gitleaks args...>   scan what `gitleaks git` never sees: the
 #     commit messages and file paths of the commits selected by $LEAK_SCAN_RANGE
 #     (rev-list args, word-split), the ref names in $LEAK_SCAN_REFS and the name and
-#     message of the tag objects in $LEAK_SCAN_TAGS, and any text in $LEAK_SCAN_TEXT
+#     message of the tag objects in $LEAK_SCAN_TAGS, any text in $LEAK_SCAN_TEXT, and the
+#     decoded text of any UTF-16 blob the range adds (bin/leak-utf16.py)
 # Every scan runs twice (see "Two passes" below) and fails if either finds something.
 # Names rule source, first found: $LEAK_NAMES_TOML (content, used by CI), then
 # $LEAK_NAMES_FILE or ~/.jarvis/leak-names.toml. Absent: a notice and the rest still
@@ -57,6 +58,10 @@ if [ "${1:-}" = "meta" ]; then
     if [ -n "${LEAK_SCAN_RANGE:-}" ]; then
       git log --format=%B $LEAK_SCAN_RANGE --
       git -c core.quotePath=false log --diff-merges=first-parent --name-only --format= $LEAK_SCAN_RANGE --
+      # UTF-16 text reads as bytes with NULs between characters, so no rule matches it:
+      # every blob the range adds is checked and a UTF-16 one is fed in decoded
+      git log --diff-merges=first-parent --raw --no-abbrev --format= $LEAK_SCAN_RANGE -- |
+        awk '/^:/ { print $4 }' | grep -v '^0*$' | sort -u | python3 "$root/bin/leak-utf16.py"
     fi
     # branch and tag names are public once pushed
     for r in ${LEAK_SCAN_REFS:-}; do printf '%s\n' "$r"; done
