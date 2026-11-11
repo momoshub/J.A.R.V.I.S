@@ -230,3 +230,23 @@ describe("reviewHelp", () => {
     expect(h).toContain("non-blocking findings are never posted, and never become an issue");
   });
 });
+
+describe("red CI in the prompt", () => {
+  test("a PR whose change request is already in skips flow B's first step", () => {
+    const p = reviewPrompt([PR], "Jarvis", undefined, [], 3, undefined, [], [PR]);
+    expect(p).toContain("change request ALREADY submitted");
+    expect(p).toContain("skip (a) and post only the comment");
+  });
+
+  test("nothing about it appears when CI was not red", () => {
+    expect(reviewPrompt([PR], "Jarvis")).not.toContain("ALREADY submitted");
+    expect(reviewPrompt([PR], "Jarvis", undefined, [], 3, undefined, [], [])).not.toContain("ALREADY submitted");
+  });
+
+  test("the help says CI comes first and what the watcher does", () => {
+    const help = reviewHelp("//bot", false, 3, "Jarvis");
+    expect(help).toContain("CI first");
+    expect(help).toContain("watcher");
+    expect(help).toContain("never while CI is red");
+  });
+});

@@ -28,6 +28,12 @@ export const REQUEST_CHANGES_BODY = "requested changes";
  * What the model should believe about approvals, per the policy each repo is
  * on. Never let it think an approval exists that does not.
  */
+/** Red CI: the change request is already in, so flow B starts at its comment. */
+const ciNote = (urls: readonly string[]): string =>
+  urls.length === 0
+    ? ""
+    : `   CI IS RED, change request ALREADY submitted (by me, before you started) on: ${urls.join(" ")}. For those, skip (a) and post only the comment, as flow B. The failing check is a known blocker: name it in the comment and review the rest.\n`;
+
 const approvalState = (prUrls: readonly string[], approved: readonly string[]): string => {
   const pending = prUrls.filter((u) => !approved.includes(u));
   if (pending.length === 0) {
@@ -138,6 +144,8 @@ export const reviewPrompt = (
   note?: string,
   /** Owners whose PRs also get non-blocking findings (`REVIEW_EXTENDED_OWNERS`). */
   extendedOwners: readonly string[] = [],
+  /** Which of `prUrls` already have a change request, submitted because their CI is red. */
+  changesRequested: readonly string[] = [],
 ): string => {
   const many = prUrls.length > 1;
   const extended = prUrls.filter((u) => isExtendedOwnerPr(u, extendedOwners));
@@ -175,7 +183,7 @@ For EACH PR, in order:
    FLOW B, something blocking, in this order:
      a) gh pr review <url> --request-changes --body "${REQUEST_CHANGES_BODY}"   (this fixed marker, nothing else)
      b) then the review comment, which carries everything: gh pr comment <url> --body "<comment>"
-   The change request is a state flip, not a place to write: never state a blocker in (a) and again in (b).
+${ciNote(changesRequested)}   The change request is a state flip, not a place to write: never state a blocker in (a) and again in (b).
    One gh pr comment per PR. LATE FINDING (a child agent reporting after the comment is up): verify it; if blocking, run (a) unless the PR already carries it and post ONE short follow-up comment with just that finding. Never hold a verified blocker back. Otherwise step 4 applies.
    Write each body in the SAME shell command that posts it (heredoc to a file then --body-file, or inline --body). Never write a body in one command and post it in another: the posting command is what gets relayed to Slack.
 
@@ -219,6 +227,7 @@ export const reviewHelp = (
   return [
     `*How I review a PR* - \`${prefix} review <pr-url>\``,
     "",
+    "*0.* CI first: red and I request changes on the spot, saying which checks failed, then review and comment anyway. green or still running goes on, and a running CI gets a watcher that runs outside the review (up to an hour): it requests changes if CI goes red, and under approve-after it approves once CI is green",
     "*1.* I gather it: `gh pr view`, the diff, and the checks. a merged or closed PR gets the same treatment as an open one, never skipped",
     `*2.* big PR (more than ${BIG_PR_FILES} files, or ${BIG_PR_LINES}+ lines either way) and I clone it and review the real code in context, with up to ${maxAgents} child ${maxAgents === 1 ? "agent" : "agents"} rather than trusting the diff`,
     "*3.* then exactly one of two flows, never a mix:",
@@ -230,7 +239,7 @@ export const reviewHelp = (
       : "*5.* non-blocking findings are never posted, and never become an issue",
     "*6.* a short wrap-up lands back in the thread with what I did and the headline blocker",
     "",
-    "*approval* only after a clean review by default; a repo can opt in to up front, reversed if I find a blocker. `--policy first|after` changes it for one run",
+    "*approval* only after a clean review by default, and never while CI is red or still running; a repo can opt in to up front (CI not red), reversed if I find a blocker or CI goes red. `--policy first|after` changes it for one run. a merged or closed PR never gets a change request from the CI watcher",
     "*steering*: anything typed next to the url aims the review, e.g. `review <url> the migration is the risky bit`",
     `*cost*: it runs on *your own* Claude token, never mine - \`${prefix} token\` adds one`,
     "",

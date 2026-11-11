@@ -52,6 +52,7 @@ import { promptFingerprint } from "../domain/promptFingerprint.ts";
 import type { ThreadSessionRepo } from "../infrastructure/db/threadSessionRepo.ts";
 import type { SlackAdminPort, SlackMessage } from "./slackAdmin.ts";
 import type { GitHubPort } from "./github.ts";
+import type { CiGate } from "./ciGate.ts";
 import type { DraftReply } from "./draftReply.ts";
 import type { SelfPrAccounts } from "../domain/selfUpdate.ts";
 import { isRestartCut } from "./runRegistry.ts";
@@ -127,6 +128,8 @@ export type HandleMessageDeps = {
   slack?: SlackAdminPort;
   /** GitHub actions the bot takes itself - the up-front approve in `review`. */
   github?: GitHubPort;
+  /** CI gate of `review` (see `CommandDeps`). */
+  ciGate?: CiGate;
   /** AI reply drafting, for jrp. */
   draft?: DraftReply;
   /** Per-role CLI tool policy (sandbox/allow-list) applied to the chat brain. */

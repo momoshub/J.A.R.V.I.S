@@ -6,7 +6,8 @@
  * Failures are returned, never thrown: a refused approval is something to report
  * in the thread, not a reason to abandon the review.
  */
-import type { ApproveResult, GitHubPort, Reviewer } from "../../application/github.ts";
+import type { ApproveResult, GitHubPort, PrSnapshot, Reviewer } from "../../application/github.ts";
+import { asPrState, ciStatusOf, type RollupEntry } from "../../domain/ciGate.ts";
 
 export type GhCliConfig = {
   /** Path or name of the gh binary. Default "gh". */
@@ -51,7 +52,52 @@ export const createGhCli = (config: GhCliConfig = {}): GitHubPort => {
     }
   };
 
+  /** `gh pr view --json state,statusCheckRollup,reviewDecision,latestReviews`, read into a snapshot. */
+  const snapshotOf = async (prUrl: string): Promise<PrSnapshot | undefined> => {
+    try {
+      const { code, out } = await run(["pr", "view", prUrl, "--json", "state,statusCheckRollup,reviewDecision,latestReviews"]);
+      if (code !== 0) return undefined;
+      const parsed: unknown = JSON.parse(out);
+      if (typeof parsed !== "object" || parsed === null) return undefined;
+      const { state, statusCheckRollup, reviewDecision, latestReviews } = parsed as {
+        state?: unknown;
+        statusCheckRollup?: unknown;
+        reviewDecision?: unknown;
+        latestReviews?: unknown;
+      };
+      const prState = asPrState(state);
+      if (!prState) return undefined;
+      const me = (await (account ??= resolveAccount()))?.login.toLowerCase();
+      const mine = me
+        ? (Array.isArray(latestReviews) ? (latestReviews as { author?: { login?: unknown }; state?: unknown }[]) : [])
+            .filter((r) => typeof r.author?.login === "string" && r.author.login.toLowerCase() === me)
+            .map((r) => (typeof r.state === "string" ? r.state.toUpperCase() : undefined))
+            .find((s) => s !== undefined)
+        : undefined;
+      return {
+        state: prState,
+        ci: ciStatusOf(Array.isArray(statusCheckRollup) ? (statusCheckRollup as RollupEntry[]) : []),
+        decision: typeof reviewDecision === "string" && reviewDecision ? reviewDecision.toUpperCase() : undefined,
+        mine,
+      };
+    } catch {
+      return undefined;
+    }
+  };
+
   return {
+    snapshot: snapshotOf,
+
+    requestChanges: async (prUrl: string, body: string): Promise<ApproveResult> => {
+      try {
+        const { code, out, err } = await run(["pr", "review", prUrl, "--request-changes", "--body", body]);
+        if (code === 0) return { ok: true };
+        return { ok: false, error: firstLine(err) || firstLine(out) || `gh exited with code ${code}` };
+      } catch (e) {
+        return { ok: false, error: e instanceof Error ? e.message : String(e) };
+      }
+    },
+
     whoami: () => (account ??= resolveAccount()),
 
     reviewDecision: async (prUrl: string): Promise<string | undefined> => {

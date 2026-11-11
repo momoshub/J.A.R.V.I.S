@@ -20,6 +20,7 @@ import {
 } from "../../domain/reviewPolicy.ts";
 import { GITHUB_LINK_PREFIX, githubLinkKey } from "../../domain/reviewInbox.ts";
 import { postedBody } from "../../domain/ghCommand.ts";
+import { failedList } from "../../domain/ciGate.ts";
 import { tokenFor } from "../claudeTokens.ts";
 import { authorReviewPolicyKey, reviewPolicyKey, SETTING_KEYS } from "../../infrastructure/db/settingsRepo.ts";
 import { type CommandDeps, PR_URL, type CommandDef, RANK, askForToken, reviewAgentsOf, botNameOf } from "./shared.ts";
@@ -210,6 +211,8 @@ export const REVIEW_COMMANDS: readonly CommandDef[] = [
       // comments on the same PR. A PR already in hand is pointed at, not redone.
       const busy: string[] = [];
       const mine: string[] = [];
+      // PRs whose approval the CI watcher took over when the review ended.
+      const releasedUrls = new Set<string>();
       for (const url of urls) {
         const holder = deps.reviewGuard?.claim(url, { channelId, threadTs: ctx.threadTs });
         if (!holder) {
@@ -230,8 +233,38 @@ export const REVIEW_COMMANDS: readonly CommandDef[] = [
         if (reply) for (const line of busy) await reply(line);
         // Repositories on `approve-after` are left alone until the review is in.
         const afterReview = mine.filter((u) => policyFor(u) === "approve-after");
+        // CI is looked at before anything else (`deps.ciGate`; none wired, none
+        // looked at). Red is a change request on the spot and never an approval;
+        // a running CI gets a watcher on the watcher's timer, started before any
+        // approval goes out. Merged, closed or unreadable PRs take the old path.
+        const gate = deps.ciGate;
+        const where = { channelId: channelId ?? "", threadTs: ctx.threadTs ?? "", slackUserId: actor.slackId };
+        const redUrls: string[] = [];
+        const ciLines: string[] = [];
         for (const url of mine) {
-          if (afterReview.includes(url)) continue;
+          const snap = gate ? await gate.inspect(url) : undefined;
+          if (gate && snap?.state === "OPEN") {
+            if (snap.ci.verdict === "red") {
+              const res = await gate.requestChanges(url, snap, "before");
+              ciLines.push(
+                typeof res === "object"
+                  ? `⚠️ CI is red on ${url} (${failedList(snap.ci.failed)}) but I could not request changes - ${res.error}`
+                  : `🔴 CI is red on ${url} (${failedList(snap.ci.failed)}) - ${res === "already" ? "changes already requested" : "requested changes"}`,
+              );
+              // Red CI is not approved whatever the policy; the review still runs.
+              if (typeof res !== "object") redUrls.push(url);
+              continue;
+            }
+            if (snap.ci.verdict === "running") {
+              const watching = gate.start({ url, policy: policyFor(url) }, where);
+              ciLines.push(
+                watching
+                  ? `🟡 CI is still running on ${url} - watching it`
+                  : `⚠️ CI is still running on ${url} and I have nowhere to keep a watcher`,
+              );
+            }
+          }
+          if (afterReview.includes(url) || redUrls.includes(url)) continue;
           const res = await deps.github?.approve(url);
           if (!res) break; // no gh wired up - leave it to the brain
           const line = res.ok ? `✅ approved ${url}` : `⚠️ could not approve ${url} - ${res.error}`;
@@ -241,9 +274,14 @@ export const REVIEW_COMMANDS: readonly CommandDef[] = [
           }
           announcements.push(line);
         }
+        // Red went in before the approvals; the order in the thread follows it.
+        announcements.unshift(...ciLines);
+        // A red PR also skips the up-front approval above (it `continue`s), so
+        // there is nothing to undo; and a PR whose watcher is already alive
+        // for the same url is kept, never doubled (`start`).
 
         const params = {
-          system: reviewPrompt(targets, name, await account, approvedUpFront, reviewAgentsOf(deps), note, deps.reviewExtendedOwners),
+          system: reviewPrompt(targets, name, await account, approvedUpFront, reviewAgentsOf(deps), note, deps.reviewExtendedOwners, redUrls),
           messages: [{ role: "user" as const, content: `review ${targets.join(" ")}${note ? `\n\n${note}` : ""}` }],
           assistantName: name,
           policy,
@@ -254,7 +292,7 @@ export const REVIEW_COMMANDS: readonly CommandDef[] = [
         // No live destination (tests / slack off): one-shot, return the text.
         if (!reply) {
           const out = await deps.llm.complete(params);
-          return [...busy, out.trim() || "I could not put a review together for that one."].join("\n");
+          return [...busy, ...ciLines, out.trim() || "I could not put a review together for that one."].join("\n");
         }
 
         // Live: post progress as each PR action lands, then the review itself. The
@@ -333,10 +371,32 @@ export const REVIEW_COMMANDS: readonly CommandDef[] = [
 
         // Held back until now: approve only what the review left unblocked, and
         // ask GitHub rather than inferring it from what the review seemed to say.
+        // With a CI gate a red CI is a change request instead, and a CI that is
+        // still running leaves the approval to the watcher already on it.
         for (const url of afterReview) {
+          if (redUrls.includes(url)) continue; // changes already requested for CI
           const decision = (await deps.github?.reviewDecision(url))?.toUpperCase();
           if (decision === "CHANGES_REQUESTED") {
             await reply(`🚫 not approving ${url} - changes are requested`);
+            continue;
+          }
+          const snap = gate ? await gate.inspect(url) : undefined;
+          if (gate && snap?.state === "OPEN" && snap.ci.verdict === "red") {
+            const res = await gate.requestChanges(url, snap, "after");
+            await reply(
+              typeof res === "object"
+                ? `⚠️ CI is red on ${url} (${failedList(snap.ci.failed)}) but I could not request changes - ${res.error}`
+                : `🚫 not approving ${url} - CI is red (${failedList(snap.ci.failed)}), changes requested`,
+            );
+            continue;
+          }
+          if (gate && snap?.state === "OPEN" && snap.ci.verdict === "running") {
+            releasedUrls.add(url);
+            await reply(
+              gate.release(url)
+                ? `⏳ CI is still running on ${url} - I approve once it is green, and request changes if it goes red`
+                : `⚠️ not approving ${url} - CI is still running and I have no watcher to wait for it`,
+            );
             continue;
           }
           const res = await deps.github?.approve(url);
@@ -345,6 +405,9 @@ export const REVIEW_COMMANDS: readonly CommandDef[] = [
         }
         return ""; // already delivered to the thread / DM
       } finally {
+        // A review that ended any other way than handing the approval over (cut
+        // off, failed, approved here) leaves the watcher only the red to watch.
+        for (const url of mine) if (!releasedUrls.has(url)) deps.ciGate?.handled(url);
         for (const url of mine) deps.reviewGuard?.release(url);
       }
     },
@@ -477,8 +540,8 @@ export const REVIEW_COMMANDS: readonly CommandDef[] = [
       const { deps, actor, args, prefix } = ctx;
       const describe = (p: ReviewPolicy) =>
         p === "approve-after"
-          ? "approved *only after* the review, and only if nothing is blocking"
-          : "approved *up front*, reversed if the review finds a blocker";
+          ? "approved *only after* the review, and only if nothing is blocking and CI is green"
+          : "approved *up front* unless CI is red, reversed if the review finds a blocker or CI goes red";
 
       if (args.length === 0) {
         // Configuration only says who differs; the rest are on the default.

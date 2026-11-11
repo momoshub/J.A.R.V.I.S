@@ -107,6 +107,7 @@ import { createOfflineAlarmSlack } from "./infrastructure/slack/offlineAlarmClie
 import { createOfflineAlarm } from "./application/offlineAlarm.ts";
 import { OFFLINE_ALARM_REQUEST_TIMEOUT_MS, OFFLINE_ALARM_TICK_MS } from "./domain/offlineAlarm.ts";
 import { createGhCli } from "./infrastructure/github/ghCli.ts";
+import { createCiGate } from "./application/ciGate.ts";
 import { createDraftReply } from "./application/draftReply.ts";
 import { syntheticTs } from "./domain/slackLinks.ts";
 import { toolPolicyFor } from "./domain/toolPolicy.ts";
@@ -468,6 +469,15 @@ const main = async () => {
   // retries: 0 so a rate-limited call fails fast instead of hanging.
   const slackWeb = new WebClient(config.slackBotToken, { retryConfig: { retries: 0 } });
   const slackAdmin = createSlackAdmin(slackWeb, clock);
+  // `review` approves, requests changes and reads CI through this one gh port; the
+  // gate puts a running CI on the watcher's timer (see the watcher below).
+  const github = createGhCli();
+  const ciGate = createCiGate({
+    github,
+    watches,
+    clock,
+    say: async (channel, text, thread) => void (await slackAdmin.post(channel, text, thread, SIGNATURES.watch)),
+  });
   const promptContext = () => ({
     botName: profile().name,
     base: settings.get(SETTING_KEYS.systemPrompt),
@@ -595,7 +605,8 @@ const main = async () => {
     rawUsers: userStore,
     slack: slackAdmin,
     // `review` approves through this directly, before the brain starts.
-    github: createGhCli(),
+    github,
+    ciGate,
     // Long tasks driven from a thread, each holding its own CLI session.
     workflows,
     // Failed worker steps in a row, so a timed-out step is retried once.
@@ -947,6 +958,7 @@ const main = async () => {
     clock,
     check: createShellCheck(fullCwd),
     runTurn: deps.runTurn!,
+    gate: { step: ciGate.step, stop: ciGate.stop },
     say: async (channel, text, thread) => void (await slackAdmin.post(channel, text, thread, SIGNATURES.watch)),
     // The enforced allowlist: a switched-off role's shell watches stop with it.
     mayRun: (id) => id === config.ownerSlackId || !!users.get(id),
