@@ -22,6 +22,8 @@ const setup = (role: UserRole | undefined, opts: { fail?: Error } = {}) => {
         return 7;
       },
       installationToken: async (inst) => `tok-${inst}`,
+      mintWorkerToken: async (inst) => ({ token: `worker-${inst}`, expiresAt: 1 }),
+      revokeInstallationToken: async () => {},
       request: async (inst, method, path, body) => {
         if (path.startsWith("users/")) {
           calls.push(`${inst} ${method} ${path}`);

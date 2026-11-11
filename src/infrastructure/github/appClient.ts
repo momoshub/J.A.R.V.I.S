@@ -39,8 +39,16 @@ export type GithubAppClientConfig = {
 };
 
 export type GithubAppClient = {
-  /** `repo` (owner/name) asks GitHub for a token limited to that one repository. */
-  installationToken: (installationId: number, repo?: string) => Promise<string>;
+  installationToken: (installationId: number) => Promise<string>;
+  /**
+   * A token for ONE worker ticket, never cached or shared: limited to `repo`,
+   * and to the permissions git needs (metadata read, contents at the level the
+   * installation itself holds - asking for more than it has is a 422). Throws
+   * plainly when the installation has no contents permission at all.
+   */
+  mintWorkerToken: (installationId: number, repo: string) => Promise<{ token: string; expiresAt: number }>;
+  /** `DELETE /installation/token`: GitHub stops honouring that token now. Never throws on an already-dead one. */
+  revokeInstallationToken: (token: string) => Promise<void>;
   /** Add a reaction at `path` (e.g. `repos/o/r/issues/comments/1/reactions`). */
   react: (installationId: number, path: string, content: string) => Promise<void>;
   /** Comment on an issue or PR conversation; returns the comment's url. */
@@ -57,7 +65,7 @@ export const createGithubAppClient = (config: GithubAppClientConfig): GithubAppC
   const doFetch: FetchLike = config.fetch ?? ((url, init) => fetch(url, init));
   const clock = config.clock ?? Date.now;
   const api = (config.apiBase ?? "https://api.github.com").replace(/\/$/, "");
-  const cache = new Map<string, { token: string; expiresAt: number }>();
+  const cache = new Map<number, { token: string; expiresAt: number }>();
 
   const headers = (auth: string): Record<string, string> => ({
     Accept: "application/vnd.github+json",
@@ -78,21 +86,51 @@ export const createGithubAppClient = (config: GithubAppClientConfig): GithubAppC
     return text ? (JSON.parse(text) as unknown) : undefined;
   };
 
-  const installationToken = async (installationId: number, repo?: string): Promise<string> => {
-    const key = `${installationId}:${repo?.toLowerCase() ?? ""}`;
-    const hit = cache.get(key);
+  const installationToken = async (installationId: number): Promise<string> => {
+    const hit = cache.get(installationId);
     if (hit && hit.expiresAt - TOKEN_MARGIN_MS > clock()) return hit.token;
     const jwt = createAppJwt(config.appId, config.privateKey, clock());
-    const name = repo?.split("/")[1];
-    const out = (await call(jwt, "POST", `app/installations/${installationId}/access_tokens`, name ? { repositories: [name] } : undefined)) as
+    const out = (await call(jwt, "POST", `app/installations/${installationId}/access_tokens`)) as
       | { token?: unknown; expires_at?: unknown }
       | undefined;
     const token = typeof out?.token === "string" ? out.token : "";
     if (!token) throw new Error("GitHub returned no installation token");
     const expiresAt = typeof out?.expires_at === "string" ? Date.parse(out.expires_at) : NaN;
     // An hour is what GitHub issues; assume it if the answer has no usable date.
-    cache.set(key, { token, expiresAt: Number.isFinite(expiresAt) ? expiresAt : clock() + 60 * 60_000 });
+    cache.set(installationId, { token, expiresAt: Number.isFinite(expiresAt) ? expiresAt : clock() + 60 * 60_000 });
     return token;
+  };
+
+  const installationContents = async (installationId: number): Promise<"read" | "write"> => {
+    const jwt = createAppJwt(config.appId, config.privateKey, clock());
+    const out = (await call(jwt, "GET", `app/installations/${installationId}`)) as { permissions?: { contents?: unknown } } | undefined;
+    const level = out?.permissions?.contents;
+    if (level === "read" || level === "write") return level;
+    throw new Error("the app has no contents permission on this installation, so there is no git token to hand out");
+  };
+
+  const mintWorkerToken = async (installationId: number, repo: string): Promise<{ token: string; expiresAt: number }> => {
+    const name = repo.split("/")[1];
+    if (!name) throw new Error("a worker token needs owner/repo");
+    const contents = await installationContents(installationId);
+    const jwt = createAppJwt(config.appId, config.privateKey, clock());
+    const out = (await call(jwt, "POST", `app/installations/${installationId}/access_tokens`, {
+      repositories: [name],
+      permissions: { contents, metadata: "read" },
+    })) as { token?: unknown; expires_at?: unknown } | undefined;
+    const token = typeof out?.token === "string" ? out.token : "";
+    if (!token) throw new Error("GitHub returned no installation token");
+    const expiresAt = typeof out?.expires_at === "string" ? Date.parse(out.expires_at) : NaN;
+    return { token, expiresAt: Number.isFinite(expiresAt) ? expiresAt : clock() + 60 * 60_000 };
+  };
+
+  const revokeInstallationToken = async (token: string): Promise<void> => {
+    try {
+      await call(token, "DELETE", "installation/token");
+    } catch (e) {
+      // 401 = already expired or revoked: that is the goal.
+      if (!/-> 401/.test(e instanceof Error ? e.message : "")) throw e;
+    }
   };
 
   const installs = new Map<string, number>();
@@ -109,6 +147,8 @@ export const createGithubAppClient = (config: GithubAppClientConfig): GithubAppC
 
   return {
     installationToken,
+    mintWorkerToken,
+    revokeInstallationToken,
     installationOfRepo,
     request: async (installationId, method, path, body) => call(await installationToken(installationId), method, path, body),
     react: async (installationId, path, content) => {

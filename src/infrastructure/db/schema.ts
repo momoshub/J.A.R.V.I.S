@@ -101,6 +101,40 @@ export const migrate = (db: Database): void => {
   migrateWorkerUsage(db);
   migrateCloudwatchRequests(db);
   migrateAccessReplay(db);
+  migrateWorkerTickets(db);
+};
+
+/**
+ * Migration v30: scoped GitHub App tickets for Orca workers.
+ *
+ * Only the sha-256 of the bearer token is stored (`token_hash`), never the token:
+ * this database is committed. `id` is the first 8 hex of that hash, the public
+ * handle logs and `worker-ticket bind|revoke` use. A revoked row stays until it
+ * would have expired, so a later redeem says "revoked", not "unknown".
+ */
+const migrateWorkerTickets = (db: Database): void => {
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS worker_tickets (
+      token_hash  TEXT PRIMARY KEY,
+      id          TEXT NOT NULL,
+      actor       TEXT NOT NULL,
+      channel     TEXT NOT NULL,
+      thread_ts   TEXT NOT NULL DEFAULT '',
+      repo        TEXT NOT NULL,
+      actions     TEXT NOT NULL,
+      ttl_ms      INTEGER NOT NULL,
+      dispatch_id TEXT NOT NULL DEFAULT '',
+      created_at  INTEGER NOT NULL,
+      expires_at  INTEGER NOT NULL,
+      revoked_at  INTEGER
+    );
+  `);
+  db.exec("CREATE INDEX IF NOT EXISTS idx_worker_tickets_id ON worker_tickets (id);");
+  db.exec("CREATE INDEX IF NOT EXISTS idx_worker_tickets_dispatch ON worker_tickets (dispatch_id);");
+  const { user_version } = db.query<{ user_version: number }, []>("PRAGMA user_version").get() ?? {
+    user_version: 0,
+  };
+  if (user_version < 30) db.exec("PRAGMA user_version = 30;");
 };
 
 /**

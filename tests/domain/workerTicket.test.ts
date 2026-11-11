@@ -17,7 +17,12 @@ describe("parseWorkerTicketArgs", () => {
     expect(r).toMatchObject({ ok: true, clamped: false, req: { repo: "acme/repo", dispatchId: "pending", actions: DEFAULT_WORKER_ACTIONS, ttlMs: WORKER_TTL_DEFAULT_MS } });
   });
 
-  test("git and push are the git-auth action; duplicates collapse", () => {
+  test("the default grant leaves out git-auth: workers push with the one-shot human credential", () => {
+    expect(DEFAULT_WORKER_ACTIONS).toEqual(["pr-create", "comment", "pr-edit"]);
+    expect(DEFAULT_WORKER_ACTIONS).not.toContain("git-auth");
+  });
+
+  test("git and push are the git-auth action, opt-in only; duplicates collapse", () => {
     const r = parseWorkerTicketArgs(["o/r", "ctx_abc", "git", "push", "pr-create"]);
     expect(r.ok && r.req.actions).toEqual(["git-auth", "pr-create"]);
   });

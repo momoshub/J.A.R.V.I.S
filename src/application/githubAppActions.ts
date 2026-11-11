@@ -14,6 +14,7 @@ import { isAllowedOwner } from "../domain/githubApp.ts";
 import type { AllowedUser } from "../domain/types.ts";
 import type { CommandLogRepo } from "../infrastructure/db/commandLogRepo.ts";
 import { isWorkerToken } from "../domain/workerTicket.ts";
+import { logAndIgnore } from "./ignoredError.ts";
 import type { Clock } from "./ports.ts";
 import type { WorkerRedeem } from "./workerTickets.ts";
 
@@ -30,8 +31,14 @@ export type GithubActionDeps = {
   users: { get: (slackId: string) => AllowedUser | undefined };
   github: {
     installationOfRepo: (repo: string) => Promise<number>;
-    /** `repo` (owner/name) narrows the token to that one repository. */
-    installationToken: (installationId: number, repo?: string) => Promise<string>;
+    installationToken: (installationId: number) => Promise<string>;
+    /**
+     * A token for one worker ticket: uncached, limited to the repo and to what
+     * git needs (see `appClient.mintWorkerToken`).
+     */
+    mintWorkerToken: (installationId: number, repo: string) => Promise<{ token: string; expiresAt: number }>;
+    /** Make GitHub stop honouring a token now (`DELETE /installation/token`). */
+    revokeInstallationToken: (token: string) => Promise<void>;
     request: (installationId: number, method: string, path: string, body?: unknown) => Promise<unknown>;
   };
   audit: Pick<CommandLogRepo, "add">;
@@ -52,7 +59,16 @@ export type GitAuth = { token: string; name: string; email: string };
 
 export type GithubActions = {
   run: (req: { ticket: string } & ActionRequest) => Promise<GithubActionResult>;
+  /**
+   * A worker ticket ended (revoked or expired): revoke, at GitHub, the token
+   * minted for it. Resolves when GitHub has answered; a failure is thrown so the
+   * caller can log it.
+   */
+  endWorker: (ticketId: string) => Promise<void>;
 };
+
+/** Reuse a worker's held token until this close to its expiry. */
+const WORKER_TOKEN_MARGIN_MS = 5 * 60_000;
 
 const errText = (e: unknown): string => (e instanceof Error ? e.message : String(e));
 
@@ -79,7 +95,7 @@ export const createGithubActions = (deps: GithubActionDeps): GithubActions => {
   // The bot's numeric user id never changes, so look it up once per slug.
   let botId: number | undefined;
   const botName = `${deps.slug}[bot]`;
-  const gitAuth = async (installation: number, onlyRepo?: string): Promise<GitAuth> => {
+  const botIdentity = async (installation: number): Promise<{ name: string; email: string }> => {
     if (botId === undefined) {
       const out = (await deps.github.request(installation, "GET", `users/${encodeURIComponent(botName)}`)) as
         | { id?: unknown }
@@ -87,17 +103,52 @@ export const createGithubActions = (deps: GithubActionDeps): GithubActions => {
       if (typeof out?.id !== "number") throw new Error(`GitHub returned no user id for ${botName}`);
       botId = out.id;
     }
-    return { token: await deps.github.installationToken(installation, onlyRepo), name: botName, email: `${botId}+${botName}@users.noreply.github.com` };
+    return { name: botName, email: `${botId}+${botName}@users.noreply.github.com` };
+  };
+  const gitAuth = async (installation: number): Promise<GitAuth> => ({
+    token: await deps.github.installationToken(installation),
+    ...(await botIdentity(installation)),
+  });
+  // One GitHub token per worker ticket, held in memory only, reused until near its
+  // expiry and revoked when the ticket ends. Never shared between tickets and
+  // never written down: a restart loses the handle (see `endWorker`).
+  const held = new Map<string, Promise<{ token: string; expiresAt: number }>>();
+  const workerGitAuth = async (installation: number, repo: string, ticketId: string): Promise<GitAuth> => {
+    const identity = await botIdentity(installation);
+    const current = held.get(ticketId);
+    if (current) {
+      const t = await current.catch(() => undefined);
+      if (t && t.expiresAt - WORKER_TOKEN_MARGIN_MS > deps.clock()) return { token: t.token, ...identity };
+      held.delete(ticketId);
+      if (t) await deps.github.revokeInstallationToken(t.token).catch(logAndIgnore("worker token rotate"));
+    }
+    const minted = deps.github.mintWorkerToken(installation, repo);
+    held.set(ticketId, minted);
+    try {
+      return { token: (await minted).token, ...identity };
+    } catch (e) {
+      held.delete(ticketId);
+      throw e;
+    }
   };
 
   return {
+    endWorker: async (ticketId) => {
+      const p = held.get(ticketId);
+      held.delete(ticketId);
+      const t = await p?.catch(() => undefined);
+      if (t) await deps.github.revokeInstallationToken(t.token);
+    },
     run: async ({ ticket, ...req }) => {
       if (!ticket.trim()) throw new Error("no ticket - acting as the app only works from inside a turn");
-      // A worker ticket is checked against this very call (action + repo) and
-      // every outcome is audited with its dispatch and a short id, never the token.
+      // A worker ticket is checked against what will RUN (the plan's action and
+      // repo, not the raw request), and every outcome is audited with its
+      // dispatch and a short id, never the token.
+      const plan = planAction(req);
       const asWorker = isWorkerToken(ticket);
+      const call = plan.ok ? { action: plan.action, repo: plan.repo } : { action: String(req.action), repo: String(req.repo) };
       const worker = asWorker
-        ? (deps.resolveWorker?.(ticket, { action: String(req.action), repo: String(req.repo) }) ?? {
+        ? (deps.resolveWorker?.(ticket, call) ?? {
             ok: false as const,
             reason: "unknown" as const,
             message: "worker tickets are not accepted here",
@@ -126,7 +177,6 @@ export const createGithubActions = (deps: GithubActionDeps): GithubActions => {
       if (worker && !worker.ok) refuse(worker.message);
       if (!user) refuse("whoever asked is not on the access list");
       if (user && !mayActAsApp(user.role)) refuse(DENIED_MESSAGE);
-      const plan = planAction(req);
       if (!plan.ok) return refuse(plan.error);
       const owner = plan.repo.split("/")[0] ?? "";
       if (!isAllowedOwner(owner, deps.allowedOwners)) {
@@ -137,8 +187,8 @@ export const createGithubActions = (deps: GithubActionDeps): GithubActions => {
         const installation = await deps.github.installationOfRepo(plan.repo);
         if (plan.action === "git-auth") {
           // The token goes back to the helper only; the audit row never has it.
-          // A worker's token is narrowed to the one repo it was granted.
-          const auth = await gitAuth(installation, worker ? plan.repo : undefined);
+          // A worker's token is its own: one repo, git's permissions only, revoked with the ticket.
+          const auth = worker?.ok ? await workerGitAuth(installation, plan.repo, worker.id) : await gitAuth(installation);
           log(true, `git-auth ${plan.repo}`);
           return { github: auth };
         }

@@ -1,5 +1,5 @@
 /**
- * Scoped tickets for Orca workers, held in memory.
+ * Scoped tickets for Orca workers, persisted by hash.
  *
  * A turn ticket cannot serve a worker: it dies in 20 minutes and carries the
  * caller's whole role, including `/api/commands/run`. A worker ticket is minted
@@ -11,10 +11,13 @@
  * Life cycle: `issue` (pending, 10 min) -> `bind` to the dispatch id once
  * `worker-start` has printed it -> redeemed per call -> `revoke` when that
  * worker finishes or dies, with the TTL (default 3h, max 6h, counted from the
- * bind) as the backstop. In memory on purpose: a restart loses the tickets and
- * the worker reports it cannot push, which is a safe failure and a one-line fix
- * (mint again), whereas a persisted bearer token would have to be hashed, swept
- * and revoked across restarts for a window of a few hours.
+ * bind) as the backstop. The rows live in `worker_tickets` and survive a restart;
+ * only the sha-256 of the token is stored. The token itself is written once to a
+ * 0600 file (`WorkerTicketFiles`) that the brief names by path, so it is never in
+ * the brain's context, a command result, a spec or a Slack message, and the file
+ * is deleted when the ticket ends. `sweep` (boot, and on a timer) ends what
+ * expired; every end (revoke or expiry) also notifies `onEnd` so the GitHub token
+ * minted for that ticket is revoked at GitHub.
  *
  * The token is never logged. `id` (first 8 hex of its sha-256) is what logs and
  * audit rows carry, and it is also how `bind`/`revoke` name a ticket without
@@ -23,7 +26,16 @@
 import { createHash } from "node:crypto";
 import type { ActionName } from "../domain/githubAppAction.ts";
 import { endedWorkerOf, normRepo, PENDING_TTL_MS, WORKER_TOKEN_PREFIX, WORKER_TTL_MAX_MS } from "../domain/workerTicket.ts";
+import type { WorkerTicketRepo, WorkerTicketRow } from "../infrastructure/db/workerTicketRepo.ts";
 import type { Clock } from "./ports.ts";
+
+/** Where a ticket's token is handed to the worker: a file only the bot's user can read. */
+export type WorkerTicketFiles = {
+  /** Write the token (mode 0600) and return the absolute path the worker is told. */
+  write: (id: string, token: string) => string;
+  /** Delete it; no error when it is gone. */
+  remove: (id: string) => void;
+};
 
 export type WorkerTicketGrant = {
   /** The actor of the minting turn's ticket. */
@@ -51,8 +63,8 @@ export type WorkerRedeem =
     };
 
 export type WorkerTickets = {
-  /** Mint a pending ticket. The token goes to the brain once; `id` is the public handle. */
-  issue: (grant: WorkerTicketGrant) => { token: string; id: string };
+  /** Mint a pending ticket. The token goes to its file only; `id` is the public handle, `file` the path. */
+  issue: (grant: WorkerTicketGrant) => { id: string; file: string };
   /** Bind a pending ticket to its dispatch and start its TTL. Only the minting actor may. */
   bind: (id: string, actor: string, dispatchId: string) => { ok: true } | { ok: false; error: string };
   /** Resolve for one GitHub App call; checks the action and the repo against the grant. */
@@ -61,72 +73,106 @@ export type WorkerTickets = {
   revoke: (dispatchId: string) => number;
   /** End one ticket by its id (only its minting actor); false when there is no such live ticket. */
   revokeId: (id: string, actor: string) => boolean;
+  /** End what has expired (files, GitHub tokens, rows); how many. Run at boot and on a timer. */
+  sweep: () => number;
+  /** Be told the id of every ticket that ends (revoked or expired), to revoke what was minted for it. */
+  onEnd: (fn: (id: string) => void) => void;
 };
 
-type Entry = WorkerTicketGrant & {
-  id: string;
-  dispatchId?: string;
-  expiresAt: number;
-  revoked: boolean;
-};
-
-export const tokenId = (token: string): string => createHash("sha256").update(token).digest("hex").slice(0, 8);
+const hashOf = (token: string): string => createHash("sha256").update(token).digest("hex");
+export const tokenId = (token: string): string => hashOf(token).slice(0, 8);
 
 const GONE = "that worker ticket is not valid any more";
 
+export type WorkerTicketDeps = {
+  repo: WorkerTicketRepo;
+  files: WorkerTicketFiles;
+  newToken?: () => string;
+};
+
 export const createWorkerTickets = (
   clock: Clock,
-  newToken: () => string = () => `${WORKER_TOKEN_PREFIX}${crypto.randomUUID().replaceAll("-", "")}`,
+  { repo, files, newToken = () => `${WORKER_TOKEN_PREFIX}${crypto.randomUUID().replaceAll("-", "")}` }: WorkerTicketDeps,
 ): WorkerTickets => {
-  const live = new Map<string, Entry>();
-
-  const sweep = (now: number): void => {
-    for (const [token, e] of live) if (e.expiresAt <= now) live.delete(token);
+  const listeners: Array<(id: string) => void> = [];
+  const notify = (id: string): void => {
+    for (const fn of listeners) {
+      try {
+        fn(id);
+      } catch {
+        // a failed GitHub revoke must not keep the ticket alive
+      }
+    }
   };
-  const byId = (id: string): Entry | undefined => [...live.values()].find((e) => e.id === id);
+  /** Revoked: the row stays (so a redeem says "revoked") until it would have expired. */
+  const end = (r: WorkerTicketRow): void => {
+    repo.revoke(r.tokenHash, clock());
+    files.remove(r.id);
+    notify(r.id);
+  };
+  const sweep = (): number => {
+    const now = clock();
+    const gone = repo.expired(now);
+    for (const r of gone) {
+      files.remove(r.id);
+      if (r.revokedAt === undefined) notify(r.id);
+      repo.delete(r.tokenHash);
+    }
+    return gone.length;
+  };
+  const liveById = (id: string): WorkerTicketRow | undefined => {
+    const r = repo.byId(id);
+    return r && r.revokedAt === undefined && r.expiresAt > clock() ? r : undefined;
+  };
 
   return {
     issue: (grant) => {
       const now = clock();
-      sweep(now);
+      sweep();
       const token = newToken();
-      const id = tokenId(token);
-      live.set(token, {
-        ...grant,
-        repo: normRepo(grant.repo),
-        ttlMs: Math.min(grant.ttlMs, WORKER_TTL_MAX_MS),
+      const tokenHash = hashOf(token);
+      const id = tokenHash.slice(0, 8);
+      repo.insert({
+        tokenHash,
         id,
+        actor: grant.actor,
+        channel: grant.channel,
+        threadTs: grant.threadTs ?? "",
+        repo: normRepo(grant.repo),
+        actions: grant.actions,
+        ttlMs: Math.min(grant.ttlMs, WORKER_TTL_MAX_MS),
+        dispatchId: "",
+        createdAt: now,
         expiresAt: now + PENDING_TTL_MS,
-        revoked: false,
       });
-      return { token, id };
+      return { id, file: files.write(id, token) };
     },
 
     bind: (id, actor, dispatchId) => {
-      const now = clock();
-      sweep(now);
-      const e = byId(id);
-      if (!e || e.revoked) return { ok: false, error: "no live pending worker ticket with that id" };
+      sweep();
+      const e = liveById(id);
+      if (!e) return { ok: false, error: "no live pending worker ticket with that id" };
       if (e.actor !== actor) return { ok: false, error: "that worker ticket was minted by someone else" };
       if (e.dispatchId) return { ok: false, error: "that worker ticket is already bound to a dispatch" };
-      e.dispatchId = dispatchId;
-      e.expiresAt = now + e.ttlMs;
+      repo.bind(e.tokenHash, dispatchId, clock() + e.ttlMs);
       return { ok: true };
     },
 
     redeem: (token, call) => {
-      const e = live.get(token);
+      const e = repo.byHash(hashOf(token));
       if (!e) return { ok: false, reason: "unknown", message: GONE };
-      const who = { actor: e.actor, channel: e.channel, dispatchId: e.dispatchId, id: e.id };
+      const who = { actor: e.actor, channel: e.channel, dispatchId: e.dispatchId || undefined, id: e.id };
+      if (e.revokedAt !== undefined) {
+        return { ok: false, reason: "revoked", message: "that worker ticket was revoked when its worker ended", ...who };
+      }
       if (e.expiresAt <= clock()) {
-        live.delete(token);
+        end(e);
         return { ok: false, reason: "expired", message: "that worker ticket has expired; ask for a new one", ...who };
       }
-      if (e.revoked) return { ok: false, reason: "revoked", message: "that worker ticket was revoked when its worker ended", ...who };
       if (!e.dispatchId) {
         return { ok: false, reason: "pending", message: "that worker ticket is not bound to its dispatch yet; retry in a few seconds", ...who };
       }
-      if (!(e.actions as readonly string[]).includes(call.action)) {
+      if (!e.actions.includes(call.action)) {
         return {
           ok: false,
           reason: "action",
@@ -141,22 +187,20 @@ export const createWorkerTickets = (
     },
 
     revoke: (dispatchId) => {
-      let n = 0;
-      for (const e of live.values()) {
-        if (e.dispatchId === dispatchId && !e.revoked) {
-          e.revoked = true;
-          n += 1;
-        }
-      }
-      return n;
+      const live = repo.liveOfDispatch(dispatchId);
+      for (const e of live) end(e);
+      return live.length;
     },
 
     revokeId: (id, actor) => {
-      const e = byId(id);
-      if (!e || e.revoked || e.actor !== actor) return false;
-      e.revoked = true;
+      const e = liveById(id);
+      if (!e || e.actor !== actor) return false;
+      end(e);
       return true;
     },
+
+    sweep,
+    onEnd: (fn) => void listeners.push(fn),
   };
 };
 

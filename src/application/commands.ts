@@ -194,6 +194,13 @@ export type DispatchOptions = {
   preApproved?: boolean;
   /** Destination sink for progress + direct results (thread or DM). */
   reply?: (text: string) => Promise<void>;
+  /**
+   * Set ONLY by the brain's run bridge (`/api/commands/run`, after it redeemed a
+   * turn ticket). Commands that hand a credential to the brain (`worker-ticket`)
+   * refuse without it, so a schedule, an errand, the command menu or a typed line
+   * can never be the caller.
+   */
+  fromBrainRun?: boolean;
 };
 
 /** Run a command line (e.g. "add @U1 admin") on behalf of `actor`. */
@@ -296,6 +303,7 @@ export const dispatchCommand = async (
       prefix,
       slash,
       reply: opts.reply,
+      fromBrainRun: opts.fromBrainRun === true,
       trivialCommands: TRIVIAL_COMMANDS,
     });
     log(command.name, true, result);

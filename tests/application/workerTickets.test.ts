@@ -1,5 +1,8 @@
 import { describe, expect, test } from "bun:test";
-import { createWorkerTickets, revokeOnWorkerEnd, tokenId, type WorkerTicketGrant } from "../../src/application/workerTickets.ts";
+import { revokeOnWorkerEnd, tokenId, type WorkerTicketGrant } from "../../src/application/workerTickets.ts";
+import { createWorkerTicketRepo } from "../../src/infrastructure/db/workerTicketRepo.ts";
+import { openDatabase } from "../../src/infrastructure/db/client.ts";
+import { ticketRig } from "./workerTicketFixture.ts";
 import { PENDING_TTL_MS, WORKER_TTL_MAX_MS } from "../../src/domain/workerTicket.ts";
 import { createCommandTickets } from "../../src/application/commandTickets.ts";
 
@@ -14,10 +17,9 @@ const grant: WorkerTicketGrant = {
 
 const setup = () => {
   const t = { now: 1000 };
-  let n = 0;
-  const tickets = createWorkerTickets(() => t.now, () => `jvwk_tok${++n}`);
-  const { token, id } = tickets.issue(grant);
-  return { t, tickets, token, id };
+  const rig = ticketRig(() => t.now);
+  const { token, id } = rig.mint(grant);
+  return { t, rig, tickets: rig.tickets, token, id, mint: rig.mint };
 };
 const call = { action: "pr-create", repo: "o/r" };
 
@@ -46,12 +48,12 @@ describe("workerTickets", () => {
   });
 
   test("a pending ticket lapses; binding starts the real TTL", () => {
-    const { t, tickets, token, id } = setup();
+    const { t, tickets, token, id, mint } = setup();
     t.now += PENDING_TTL_MS + 1;
     expect(tickets.redeem(token, call)).toMatchObject({ ok: false, reason: "expired" });
     expect(tickets.bind(id, "U0ADMIN0001", "ctx_w1").ok).toBe(false);
 
-    const fresh = tickets.issue(grant);
+    const fresh = mint(grant);
     t.now += 60_000;
     tickets.bind(fresh.id, "U0ADMIN0001", "ctx_w2");
     t.now += grant.ttlMs - 1;
@@ -61,8 +63,8 @@ describe("workerTickets", () => {
   });
 
   test("the TTL is capped whatever the caller asked", () => {
-    const { t, tickets } = setup();
-    const long = tickets.issue({ ...grant, ttlMs: 100 * 60 * 60_000 });
+    const { t, tickets, mint } = setup();
+    const long = mint({ ...grant, ttlMs: 100 * 60 * 60_000 });
     tickets.bind(long.id, "U0ADMIN0001", "ctx_w3");
     t.now += WORKER_TTL_MAX_MS + 1;
     expect(tickets.redeem(long.token, call)).toMatchObject({ ok: false, reason: "expired" });
@@ -86,8 +88,8 @@ describe("workerTickets", () => {
   });
 
   test("revoking a dispatch ends its tickets, and only its tickets", () => {
-    const { tickets, token, id } = setup();
-    const other = tickets.issue(grant);
+    const { tickets, token, id, mint } = setup();
+    const other = mint(grant);
     tickets.bind(id, "U0ADMIN0001", "ctx_w1");
     tickets.bind(other.id, "U0ADMIN0001", "ctx_w2");
     expect(tickets.revoke("ctx_w1")).toBe(1);
@@ -138,5 +140,80 @@ describe("revokeOnWorkerEnd (the watcher's onFired)", () => {
     expect(revokeOnWorkerEnd(tickets, helper)({ check: "echo hi" }, "orca worker ctx_w1 finished: x")).toBe(0);
     expect(revokeOnWorkerEnd(tickets, "")(watch, "orca worker ctx_w1 finished: x")).toBe(0);
     expect(tickets.redeem(token, call).ok).toBe(true);
+  });
+});
+
+describe("persistence and ending", () => {
+  const BOUND = { ...grant, ttlMs: 60_000 };
+
+  test("only the hash is stored, never the token, and the token is only in its file", () => {
+    const { rig, token, id } = setup();
+    const row = rig.repo.byId(id);
+    expect(row?.tokenHash).toHaveLength(64);
+    expect(JSON.stringify(row)).not.toContain(token);
+    expect(rig.tokenOf(id)).toBe(token);
+  });
+
+  test("a restart keeps a bound ticket: a new store on the same database redeems it", () => {
+    const db = openDatabase(":memory:");
+    const t = { now: 1000 };
+    const first = ticketRig(() => t.now, createWorkerTicketRepo(db));
+    const { id, token } = first.mint(BOUND);
+    first.tickets.bind(id, "U0ADMIN0001", "ctx_w1");
+    const second = ticketRig(() => t.now, createWorkerTicketRepo(db));
+    expect(second.tickets.redeem(token, call)).toMatchObject({ ok: true, dispatchId: "ctx_w1" });
+    expect(second.tickets.revoke("ctx_w1")).toBe(1);
+    expect(first.tickets.redeem(token, call)).toMatchObject({ ok: false, reason: "revoked" });
+  });
+
+  test("revoke deletes the token file and tells onEnd once; a second revoke does nothing", () => {
+    const { rig, tickets, id } = setup();
+    const ended: string[] = [];
+    tickets.onEnd((i) => void ended.push(i));
+    tickets.bind(id, "U0ADMIN0001", "ctx_w1");
+    expect(tickets.revoke("ctx_w1")).toBe(1);
+    expect(rig.files.has(id)).toBe(false);
+    expect(tickets.revoke("ctx_w1")).toBe(0);
+    expect(ended).toEqual([id]);
+  });
+
+  test("sweep ends what expired: file gone, row gone, onEnd told; live ones and revoked ones are not told twice", () => {
+    const { t, rig, tickets, id, mint } = setup();
+    const ended: string[] = [];
+    tickets.onEnd((i) => void ended.push(i));
+    tickets.bind(id, "U0ADMIN0001", "ctx_w1");
+    const doomed = mint(BOUND);
+    tickets.bind(doomed.id, "U0ADMIN0001", "ctx_w2");
+    tickets.revoke("ctx_w2");
+    ended.length = 0;
+    t.now += 61_000;
+    expect(tickets.sweep()).toBe(1);
+    expect(rig.repo.byId(doomed.id)).toBeUndefined();
+    expect(ended).toEqual([]);
+    t.now += grant.ttlMs;
+    expect(tickets.sweep()).toBe(1);
+    expect(ended).toEqual([id]);
+    expect(rig.files.size).toBe(0);
+    expect(tickets.redeem(doomed.token, call)).toMatchObject({ ok: false, reason: "unknown" });
+  });
+
+  test("an expired ticket seen at redeem also ends it, so its GitHub token is revoked", () => {
+    const { t, tickets, token, id } = setup();
+    const ended: string[] = [];
+    tickets.onEnd((i) => void ended.push(i));
+    tickets.bind(id, "U0ADMIN0001", "ctx_w1");
+    t.now += grant.ttlMs + 1;
+    expect(tickets.redeem(token, call)).toMatchObject({ ok: false, reason: "expired" });
+    expect(ended).toEqual([id]);
+  });
+
+  test("a failing onEnd listener never keeps a ticket alive", () => {
+    const { tickets, token, id } = setup();
+    tickets.onEnd(() => {
+      throw new Error("github is down");
+    });
+    tickets.bind(id, "U0ADMIN0001", "ctx_w1");
+    expect(tickets.revoke("ctx_w1")).toBe(1);
+    expect(tickets.redeem(token, call)).toMatchObject({ ok: false, reason: "revoked" });
   });
 });

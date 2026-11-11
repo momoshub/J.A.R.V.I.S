@@ -200,6 +200,8 @@ export type Context = {
    * post the result directly instead of returning one blob. Undefined in tests.
    */
   reply?: (text: string) => Promise<void>;
+  /** True only for a call that came through the brain's run bridge with a turn ticket. */
+  fromBrainRun: boolean;
   /** Names of the trivial commands. Handed in so a group never imports the registry back. */
   trivialCommands: readonly string[];
 };

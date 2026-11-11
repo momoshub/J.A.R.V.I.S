@@ -122,13 +122,18 @@ no classes.
   token + `<slug>[bot]` identity) and gives that one git process the token in its
   environment (`GIT_CONFIG_*` `http.extraheader`), never in a url or a file.
   An Orca worker outlives the turn's 20-minute ticket, so a turn mints it a
-  **worker ticket** (`worker-ticket`, `workerTickets.ts`): in memory, one repo,
-  a short action list, bound to its dispatch id, 3h (max 6h), revoked when the
-  `watch worker` sees it finish or die. The worker exports it as
-  `JARVIS_RUN_TICKET` for the same `bin/github-app.sh`; `githubAppActions`
-  redeems it against the call's action and repo, still checks the minter's role,
-  and the `git-auth` token it hands back is narrowed to that one repository.
-  It is a separate store from `commandTickets`, so it can never run a command.
+  **worker ticket** (`worker-ticket`, `workerTickets.ts`, rows in
+  `worker_tickets` holding only the token's sha-256): one repo, a short action
+  list (no `git`/`push` by default: a worker pushes with the one-shot human
+  credential), bound to its dispatch id, 3h (max 6h), ended when the
+  `watch worker` sees it finish or die, on `revoke`, or by the expiry sweep. The
+  token is handed over as a 0600 file whose PATH is the only thing in the brief
+  (`JARVIS_RUN_TICKET_FILE`, read by `bin/github-app.sh`). `githubAppActions`
+  redeems it against the plan's action and repo (not the raw request), still
+  checks the minter's role, and a `git-auth` token for a worker is minted per
+  ticket (repo-narrowed, permission-narrowed, uncached) and revoked at GitHub
+  when the ticket ends. It is a separate store from `commandTickets`, so it can
+  never run a command, and only the brain's run bridge can mint one.
 - **Self-update.** A fix lands through a PR that CI (`.github/workflows/ci.yml`)
   passes (typecheck, tests, the real-Slack e2e on non-fork runs, and a `gitleaks` secret scan whose known false positives are allowlisted by value in `.gitleaks.toml`), merged only by `bin/merge-when-green.sh` (exit 4 at once on a PR that
   conflicts with its base, which GitHub never runs CI on). When it touches runtime code

@@ -14,6 +14,9 @@ import { parseSelfPrAccounts, RESTART_TURN_BUDGET_MS, type SelfPrAccounts } from
 /** Where the GitHub App's credentials live by default: outside the repo, never in `.env`. */
 export const GITHUB_APP_DIR = join(homedir(), ".config", "jarvis", "github-app");
 
+/** Where a worker ticket's token file is written (mode 0600 in a 0700 dir), next to the app's credentials. */
+export const WORKER_TICKET_DIR = join(homedir(), ".config", "jarvis", "worker-tickets");
+
 /** `a, b,,c` -> `["a", "b", "c"]`; unset is empty. */
 const parseList = (raw: string | undefined): string[] =>
   (raw ?? "")

@@ -19,13 +19,18 @@ export const WORKER_TTL_MAX_MS = 6 * HOUR_MS;
 /** A minted ticket not yet bound to a dispatch: the gap between `worker-ticket` and `worker-start`. */
 export const PENDING_TTL_MS = 10 * 60_000;
 
-/** What a worker gets when the brain names no actions: commit, push, open the PR, talk on it. */
-export const DEFAULT_WORKER_ACTIONS: readonly ActionName[] = ["git-auth", "pr-create", "comment", "pr-edit"];
+/**
+ * What a worker gets when the brain names no actions: open the PR, talk on it,
+ * edit it. Not `git-auth` (git and push): a worker pushes with the one-shot
+ * human credential of the org's own rule (where the app has contents:read it
+ * cannot push anyway). `git`/`push` stay an explicit opt-in.
+ */
+export const DEFAULT_WORKER_ACTIONS: readonly ActionName[] = ["pr-create", "comment", "pr-edit"];
 /**
  * The most a worker ticket can ever grant. No review (a worker approving its own
  * PR), no merge, no close/reopen, no label removal: those stay with a turn.
  */
-export const WORKER_ACTION_CEILING: readonly ActionName[] = [...DEFAULT_WORKER_ACTIONS, "labels-add", "reviewers-request"];
+export const WORKER_ACTION_CEILING: readonly ActionName[] = [...DEFAULT_WORKER_ACTIONS, "git-auth", "labels-add", "reviewers-request"];
 
 /** The brain says `git` / `push`; on the wire both are the `git-auth` action. */
 const ALIASES: Readonly<Record<string, ActionName>> = { git: "git-auth", push: "git-auth" };

@@ -87,13 +87,11 @@ export const PEOPLE_COMMANDS: readonly CommandDef[] = [
     aliases: ["wticket"],
     // Same gate as acting as the app (`mayActAsApp`): the ticket can never carry more than its minter has.
     minRole: "admin",
-    usage: "<owner/repo> <ctx_...|pending> [git|push|pr-create|comment|pr-edit|labels-add|reviewers-request ...] [--ttl 3h] | bind <id> <ctx_...> | revoke <id|ctx_...>",
+    usage: "<owner/repo> <ctx_...|pending> [pr-create|comment|pr-edit|git|push|labels-add|reviewers-request ...] [--ttl 3h] | bind <id> <ctx_...> | revoke <id|ctx_...>",
     summary: "mint a scoped GitHub App ticket for an Orca worker (one repo, a few actions, hours, revoked when it ends)",
     // The token goes back to the brain and nowhere else.
     quiet: true,
-    run: ({ deps, actor, args, prefix, reply, channelId, threadTs }) => {
-      // A person typing it would get the token posted into the thread. Only the brain's own run gets it.
-      if (reply) return "I only hand a worker ticket to my own turn, never into a thread. Ask me for the work and I will mint it myself.";
+    run: ({ deps, actor, args, prefix, fromBrainRun, channelId, threadTs }) => {
       const tickets = deps.workerTickets;
       if (!tickets) return "I cannot mint worker tickets here.";
       const sub = (args[0] ?? "").toLowerCase();
@@ -111,10 +109,13 @@ export const PEOPLE_COMMANDS: readonly CommandDef[] = [
         return n > 0 ? `Revoked ${n} worker ticket${n === 1 ? "" : "s"} for ${target}.` : `No live worker ticket for ${target}.`;
       }
 
+      // Positive gate: only the brain's own run bridge (a turn ticket at /api/commands/run) may mint (bind and revoke only ever narrow, so anyone allowed may use them).
+      // A schedule, an errand, the command menu or a typed line has no such marker.
+      if (!fromBrainRun) return "I only mint a worker ticket for my own turn, never from a typed line, a schedule or a menu. Ask me for the work and I will mint it myself.";
       const parsed = parseWorkerTicketArgs(args);
       if (!parsed.ok) return `${parsed.error}. \`${prefix} worker-ticket <owner/repo> <ctx_...|pending> [actions...] [--ttl 3h]\``;
       const { req, clamped } = parsed;
-      const { token, id } = tickets.issue({
+      const { id, file } = tickets.issue({
         actor: actor.slackId,
         channel: channelId,
         threadTs,
@@ -125,12 +126,12 @@ export const PEOPLE_COMMANDS: readonly CommandDef[] = [
       const bound = req.dispatchId === "pending" ? undefined : tickets.bind(id, actor.slackId, req.dispatchId);
       if (bound && !bound.ok) return bound.error;
       return [
-        `JARVIS_RUN_TICKET=${token}`,
+        `JARVIS_RUN_TICKET_FILE=${file}`,
         `Worker ticket ${id} for ${req.repo}: ${req.actions.join(", ")}; good for ${humanDuration(req.ttlMs)}${clamped ? " (capped)" : ""} from ${bound ? "now" : "the bind"}, revoked when the worker ends.`,
         bound
           ? `Bound to ${req.dispatchId}.`
           : `Not usable yet: after worker-start prints its dispatch id, run \`${prefix} worker-ticket bind ${id} <ctx_...>\` (pending tickets lapse in 10 minutes).`,
-        "Give the worker the line above to export before bin/github-app.sh (git, push, pr-create, comment, pr-edit). It cannot run commands, other repos or other actions. Keep it out of Slack and out of anything you post.",
+        "The token is in that file (mode 0600), not here. Put ONLY the path in the worker's brief, to export as JARVIS_RUN_TICKET_FILE before bin/github-app.sh; never read or print the file. It cannot run commands, other repos or other actions, and the file is deleted when the worker ends. Pushing is not part of it: the worker pushes with the one-shot human credential.",
       ].join("\n");
     },
   },
