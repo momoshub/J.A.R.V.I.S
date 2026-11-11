@@ -17,6 +17,7 @@ import {
   menuRunActionId,
 } from "../domain/commandMenu.ts";
 import { SIGNATURES } from "../domain/messageFooter.ts";
+import { redactSecrets } from "../domain/toolVisibility.ts";
 import { allowanceFor, holdForApproval, type CommandLimitDeps } from "./commandLimits.ts";
 import { isTimeout } from "../domain/threadSession.ts";
 import { asksForHelp, commandHelp } from "../domain/commandHelp.ts";
@@ -216,7 +217,11 @@ export const dispatchCommand = async (
   const args = rest.length ? rest.split(/\s+/) : [];
 
   const log = (command: string, ok: boolean, result: string) =>
-    deps.commandLog?.add({ slackUserId: actor.slackId, command, args: rest, channelId, ok, result }, deps.clock());
+    // A result may carry a credential the brain has to see (`worker-ticket`); the log never does.
+    deps.commandLog?.add(
+      { slackUserId: actor.slackId, command, args: rest, channelId, ok, result: redactSecrets(result) },
+      deps.clock(),
+    );
 
   const command = unnamedReview ? byName.get("review") : byName.get(name);
   if (!command) {

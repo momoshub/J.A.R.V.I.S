@@ -119,6 +119,7 @@ import { createDashboard } from "./infrastructure/dashboard/server.ts";
 import { runForBrain } from "./application/brainRun.ts";
 import { dispatchCommand, isQuietCommand } from "./application/commands.ts";
 import { createCommandTickets, refusalMessage } from "./application/commandTickets.ts";
+import { createWorkerTickets, revokeOnWorkerEnd } from "./application/workerTickets.ts";
 import { createActivityLog } from "./infrastructure/logger.ts";
 import type { CommandLogRepo } from "./infrastructure/db/commandLogRepo.ts";
 import type { LlmPort, ToolTraceSink, UsageSink } from "./application/ports.ts";
@@ -268,6 +269,8 @@ const main = async () => {
   // A query still `running` lost its process in the last restart.
   cloudwatchRepo.failRunning(Date.now());
   const commandTickets = createCommandTickets(() => Date.now(), undefined, config.commandTicketUses);
+  // Scoped GitHub App tickets for Orca workers; revoked when `watch worker` sees the worker end.
+  const workerTickets = createWorkerTickets(() => Date.now());
   const baseCommandLog = createCommandLogRepo(db);
   const commandLog: CommandLogRepo = {
     ...baseCommandLog,
@@ -516,6 +519,7 @@ const main = async () => {
     reminders,
     slackWaitScript,
     orcaWorkerWait,
+    workerTickets,
     workerUsage: {
       measure: (id) => measureWorker(id, { orca: createOrcaCli("orca", WORKER_USAGE_ORCA_TIMEOUT_MS) }),
       dispatchesOf: async (runId) =>
@@ -936,7 +940,12 @@ const main = async () => {
     mayRun: (id) => id === config.ownerSlackId || !!users.get(id),
     log: (msg) => console.error(`[watch] ${msg}`),
     // A `watch worker` that fired printed the worker's usage; keep it.
-    onFired: keepWorkerUsage(workerUsageRepo, orcaWorkerWait[1] ?? "", clock),
+    onFired: (w, output) => {
+      keepWorkerUsage(workerUsageRepo, orcaWorkerWait[1] ?? "", clock)(w, output);
+      // A worker that finished or died keeps no GitHub App ticket.
+      const n = revokeOnWorkerEnd(workerTickets, orcaWorkerWait[1] ?? "")(w, output);
+      if (n > 0) console.error(`[worker-ticket] revoked ${n} on worker end`);
+    },
     onError: onDbError,
   });
   // A worker's `orca orchestration ask` lands in the bot's own Orca terminal,
@@ -1047,6 +1056,7 @@ const main = async () => {
         if (!resolved.ok) throw new Error(refusalMessage(resolved.reason, resolved.limit));
         return { actor: resolved.ctx.actor, channel: resolved.ctx.channel };
       },
+      resolveWorker: workerTickets.redeem,
       users,
       github: appClient,
       audit: commandLog,

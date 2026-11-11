@@ -13,16 +13,25 @@ import { type ActionRequest, DENIED_MESSAGE, mayActAsApp, planAction, summarize 
 import { isAllowedOwner } from "../domain/githubApp.ts";
 import type { AllowedUser } from "../domain/types.ts";
 import type { CommandLogRepo } from "../infrastructure/db/commandLogRepo.ts";
+import { isWorkerToken } from "../domain/workerTicket.ts";
 import type { Clock } from "./ports.ts";
+import type { WorkerRedeem } from "./workerTickets.ts";
 
 export type GithubActionDeps = {
   clock: Clock;
   /** Resolve a turn's ticket to who it runs as; throws with a plain message if it will not. */
   resolve: (ticket: string) => { actor: string; channel: string };
+  /**
+   * Resolve a worker ticket (`jvwk_...`, see `workerTickets.ts`) for ONE call:
+   * it checks the action and the repo against what the ticket grants. Absent
+   * means worker tickets are not accepted here.
+   */
+  resolveWorker?: (token: string, call: { action: string; repo: string }) => WorkerRedeem;
   users: { get: (slackId: string) => AllowedUser | undefined };
   github: {
     installationOfRepo: (repo: string) => Promise<number>;
-    installationToken: (installationId: number) => Promise<string>;
+    /** `repo` (owner/name) narrows the token to that one repository. */
+    installationToken: (installationId: number, repo?: string) => Promise<string>;
     request: (installationId: number, method: string, path: string, body?: unknown) => Promise<unknown>;
   };
   audit: Pick<CommandLogRepo, "add">;
@@ -70,7 +79,7 @@ export const createGithubActions = (deps: GithubActionDeps): GithubActions => {
   // The bot's numeric user id never changes, so look it up once per slug.
   let botId: number | undefined;
   const botName = `${deps.slug}[bot]`;
-  const gitAuth = async (installation: number): Promise<GitAuth> => {
+  const gitAuth = async (installation: number, onlyRepo?: string): Promise<GitAuth> => {
     if (botId === undefined) {
       const out = (await deps.github.request(installation, "GET", `users/${encodeURIComponent(botName)}`)) as
         | { id?: unknown }
@@ -78,20 +87,31 @@ export const createGithubActions = (deps: GithubActionDeps): GithubActions => {
       if (typeof out?.id !== "number") throw new Error(`GitHub returned no user id for ${botName}`);
       botId = out.id;
     }
-    return { token: await deps.github.installationToken(installation), name: botName, email: `${botId}+${botName}@users.noreply.github.com` };
+    return { token: await deps.github.installationToken(installation, onlyRepo), name: botName, email: `${botId}+${botName}@users.noreply.github.com` };
   };
 
   return {
     run: async ({ ticket, ...req }) => {
       if (!ticket.trim()) throw new Error("no ticket - acting as the app only works from inside a turn");
-      const ctx = deps.resolve(ticket);
+      // A worker ticket is checked against this very call (action + repo) and
+      // every outcome is audited with its dispatch and a short id, never the token.
+      const asWorker = isWorkerToken(ticket);
+      const worker = asWorker
+        ? (deps.resolveWorker?.(ticket, { action: String(req.action), repo: String(req.repo) }) ?? {
+            ok: false as const,
+            reason: "unknown" as const,
+            message: "worker tickets are not accepted here",
+          })
+        : undefined;
+      const ctx = worker?.ok ? worker : worker ? { actor: worker.actor ?? "worker-ticket", channel: worker.channel ?? "" } : deps.resolve(ticket);
+      const tag = worker ? ` worker=${worker.dispatchId ?? "unbound"} t=${worker.id ?? "?"}` : "";
       const user = deps.users.get(ctx.actor);
       const log = (ok: boolean, result: string): void =>
         deps.audit.add(
           {
             slackUserId: ctx.actor,
             command: "github-app",
-            args: `${String(req.action)} ${describe(req)}`.trim(),
+            args: `${String(req.action)} ${describe(req)}${tag}`.trim(),
             channelId: ctx.channel,
             ok,
             result: result.slice(0, 300),
@@ -103,6 +123,7 @@ export const createGithubActions = (deps: GithubActionDeps): GithubActions => {
         throw new Error(message);
       };
 
+      if (worker && !worker.ok) refuse(worker.message);
       if (!user) refuse("whoever asked is not on the access list");
       if (user && !mayActAsApp(user.role)) refuse(DENIED_MESSAGE);
       const plan = planAction(req);
@@ -116,7 +137,8 @@ export const createGithubActions = (deps: GithubActionDeps): GithubActions => {
         const installation = await deps.github.installationOfRepo(plan.repo);
         if (plan.action === "git-auth") {
           // The token goes back to the helper only; the audit row never has it.
-          const auth = await gitAuth(installation);
+          // A worker's token is narrowed to the one repo it was granted.
+          const auth = await gitAuth(installation, worker ? plan.repo : undefined);
           log(true, `git-auth ${plan.repo}`);
           return { github: auth };
         }

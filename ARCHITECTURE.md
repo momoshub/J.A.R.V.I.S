@@ -121,6 +121,14 @@ no classes.
   local git as the app: it asks the bot for the `git-auth` action (installation
   token + `<slug>[bot]` identity) and gives that one git process the token in its
   environment (`GIT_CONFIG_*` `http.extraheader`), never in a url or a file.
+  An Orca worker outlives the turn's 20-minute ticket, so a turn mints it a
+  **worker ticket** (`worker-ticket`, `workerTickets.ts`): in memory, one repo,
+  a short action list, bound to its dispatch id, 3h (max 6h), revoked when the
+  `watch worker` sees it finish or die. The worker exports it as
+  `JARVIS_RUN_TICKET` for the same `bin/github-app.sh`; `githubAppActions`
+  redeems it against the call's action and repo, still checks the minter's role,
+  and the `git-auth` token it hands back is narrowed to that one repository.
+  It is a separate store from `commandTickets`, so it can never run a command.
 - **Self-update.** A fix lands through a PR that CI (`.github/workflows/ci.yml`)
   passes (typecheck, tests, the real-Slack e2e on non-fork runs, and a `gitleaks` secret scan whose known false positives are allowlisted by value in `.gitleaks.toml`), merged only by `bin/merge-when-green.sh` (exit 4 at once on a PR that
   conflicts with its base, which GitHub never runs CI on). When it touches runtime code
@@ -186,7 +194,7 @@ Orchestrates the domain and depends on **ports**, not concrete adapters.
 - `respond.ts` - routes an inbound message to command or chat
 - `handleMessage.ts` - the chat flow (access -> remember -> ask model -> remember), applying the role's tool policy
 - `cloudwatch.ts` (application) + `domain/cloudwatch.ts` + `infrastructure/aws/cloudwatchCli.ts` + `db/cloudwatchRepo.ts` - the `cloudwatch` command: Logs Insights run by the bot's own `aws` CLI (a turn's `aws logs` stays denied), a scan estimate from the log group's stored size, owner runs after a warning, executer/admin park a `cloudwatch_requests` row behind `jv:cloudwatch:confirm|cancel` buttons decided in code (never a model turn), every request audited
-- `commands.ts`, `commandTickets.ts`, `commandLimits.ts`, `brainRun.ts` - the command registry (configurable prefix + slash, role gates, help), the brain's tickets, allowances and result delivery. The command definitions live in `commands/`, one file per group (`chat`, `schedule`, `people`, `adapter`, `learnings`, `errands`, `review`, `runtime`, `slack`, `cloudwatch`), with `commands/shared.ts` for the deps, the `CommandDef` type and the helpers more than one group uses
+- `commands.ts`, `commandTickets.ts`, `workerTickets.ts`, `commandLimits.ts`, `brainRun.ts` - the command registry (configurable prefix + slash, role gates, help), the brain's tickets, allowances and result delivery. The command definitions live in `commands/`, one file per group (`chat`, `schedule`, `people`, `adapter`, `learnings`, `errands`, `review`, `runtime`, `slack`, `cloudwatch`), with `commands/shared.ts` for the deps, the `CommandDef` type and the helpers more than one group uses
 - `threadQueue.ts`, `runRegistry.ts` - one turn per thread, and stopping one
 - `watcher.ts`, `reminders.ts`, `reviewInbox.ts`, `reviewGuard.ts`, `innerChild.ts`, `offlineAlarm.ts`, `orcaQuestions.ts`, `stuckSweeper.ts` - the timers (`orcaQuestions` also sits on the tool-trace sink, linking each Orca worker to the thread that started it)
 - `githubApp.ts` - calls from the GitHub App: dedupe/queue, identity mapping, the turn, the answer back

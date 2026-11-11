@@ -56,6 +56,17 @@ describe("createGithubAppClient", () => {
     expect(calls.length).toBe(2);
   });
 
+  test("a repo-scoped token asks GitHub for that one repository and is cached apart from the wide one", async () => {
+    const { client, calls } = setup();
+    const wide = await client.installationToken(42);
+    const narrow = await client.installationToken(42, "Acme/Repo");
+    expect(narrow).not.toBe(wide);
+    expect(JSON.parse(calls[1]?.body ?? "{}")).toEqual({ repositories: ["Repo"] });
+    expect(calls[0]?.body).toBeUndefined();
+    expect(await client.installationToken(42, "acme/repo")).toBe(narrow);
+    expect(calls.length).toBe(2);
+  });
+
   test("comments and reacts with the installation token", async () => {
     const { client, calls } = setup();
     const url = await client.comment(42, "o/r", 1, "hello");

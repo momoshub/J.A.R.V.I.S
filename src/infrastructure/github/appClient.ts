@@ -39,7 +39,8 @@ export type GithubAppClientConfig = {
 };
 
 export type GithubAppClient = {
-  installationToken: (installationId: number) => Promise<string>;
+  /** `repo` (owner/name) asks GitHub for a token limited to that one repository. */
+  installationToken: (installationId: number, repo?: string) => Promise<string>;
   /** Add a reaction at `path` (e.g. `repos/o/r/issues/comments/1/reactions`). */
   react: (installationId: number, path: string, content: string) => Promise<void>;
   /** Comment on an issue or PR conversation; returns the comment's url. */
@@ -56,7 +57,7 @@ export const createGithubAppClient = (config: GithubAppClientConfig): GithubAppC
   const doFetch: FetchLike = config.fetch ?? ((url, init) => fetch(url, init));
   const clock = config.clock ?? Date.now;
   const api = (config.apiBase ?? "https://api.github.com").replace(/\/$/, "");
-  const cache = new Map<number, { token: string; expiresAt: number }>();
+  const cache = new Map<string, { token: string; expiresAt: number }>();
 
   const headers = (auth: string): Record<string, string> => ({
     Accept: "application/vnd.github+json",
@@ -77,18 +78,20 @@ export const createGithubAppClient = (config: GithubAppClientConfig): GithubAppC
     return text ? (JSON.parse(text) as unknown) : undefined;
   };
 
-  const installationToken = async (installationId: number): Promise<string> => {
-    const hit = cache.get(installationId);
+  const installationToken = async (installationId: number, repo?: string): Promise<string> => {
+    const key = `${installationId}:${repo?.toLowerCase() ?? ""}`;
+    const hit = cache.get(key);
     if (hit && hit.expiresAt - TOKEN_MARGIN_MS > clock()) return hit.token;
     const jwt = createAppJwt(config.appId, config.privateKey, clock());
-    const out = (await call(jwt, "POST", `app/installations/${installationId}/access_tokens`)) as
+    const name = repo?.split("/")[1];
+    const out = (await call(jwt, "POST", `app/installations/${installationId}/access_tokens`, name ? { repositories: [name] } : undefined)) as
       | { token?: unknown; expires_at?: unknown }
       | undefined;
     const token = typeof out?.token === "string" ? out.token : "";
     if (!token) throw new Error("GitHub returned no installation token");
     const expiresAt = typeof out?.expires_at === "string" ? Date.parse(out.expires_at) : NaN;
     // An hour is what GitHub issues; assume it if the answer has no usable date.
-    cache.set(installationId, { token, expiresAt: Number.isFinite(expiresAt) ? expiresAt : clock() + 60 * 60_000 });
+    cache.set(key, { token, expiresAt: Number.isFinite(expiresAt) ? expiresAt : clock() + 60 * 60_000 });
     return token;
   };
 

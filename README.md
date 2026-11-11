@@ -807,6 +807,25 @@ In the `acme` org, every PR is committed and opened as the app
 (`git` + `push` + `pr-create` above); review comments and the merge are done as
 `kai-at-acme`.
 
+**Orca workers** outlive the turn that started them, and a turn's ticket is
+gone after 20 minutes, so a worker gets its own scoped one. In the turn (admin or
+owner, through the run helper, never typed into a thread):
+
+```
+worker-ticket <owner/repo> pending [git|push|pr-create|comment|pr-edit|labels-add|reviewers-request ...] [--ttl 3h]
+worker-ticket bind <id> <ctx_...>      # after worker-start prints the dispatch id
+worker-ticket revoke <id|ctx_...>
+```
+
+The result holds `JARVIS_RUN_TICKET=<token>`; the brief tells the worker to
+export it before `bin/github-app.sh git|push|pr-create|comment|pr-edit`. The
+token works for that one repo and those actions only (default `git`/`push`,
+`pr-create`, `comment`, `pr-edit`; never review, merge or close), cannot run any
+command, is checked against the minting person's role on every call, expires in
+3 hours (max 6) and is revoked when the worker finishes or dies (the turn's
+`watch worker`). Tickets live in memory: after a restart the worker says it
+cannot push and the turn mints a new one. No new setting.
+
 It only acts on owners in `GITHUB_APP_ALLOWED_OWNERS`. It posts to `/api/github-app/action` with the turn's ticket (from
 `JARVIS_RUN_TICKET`, never an argument); the bot resolves it to the person the
 turn runs as, refuses unless they are admin or owner, logs the call in the

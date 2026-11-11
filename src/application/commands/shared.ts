@@ -2,6 +2,7 @@
 
 import type { ReviewGuard } from "../reviewGuard.ts";
 import type { WorkerUsagePort } from "../workerCost.ts";
+import type { WorkerTickets } from "../workerTickets.ts";
 import { DEFAULT_BOT_NAME } from "../../domain/personality.ts";
 import { ALWAYS_ON_BUDGET } from "../../domain/adapterCheck.ts";
 import { type AdapterDeps } from "../adapterMemory.ts";
@@ -63,6 +64,8 @@ export type CommandDeps = {
   slackWaitScript?: string;
   /** The command that runs `bin/orca-worker-wait.ts` (bun + script), for `watch worker`. */
   orcaWorkerWait?: readonly string[];
+  /** Scoped GitHub App tickets for Orca workers, for `worker-ticket`. */
+  workerTickets?: WorkerTickets;
   /** Measures what an Orca worker used, for `worker-cost`. */
   workerUsage?: WorkerUsagePort;
   llm?: LlmPort;

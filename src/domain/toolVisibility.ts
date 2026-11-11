@@ -72,6 +72,7 @@ const SECRETS: readonly RegExp[] = [
   /sk-ant-[A-Za-z0-9_-]{8,}/g,
   /gh[pousr]_[A-Za-z0-9]{16,}/g,
   /AKIA[0-9A-Z]{12,}/g,
+  /jvwk_[A-Za-z0-9]{16,}/g,
   /\bBearer\s+[A-Za-z0-9._~+/-]{16,}=*/gi,
 ];
 
