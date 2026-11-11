@@ -45,7 +45,7 @@ describe("selfUpdateRules with a memory skill", () => {
   });
 
   test("a standalone reviewer comes before the merge of runtime code", () => {
-    expect(short).toContain("standalone reviewer agent (Orca worker, fresh context, PR comments only, max 2 rounds)");
+    expect(short).toContain("standalone reviewer agent (Orca worker, fresh context, real PR reviews only, max 2 rounds)");
     expect(short).toContain("green CI before you merge it yourself with `bin/merge-when-green.sh`");
     expect(short.indexOf("standalone reviewer agent")).toBeLessThan(short.indexOf("merge it yourself"));
     // the full rule still exists for the prompts that carry it whole
@@ -121,8 +121,25 @@ describe("selfUpdateRules with no skill to read (the full block)", () => {
     expect(STANDALONE_REVIEW_RULE).toContain("Never end your turn while it is open");
     expect(STANDALONE_REVIEW_RULE).toContain("You never use SendMessage or TaskStop for it");
     expect(STANDALONE_REVIEW_RULE).not.toContain("run_in_background");
-    // review and fix rounds are PR comments, marked since both share one account
+    // each review round is a real GitHub review, each fix round a PR comment, marked since both may share one account
     expect(STANDALONE_REVIEW_RULE).toContain("`[review round N]`");
+    expect(STANDALONE_REVIEW_RULE).toContain("one real GitHub review whose body starts with `[review round N]`");
+    expect(STANDALONE_REVIEW_RULE).toContain("a request-changes review when the verdict is changes, an approving review (with its comments, if any) when it is clean");
+    expect(STANDALONE_REVIEW_RULE).toContain("`gh pr review <pr> --request-changes|--approve --body-file <file>`");
+    expect(STANDALONE_REVIEW_RULE).toContain("pulls/<pr>/reviews --input <json>");
+    // one account cannot request changes on or approve its own PR: the body's VERDICT line is the verdict
+    expect(STANDALONE_REVIEW_RULE).toContain("when the PR's author and the reviewer are one account");
+    expect(STANDALONE_REVIEW_RULE).toContain("`--comment` / `event` = `COMMENT`");
+    expect(STANDALONE_REVIEW_RULE).toContain("the verdict is the body's `VERDICT:` line, in both modes");
+    expect(STANDALONE_REVIEW_RULE).not.toContain("its state is the verdict");
+    expect(STANDALONE_REVIEW_RULE).toContain("`comments` = `[{path, line, side, body}]`");
+    // the writer polls reviews, not comments, and reads the verdict from the body
+    expect(STANDALONE_REVIEW_RULE).toContain("polls `gh pr view <pr> --json reviews`");
+    expect(STANDALONE_REVIEW_RULE).toContain("`APPROVED` / `CHANGES_REQUESTED` / `COMMENTED`, is only a hint");
+    expect(STANDALONE_REVIEW_RULE).toContain("answers each review point");
+    expect(STANDALONE_REVIEW_RULE).toContain("inline review thread may also be answered in the thread itself");
+    expect(STANDALONE_REVIEW_RULE).not.toContain("`[review round N]` comment");
+    expect(STANDALONE_REVIEW_RULE).not.toContain("one PR comment that starts with `[review round N]`");
     expect(STANDALONE_REVIEW_RULE).toContain("`[fix round N]`");
     expect(STANDALONE_REVIEW_RULE).toContain("`VERDICT: clean`");
     expect(STANDALONE_REVIEW_RULE.indexOf("post a PR comment that starts with `[fix round N]`")).toBeGreaterThan(
@@ -133,7 +150,7 @@ describe("selfUpdateRules with no skill to read (the full block)", () => {
     expect(STANDALONE_REVIEW_RULE).toContain("when the PR is merged or closed");
     expect(STANDALONE_REVIEW_RULE).toContain("after 40 minutes with no new `[fix round N]` comment");
     // and the writer never waits forever on a reviewer that died
-    expect(STANDALONE_REVIEW_RULE).toContain("shows the reviewer task completed, failed or blocked (blocked: it stopped without reporting) with no new review comment");
+    expect(STANDALONE_REVIEW_RULE).toContain("shows the reviewer task completed, failed or blocked (blocked: it stopped without reporting) with no new review");
     expect(STANDALONE_REVIEW_RULE).toContain("gives up after 30 minutes");
     expect(STANDALONE_REVIEW_RULE).toContain("or the reviewer died or went silent, do not merge");
     // the reviewer never touches the shared checkout it is started in
@@ -149,7 +166,7 @@ describe("selfUpdateRules with no skill to read (the full block)", () => {
     expect(STANDALONE_REVIEW_RULE).toContain("Bash timeout of 600000");
     expect(STANDALONE_REVIEW_RULE).toContain("exit 3 means CI has not finished so run it again");
     expect(STANDALONE_REVIEW_RULE).toContain("exit 4 means the PR conflicts with its base");
-    expect(STANDALONE_REVIEW_RULE).toContain("approves the PR as the merging account when that account did not open it (a failed approval is no merge)");
+    expect(STANDALONE_REVIEW_RULE).toContain("approves the PR as the merging account when that account did not open it and its latest review on this commit is not already an approval (a failed approval is no merge)");
     expect(STANDALONE_REVIEW_RULE).toContain("Never fall back to a bare `gh pr merge`");
     // a fix made after review is checked again before it can merge
     expect(STANDALONE_REVIEW_RULE.indexOf("re-run `bun run typecheck` and `bun test`")).toBeGreaterThan(
@@ -329,7 +346,8 @@ describe("self PR accounts", () => {
     const line = selfPrAccountsRule(accounts);
     expect(line).toContain("open the PR and post every `[fix round N]` comment as `writer`");
     expect(line).toContain("`GH_TOKEN=$(gh auth token -u writer)` in front of `gh pr create`");
-    expect(line).toContain("posts every `[review round N]` comment as `checker`");
+    expect(line).toContain("posts every `[review round N]` review as `checker`");
+    expect(line).toContain("`GH_TOKEN=$(gh auth token -u checker)` in front of `gh pr review` and `gh api`");
     expect(line).toContain("merge as `checker`: `GH_TOKEN=$(gh auth token -u checker)` in front of `bin/merge-when-green.sh <pr>`");
     expect(line).toContain("which approves the PR as `checker` right before it merges");
     // switching the active account would move it under every other session
