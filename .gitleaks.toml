@@ -51,9 +51,9 @@ keywords = ["momos"]
   regexes = ['''Copyright 2026 Momos\b''']
 
   [[rules.allowlists]]
-  description = "commit messages: GitHub's merge line and a default git pull merge line name the org the repo lives in (the repo URL already shows it), and the commit that set the copyright holder says so. Whole lines only, so extra text on the line is still flagged"
+  description = "commit messages: GitHub's merge line (and a revert of it) and a default git pull merge line name the org the repo lives in (the repo URL already shows it), and the commit that set the copyright holder says so. Whole lines only, so extra text on the line is still flagged"
   regexTarget = "line"
-  regexes = ['''(?m)^Merge pull request #[0-9]+ from momoshub/[A-Za-z0-9._/-]+$''', '''(?m)^Merge branch '[^'\n]+' of (?:https://|git@)?github\.com[:/]momoshub/J\.A\.R\.V\.I\.S(?:\.git)?(?: into [^\s']+)?$''', '''(?m)^(?:Copyright holder: Momos|docs: copyright holder is Momos)$''']
+  regexes = ['''(?m)^(?:Revert ")*Merge pull request #[0-9]+ from momoshub/[A-Za-z0-9._/-]+"*$''', '''(?m)^Merge branch '[^'\n]+' of (?:https://|git@)?github\.com[:/]momoshub/J\.A\.R\.V\.I\.S(?:\.git)?(?: into [^\s']+)?$''', '''(?m)^(?:Copyright holder: Momos|docs: copyright holder is Momos)$''']
 
   [[rules.allowlists]]
   description = "this config's own pattern lines (regex, regexes, keywords), which have to spell out what they hunt. Whole lines only: a trailing comment, a description or any other line here is still scanned (by the no-defaults pass, since gitleaks' defaults skip this file)"

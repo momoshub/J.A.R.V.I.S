@@ -302,6 +302,24 @@ describe.skipIf(!HAS_GITLEAKS && !process.env.CI)("leak guard", () => {
     }
   });
 
+  test("pre-push reads every tag a tag points through", () => {
+    const { repo, env } = makeRepo();
+    const r = sh(repo, `git tag -a inner -m "see U07AB12${"CD3E"}" HEAD && git tag -a outer -m clean inner && git tag -d inner >/dev/null && git push origin outer`, env);
+    expect(r.code).not.toBe(0);
+    expect(r.out).toContain("slack-real-looking-id");
+  });
+
+  test("a revert of a merged PR passes, extra text on that line does not", () => {
+    const { repo, env } = makeRepo();
+    const org = EMP.toLowerCase() + "hub";
+    const merge = `Merge pull request #2 from ${org}/feat/x`;
+    for (const [line, clean] of [[`Revert \\"${merge}\\"`, true], [`Revert \\"Revert \\"${merge}\\"\\"`, true], [`Revert \\"${merge}\\" for ${EMP}`, false]] as const) {
+      const r = sh(repo, `git checkout -q main && git checkout -qB rv && git commit -q --allow-empty -m "${line}" --no-verify && LEAK_SCAN_RANGE=main..rv bin/leak-scan.sh meta --no-banner --redact -v`, env);
+      if (clean) expect(r.out).not.toContain("employer-name");
+      else expect(r.out).toContain("employer-name");
+    }
+  });
+
   test("pre-push skips with a warning when gitleaks is missing", () => {
     const { repo, env } = makeRepo();
     const r = sh(repo, `PATH=/usr/bin:/bin git push origin main`, env);

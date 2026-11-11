@@ -60,9 +60,16 @@ if [ "${1:-}" = "meta" ]; then
     fi
     # branch and tag names are public once pushed
     for r in ${LEAK_SCAN_REFS:-}; do printf '%s\n' "$r"; done
-    # an annotated tag: its name line and message (the tagger is an identity, out of scope)
+    # an annotated tag: its name line and message (the tagger is an identity, out of
+    # scope), and the same for every tag object it points through, since a tag of a tag
+    # carries the inner message to whoever fetches it
     for t in ${LEAK_SCAN_TAGS:-}; do
-      [ "$(git cat-file -t "$t")" = tag ] && git cat-file tag "$t" | grep -vE '^(object|type|tagger) ' || true
+      n=0
+      while [ "$(git cat-file -t "$t" 2>/dev/null)" = tag ] && [ "$n" -lt 50 ]; do
+        git cat-file tag "$t" | grep -vE '^(object|type|tagger) ' || true
+        t="$(git cat-file tag "$t" | sed -n 's/^object //p' | head -1)"
+        n=$((n + 1))
+      done
     done
   } > "$tmp/meta.txt"
   input="$tmp/meta.txt"

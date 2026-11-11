@@ -115,6 +115,10 @@ jobs:
           # a ref that peels to a blob or a tree is content no commit scan reads
           odd=$(git for-each-ref refs/remotes/origin refs/tags --format='%(objectname)' | while read -r o; do [ "$(git cat-file -t "$o^{}")" = commit ] || echo x; done | wc -l)
           if [ "$odd" -ne 0 ]; then echo "$odd ref(s) point at something other than a commit"; exit 1; fi
+          # refs outside heads, tags and pull (notes, custom namespaces) are served by GitHub
+          # but fetched by no scan, so they are refused outright
+          other=$(git ls-remote origin | awk '{print $2}' | grep -cvE '^(HEAD|refs/heads/.+|refs/tags/.+|refs/pull/.+)$' || true)
+          if [ "$other" -ne 0 ]; then echo "$other ref(s) outside refs/heads, refs/tags and refs/pull"; exit 1; fi
           set +e
           bin/leak-scan.sh meta --redact --no-banner --report-format json --report-path leaks-meta.json
           code=$?
