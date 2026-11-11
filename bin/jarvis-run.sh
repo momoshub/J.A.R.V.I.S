@@ -1,7 +1,11 @@
 #!/usr/bin/env bash
 # Run one of the bot's own commands, as whoever this turn is talking to.
 #
-#   jarvis-run.sh <endpoint> <command line...>
+#   jarvis-run.sh <endpoint> [--show] <command line...>
+#
+# By default the command's output comes back to the caller ONLY and nothing is
+# posted to the thread. `--show` is for a command the person in the thread
+# directly asked for: its output then shows there, as if they had typed it.
 #
 # The ticket is NOT an argument. It is read from JARVIS_RUN_TICKET, which the
 # bot puts in this process's environment when it spawns the turn.
@@ -20,7 +24,7 @@
 set -uo pipefail
 
 if [ "$#" -lt 2 ]; then
-  echo "usage: jarvis-run.sh <endpoint> <command line...>" >&2
+  echo "usage: jarvis-run.sh <endpoint> [--show] <command line...>" >&2
   exit 2
 fi
 
@@ -40,11 +44,23 @@ if [[ "${1:-}" =~ ^[0-9a-f]{32}$ ]]; then
   shift
 fi
 
+show=""
+if [ "${1:-}" = "--show" ]; then
+  show=1
+  shift
+  # An old ticket may follow the flag too.
+  if [[ "${1:-}" =~ ^[0-9a-f]{32}$ ]]; then
+    shift
+  fi
+fi
+
 line="$*"
 if [ -z "$line" ]; then
-  echo "usage: jarvis-run.sh <endpoint> <command line...>" >&2
+  echo "usage: jarvis-run.sh <endpoint> [--show] <command line...>" >&2
   exit 2
 fi
 
-payload=$(TICKET="$ticket" LINE="$line" python3 -c 'import json,os; print(json.dumps({"ticket": os.environ["TICKET"], "line": os.environ["LINE"]}))')
+payload=$(TICKET="$ticket" LINE="$line" SHOW="$show" python3 -c 'import json,os; p = {"ticket": os.environ["TICKET"], "line": os.environ["LINE"]}
+if os.environ["SHOW"]: p["show"] = True
+print(json.dumps(p))')
 curl -s -X POST -H "Content-Type: application/json" -d "$payload" "$endpoint"

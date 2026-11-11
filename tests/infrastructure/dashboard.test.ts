@@ -355,6 +355,16 @@ describe("running a command through the API", () => {
     expect(seen[0]).toEqual({ ticket: "tkt123", line: "review https://github.com/o/r/pull/1" });
   });
 
+  test("show is passed through only when true, and must be a boolean", async () => {
+    const { dash, seen } = withRunner();
+    await dash.handle(postJson("/api/commands/run", { ticket: "t", line: "ping", show: true }));
+    await dash.handle(postJson("/api/commands/run", { ticket: "t", line: "ping", show: false }));
+    expect(seen[0]).toEqual({ ticket: "t", line: "ping", show: true });
+    expect(seen[1]).toEqual({ ticket: "t", line: "ping" });
+    expect((await dash.handle(postJson("/api/commands/run", { ticket: "t", line: "ping", show: "yes" }))).status).toBe(400);
+    expect(seen).toHaveLength(2);
+  });
+
   test("ticket and line are both required", async () => {
     const { dash, seen } = withRunner();
     expect((await dash.handle(postJson("/api/commands/run", { line: "ping" }))).status).toBe(400);

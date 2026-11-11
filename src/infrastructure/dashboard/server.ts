@@ -125,6 +125,12 @@ export type RunCommandRequest = {
   ticket: string;
   /** The command line, e.g. `review https://github.com/o/r/pull/1`. */
   line: string;
+  /**
+   * The person in the thread directly asked for this command, so its output
+   * shows there. Absent or false: the bot ran it on its own and the output
+   * goes back to the brain only.
+   */
+  show?: boolean;
 };
 
 const LOOPBACK_HOSTS = new Set(["localhost", "127.0.0.1", "::1", "[::1]"]);
@@ -378,8 +384,9 @@ export const createDashboard = (config: DashboardConfig, deps: DashboardDeps) =>
           const ticket = String(body.ticket ?? "").trim();
           const line = String(body.line ?? "").trim();
           if (!ticket || !line) return jsonError("ticket and line are required");
+          if (body.show !== undefined && typeof body.show !== "boolean") return jsonError("show must be a boolean");
           try {
-            return Response.json({ ok: true, ...(await deps.runCommand({ ticket, line })) });
+            return Response.json({ ok: true, ...(await deps.runCommand({ ticket, line, ...(body.show === true ? { show: true } : {}) })) });
           } catch (e) {
             return jsonError(e instanceof Error ? e.message : String(e), 500);
           }
