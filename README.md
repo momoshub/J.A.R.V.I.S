@@ -664,6 +664,14 @@ else - exactly the escalation the ticket exists to prevent.
 
 A process environment cannot be stale: it was set when the turn began.
 
+**What the thread sees.** A command a person types shows its output in the
+thread. A command the brain runs on its own (checking `mindful`, a status) is
+hidden: the output goes back to the brain only and nothing is posted. When the
+person directly asked for the command ("review this PR"), the brain runs it as
+`jarvis-run.sh <endpoint> --show <command>` and it shows like a typed one.
+Commands that post by themselves outside this bridge (pickers, GitHub reviews)
+are not affected.
+
 ## Stopping a turn
 
 A chat turn can run for the better part of an hour, so there is a way to end one

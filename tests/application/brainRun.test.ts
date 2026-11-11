@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { runForBrain, STARTED_MESSAGE } from "../../src/application/brainRun.ts";
+import { HIDDEN_RUNNING_MESSAGE, runForBrain, STARTED_MESSAGE } from "../../src/application/brainRun.ts";
 import { blockKitReply } from "../../src/domain/blockKit.ts";
 
 const recorder = () => {
@@ -13,6 +13,7 @@ describe("runForBrain", () => {
     let gotReply: unknown = "unset";
     const out = await runForBrain({
       quiet: true,
+      show: false,
       start: async (reply) => {
         gotReply = reply;
         return "the page body";
@@ -30,6 +31,7 @@ describe("runForBrain", () => {
     const { posts, post } = recorder();
     const out = await runForBrain({
       quiet: false,
+      show: true,
       start: async () => "- <@U1> - *owner*",
       post,
       handoffMs: 1000,
@@ -41,7 +43,7 @@ describe("runForBrain", () => {
 
   test("an empty result posts nothing and claims nothing was posted", async () => {
     const { posts, post } = recorder();
-    const out = await runForBrain({ quiet: false, start: async () => "  ", post, handoffMs: 1000, onLateError: () => {} });
+    const out = await runForBrain({ quiet: false, show: true, start: async () => "  ", post, handoffMs: 1000, onLateError: () => {} });
     expect(posts).toEqual([]);
     expect(out.posted).toBe(false);
   });
@@ -51,6 +53,7 @@ describe("runForBrain", () => {
     let finish: (s: string) => void = () => {};
     const out = await runForBrain({
       quiet: false,
+      show: true,
       start: () => new Promise<string>((r) => (finish = r)),
       post,
       handoffMs: 5,
@@ -71,6 +74,7 @@ describe("runForBrain", () => {
     let fail: (e: Error) => void = () => {};
     await runForBrain({
       quiet: false,
+      show: true,
       start: () => new Promise<string>((_, reject) => (fail = reject)),
       post,
       handoffMs: 5,
@@ -86,10 +90,105 @@ describe("runForBrain", () => {
   test("a Block Kit reply posts as the fence but comes back to the brain as its words", async () => {
     const { posts, post } = recorder();
     const reply = blockKitReply("*cpu* fine", [{ type: "divider" }]);
-    const errand = await runForBrain({ quiet: false, start: async () => reply, post, handoffMs: 1000, onLateError: () => {} });
+    const errand = await runForBrain({ quiet: false, show: true, start: async () => reply, post, handoffMs: 1000, onLateError: () => {} });
     expect(errand).toEqual({ result: "*cpu* fine", posted: true });
     expect(posts).toEqual([reply]);
-    const tool = await runForBrain({ quiet: true, start: async () => reply, post, handoffMs: 1000, onLateError: () => {} });
+    const tool = await runForBrain({ quiet: true, show: false, start: async () => reply, post, handoffMs: 1000, onLateError: () => {} });
     expect(tool.result).toBe("*cpu* fine");
+  });
+
+  test("a quiet command stays quiet even when the person asked for it", async () => {
+    const { posts, post } = recorder();
+    const out = await runForBrain({ quiet: true, show: true, start: async () => "list", post, handoffMs: 1000, onLateError: () => {} });
+    expect(out).toEqual({ result: "list", posted: false });
+    expect(posts).toEqual([]);
+  });
+
+  describe("hidden (the brain ran it on its own)", () => {
+    test("a fast one comes back to the brain and posts nothing, not even progress", async () => {
+      const { posts, post } = recorder();
+      let gotReply: unknown = "unset";
+      const out = await runForBrain({
+        quiet: false,
+        show: false,
+        start: async (reply) => {
+          gotReply = reply;
+          return "mindful report";
+        },
+        post,
+        handoffMs: 1000,
+        onLateError: () => {},
+      });
+      expect(out).toEqual({ result: "mindful report", posted: false });
+      // a sink, never undefined: commands read no reply as "no Slack" and take another path
+      expect(typeof gotReply).toBe("function");
+      expect(posts).toEqual([]);
+    });
+
+    test("progress lines are collected for the brain, never posted", async () => {
+      const { posts, post } = recorder();
+      const out = await runForBrain({
+        quiet: false,
+        show: false,
+        start: async (reply) => {
+          await reply?.(":mag: reviewing");
+          return "approved";
+        },
+        post,
+        handoffMs: 1000,
+        onLateError: () => {},
+      });
+      expect(out).toEqual({ result: ":mag: reviewing\n\napproved", posted: false });
+      expect(posts).toEqual([]);
+    });
+
+    test("a Block Kit reply comes back as its words", async () => {
+      const { posts, post } = recorder();
+      const reply = blockKitReply("*cpu* fine", [{ type: "divider" }]);
+      const out = await runForBrain({ quiet: false, show: false, start: async () => reply, post, handoffMs: 1000, onLateError: () => {} });
+      expect(out).toEqual({ result: "*cpu* fine", posted: false });
+      expect(posts).toEqual([]);
+    });
+
+    test("a slow one is handed off, says it is hidden, and never posts its result", async () => {
+      const { posts, post } = recorder();
+      const late: string[] = [];
+      let finish: (s: string) => void = () => {};
+      const out = await runForBrain({
+        quiet: false,
+        show: false,
+        start: async (reply) => {
+          await reply?.(":mag: reviewing");
+          return new Promise<string>((r) => (finish = r));
+        },
+        post,
+        handoffMs: 5,
+        onLateError: () => {},
+        onLateResult: (t) => void late.push(t),
+      });
+      expect(out).toEqual({ result: HIDDEN_RUNNING_MESSAGE, posted: false });
+      finish("review done");
+      await new Promise((r) => setTimeout(r, 0));
+      expect(posts).toEqual([]);
+      expect(late).toEqual([":mag: reviewing\n\nreview done"]);
+    });
+
+    test("a slow one that fails is logged, never posted", async () => {
+      const { posts, post } = recorder();
+      const logged: unknown[] = [];
+      let fail: (e: Error) => void = () => {};
+      await runForBrain({
+        quiet: false,
+        show: false,
+        start: () => new Promise<string>((_, reject) => (fail = reject)),
+        post,
+        handoffMs: 5,
+        onLateError: (e) => void logged.push(e),
+      });
+      fail(new Error("killed"));
+      await new Promise((r) => setTimeout(r, 0));
+      expect(logged).toHaveLength(1);
+      expect(posts).toEqual([]);
+    });
   });
 });

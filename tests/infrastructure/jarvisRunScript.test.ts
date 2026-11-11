@@ -51,6 +51,30 @@ describe("jarvis-run.sh", () => {
     expect(JSON.parse(stdout).line).toBe("bomb money 9 <link>");
   });
 
+  test("--show is sent as show: true and is not part of the command", async () => {
+    const { stdout, code } = await run(["--show", "review", "that"], { JARVIS_RUN_TICKET: TICKET });
+    expect(code).toBe(0);
+    expect(JSON.parse(stdout)).toEqual({ ticket: TICKET, line: "review that", show: true });
+  });
+
+  test("no --show leaves show out of the payload", async () => {
+    const { stdout } = await run(["mindful"], { JARVIS_RUN_TICKET: TICKET });
+    expect(JSON.parse(stdout)).not.toHaveProperty("show");
+  });
+
+  test("an old ticket is dropped on either side of --show", async () => {
+    const stale = "b".repeat(32);
+    for (const args of [[stale, "--show", "ticket", "x"], ["--show", stale, "ticket", "x"]]) {
+      const { stdout } = await run(args, { JARVIS_RUN_TICKET: TICKET });
+      expect(JSON.parse(stdout)).toEqual({ ticket: TICKET, line: "ticket x", show: true });
+    }
+  });
+
+  test("--show with no command is a usage error", async () => {
+    const { code } = await run(["--show"], { JARVIS_RUN_TICKET: TICKET });
+    expect(code).toBe(2);
+  });
+
   test("no ticket in the environment is refused, loudly", async () => {
     const { code, stderr } = await run(["ticket", "x"], { JARVIS_RUN_TICKET: "" });
     expect(code).toBe(3);

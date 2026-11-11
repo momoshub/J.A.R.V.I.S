@@ -164,7 +164,9 @@ describe("buildSystemPrompt", () => {
   test("offers to run a real command when a chat request is one", () => {
     const p = buildSystemPrompt(runOpts);
     expect(p).toContain("Running my own commands");
-    expect(p).toContain("/bin/jarvis-run.sh http://127.0.0.1:2002/api/commands/run <command and its arguments>");
+    expect(p).toContain("/bin/jarvis-run.sh http://127.0.0.1:2002/api/commands/run [--show] <command and its arguments>");
+    expect(p).toContain("Pass `--show` when the person directly asked for that command");
+    expect(p).toContain("NEVER pass it when you run a command on your own");
     expect(p).toContain("X/jarvis");
     expect(p).toContain("It already carries who you are talking to");
   });

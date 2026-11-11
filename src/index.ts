@@ -829,7 +829,7 @@ const main = async () => {
       // Lets the brain run a real command when a chat request is really one.
       // The actor's own role decides what is allowed - nothing is elevated by
       // going through here.
-      runCommand: async ({ ticket, line }) => {
+      runCommand: async ({ ticket, line, show }) => {
         const resolved = commandTickets.redeem(ticket);
         if (!resolved.ok) throw new Error(refusalMessage(resolved.reason, resolved.limit));
         const ctx = resolved.ctx;
@@ -840,10 +840,12 @@ const main = async () => {
         const opts = { prefix: config.commandPrefix, slash: config.slashCommand, threadTs: ctx.threadTs, fromBrainRun: true };
         return runForBrain({
           quiet: isQuietCommand(line),
+          show: show === true,
           start: (reply) => dispatchCommand(deps, user, ctx.channel, line, reply ? { ...opts, reply } : opts),
           post: async (text) => void (await slackAdmin.post(ctx.channel, text, ctx.threadTs, SIGNATURES.command)),
           handoffMs: RUN_HANDOFF_MS,
           onLateError: (e) => activity.error("command_failed", { command: line, result: String(e) }),
+          onLateResult: (text) => activity.line(`hidden command finished: ${line} - ${text.slice(0, 200)}`),
         });
       },
       // A GitHub-called turn answers on GitHub. The ticket names the thread,
