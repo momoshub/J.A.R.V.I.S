@@ -25,6 +25,11 @@ jobs:
           bun-version: 1.4.3 # same as the host; bump together
       - run: bun install --frozen-lockfile
       - run: bun run typecheck
+      # the leak guard tests need gitleaks, and fail rather than skip under CI
+      - name: install gitleaks
+        env:
+          GITLEAKS_VERSION: 8.30.1 # same as the gitleaks job; bump together
+        run: curl -sSfL "https://github.com/gitleaks/gitleaks/releases/download/v${GITLEAKS_VERSION}/gitleaks_${GITLEAKS_VERSION}_linux_x64.tar.gz" | tar -xz -C /usr/local/bin gitleaks
       - run: bun test
       # Real Slack, in a private test channel named by the JARVIS_E2E_CHANNEL repository variable (see README "Testing"). Secrets are never
       # passed to fork PRs, so those skip this step. Where the variable is set, a missing
@@ -49,8 +54,8 @@ jobs:
         working-directory: web
 
   # Secret scan with the gitleaks CLI (the action needs a licence for organisations).
-  # Push (any branch or tag): the whole history from the pushed ref, plus every tag. Pull request: only the commits it adds. Both scan the diffs and,
-  # separately, the commit messages, file paths and annotated tag messages, which gitleaks git
+  # Push (any branch or tag): every public ref (--all), their names and every tag. Pull request: only the commits it adds. Both scan the diffs and,
+  # separately, the commit messages, file paths, ref names and annotated tag names and messages, which gitleaks git
   # never reads. False positives (test vectors, fake tokens) are allowlisted by value in
   # .gitleaks.toml. Rules: .gitleaks.toml plus the private names rule from the LEAK_NAMES_TOML
   # secret, both through bin/leak-scan.sh. The secret is required wherever GitHub passes it
@@ -75,18 +80,24 @@ jobs:
           curl -sSfL "https://github.com/gitleaks/gitleaks/releases/download/v${GITLEAKS_VERSION}/gitleaks_${GITLEAKS_VERSION}_linux_x64.tar.gz" | tar -xz -C /usr/local/bin gitleaks
           gitleaks version
       - name: pick the range
+        env:
+          HEAD_REF: ${{ github.head_ref }}
         run: |
           if [ "${{ github.event_name }}" = pull_request ]; then
             echo "LEAK_SCAN_RANGE=${{ github.event.pull_request.base.sha }}..${{ github.event.pull_request.head.sha }}" >> "$GITHUB_ENV"
+            echo "LEAK_SCAN_REFS=$HEAD_REF" >> "$GITHUB_ENV"
           else
-            git fetch -q --tags origin
-            echo "LEAK_SCAN_RANGE=HEAD" >> "$GITHUB_ENV"
+            # every public ref, not just the pushed one: a push of more than three tags
+            # starts no workflow, so what only those reach is caught on the next push
+            git fetch -q --tags origin '+refs/heads/*:refs/remotes/origin/*'
+            echo "LEAK_SCAN_RANGE=--all" >> "$GITHUB_ENV"
+            echo "LEAK_SCAN_REFS=$(git for-each-ref refs/remotes/origin refs/tags --format='%(refname:lstrip=2)' | sed 's#^origin/##' | grep -vx HEAD | tr '\n' ' ')" >> "$GITHUB_ENV"
             echo "LEAK_SCAN_TAGS=$(git for-each-ref refs/tags --format='%(objectname)' | tr '\n' ' ')" >> "$GITHUB_ENV"
           fi
       - name: scan the diffs
         run: |
           set +e
-          bin/leak-scan.sh git . --redact --no-banner --report-format json --report-path leaks.json --log-opts="$LEAK_SCAN_RANGE"
+          bin/leak-scan.sh git . --redact --no-banner --report-format json --report-path leaks.json "--log-opts=$LEAK_SCAN_RANGE"
           code=$?
           set -e
           jq -r '.[] | "\(.RuleID) \(.File):\(.StartLine) \(.Commit[0:8])"' leaks.json 2>/dev/null || true
@@ -97,5 +108,5 @@ jobs:
           bin/leak-scan.sh meta --redact --no-banner --report-format json --report-path leaks-meta.json
           code=$?
           set -e
-          jq -r '.[] | "\(.RuleID) in a commit message, file path or tag message"' leaks-meta.json 2>/dev/null || true
+          jq -r '.[] | "\(.RuleID) in a commit message, file path, ref name or tag message"' leaks-meta.json 2>/dev/null || true
           exit "$code"

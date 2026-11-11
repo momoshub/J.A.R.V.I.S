@@ -45,7 +45,8 @@ const SAMPLES: Record<string, string> = {
   "employer-name": `owned by ${EMP} Inc\n`,
 };
 
-describe.skipIf(!HAS_GITLEAKS)("leak guard", () => {
+// skipped only off CI: under CI a missing gitleaks fails the suite instead of hiding it
+describe.skipIf(!HAS_GITLEAKS && !process.env.CI)("leak guard", () => {
   test("the committed tree is clean", () => {
     const r = sh(ROOT, "bin/leak-scan.sh dir . --no-banner --redact -v");
     expect(r.out).toContain("no leaks found");
@@ -138,7 +139,7 @@ describe.skipIf(!HAS_GITLEAKS)("leak guard", () => {
     const id = "U07AB12" + "CD3E";
     const msg = sh(repo, `git checkout -qb m && echo a > a.txt && git add a.txt && git commit -qm "asked in ${id}" --no-verify && git push origin m`, env);
     expect(msg.code).not.toBe(0);
-    expect(msg.out).toContain("commit message, a file path or a tag message");
+    expect(msg.out).toContain("a commit message, a file path, a branch or tag name");
     const path = sh(repo, `git checkout -q main && git checkout -qb p && mkdir -p notes && echo a > "notes/${EMP}.md" && git add notes && git commit -qm notes --no-verify && git push origin p`, env);
     expect(path.code).not.toBe(0);
     expect(path.out).toContain("employer-name");
@@ -188,25 +189,36 @@ describe.skipIf(!HAS_GITLEAKS)("leak guard", () => {
     expect(exact.out).toContain("no leaks found");
   });
 
-  test("no file is exempt by path: an edited example names file or a config comment is still scanned", () => {
+  test("no file is exempt by path: example names file, config comments, svg and lockfiles are scanned", () => {
     const { repo, env } = makeRepo();
     mkdirSync(join(repo, "docs"), { recursive: true });
     cpSync(join(ROOT, "docs", "leak-names.example.toml"), join(repo, "docs", "leak-names.example.toml"));
     const line = `# owner U07AB12${"CD3E"} at ${EMP}\n`;
-    writeFileSync(join(repo, "docs", "leak-names.example.toml"), line, { flag: "a" });
-    const ex = sh(repo, "bin/leak-scan.sh dir docs/leak-names.example.toml --no-banner --redact -v", env);
-    expect(ex.out).toContain("slack-real-looking-id");
-    expect(ex.out).toContain("employer-name");
-    // gitleaks' default allowlist skips .gitleaks.toml, so the meta scan reads its added lines
-    writeFileSync(join(repo, ".gitleaks.toml"), line, { flag: "a" });
-    const cfg = sh(repo, "git checkout -qb c && git commit -qam cfg --no-verify && LEAK_SCAN_RANGE=main..c bin/leak-scan.sh meta --no-banner --redact -v", env);
-    expect(cfg.out).toContain("slack-real-looking-id");
-    expect(cfg.out).toContain("employer-name");
-    // the config's own pattern lines stay allowed
-    expect(sh(repo, "git checkout -qb d main", env).code).toBe(0);
-    writeFileSync(join(repo, ".gitleaks.toml"), `\n[[rules]]\nid = "extra"\nregex = '''(?i)${EMP} extra'''\nkeywords = ["${EMP.toLowerCase()}"]\n`, { flag: "a" });
-    const ok = sh(repo, "git commit -qam pat --no-verify && LEAK_SCAN_RANGE=main..d bin/leak-scan.sh meta --no-banner --redact -v", env);
-    expect(ok.out).toContain("no leaks found");
+    // gitleaks' defaults skip svg, lockfiles and .gitleaks.toml, so the no-defaults pass has to catch these
+    for (const f of ["docs/leak-names.example.toml", ".gitleaks.toml", "docs/arch.svg", "yarn.lock", "package-lock.json", "go.sum"]) {
+      writeFileSync(join(repo, f), line, { flag: "a" });
+      const r = sh(repo, `bin/leak-scan.sh dir ${f} --no-banner --redact -v`, env);
+      expect(r.out).toContain("slack-real-looking-id");
+      expect(r.out).toContain("employer-name");
+    }
+    // a trailing comment after a pattern line is scanned, the bare pattern line is not
+    const cfg = join(repo, ".gitleaks.toml");
+    cpSync(join(ROOT, ".gitleaks.toml"), cfg);
+    writeFileSync(cfg, `\n[[rules]]\nid = "extra"\nregex = '''(?i)${EMP} extra'''\nkeywords = ["${EMP.toLowerCase()}"]\n`, { flag: "a" });
+    expect(sh(repo, "bin/leak-scan.sh dir .gitleaks.toml --no-banner --redact -v", env).out).toContain("no leaks found");
+    writeFileSync(cfg, `regex2 = '''x''' # asked in U07AB12${"CD3E"}\n`, { flag: "a" });
+    expect(sh(repo, "bin/leak-scan.sh dir .gitleaks.toml --no-banner --redact -v", env).out).toContain("slack-real-looking-id");
+  });
+
+  test("pre-push blocks an id or the employer word in a branch or tag name", () => {
+    const { repo, env } = makeRepo();
+    const bad = `x-U07AB12${"CD3E"}`;
+    const branch = sh(repo, `git push origin main:${bad}`, env);
+    expect(branch.code).not.toBe(0);
+    expect(branch.out).toContain("slack-real-looking-id");
+    const tag = sh(repo, `git tag ${EMP.toLowerCase()}-v1 && git push origin ${EMP.toLowerCase()}-v1`, env);
+    expect(tag.code).not.toBe(0);
+    expect(tag.out).toContain("employer-name");
   });
 
   test("a non-ASCII file path is scanned as written, not octal-quoted", () => {

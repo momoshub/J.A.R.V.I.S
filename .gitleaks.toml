@@ -9,8 +9,8 @@ useDefault = true
 
 [allowlist]
 description = "known fake secrets in tests"
-# no path is exempt here. gitleaks' own default allowlist skips this file, so
-# bin/leak-scan.sh meta scans its added lines itself, minus the pattern lines
+# no path is exempt here. gitleaks' default allowlist (useDefault) skips whole file
+# types, this file included, so bin/leak-scan.sh also runs these rules without it
 # the known fake secrets in tests, by value, so a history rewrite (new SHAs) does
 # not break the scan the way .gitleaksignore fingerprints do: the RFC 6238 seed,
 # a made-up DASHBOARD_TOKEN, a made-up xoxb fed to the redactor and the user id
@@ -51,3 +51,10 @@ keywords = ["momos"]
   description = "commit messages: GitHub's own merge line names the org the repo lives in (the repo URL already shows it), and the commit that set the copyright holder says so. Whole lines only, so extra text on the line is still flagged"
   regexTarget = "line"
   regexes = ['''(?m)^Merge pull request #[0-9]+ from momoshub/[A-Za-z0-9._/-]+$''', '''(?m)^(?:Copyright holder: Momos|docs: copyright holder is Momos)$''']
+
+  [[rules.allowlists]]
+  description = "this config's own pattern lines (regex, regexes, keywords), which have to spell out what they hunt. Whole lines only: a trailing comment, a description or any other line here is still scanned (by the no-defaults pass, since gitleaks' defaults skip this file)"
+  condition = "AND"
+  paths = ['''^\.gitleaks\.toml$''']
+  regexTarget = "line"
+  regexes = ['''(?m)^\s*(?:regex|regexes|keywords)\s*=\s*\[?\s*(?:'{3}[^'\n]*'{3}|"[^"\n]*")(?:\s*,\s*(?:'{3}[^'\n]*'{3}|"[^"\n]*"))*\s*\]?\s*$''']
