@@ -16,6 +16,7 @@ import {
   LOOP_APPROVE_ACTION,
   LOOP_REJECT_ACTION,
   PENDING_TTL_MS,
+  approvalCore,
   approvalText,
   nextRun,
   parseSchedule,
@@ -107,12 +108,25 @@ export type LoopPressOutcome =
  */
 export const decideLoop = async (
   deps: LoopApprovalDeps,
-  press: { slackUserId: string; actionId: string; value: string; channel?: string; messageTs?: string; edited?: boolean },
+  press: {
+    slackUserId: string;
+    actionId: string;
+    value: string;
+    channel?: string;
+    messageTs?: string;
+    edited?: boolean;
+    /** The texts the pressed message shows (its blocks), as Slack sent them back. */
+    shown?: readonly string[];
+  },
 ): Promise<LoopPressOutcome> => {
   if (press.actionId !== LOOP_APPROVE_ACTION && press.actionId !== LOOP_REJECT_ACTION) return { kind: "unknown" };
   const l = deps.loops.get(Number(press.value));
   if (!l || !l.command) return { kind: "unknown" };
-  if (!l.noticeChannel || !l.noticeTs || press.channel !== l.noticeChannel || press.messageTs !== l.noticeTs || press.edited) {
+  // Slack does not reliably flag an app's own chat.update as edited, so what the message shows decides.
+  const shown = (press.shown ?? []).join("\n");
+  const showsWhatRuns = approvalCore(l.schedule, l.command).every((line) => shown.includes(line));
+  const fromTheDm = !!l.noticeChannel && !!l.noticeTs && press.channel === l.noticeChannel && press.messageTs === l.noticeTs;
+  if (!fromTheDm || press.edited || !showsWhatRuns) {
     deps.log?.(`loop ${l.id} press refused: not the untouched approval DM`);
     return { kind: "forged" };
   }

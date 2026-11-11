@@ -1026,7 +1026,7 @@ export const createSlackApp = (config: SlackAppConfig, deps: Deps) => {
   // Approve / Reject on a script loop a turn wrote. Decided HERE and never
   // handed to the model (the kit listener skips `LOOP_ACTION_PREFIX`): a press
   // that went through a model turn could be talked into approving its own shell.
-  app.action(new RegExp(`^${LOOP_ACTION_PREFIX}`), (async ({ ack, body, action, client }: Omit<ApprovalArgs, "body"> & { body: ApprovalArgs["body"] & { message?: { ts?: string; thread_ts?: string; edited?: unknown } }; client: KitClient }) => {
+  app.action(new RegExp(`^${LOOP_ACTION_PREFIX}`), (async ({ ack, body, action, client }: Omit<ApprovalArgs, "body"> & { body: ApprovalArgs["body"] & { message?: { ts?: string; thread_ts?: string; edited?: unknown; blocks?: { text?: { text?: string } }[] } }; client: KitClient }) => {
     await ack();
     const by = body.user?.id;
     const value = action?.value;
@@ -1039,6 +1039,7 @@ export const createSlackApp = (config: SlackAppConfig, deps: Deps) => {
         channel: body.channel?.id,
         messageTs: body.message?.ts,
         edited: body.message?.edited !== undefined,
+        shown: (body.message?.blocks ?? []).flatMap((b) => (typeof b.text?.text === "string" ? [b.text.text] : [])),
       });
       log(`loop press ${outcome.kind} by ${by}`);
       const channel = body.channel?.id;

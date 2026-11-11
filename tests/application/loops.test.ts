@@ -6,7 +6,7 @@ import { dispatchCommand } from "../../src/application/commands.ts";
 import type { CheckResult } from "../../src/application/watcher.ts";
 import { createCommandLogRepo } from "../../src/infrastructure/db/commandLogRepo.ts";
 import { decideLoop, expirePendingLoops, type LoopApprovalDeps } from "../../src/application/loopApproval.ts";
-import { LOOP_APPROVE_ACTION, LOOP_REJECT_ACTION, PENDING_TTL_MS } from "../../src/domain/loop.ts";
+import { approvalText, LOOP_APPROVE_ACTION, LOOP_REJECT_ACTION, PENDING_TTL_MS } from "../../src/domain/loop.ts";
 import { actor, build, db as fixtureDb, OWNER, slackCalls } from "./commandsFixture.ts";
 
 let db: DbClient;
@@ -70,6 +70,8 @@ beforeEach(() => {
   failDm = false;
   check = { code: 0, output: "" };
 });
+
+const shownOf = (row: { id: number; schedule: string; command?: string | null }): string[] => [approvalText(row.id, row.schedule, row.command ?? "")];
 
 describe("loop runner: prompt mode", () => {
   test("nothing fires before it is due", async () => {
@@ -352,7 +354,7 @@ describe("loop command", () => {
     const m = mk();
     const row = await propose(m);
     expect(await dispatchCommand(m.deps, OWNER_ACTOR, "C1", "loop list")).toMatch(/script every 15m - pending.*`\.\/sync\.sh`/);
-    await decideLoop(m.loopApproval, { slackUserId: OWNER, actionId: LOOP_APPROVE_ACTION, value: String(row.id), channel: row.noticeChannel, messageTs: row.noticeTs });
+    await decideLoop(m.loopApproval, { slackUserId: OWNER, actionId: LOOP_APPROVE_ACTION, value: String(row.id), channel: row.noticeChannel, messageTs: row.noticeTs, shown: shownOf(row) });
     expect(await dispatchCommand(m.deps, OWNER_ACTOR, "C1", "loop list")).toMatch(/script every 15m - next.*`\.\/sync\.sh`/);
   });
 
@@ -361,13 +363,13 @@ describe("loop command", () => {
     const row = await propose(m);
     expect(await dispatchCommand(m.deps, OWNER_ACTOR, "C1", `loop cancel ${row.id}`)).toContain("cancelled");
     expect(m.l.get(row.id)).toBeUndefined();
-    expect(await decideLoop(m.loopApproval, { slackUserId: OWNER, actionId: LOOP_APPROVE_ACTION, value: String(row.id), channel: row.noticeChannel, messageTs: row.noticeTs })).toEqual({ kind: "unknown" });
+    expect(await decideLoop(m.loopApproval, { slackUserId: OWNER, actionId: LOOP_APPROVE_ACTION, value: String(row.id), channel: row.noticeChannel, messageTs: row.noticeTs, shown: shownOf(row) })).toEqual({ kind: "unknown" });
   });
 
   describe("approval", () => {
     const press = (m: ReturnType<typeof mk>, id: number, actionId: string, by = OWNER) => {
       const row = m.l.get(id);
-      return decideLoop(m.loopApproval, { slackUserId: by, actionId, value: String(id), channel: row?.noticeChannel, messageTs: row?.noticeTs });
+      return decideLoop(m.loopApproval, { slackUserId: by, actionId, value: String(id), channel: row?.noticeChannel, messageTs: row?.noticeTs, shown: row ? shownOf(row) : [] });
     };
 
     test("a press that is not on the untouched approval DM changes nothing", async () => {
@@ -379,9 +381,16 @@ describe("loop command", () => {
       expect(await decideLoop(m.loopApproval, { ...base, channel: row.noticeChannel, messageTs: "1.000001" })).toEqual({ kind: "forged" });
       expect(await decideLoop(m.loopApproval, base)).toEqual({ kind: "forged" });
       // The real DM, but edited after it was posted.
-      expect(await decideLoop(m.loopApproval, { ...base, channel: row.noticeChannel, messageTs: row.noticeTs, edited: true })).toEqual({ kind: "forged" });
+      expect(await decideLoop(m.loopApproval, { ...base, channel: row.noticeChannel, messageTs: row.noticeTs, shown: shownOf(row), edited: true })).toEqual({ kind: "forged" });
+      // The real DM rewritten to show a harmless command, with no edited flag (Slack may not set one for the app's own update).
+      const harmless = approvalText(row.id, row.schedule, "echo backup ok");
+      expect(await decideLoop(m.loopApproval, { ...base, channel: row.noticeChannel, messageTs: row.noticeTs, shown: [harmless] })).toEqual({ kind: "forged" });
+      expect(await decideLoop(m.loopApproval, { ...base, channel: row.noticeChannel, messageTs: row.noticeTs, shown: [] })).toEqual({ kind: "forged" });
       expect(await decideLoop(m.loopApproval, { ...base, actionId: LOOP_REJECT_ACTION, channel: "C0OTHER", messageTs: "1.000001" })).toEqual({ kind: "forged" });
       expect(m.l.get(row.id)?.state).toBe("pending");
+      // What was really posted passes, as Slack hands the text back in the section.
+      const posted = slackCalls.posts.filter((p) => p.text.includes(`#${row.id}`)).at(-1)?.text ?? "";
+      expect(await decideLoop(m.loopApproval, { ...base, channel: row.noticeChannel, messageTs: row.noticeTs, shown: [posted] })).toEqual({ kind: "approved", id: row.id });
     });
 
     test("a pending loop never runs, even when its time has come", async () => {

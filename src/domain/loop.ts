@@ -38,13 +38,19 @@ export const LOOP_REJECT_ACTION = `${LOOP_ACTION_PREFIX}reject`;
 const escapeForSlack = (text: string): string =>
   text.replaceAll("&", "&amp;").replaceAll("<", "&lt;").replaceAll(">", "&gt;");
 
+/** The lines of the approval DM that say what runs: a press counts only while the pressed message still shows them. */
+export const approvalCore = (schedule: string, command: string): readonly [string, string] => [
+  `schedule: ${schedule}`,
+  `\`\`\`${escapeForSlack(command.replaceAll("```", "'''"))}\`\`\``,
+];
+
 /** The approval DM: the exact shell and schedule, so what is approved is what runs. */
 export const approvalText = (id: number, schedule: string, command: string, ttlMs: number = PENDING_TTL_MS): string =>
   [
     `🔐 I wrote a script loop (#${id}) and it needs your OK before it ever runs.`,
-    `schedule: ${schedule}`,
+    approvalCore(schedule, command)[0],
     "command (runs as me, with no turn):",
-    `\`\`\`${escapeForSlack(command.replaceAll("```", "'''"))}\`\`\``,
+    approvalCore(schedule, command)[1],
     `Approve starts it, Reject deletes it. No answer in ${Math.round(ttlMs / 3_600_000)}h also deletes it.`,
   ].join("\n");
 
