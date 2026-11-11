@@ -145,6 +145,14 @@ describe("reviews run on the caller's own Claude token", () => {
     expect(isQuietCommand("rm-msg https://x.slack.com/archives/C1/p1700000000000100")).toBe(true);
   });
 
+  test("adapter is quiet except refine, so export/import do not litter the thread", () => {
+    expect(isQuietCommand("adapter export")).toBe(true);
+    expect(isQuietCommand("adapter import /tmp/x")).toBe(true);
+    expect(isQuietCommand("adapter")).toBe(true);
+    expect(isQuietCommand("memory status")).toBe(true);
+    expect(isQuietCommand("adapter refine tidy up")).toBe(false);
+  });
+
   test("tell and a remote workflow stop are quiet, a plain workflow stop still answers in the thread", () => {
     expect(isQuietCommand("tell https://x.slack.com/archives/C1/p1700000000000100 hi")).toBe(true);
     expect(isQuietCommand("workflow stop https://x.slack.com/archives/C1/p1700000000000100")).toBe(true);

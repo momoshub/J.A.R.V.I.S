@@ -16,6 +16,10 @@ export const ADAPTER_COMMANDS: readonly CommandDef[] = [
     minRole: "admin",
     usage: "[status|check|history|refine [note]|revert <id>|export|import <dir>|migrate]",
     summary: "inspect and curate what I remember",
+    // Bookkeeping the brain runs for itself (export, import, status...) is
+    // plumbing: posted into the thread it was just noise between replies.
+    // Only refine stays loud - it runs for minutes and reports as it goes.
+    quiet: (args) => (args[0] ?? "").toLowerCase() !== "refine",
     run: async (ctx) => {
       const { deps, actor, args, rest, prefix, reply, channelId } = ctx;
       const a = adapterDepsOf(deps);
