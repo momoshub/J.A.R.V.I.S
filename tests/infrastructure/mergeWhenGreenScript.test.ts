@@ -170,6 +170,29 @@ describe("merge-when-green.sh", () => {
     expect(r.merged).toContain("pr merge 42");
   });
 
+  test("the reviewer's own approval (same account, a COMMENTED note after it) is not approved again", async () => {
+    const reviews = [
+      { author: { login: "Checker" }, state: "APPROVED", commit: { oid: SHA } },
+      { author: { login: "checker" }, state: "COMMENTED", commit: { oid: SHA } },
+    ];
+    const r = await run(fakeGh([{ checks: [ci("pass")] }], { reviews }), ["42"]);
+    expect(r.code).toBe(0);
+    expect(r.approved).toBeNull();
+    expect(r.merged).toContain("pr merge 42");
+  });
+
+  test("a request-changes or dismissal after the approval means it is approved again", async () => {
+    for (const state of ["CHANGES_REQUESTED", "DISMISSED"]) {
+      const reviews = [
+        { author: { login: "checker" }, state: "APPROVED", commit: { oid: SHA } },
+        { author: { login: "checker" }, state, commit: { oid: SHA } },
+      ];
+      const r = await run(fakeGh([{ checks: [ci("pass")] }], { reviews }), ["42"]);
+      expect(r.code).toBe(0);
+      expect(r.approved).toContain("--approve");
+    }
+  });
+
   test("an approval on an older head, or by someone else, does not count", async () => {
     const reviews = [
       { author: { login: "checker" }, state: "APPROVED", commit: { oid: "old999" } },

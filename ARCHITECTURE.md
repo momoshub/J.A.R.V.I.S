@@ -138,11 +138,11 @@ no classes.
   passes (typecheck, tests, the real-Slack e2e on non-fork runs, and a `gitleaks` secret scan whose known false positives are allowlisted by value in `.gitleaks.toml`), merged only by `bin/merge-when-green.sh` (exit 4 at once on a PR that
   conflicts with its base, which GitHub never runs CI on). When it touches runtime code
   (logic, commands, adapters, `bin/` scripts, or a mixed PR) a reviewer Orca worker
-  reads it first, at most 2 rounds (rounds are PR comments, fixes are pushes); docs,
+  reads it first, at most 2 rounds (each round is a real GitHub review, request changes or approve; fixes are pushes answered by a `[fix round N]` comment); docs,
   prompt text, skills and dashboard UI need no reviewer. `bin/jarvis-restart.sh` runs typecheck and tests and only
   restarts when both pass. With `SELF_PR_AUTHOR`/`SELF_PR_REVIEWER` set, the
   PR is opened as the author and reviewed, approved and merged as the reviewer
-  (the approval is fired by `merge-when-green.sh` right before the merge). `restartWhenIdle` then drains: timers that start turns hold, and new
+  (the reviewer's own approving review is the clean verdict; `merge-when-green.sh` approves right before the merge only when that account has not already approved this head). `restartWhenIdle` then drains: timers that start turns hold, and new
   chat messages are still answered, each turn on `RESTART_TURN_BUDGET_MS` (2 min;
   commands, slash commands and buttons wait in the inbox instead);
   one past it tells its thread to hold on, is cut and its inbox row stays

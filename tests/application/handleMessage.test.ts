@@ -681,7 +681,7 @@ describe("handleMessage", () => {
 
     await handleMessage(deps, { channelId: "D1", slackUserId: OWNER, text: "hi" });
     expect(system).toContain("GitHub accounts:");
-    expect(system).toContain("comment as `checker`");
+    expect(system).toContain("review as `checker`");
 
     deps.users.upsert({ slackId: "U0PAL01", role: "pal", displayName: "P", addedBy: OWNER, createdAt: 0 });
     await handleMessage(deps, { channelId: "D1", slackUserId: "U0PAL01", text: "hi" });

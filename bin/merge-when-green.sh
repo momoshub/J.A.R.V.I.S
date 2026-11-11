@@ -23,8 +23,10 @@
 # comments. GitHub refuses to approve a closed PR, hence before, not after. It
 # is skipped (one line) when the merging account opened the PR - GitHub forbids
 # approving your own PR, so a one-account setup still merges - and when that
-# account already approved this exact head (a rerun after exit 3). A failed
-# approval stops the merge (exit 1).
+# account's latest approve/request-changes review is already an approval of this
+# exact head: the standalone reviewer posts that approval itself as the same
+# account, and a rerun after exit 3 finds its own. A later request-changes, or a
+# dismissed approval, does not count. A failed approval stops the merge (exit 1).
 #
 # The default timeout stays under the 10 minute ceiling of a foreground tool
 # call; give that call a timeout to match. Exit codes: 0 merged, 1 red CI or a
@@ -59,7 +61,7 @@ approve() {
   fi
   approved=$(gh pr view "$PR" --json reviews 2>/dev/null |
     jq -r --arg me "$(lower "$me")" --arg sha "$SHA" \
-      'any(.reviews[]?; ((.author.login // "") | ascii_downcase) == $me and .state == "APPROVED" and .commit.oid == $sha)' 2>/dev/null)
+      '[.reviews[]? | select(((.author.login // "") | ascii_downcase) == $me and (.state == "APPROVED" or .state == "CHANGES_REQUESTED" or .state == "DISMISSED"))] | last | (.state == "APPROVED" and .commit.oid == $sha)' 2>/dev/null)
   if [ "$approved" = "true" ]; then
     echo "already approved by $me on ${SHA:0:7}"
     return 0
