@@ -120,7 +120,25 @@ describe("runForBrain", () => {
         onLateError: () => {},
       });
       expect(out).toEqual({ result: "mindful report", posted: false });
-      expect(gotReply).toBeUndefined();
+      // a sink, never undefined: commands read no reply as "no Slack" and take another path
+      expect(typeof gotReply).toBe("function");
+      expect(posts).toEqual([]);
+    });
+
+    test("progress lines are collected for the brain, never posted", async () => {
+      const { posts, post } = recorder();
+      const out = await runForBrain({
+        quiet: false,
+        show: false,
+        start: async (reply) => {
+          await reply?.(":mag: reviewing");
+          return "approved";
+        },
+        post,
+        handoffMs: 1000,
+        onLateError: () => {},
+      });
+      expect(out).toEqual({ result: ":mag: reviewing\n\napproved", posted: false });
       expect(posts).toEqual([]);
     });
 
@@ -139,7 +157,10 @@ describe("runForBrain", () => {
       const out = await runForBrain({
         quiet: false,
         show: false,
-        start: () => new Promise<string>((r) => (finish = r)),
+        start: async (reply) => {
+          await reply?.(":mag: reviewing");
+          return new Promise<string>((r) => (finish = r));
+        },
         post,
         handoffMs: 5,
         onLateError: () => {},
@@ -149,7 +170,7 @@ describe("runForBrain", () => {
       finish("review done");
       await new Promise((r) => setTimeout(r, 0));
       expect(posts).toEqual([]);
-      expect(late).toEqual(["review done"]);
+      expect(late).toEqual([":mag: reviewing\n\nreview done"]);
     });
 
     test("a slow one that fails is logged, never posted", async () => {

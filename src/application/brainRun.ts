@@ -24,7 +24,11 @@
  *
  * What this does NOT hide: anything a command posts by itself outside `post` and
  * `reply` (a picker, a Block Kit card sent straight to Slack, a review on
- * GitHub). Hiding is only about what goes through this bridge.
+ * GitHub). Hiding is only about what goes through this bridge. Since a hidden
+ * run has a `reply`, the token / secret asks that gate on it still post their
+ * buttons: those need the person's hand, so they are meant to show. A
+ * `workflow` posts its later steps by itself, so the brain passes `--show` for
+ * one - it is always something the person asked for.
  */
 
 import { readableText } from "../domain/blockKit.ts";
@@ -41,7 +45,7 @@ export type BrainRunDeps = {
   quiet: boolean;
   /** The person directly asked for this command (`--show`): only then may its output reach the thread. */
   show: boolean;
-  /** Start the command; `reply` is how it posts progress, absent for a quiet or hidden one. */
+  /** Start the command; `reply` is how it posts progress: absent for a quiet one, a collecting sink for a hidden one. */
   start: (reply?: (text: string) => Promise<void>) => Promise<string>;
   post: (text: string) => Promise<void>;
   /** How long the caller is held before a slow command is left to finish on its own. */
@@ -64,14 +68,19 @@ export const runForBrain = async (deps: BrainRunDeps): Promise<BrainRunOutcome> 
 
   // Nobody asked for this one: it is the brain's own check or errand, so the
   // thread hears nothing - no progress, no result, no late failure.
+  // It still gets a `reply`, a sink that collects instead of posting: commands
+  // read a missing `reply` as "no Slack" and take a one-shot path, so a hidden
+  // `review` once skipped its approve-after and CI hand-off entirely.
   if (!deps.show) {
-    const run = deps.start();
+    const lines: string[] = [];
+    const collected = (text: string) => [...lines, text].filter((t) => t.trim()).join("\n\n");
+    const run = deps.start(async (text) => void lines.push(text));
     const settled = await Promise.race([
       run.then((text) => ({ done: true as const, text })),
       new Promise<{ done: false }>((r) => setTimeout(() => r({ done: false }), deps.handoffMs)),
     ]);
-    if (settled.done) return { result: readableText(settled.text), posted: false };
-    run.then((text) => deps.onLateResult?.(text)).catch((e: unknown) => deps.onLateError(e));
+    if (settled.done) return { result: readableText(collected(settled.text)), posted: false };
+    run.then((text) => deps.onLateResult?.(collected(text))).catch((e: unknown) => deps.onLateError(e));
     return { result: HIDDEN_RUNNING_MESSAGE, posted: false };
   }
 
