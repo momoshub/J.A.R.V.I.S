@@ -426,6 +426,20 @@ describe.skipIf(!HAS_GITLEAKS && !process.env.CI)("leak guard", () => {
     }
   });
 
+  test("UTF-16 after an odd-length UTF-8 prefix is decoded", () => {
+    const { repo, env } = makeRepo();
+    const tail = Buffer.from(`owner U07AB12${"CD3E"}\r\n`, "utf16le");
+    let i = 0;
+    for (const buf of [Buffer.concat([Buffer.from("# notes:\n"), tail]), Buffer.concat([Buffer.from("# notes:\n"), Buffer.from(tail).swap16()])]) {
+      const name = `odd${i++}.log`;
+      writeFileSync(join(repo, name), buf);
+      const r = sh(repo, `git checkout -q main && git checkout -qB m-${name.replace(".log", "")} && git add ${name} && git commit -qm o --no-verify && git push origin HEAD`, env);
+      expect(r.code).not.toBe(0);
+      expect(r.out).toContain("slack-real-looking-id");
+      sh(repo, "git checkout -q main", env);
+    }
+  });
+
   test("pre-push skips with a warning when gitleaks is missing", () => {
     const { repo, env } = makeRepo();
     const r = sh(repo, `PATH=/usr/bin:/bin git push origin main`, env);
