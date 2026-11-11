@@ -38,25 +38,8 @@ export const mentionsBot = (text: string, botUserId?: string): boolean =>
  * Everything here is cheap and local. The expensive part - who wrote the
  * thread's parent - is only worth asking once this says yes.
  */
-export const couldFollowThread = (m: FollowCandidate, botUserId?: string, botName?: string): boolean =>
-  followSkipReason(m, botUserId, botName) === undefined;
-
-/**
- * Is this message addressed to somebody else?
- *
- * It tags a person and that person is not the bot, and it does not call the
- * bot by name either. "<@Kai> where did you get that?" in a followed thread is
- * Kai's question, even when it is about something the bot said: answering it
- * speaks over the person who was asked.
- */
-export const addressedToOther = (text: string, botUserId?: string, botName?: string): boolean => {
-  const tagged = [...text.matchAll(/<@([UW][A-Z0-9]+)(?:[|:][^>]*)?>/g)].map((t) => t[1]);
-  if (!tagged.some((id) => id !== botUserId)) return false;
-  const name = botName?.trim().toLowerCase();
-  if (!name) return true;
-  const words = text.replace(/<@[^>]*>/g, " ").toLowerCase().split(/[^\p{L}\p{N}]+/u);
-  return !words.includes(name);
-};
+export const couldFollowThread = (m: FollowCandidate, botUserId?: string): boolean =>
+  followSkipReason(m, botUserId) === undefined;
 
 /**
  * Whether a message subtype is still a person talking. A message with files
@@ -72,7 +55,7 @@ export const isSpeech = (subtype?: string): boolean => !subtype || subtype === "
  * its reason instead of vanishing. A silent skip and an event Slack never
  * delivered look identical in the logs otherwise.
  */
-export const followSkipReason = (m: FollowCandidate, botUserId?: string, botName?: string): string | undefined => {
+export const followSkipReason = (m: FollowCandidate, botUserId?: string): string | undefined => {
   // Edits, joins, deletions and other subtypes are not somebody talking.
   if (!isSpeech(m.subtype)) return `subtype:${m.subtype}`;
   if (m.bot_id) return "bot";
@@ -86,8 +69,6 @@ export const followSkipReason = (m: FollowCandidate, botUserId?: string, botName
   // A tagged message is handled by the mention event; following it here too
   // would answer the same message twice.
   if (mentionsBot(m.text, botUserId)) return "tagged";
-  // Tagging someone else is talking to them, not to the thread.
-  if (addressedToOther(m.text, botUserId, botName)) return "tags-other";
   return undefined;
 };
 

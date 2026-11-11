@@ -1470,7 +1470,7 @@ export const createSlackApp = (config: SlackAppConfig, deps: Deps) => {
       // started by a person gets the same treatment. Or it is just it and
       // one person talking, who should not have to tag it on every line.
       const me = await deps.slack?.botUserId().catch(ignoreQuietly("bot user id lookup"));
-      if (!couldFollowThread(m, me, config.botName)) return;
+      if (!couldFollowThread(m, me)) return;
       if (!me) {
         log(`follow skip channel=${m.channel} thread=${m.thread_ts} user=${m.user}: bot id unknown`);
         return;
