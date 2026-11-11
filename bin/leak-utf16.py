@@ -3,8 +3,8 @@
 
 gitleaks reads a UTF-16 file as bytes with a NUL between every character, so no
 rule matches it. bin/leak-scan.sh meta feeds the decoded text to gitleaks instead.
-UTF-16 is recognised by its byte order mark, or, with no mark, by its NUL bytes all
-falling on one side (odd positions for LE, even for BE), whatever the script.
+A blob with a byte order mark is decoded by it. With no mark, any even-length blob
+holding a NUL is decoded both as UTF-16LE and as UTF-16BE, and both are scanned.
 """
 import subprocess
 import sys
@@ -24,20 +24,11 @@ while pos < len(out):
     size = int(header[2])
     data = out[pos:pos + size]
     pos += size + 1
-    encoding = None
     if data[:2] in (b"\xff\xfe", b"\xfe\xff"):
-        encoding = "utf-16"
-    else:
-        # where the NULs fall, not how many: UTF-16 puts them on one side only (LE odd,
-        # BE even) whatever the script, a binary file has them on both. 90%, not all: an
-        # emoji's low surrogate can put a NUL on the other side
-        odd_nul = data[1::2].count(0)
-        even_nul = data[0::2].count(0)
-        total = odd_nul + even_nul
-        if total >= 4 and len(data) % 2 == 0:
-            if odd_nul / total >= 0.9:
-                encoding = "utf-16-le"
-            elif even_nul / total >= 0.9:
-                encoding = "utf-16-be"
-    if encoding:
-        sys.stdout.write(data.decode(encoding, errors="replace") + "\n")
+        sys.stdout.write(data.decode("utf-16", errors="replace") + "\n")
+    elif len(data) % 2 == 0 and data.count(0) > 0:
+        # no mark: read it both ways rather than guess the byte order. Where the NULs
+        # fall says too little (U+3000, U+4E00, U+AC00 and emoji surrogates put them on
+        # the "wrong" side), and the wrong order decodes to CJK noise no rule matches
+        for encoding in ("utf-16-le", "utf-16-be"):
+            sys.stdout.write(data.decode(encoding, errors="replace") + "\n")

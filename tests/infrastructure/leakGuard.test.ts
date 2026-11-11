@@ -412,6 +412,20 @@ describe.skipIf(!HAS_GITLEAKS && !process.env.CI)("leak guard", () => {
     expect(r.out).toContain("slack-real-looking-id");
   });
 
+  test("BOM-less UTF-16 CJK text full of U+xx00 characters is decoded", () => {
+    const { repo, env } = makeRepo();
+    const text = `顧客メモ　一覧　一番目　가\nowner U07AB12${"CD3E"}\n`;
+    let i = 0;
+    for (const buf of [Buffer.from(text, "utf16le"), Buffer.from(text, "utf16le").swap16()]) {
+      const name = `cjk${i++}.txt`;
+      writeFileSync(join(repo, name), buf);
+      const r = sh(repo, `git checkout -q main && git checkout -qB c-${name.replace(".txt", "")} && git add ${name} && git commit -qm c --no-verify && git push origin HEAD`, env);
+      expect(r.code).not.toBe(0);
+      expect(r.out).toContain("slack-real-looking-id");
+      sh(repo, "git checkout -q main", env);
+    }
+  });
+
   test("pre-push skips with a warning when gitleaks is missing", () => {
     const { repo, env } = makeRepo();
     const r = sh(repo, `PATH=/usr/bin:/bin git push origin main`, env);
