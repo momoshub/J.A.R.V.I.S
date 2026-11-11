@@ -5,6 +5,8 @@ name: ci
 
 on:
   pull_request:
+    # edited too: the PR title becomes the merge commit's message on main, where no hook runs
+    types: [opened, synchronize, reopened, edited]
   push:
     branches: ['**']
     tags: ['**']
@@ -104,10 +106,12 @@ jobs:
           exit "$code"
       - name: scan commit messages, file paths, ref names and tag messages
         run: |
-          # ref names are read here, never through $GITHUB_ENV or an env: block, which the
-          # public log prints on every later run
+          # ref names and the PR title are read here, never through $GITHUB_ENV or an env:
+          # block, which the public log prints
           if [ "${{ github.event_name }}" = pull_request ]; then
             LEAK_SCAN_REFS="$(jq -r '.pull_request.head.ref' "$GITHUB_EVENT_PATH")"
+            LEAK_SCAN_TEXT="$(jq -r '.pull_request.title' "$GITHUB_EVENT_PATH")"
+            export LEAK_SCAN_TEXT
           else
             LEAK_SCAN_REFS="$(git for-each-ref refs/remotes/origin refs/tags --format='%(refname:lstrip=2)' | sed 's#^origin/##' | grep -vx HEAD | tr '\n' ' ')"
           fi

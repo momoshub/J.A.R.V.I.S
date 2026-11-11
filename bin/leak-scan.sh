@@ -5,7 +5,7 @@
 #   bin/leak-scan.sh meta <gitleaks args...>   scan what `gitleaks git` never sees: the
 #     commit messages and file paths of the commits selected by $LEAK_SCAN_RANGE
 #     (rev-list args, word-split), the ref names in $LEAK_SCAN_REFS and the name and
-#     message of the tag objects in $LEAK_SCAN_TAGS
+#     message of the tag objects in $LEAK_SCAN_TAGS, and any text in $LEAK_SCAN_TEXT
 # Every scan runs twice (see "Two passes" below) and fails if either finds something.
 # Names rule source, first found: $LEAK_NAMES_TOML (content, used by CI), then
 # $LEAK_NAMES_FILE or ~/.jarvis/leak-names.toml. Absent: a notice and the rest still
@@ -60,6 +60,8 @@ if [ "${1:-}" = "meta" ]; then
     fi
     # branch and tag names are public once pushed
     for r in ${LEAK_SCAN_REFS:-}; do printf '%s\n' "$r"; done
+    # free text that will land in history, e.g. a PR title GitHub writes into the merge commit
+    if [ -n "${LEAK_SCAN_TEXT:-}" ]; then printf "%s\n" "$LEAK_SCAN_TEXT"; fi
     # an annotated tag: its name line and message (the tagger is an identity, out of
     # scope), and the same for every tag object it points through, since a tag of a tag
     # carries the inner message to whoever fetches it

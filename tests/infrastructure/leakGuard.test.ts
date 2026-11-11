@@ -320,6 +320,16 @@ describe.skipIf(!HAS_GITLEAKS && !process.env.CI)("leak guard", () => {
     }
   });
 
+  test("a PR title passed as LEAK_SCAN_TEXT is scanned", () => {
+    const { repo, env } = makeRepo();
+    for (const [title, rule] of [[`fix for C07AB12${"CD3E"} owners`, "slack-real-looking-id"], [`${EMP} rollout`, "employer-name"]] as const) {
+      const r = sh(repo, "bin/leak-scan.sh meta --no-banner --redact -v", { ...env, LEAK_SCAN_TEXT: title });
+      expect(r.code).not.toBe(0);
+      expect(r.out).toContain(rule);
+    }
+    expect(sh(repo, "bin/leak-scan.sh meta --no-banner --redact -v", { ...env, LEAK_SCAN_TEXT: "leak guard: scan ref names" }).out).toContain("no leaks found");
+  });
+
   test("pre-push skips with a warning when gitleaks is missing", () => {
     const { repo, env } = makeRepo();
     const r = sh(repo, `PATH=/usr/bin:/bin git push origin main`, env);
