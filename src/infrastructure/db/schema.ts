@@ -102,6 +102,41 @@ export const migrate = (db: Database): void => {
   migrateCloudwatchRequests(db);
   migrateAccessReplay(db);
   migrateWorkerTickets(db);
+  migrateLoops(db);
+};
+
+/**
+ * Migration v31: recurring loops.
+ *
+ * `schedule` is the canonical text (`every monday at 09:00`) rather than a
+ * decoded shape, so a row stays readable and the parser is the one authority.
+ * `next_at` is indexed like `watches.next_at`: the timer asks "what is due" on
+ * every tick.
+ */
+const migrateLoops = (db: Database): void => {
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS loops (
+      id          INTEGER PRIMARY KEY AUTOINCREMENT,
+      channel_id  TEXT NOT NULL,
+      thread_ts   TEXT NOT NULL,
+      created_by  TEXT NOT NULL,
+      schedule    TEXT NOT NULL,
+      prompt      TEXT NOT NULL,
+      command     TEXT NOT NULL DEFAULT '',
+      next_at     INTEGER NOT NULL,
+      last_run_at INTEGER,
+      runs        INTEGER NOT NULL DEFAULT 0,
+      state       TEXT NOT NULL DEFAULT 'active',
+      last_error  TEXT NOT NULL DEFAULT '',
+      created_at  INTEGER NOT NULL,
+      updated_at  INTEGER NOT NULL
+    );
+  `);
+  db.exec("CREATE INDEX IF NOT EXISTS idx_loops_due ON loops (state, next_at);");
+  const { user_version } = db.query<{ user_version: number }, []>("PRAGMA user_version").get() ?? {
+    user_version: 0,
+  };
+  if (user_version < 31) db.exec("PRAGMA user_version = 31;");
 };
 
 /**

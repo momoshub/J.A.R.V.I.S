@@ -72,7 +72,7 @@ export const parseClock = (token: string): number | undefined => {
 };
 
 /** Midnight of the local day `now` falls in, as epoch ms. */
-const localMidnight = (now: number, offsetMin: number): number => {
+export const localMidnight =(now: number, offsetMin: number): number => {
   const shifted = now + offsetMin * 60_000;
   return shifted - (shifted % 86_400_000) - offsetMin * 60_000;
 };

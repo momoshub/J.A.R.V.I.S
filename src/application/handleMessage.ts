@@ -36,6 +36,7 @@ import type { CommandLogRepo } from "../infrastructure/db/commandLogRepo.ts";
 import type { UsageRepo } from "../infrastructure/db/usageRepo.ts";
 import type { TurnLogRepo } from "../infrastructure/db/turnLogRepo.ts";
 import type { ReminderRepo } from "../infrastructure/db/reminderRepo.ts";
+import type { LoopRepo } from "../infrastructure/db/loopRepo.ts";
 import type { WatchRepo } from "../infrastructure/db/watchRepo.ts";
 import type { FollowRepo } from "../infrastructure/db/followRepo.ts";
 import type { WorkflowRepo } from "../infrastructure/db/workflowRepo.ts";
@@ -93,6 +94,8 @@ export type HandleMessageDeps = {
   follows?: FollowRepo;
   /** Reminders people asked for, for the `remind` command. */
   reminders?: ReminderRepo;
+  /** Recurring prompts, for the `loop` command. */
+  loops?: LoopRepo;
   /** Dispatched Orca tasks with no live worker and quiet PRs on the bot's own repo, for `mindful`. */
   stuckWork?: () => Promise<StuckWork>;
   /** The workspace domain, so `mindful` can print clickable thread links. */

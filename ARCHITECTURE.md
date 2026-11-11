@@ -36,7 +36,7 @@ no classes.
   |                    tool policy per role, stream.ts -> live Slack reply  |
   |                                                                         |
   |  timers, outside every turn:                                            |
-  |    watcher | reminders | reviewInbox | workflow continues | innerChild  |
+  |    watcher | reminders | loops | reviewInbox | workflow continues | ...  |
   |    orcaQuestions (worker questions -> the thread that started it)      |
   |    offlineAlarm (keeps an "I'm offline" Slack scheduled msg armed)     |
   |    stuckSweeper (dead Orca workers, quiet own PRs -> owner DM, 15 min)  |
@@ -85,6 +85,7 @@ no classes.
   and list-price cost its Claude transcript used, stored in
   `orca_worker_usage`, read later with `worker-cost <ctx_...|run_...>`);
   `reminders` posts at the time with no model;
+  `loops` (`application/loops.ts`, `db/loopRepo.ts`, `domain/loop.ts`, `loop` command) fires a recurring schedule: a prompt loop hands a turn through the watcher's own `runTurn` (so there is one way to wake a thread), in a fresh top-level DM message to the loop's creator each time, as the creator; a script loop (`-- <shell>`, owner only) runs through the watcher's shell runner with no turn, and only a failure posts, to the same DM. A loop is always moved on from now before it fires, so a run missed while down happens once on startup, never as a backlog; a creator who lost the role stops the loop;
   a `watches` row whose check is `ci-gate:{...}` is not shell and hands back no
   turn: `watcher` calls `application/ciGate.ts` instead, which polls the PR's
   checks once a minute and approves or requests changes itself (the CI gate of
@@ -184,7 +185,7 @@ No I/O, no frameworks. Just data shapes and functions of their inputs.
 - `threadSession.ts`, `agentSession.ts` - one CLI session per thread and when it may be resumed
 - `adapter.ts`, `adapterCheck.ts` - memory as a checked, versioned directory (facts + skills) instead of an ever-growing list
 - `ciGate.ts` (domain) - CI verdict of a PR from its check rollup, what a CI-gate poll should do, the spec of a gate's watch row
-- `watch.ts`, `reminder.ts`, `selfUpdate.ts`, `runControl.ts`, `threadBackground.ts` - waits, reminders, draining restart, stopping a turn and the background agents its thread started
+- `watch.ts`, `reminder.ts`, `loop.ts`, `selfUpdate.ts`, `runControl.ts`, `threadBackground.ts` - waits, reminders, draining restart, stopping a turn and the background agents its thread started
 - `workerUsage.ts` - an Orca worker's tokens summed from its Claude Code transcript (deduped per message) and priced per model (the one price table)
 - `offlineAlarm.ts` - the dead man's switch notice and its back-online edit
 - `systemStatus.ts`, `orcaStatus.ts`, `systemBlocks.ts` - `sys`: the host verdict and numbers, Orca's runtime/runs/tasks parsed from its CLI JSON and counted, and the Block Kit message (header, fields, trend, Orca table) with the plain report as its fallback
@@ -207,7 +208,7 @@ Orchestrates the domain and depends on **ports**, not concrete adapters.
 - `commands.ts`, `commandTickets.ts`, `workerTickets.ts`, `commandLimits.ts`, `brainRun.ts` - the command registry (configurable prefix + slash, role gates, help), the brain's tickets, allowances and result delivery. The command definitions live in `commands/`, one file per group (`chat`, `schedule`, `people`, `adapter`, `learnings`, `errands`, `review`, `runtime`, `slack`, `cloudwatch`), with `commands/shared.ts` for the deps, the `CommandDef` type and the helpers more than one group uses
 - `threadQueue.ts`, `runRegistry.ts` - one turn per thread, and stopping one
 - `ciGate.ts` (application) - the CI gate of `review`: idempotent request-changes and approve against GitHub's own state, the watcher row for a running CI, and its poll
-- `watcher.ts`, `reminders.ts`, `reviewInbox.ts`, `reviewGuard.ts`, `innerChild.ts`, `offlineAlarm.ts`, `orcaQuestions.ts`, `stuckSweeper.ts` - the timers (`orcaQuestions` also sits on the tool-trace sink, linking each Orca worker to the thread that started it)
+- `watcher.ts`, `reminders.ts`, `loops.ts`, `reviewInbox.ts`, `reviewGuard.ts`, `innerChild.ts`, `offlineAlarm.ts`, `orcaQuestions.ts`, `stuckSweeper.ts` - the timers (`orcaQuestions` also sits on the tool-trace sink, linking each Orca worker to the thread that started it)
 - `githubApp.ts` - calls from the GitHub App: dedupe/queue, identity mapping, the turn, the answer back
 - `workflow.ts`, `workflowFront.ts`, `workflowContinue.ts` - long tasks driven from one thread on a durable session
 - `accessRequests.ts` - unknown people ask the owner and admins, who decide with a reaction; on ✅ the person's original message (stored whole, with its Slack ts) is answered as a normal turn through the Slack intake, falling back to a short "you are in" line if the replay fails
@@ -233,7 +234,7 @@ Concrete implementations of the seams and the transports.
 - `inbox/inboxRepo.ts` - the inbox queue shared by both processes
 - `llm/claudeCli.ts` - the default `LlmPort`, wraps the local `claude` CLI (`--resume`, `stream-json`, per-call policy -> `--allowedTools`/cwd/timeout, the timeout stopping the whole process tree, `turnEnv` for per-turn environment such as the Orca handle and the subagent/worker models, `agents` for the `--agents` definitions that pin Explore and Plan); `killTree.ts`, `toolTraceLog.ts` support it; `backgroundAgents.ts` finds a thread's `claude --bg` sessions and Orca workers in its trace and stops them through their own CLIs for `stop`
 - `llm/anthropic.ts` - alternative `LlmPort` backed by the Anthropic API
-- `db/` - `bun:sqlite` client, schema + migrations, one repo per table (users, role policies, messages, sessions, watches, reminders, workflows, usage, turn and command logs, Orca worker threads and questions, ...), `secretBox.ts` for encrypted tokens, `tokenKeyStore.ts` for where its key lives (file, or a macOS Keychain item via the `security` CLI, `TOKEN_KEY_SOURCE`)
+- `db/` - `bun:sqlite` client, schema + migrations, one repo per table (users, role policies, messages, sessions, watches, reminders, loops, workflows, usage, turn and command logs, Orca worker threads and questions, ...), `secretBox.ts` for encrypted tokens, `tokenKeyStore.ts` for where its key lives (file, or a macOS Keychain item via the `security` CLI, `TOKEN_KEY_SOURCE`)
 - `adapter/adapterStore.ts` - the memory adapter in the `adapter_files` table, mirrored to `data/adapter-mirror` so skills can be read by path
 - `github/` - `gh` CLI wrapper and review-request polling; the GitHub App's fetch client (`appClient.ts`, RS256 JWT -> cached installation token), credentials from files (`appCredentials.ts`) and webhook listener (`webhookServer.ts`)
 - `system/` - host probes (system load, Accessibility access, shell checks for watches, `orcaProbe.ts` reading Orca's status, newest Runs and their tasks for `sys` under one deadline), `guideWriter.ts`, which writes the prompt's how-to guides to `data/prompt-guides`, and `orcaTerminal.ts`, the bot's own Orca terminal (created once, checked against Orca at most once a minute, re-created when gone) whose handle every spawned turn gets as `ORCA_TERMINAL_HANDLE` so it can open Orca Runs and start workers, and `workerTranscript.ts`, which finds an Orca worker's Claude Code session (one message id from `worker-read --source transcript`, matched to the `uuid` in a `~/.claude/projects` jsonl) and sums what it used

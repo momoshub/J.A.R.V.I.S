@@ -47,6 +47,7 @@ import { createStatsRepo } from "./infrastructure/db/statsRepo.ts";
 import { createTurnLogRepo } from "./infrastructure/db/turnLogRepo.ts";
 import { createWatchRepo } from "./infrastructure/db/watchRepo.ts";
 import { createReminderRepo } from "./infrastructure/db/reminderRepo.ts";
+import { createLoopRepo } from "./infrastructure/db/loopRepo.ts";
 import { createFollowRepo } from "./infrastructure/db/followRepo.ts";
 import { createKitViewRepo } from "./infrastructure/db/kitViewRepo.ts";
 import { createWatcher } from "./application/watcher.ts";
@@ -68,6 +69,7 @@ import { createSelfIssueRepo } from "./infrastructure/db/selfIssueRepo.ts";
 import { noTools } from "./domain/toolPolicy.ts";
 import { createClaudeJsonReader, unlistedLocalMcpServers } from "./infrastructure/llm/mcpConfig.ts";
 import { createReminderSender } from "./application/reminders.ts";
+import { createLoopRunner } from "./application/loops.ts";
 import { createShellCheck } from "./infrastructure/system/shellCheck.ts";
 import { createOrcaCli, createOrcaTerminal } from "./infrastructure/system/orcaTerminal.ts";
 import { createOrcaProbe } from "./infrastructure/system/orcaProbe.ts";
@@ -80,7 +82,7 @@ const WORKER_USAGE_ORCA_TIMEOUT_MS = 15_000;
 
 import { createWorkflowRepo } from "./infrastructure/db/workflowRepo.ts";
 import { resumeContinues } from "./application/workflowContinue.ts";
-import { SIGNATURES } from "./domain/messageFooter.ts";
+import { SIGNATURES, hostOffsetMin } from "./domain/messageFooter.ts";
 import { WORKER_BILL_KIND } from "./application/workflow.ts";
 import { createAccessRequestRepo } from "./infrastructure/db/accessRequestRepo.ts";
 import { createCommandApprovalRepo } from "./infrastructure/db/commandApprovalRepo.ts";
@@ -214,6 +216,7 @@ const main = async () => {
   const watches = createWatchRepo(db);
   const workerUsageRepo = createWorkerUsageRepo(db);
   const reminders = createReminderRepo(db);
+  const loops = createLoopRepo(db);
   const follows = createFollowRepo(db);
   const kitViews = createKitViewRepo(db);
   const adapterDeps = () => ({
@@ -538,6 +541,7 @@ const main = async () => {
     watches,
     follows,
     reminders,
+    loops,
     slackWaitScript,
     orcaWorkerWait,
     workerTickets,
@@ -996,6 +1000,21 @@ const main = async () => {
     log: (msg) => console.error(`[remind] ${msg}`),
     onError: onDbError,
   });
+  // Loops hand a thread a real turn on a schedule, through the watcher's own
+  // `runTurn`. A missed fire runs once on the first tick after a restart.
+  const loopRunner = createLoopRunner({
+    loops,
+    clock,
+    runTurn: deps.runTurn!,
+    offsetMinutes: () => hostOffsetMin(clock()),
+    dm: async (userId, text) => slackAdmin.postDm(userId, text, SIGNATURES.loop),
+    // Unattended spend needs a role that can still start a loop: a demoted or removed creator's loops stop.
+    check: createShellCheck(fullCwd),
+    mayRun: (id, script) =>
+      id === config.ownerSlackId || (!script && ["admin", "owner"].includes(users.get(id)?.role ?? "")),
+    log: (msg) => console.error(`[loop] ${msg}`),
+    onError: onDbError,
+  });
   // GitHub review requests of the bot's account, posted and reviewed in a
   // channel as whoever asked - on their own token, review before approve.
   const ghRequests = createGhReviewRequests();
@@ -1104,6 +1123,8 @@ const main = async () => {
   }
   const pendingReminders = reminders.waiting().length;
   if (pendingReminders > 0) console.log(`[remind] ${pendingReminders} reminder(s) waiting from before the restart`);
+  const pendingLoops = loops.active().length;
+  if (pendingLoops > 0) console.log(`[loop] ${pendingLoops} loop(s) scheduled from before the restart`);
   // Workflows a restart caught between two steps carry on where they were.
   const resumed = resumeContinues(deps, 15_000);
   if (resumed > 0) console.log(`[workflow] resuming ${resumed} workflow(s) that were mid-way between steps`);
@@ -1199,6 +1220,7 @@ const main = async () => {
     // requests stay on their rows, and the next process carries on with them.
     if (draining) return;
     void watcher.tick().catch(tickFailed("watch"));
+    void loopRunner.tick().catch(tickFailed("loop"));
     void innerChild.tick().catch(tickFailed("inner-child"));
     void reviewInbox.tick().catch(tickFailed("review-inbox"));
     // Questions Orca workers are blocked on, put to the threads that started them.
