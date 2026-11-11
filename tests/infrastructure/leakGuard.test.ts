@@ -1,9 +1,11 @@
-import { afterEach, describe, expect, test } from "bun:test";
+import { afterEach, describe, expect, setDefaultTimeout, test } from "bun:test";
 import { chmodSync, cpSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 
 const ROOT = join(import.meta.dir, "..", "..");
+// each case runs gitleaks twice per scan in scratch repos, slow on a CI runner
+setDefaultTimeout(60_000);
 const HAS_GITLEAKS = Bun.spawnSync(["sh", "-c", "command -v gitleaks"]).exitCode === 0;
 
 const dirs: string[] = [];
@@ -31,7 +33,7 @@ const makeRepo = () => {
   const r = sh(
     repo,
     `git init -q -b main && git config user.email t@example.com && git config user.name t &&
-     git config core.hooksPath .githooks && git init -q --bare ../remote.git && git remote add origin ../remote.git &&
+     git config core.hooksPath .githooks && git init -q --bare -b main ../remote.git && git remote add origin ../remote.git &&
      git add -A && git commit -qm base --no-verify && git push -q --no-verify origin main`,
     env,
   );
@@ -48,7 +50,11 @@ const SAMPLES: Record<string, string> = {
 // skipped only off CI: under CI a missing gitleaks fails the suite instead of hiding it
 describe.skipIf(!HAS_GITLEAKS && !process.env.CI)("leak guard", () => {
   test("the committed tree is clean", () => {
-    const r = sh(ROOT, "bin/leak-scan.sh dir . --no-banner --redact -v");
+    // the files HEAD holds, not the checkout: node_modules and .git are not the repo
+    const tree = mkdtempSync(join(tmpdir(), "leakguard-tree-"));
+    dirs.push(tree);
+    expect(sh(ROOT, `git archive HEAD | tar -x -C '${tree}'`).code).toBe(0);
+    const r = sh(tree, `'${join(ROOT, "bin", "leak-scan.sh")}' dir . --no-banner --redact -v`);
     expect(r.out).toContain("no leaks found");
     expect(r.code).toBe(0);
   });
