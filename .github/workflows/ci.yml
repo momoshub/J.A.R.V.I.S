@@ -1,11 +1,15 @@
 # Typecheck, tests, a secret scan and (where secrets exist) the real-Slack e2e suite on every PR and
-# every push to main. The merge gate for self-fixes is bin/merge-when-green.sh.
+# every push to main. The secret scan also runs on a push of any branch or tag, so a push that
+# skipped the local hook is still caught. The merge gate for self-fixes is bin/merge-when-green.sh.
 name: ci
 
 on:
   pull_request:
+    # edited too: the PR title becomes the merge commit's message on main, where no hook runs
+    types: [opened, synchronize, reopened, edited]
   push:
-    branches: [main]
+    branches: ['**']
+    tags: ['**']
 
 concurrency:
   group: ci-${{ github.ref }}
@@ -13,6 +17,7 @@ concurrency:
 
 jobs:
   checks:
+    if: github.event_name == 'pull_request' || github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
@@ -22,6 +27,11 @@ jobs:
           bun-version: 1.4.3 # same as the host; bump together
       - run: bun install --frozen-lockfile
       - run: bun run typecheck
+      # the leak guard tests need gitleaks, and fail rather than skip under CI
+      - name: install gitleaks
+        env:
+          GITLEAKS_VERSION: 8.30.1 # same as the gitleaks job; bump together
+        run: curl -sSfL "https://github.com/gitleaks/gitleaks/releases/download/v${GITLEAKS_VERSION}/gitleaks_${GITLEAKS_VERSION}_linux_x64.tar.gz" | tar -xz -C /usr/local/bin gitleaks
       - run: bun test
       # Real Slack, in a private test channel named by the JARVIS_E2E_CHANNEL repository variable (see README "Testing"). Secrets are never
       # passed to fork PRs, so those skip this step. Where the variable is set, a missing
@@ -46,24 +56,68 @@ jobs:
         working-directory: web
 
   # Secret scan with the gitleaks CLI (the action needs a licence for organisations).
-  # Push: the whole history. Pull request: only the commits it adds. False positives
-  # (test vectors, fake tokens) are fingerprinted in .gitleaksignore.
+  # Push (any branch or tag): every public ref (--all), their names and every tag. Pull request: only the commits it adds. Both scan the diffs and,
+  # separately, the commit messages, file paths, ref names and annotated tag names and messages, which gitleaks git
+  # never reads. False positives (test vectors, fake tokens) are allowlisted by value in
+  # .gitleaks.toml. Rules: .gitleaks.toml plus the private names rule from the LEAK_NAMES_TOML
+  # secret, both through bin/leak-scan.sh. The secret is required wherever GitHub passes it
+  # (pushes, same-repo PRs), so a deleted or renamed secret fails instead of skipping names;
+  # only fork PRs skip it.
+  # The log is public: never -v, and LEAK_SCAN_QUIET keeps gitleaks' own output (a panic on a
+  # broken names regex prints every name) out of it. Rule, commit and line only: a file path
+  # or a ref name can hold the very name that was caught.
   gitleaks:
     runs-on: ubuntu-latest
     timeout-minutes: 10
     env:
       GITLEAKS_VERSION: 8.30.1
+      LEAK_NAMES_TOML: ${{ secrets.LEAK_NAMES_TOML }}
+      LEAK_NAMES_REQUIRED: ${{ github.event_name == 'push' || github.event.pull_request.head.repo.full_name == github.repository }}
+      LEAK_SCAN_QUIET: "true"
     steps:
+      # depth 1 and a quiet fetch of the rest: a full checkout prints one line per
+      # branch and tag, and a ref name can hold the very name the scan exists to keep out
       - uses: actions/checkout@v4
         with:
-          fetch-depth: 0
+          fetch-depth: 1
+      - name: fetch every branch and tag, quietly
+        run: git fetch -q --unshallow --tags origin '+refs/heads/*:refs/remotes/origin/*' > /dev/null 2>&1
       - name: install gitleaks
         run: |
           curl -sSfL "https://github.com/gitleaks/gitleaks/releases/download/v${GITLEAKS_VERSION}/gitleaks_${GITLEAKS_VERSION}_linux_x64.tar.gz" | tar -xz -C /usr/local/bin gitleaks
           gitleaks version
-      - name: scan history (push)
-        if: github.event_name == 'push'
-        run: gitleaks git . --redact --no-banner
-      - name: scan the PR range
-        if: github.event_name == 'pull_request'
-        run: gitleaks git . --redact --no-banner --log-opts="${{ github.event.pull_request.base.sha }}..${{ github.event.pull_request.head.sha }}"
+      - name: pick the range
+        run: |
+          if [ "${{ github.event_name }}" = pull_request ]; then
+            echo "LEAK_SCAN_RANGE=${{ github.event.pull_request.base.sha }}..${{ github.event.pull_request.head.sha }}" >> "$GITHUB_ENV"
+          else
+            # every public ref, not just the pushed one, so anything an earlier run missed is caught
+            echo "LEAK_SCAN_RANGE=--all" >> "$GITHUB_ENV"
+            echo "LEAK_SCAN_TAGS=$(git for-each-ref refs/tags --format='%(objectname)' | tr '\n' ' ')" >> "$GITHUB_ENV"
+          fi
+      - name: scan the diffs
+        run: |
+          set +e
+          bin/leak-scan.sh git . --redact --no-banner --report-format json --report-path leaks.json "--log-opts=$LEAK_SCAN_RANGE"
+          code=$?
+          set -e
+          jq -r '.[] | "\(.RuleID) commit \(.Commit[0:8]) line \(.StartLine)"' leaks.json 2>/dev/null || true
+          exit "$code"
+      - name: scan commit messages, file paths, ref names and tag messages
+        run: |
+          # ref names and the PR title are read here, never through $GITHUB_ENV or an env:
+          # block, which the public log prints
+          if [ "${{ github.event_name }}" = pull_request ]; then
+            LEAK_SCAN_REFS="$(jq -r '.pull_request.head.ref' "$GITHUB_EVENT_PATH")"
+            LEAK_SCAN_TEXT="$(jq -r '.pull_request.title' "$GITHUB_EVENT_PATH")"
+            export LEAK_SCAN_TEXT
+          else
+            LEAK_SCAN_REFS="$(git for-each-ref refs/remotes/origin refs/tags --format='%(refname:lstrip=2)' | sed 's#^origin/##' | grep -vx HEAD | tr '\n' ' ')"
+          fi
+          export LEAK_SCAN_REFS
+          set +e
+          bin/leak-scan.sh meta --redact --no-banner --report-format json --report-path leaks-meta.json
+          code=$?
+          set -e
+          jq -r '.[] | "\(.RuleID) in a commit message, file path, ref name or tag message"' leaks-meta.json 2>/dev/null || true
+          exit "$code"

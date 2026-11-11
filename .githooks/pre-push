@@ -1,0 +1,53 @@
+#!/usr/bin/env bash
+# Scan the commits being pushed with gitleaks before they leave the machine.
+# Bypass (use sparingly): git push --no-verify
+set -uo pipefail
+root="$(git rev-parse --show-toplevel)"
+scan="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)/bin/leak-scan.sh"
+zero="0000000000000000000000000000000000000000"
+if ! command -v gitleaks >/dev/null 2>&1; then
+  echo "pre-push: gitleaks is not installed, skipping the leak scan (brew install gitleaks)" >&2
+  exit 0
+fi
+status=0
+while read -r local_ref local_sha remote_ref remote_sha; do
+  [ -n "${local_sha:-}" ] || continue
+  # deleting a ref pushes no commits
+  [ "$local_sha" = "$zero" ] && continue
+  if [ "$remote_sha" = "$zero" ] || ! git cat-file -e "$remote_sha^{commit}" 2>/dev/null; then
+    # new branch, or a remote tip this clone has never fetched (a force-push after a
+    # rebase): scan every commit this remote's tracking branches do not have. Only this
+    # remote: a commit already on a private remote is still new to the public one
+    range="$local_sha --not --remotes=$1"
+  else
+    range="$remote_sha..$local_sha"
+  fi
+  # fail closed: gitleaks exits 0 on a bad --log-opts and scans nothing, so prove
+  # the range resolves first
+  # shellcheck disable=SC2086
+  if ! git rev-list $range >/dev/null 2>&1; then
+    echo "pre-push: cannot resolve the commits to scan for $local_ref ($range), blocking" >&2
+    status=1
+    continue
+  fi
+  if ! "$scan" git "$root" --redact --no-banner -v --log-opts="$range"; then
+    status=1
+  fi
+  # commit messages, file paths, the ref name and an annotated tag's name and message
+  # are public too, and `gitleaks git` only reads the diffs
+  tags=""
+  [ "$(git cat-file -t "$local_sha" 2>/dev/null)" = tag ] && tags="$local_sha"
+  ref="${remote_ref#refs/heads/}"
+  ref="${ref#refs/tags/}"
+  if ! LEAK_SCAN_RANGE="$range" LEAK_SCAN_REFS="$ref" LEAK_SCAN_TAGS="$tags" "$scan" meta --redact --no-banner -v; then
+    echo "pre-push: the hit above is in a commit message, a file path, a branch or tag name or a tag message" >&2
+    status=1
+  fi
+done
+if [ "$status" -ne 0 ]; then
+  echo "" >&2
+  echo "pre-push: BLOCKED, gitleaks found sensitive-looking content in the commits above." >&2
+  echo "Remove it (amend or rewrite the commits), or for a verified false positive add it to" >&2
+  echo ".gitleaks.toml (allowlist by value). Last resort: git push --no-verify" >&2
+fi
+exit "$status"
