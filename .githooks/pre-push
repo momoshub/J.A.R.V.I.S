@@ -42,7 +42,8 @@ while read -r local_ref local_sha remote_ref remote_sha; do
   # commit messages, file paths, the ref name and an annotated tag's name and message
   # are public too, and `gitleaks git` only reads the diffs
   tags=""
-  case "$local_ref" in refs/tags/*) tags="$local_sha" ;; esac
+  # by object type, not ref name: a tag object pushed by its sha has no refs/tags/ name
+  [ "$(git cat-file -t "$local_sha" 2>/dev/null)" = tag ] && tags="$local_sha"
   ref="${remote_ref#refs/heads/}"
   ref="${ref#refs/tags/}"
   if ! LEAK_SCAN_RANGE="$range" LEAK_SCAN_REFS="$ref" LEAK_SCAN_TAGS="$tags" "$scan" meta --redact --no-banner -v; then

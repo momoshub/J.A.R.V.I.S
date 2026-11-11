@@ -59,15 +59,17 @@ if [ "${1:-}" = "meta" ]; then
       git log --format=%B $LEAK_SCAN_RANGE --
       # commit headers beyond the message: a merged signed tag's text sits in a mergetag
       # header. Identities (author, committer, tagger) are out of scope, and signatures
-      # are dropped, since base64 can look like anything. The message itself (indented
-      # four spaces here) is already read above, unindented
+      # are dropped, since base64 can look like anything. Only the header block is read
+      # (up to the first empty line of each commit): the message is already read above
       git log --format=raw --no-decorate $LEAK_SCAN_RANGE -- | awk '
+        /^commit [0-9a-f]+/ { hdr = 1; sig = 0; next }
+        hdr && /^$/ { hdr = 0; next }
+        !hdr { next }
         /-----BEGIN [A-Z ]*SIGNATURE-----/ { sig = 1 }
         sig { if (/-----END [A-Z ]*SIGNATURE-----/) sig = 0; next }
-        /^(commit|tree|parent|author|committer|encoding) / { next }
+        /^(tree|parent|author|committer|encoding) / { next }
         /^ (object|type|tagger) / { next }
         /^mergetag object / { next }
-        /^    / { next }
         /^ / { print substr($0, 2); next }
         { print }'
       git -c core.quotePath=false log --diff-merges=first-parent --name-only --format= $LEAK_SCAN_RANGE --

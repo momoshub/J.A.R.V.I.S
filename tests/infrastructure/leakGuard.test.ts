@@ -376,6 +376,42 @@ describe.skipIf(!HAS_GITLEAKS && !process.env.CI)("leak guard", () => {
     expect(r.out).toContain("slack-real-looking-id");
   });
 
+  test("a mergetag line indented like a commit message is still read", () => {
+    const { repo, env } = makeRepo();
+    const key = join(repo, "..", "sign");
+    expect(sh(repo, `ssh-keygen -q -t ed25519 -N '' -f '${key}' && git config gpg.format ssh && git config user.signingkey '${key}.pub'`, env).code).toBe(0);
+    const msg = join(repo, "..", "tagmsg");
+    writeFileSync(msg, `Notes\n\n- fixes\n    - reported in U07AB12${"CD3F"}\n`);
+    const r = sh(repo, `git checkout -qb side && echo s > s.txt && git add s.txt && git commit -qm s --no-verify && git checkout -q main && git tag -s rel -F '${msg}' side && git merge -q --no-ff -m "merge rel" rel && git tag -d rel >/dev/null && git push origin main`, env);
+    expect(r.code).not.toBe(0);
+    expect(r.out).toContain("slack-real-looking-id");
+  });
+
+  test("BOM-less UTF-16 that opens with Cyrillic or CJK is decoded", () => {
+    const { repo, env } = makeRepo();
+    const lead = ["Привет, как дела?\n".repeat(5), "こんにちは、世界。\n".repeat(5)];
+    let i = 0;
+    for (const text of lead) {
+      const le = Buffer.from(`${text}owner U07AB12${"CD3N"}\n`, "utf16le");
+      for (const buf of [le, Buffer.from(le).swap16()]) {
+        const name = `n${i++}.txt`;
+        writeFileSync(join(repo, name), buf);
+        const r = sh(repo, `git checkout -q main && git checkout -qB s-${name.replace(".txt", "")} && git add ${name} && git commit -qm n --no-verify && git push origin HEAD`, env);
+        expect(r.code).not.toBe(0);
+        expect(r.out).toContain("slack-real-looking-id");
+        sh(repo, "git checkout -q main", env);
+      }
+    }
+  });
+
+  test("pre-push reads an annotated tag pushed by its object id", () => {
+    const { repo, env } = makeRepo();
+    const sha = sh(repo, `git tag -a v13 -m "asked in U07AB12${"CD3E"}" && git rev-parse v13 && git tag -d v13 >/dev/null`, env).out.trim().split("\n")[0];
+    const r = sh(repo, `git push origin ${sha}:refs/tags/v13`, env);
+    expect(r.code).not.toBe(0);
+    expect(r.out).toContain("slack-real-looking-id");
+  });
+
   test("pre-push skips with a warning when gitleaks is missing", () => {
     const { repo, env } = makeRepo();
     const r = sh(repo, `PATH=/usr/bin:/bin git push origin main`, env);
