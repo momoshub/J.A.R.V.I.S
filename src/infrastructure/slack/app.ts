@@ -62,7 +62,15 @@ import { isTimeout } from "../../domain/threadSession.ts";
 import { toMrkdwn } from "../../domain/slackFormat.ts";
 import { MAX_BLOCKS, readableText, toBlockMessage, type Block } from "../../domain/blockKit.ts";
 import { couldFollowThread, followVerdict, isOneOnOneThread, isSpeech, startsAutoFollow } from "../../domain/threadFollow.ts";
-import { formatBatchInput, gateApplies, gateSettings, GATE_CONTEXT_LINES, type GateContextLine } from "../../domain/followGate.ts";
+import {
+  formatBatchInput,
+  gateRoute,
+  gateSettings,
+  GATE_CONTEXT_LINES,
+  leastPrivilegedAuthor,
+  type GateContextLine,
+} from "../../domain/followGate.ts";
+import { ROLES } from "../../domain/rolePolicy.ts";
 import { decideAccess } from "../../domain/access.ts";
 import { reviewRequestIn } from "../../domain/reviewRequest.ts";
 import { createFollowGate } from "../../application/followGate.ts";
@@ -1032,10 +1040,17 @@ export const createSlackApp = (config: SlackAppConfig, deps: Deps) => {
     },
     run: async ({ channel, threadTs, items }) => {
       const last = items[items.length - 1]!;
+      // Role, tool policy and access come from whoever the turn runs as: the
+      // least-privileged author in the batch, never just the newest.
+      const rankOf = (userId: string): number => {
+        const d = decideAccess(userId, deps.ownerSlackId, deps.users.get);
+        return d.allowed ? ROLES.length - ROLES.indexOf(d.user.role) : 0;
+      };
+      const runAs = leastPrivilegedAuthor(items, rankOf);
       await handle({
         channelId: channel,
-        userId: last.userId,
-        teamId: last.teamId,
+        userId: runAs.userId,
+        teamId: runAs.teamId,
         inbox: last.inbox,
         text: last.text,
         threadTs,
@@ -1054,6 +1069,8 @@ export const createSlackApp = (config: SlackAppConfig, deps: Deps) => {
   app.event("app_mention", async ({ event, client, say, context }) => {
     const e = event as { channel: string; user?: string; text: string; ts: string; thread_ts?: string };
     if (!e.user) return;
+    // A tag is answered at once: whatever the thread had buffered is taken over.
+    followGate.cancel({ channel: e.channel, threadTs: threadKeyOf(e) }, "tagged message");
     void retireOnReply(client, { ...e, user: e.user });
     await autoFollow(asClient(client), e.channel, threadKeyOf(e), e.user);
     await handle({
@@ -1665,7 +1682,9 @@ export const createSlackApp = (config: SlackAppConfig, deps: Deps) => {
       // Only look the thread up when the answer could still depend on it: the
       // lookup is a Slack call, and an explicit follow already settles it. A
       // thread that is just it and one person is followed too, setting or not.
-      const info = asked ? undefined : await threadInfo(asClient(client), m.channel, m.thread_ts!);
+      // Always looked up (cached 30s): a one-on-one thread must be recognised
+      // from the thread even after auto-follow made it `asked`.
+      const info = await threadInfo(asClient(client), m.channel, m.thread_ts!);
       const ownThread = !!info && !ownThreadsOff && info.author === me;
       const oneOnOne =
         !!info && isOneOnOneThread({ participants: info.participants, author: m.user!, botUserId: me });
@@ -1688,15 +1707,15 @@ export const createSlackApp = (config: SlackAppConfig, deps: Deps) => {
       // into a thread it is a guest in wait for a quiet moment and the gate.
       // Somebody off the allowlist is not buffered either - their message
       // would be ignored anyway, and must not cost a gate call.
-      const gated =
-        !!deps.gatePolicy &&
-        gateApplies({
-          enabled: gateSettings((k) => deps.settings?.get(k)).enabled,
-          route: verdict.why,
-          isCommand: commandLineOf(m.text!, config.commandPrefix) !== undefined || reviewRequestIn(m.text!) !== undefined,
-        }) &&
-        decideAccess(m.user!, deps.ownerSlackId, deps.users.get).allowed;
-      if (gated) {
+      const route = gateRoute({
+        wired: !!deps.gatePolicy,
+        enabled: gateSettings((k) => deps.settings?.get(k)).enabled,
+        route: verdict.why,
+        isCommand: commandLineOf(m.text!, config.commandPrefix) !== undefined || reviewRequestIn(m.text!) !== undefined,
+        oneOnOne,
+        allowed: decideAccess(m.user!, deps.ownerSlackId, deps.users.get).allowed,
+      });
+      if (route === "gate") {
         // Held until the batch is skipped or answered, so the inbox row stays
         // `running` meanwhile and a restart redelivers it.
         await followGate.submit(
@@ -1713,6 +1732,10 @@ export const createSlackApp = (config: SlackAppConfig, deps: Deps) => {
         );
         return;
       }
+      // Answered at once (a command line, a one-on-one thread, the gate off):
+      // a batch still buffered for this thread is taken over, not answered
+      // later out of order.
+      followGate.cancel({ channel: m.channel, threadTs: m.thread_ts! }, "message answered at once");
       await handle({
         channelId: m.channel,
         userId: m.user!,

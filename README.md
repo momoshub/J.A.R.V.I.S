@@ -758,7 +758,21 @@ those messages wait in a short per-thread buffer first:
 
 Never held, and handled exactly as before: tagged messages, DMs, threads that are
 just the bot and one person, command lines (`//bot ...`) and spoken review
-requests. A message from somebody off the allowlist is not buffered either.
+requests. A message from somebody off the allowlist is not buffered either. A
+one-on-one thread is recognised from the thread itself (the bot has written and
+exactly one human has), not from why it is followed: it is followed for good from
+its second message on, which makes its route read "asked", and it must still never
+wait.
+
+A message that is not held is answered at once and takes over whatever the thread
+had buffered: a tag, a command line or a one-on-one reply drops the pending batch
+and settles its inbox rows, so the batch cannot fire later into a second,
+out-of-order answer (the earlier messages are in the thread context the answer
+already reads). Past the hard cap the gate never asks again: any answer except
+`skip`, including one superseded by a newer message, replies with the whole current
+batch. The batch runs as its least-privileged author (role, tools and access), so a
+lower-role request plus a higher-role "+1" in the same window never runs on the
+higher role's tools. A turn that fails marks its rows failed, not done.
 
 A restart does not lose the buffer: a message's inbox row stays open until its
 batch is answered or skipped, so after a restart the row is redelivered and the

@@ -272,7 +272,7 @@ describe("createFollowGate", () => {
     expect(ran).toEqual([["first"], ["second"]]);
   });
 
-  test("a failing main turn is logged and still settles every submit", async () => {
+  test("a failing main turn is logged and still settles every submit, as a failure", async () => {
     const clock = fake();
     const logs: string[] = [];
     const gate = createFollowGate<Item>({
@@ -285,10 +285,11 @@ describe("createFollowGate", () => {
         throw new Error("turn blew up");
       },
     });
-    let settled = false;
-    void gate.submit(K, item("a")).then(() => (settled = true));
+    // Still settles (the row is not held for ever), but as a failure.
+    let settled: "ok" | "failed" | undefined;
+    void gate.submit(K, item("a")).then(() => (settled = "ok"), () => (settled = "failed"));
     await clock.advance(25_000);
-    expect(settled).toBe(true);
+    expect(settled).toBe("failed");
     expect(logs.some((l) => l.includes("turn blew up"))).toBe(true);
   });
 
@@ -310,5 +311,149 @@ describe("createFollowGate", () => {
     void t.gate.submit(K, item("a"));
     await t.clock.advance(5_000);
     expect(t.ran).toHaveLength(1);
+  });
+});
+
+describe("past the hard cap", () => {
+  test("a slow gate and a steady stream of messages still ends in a reply by the cap", async () => {
+    // The repro: a 3s gate and a message every 2.5s. Every answer was about a
+    // batch somebody had just added to, so it was thrown away and asked again
+    // at 0ms: 365 asks in 1000s, no reply, the batch still pending.
+    const clock = fake();
+    const ranAt: number[] = [];
+    let asks = 0;
+    const gate = createFollowGate<Item>({
+      settings: () => gateSettings(() => undefined),
+      now: clock.now,
+      timers: clock.timers,
+      log: () => {},
+      decide: () => {
+        asks++;
+        return new Promise<GateDecision>((resolve) => {
+          clock.timers.set(() => resolve({ verdict: "reply", reason: "r" }), 3_000);
+        });
+      },
+      run: async () => {
+        ranAt.push(clock.now());
+      },
+    });
+    let i = 0;
+    for (let t = 0; t < 200_000; t += 2_500) {
+      void gate.submit(K, item(`m${i}`, String(i)));
+      i++;
+      await clock.advance(2_500);
+    }
+    expect(ranAt.length).toBeGreaterThan(0);
+    // 90s cap from the first message, plus the gate's 3s.
+    expect(ranAt[0]!).toBeLessThanOrEqual(93_000 + 2_500);
+    expect(asks).toBeLessThan(20);
+  });
+
+  test("a superseded `wait` or `reply` past the cap answers the whole current batch, once", async () => {
+    const t = setup({
+      verdicts: async () => {
+        await new Promise<void>((r) => t.clock.timers.set(() => r(), 3_000));
+        return { verdict: "wait", reason: "unfinished" };
+      },
+    });
+    // A message every 20s keeps the quiet window open until the cap (90s).
+    for (let i = 0; i < 4; i++) {
+      void t.gate.submit(K, item(`m${i}`, String(i)));
+      await t.clock.advance(20_000);
+    }
+    void t.gate.submit(K, item("m4", "4")); // at 80s: due is clamped to the cap (90s)
+    await t.clock.advance(11_500); // the gate starts reading at 90s...
+    void t.gate.submit(K, item("late", "9")); // ...and a message lands mid-read
+    await t.clock.advance(5_000);
+    expect(t.ran).toHaveLength(1);
+    expect(t.ran[0]!.map((x) => x.text)).toEqual(["m0", "m1", "m2", "m3", "m4", "late"]);
+    expect(t.asked).toHaveLength(1);
+    expect(t.gate.pending()).toBe(0);
+  });
+
+  test("a superseded `skip` is still never allowed to swallow the newer message", async () => {
+    const t = setup({
+      verdicts: async (n) => {
+        await new Promise<void>((r) => t.clock.timers.set(() => r(), 3_000));
+        return n === 1 ? { verdict: "skip", reason: "chat" } : { verdict: "reply", reason: "asked" };
+      },
+    });
+    for (let i = 0; i < 4; i++) {
+      void t.gate.submit(K, item(`m${i}`, String(i)));
+      await t.clock.advance(20_000);
+    }
+    void t.gate.submit(K, item("m4", "4"));
+    await t.clock.advance(11_500);
+    void t.gate.submit(K, item("late", "9"));
+    await t.clock.advance(30_000);
+    expect(t.asked).toHaveLength(2);
+    expect(t.ran).toHaveLength(1);
+    expect(t.ran[0]!.map((x) => x.text)).toEqual(["m0", "m1", "m2", "m3", "m4", "late"]);
+  });
+});
+
+describe("a message that bypasses the gate (cancel)", () => {
+  test("takes the pending batch over: nothing fires later, the waiters settle", async () => {
+    const t = setup({});
+    const done: string[] = [];
+    void t.gate.submit(K, item("A", "1")).then(() => done.push("A"));
+    await t.clock.advance(5_000);
+    void t.gate.submit(K, item("B", "2")).then(() => done.push("B"));
+    await t.clock.advance(5_000);
+    expect(t.gate.cancel(K, "tagged message")).toBe(2);
+    await t.clock.advance(0);
+    expect(done).toEqual(["A", "B"]);
+    expect(t.gate.pending()).toBe(0);
+    await t.clock.advance(300_000);
+    expect(t.asked).toHaveLength(0);
+    expect(t.ran).toHaveLength(0);
+    expect(t.clock.pendingTimers()).toBe(0);
+  });
+
+  test("while the gate is reading, its answer is dropped and nothing is run", async () => {
+    const t = setup({
+      verdicts: async () => {
+        await new Promise<void>((r) => t.clock.timers.set(() => r(), 3_000));
+        return { verdict: "reply", reason: "r" };
+      },
+    });
+    let settled = false;
+    void t.gate.submit(K, item("A", "1")).then(() => (settled = true));
+    await t.clock.advance(26_000); // asking now
+    expect(t.asked).toHaveLength(1);
+    t.gate.cancel(K, "command line");
+    await t.clock.advance(10_000);
+    expect(settled).toBe(true);
+    expect(t.ran).toHaveLength(0);
+    expect(t.gate.pending()).toBe(0);
+  });
+
+  test("a thread with nothing buffered is untouched, and a later message opens a fresh batch", async () => {
+    const t = setup({});
+    expect(t.gate.cancel(K, "tagged message")).toBe(0);
+    void t.gate.submit(K, item("later", "5"));
+    await t.clock.advance(25_000);
+    expect(t.ran.map((b) => b.map((x) => x.text))).toEqual([["later"]]);
+  });
+});
+
+describe("a turn that fails", () => {
+  test("rejects every waiter, so the inbox rows are marked failed, not done", async () => {
+    const clock = fake();
+    const gate = createFollowGate<Item>({
+      settings: () => gateSettings(() => undefined),
+      now: clock.now,
+      timers: clock.timers,
+      log: () => {},
+      decide: async () => ({ verdict: "reply", reason: "r" }),
+      run: async () => {
+        throw new Error("brain crashed");
+      },
+    });
+    const out: string[] = [];
+    void gate.submit(K, item("a", "1")).then(() => out.push("a ok"), (e: Error) => out.push(`a ${e.message}`));
+    void gate.submit(K, item("b", "2")).then(() => out.push("b ok"), (e: Error) => out.push(`b ${e.message}`));
+    await clock.advance(25_000);
+    expect(out).toEqual(["a brain crashed", "b brain crashed"]);
   });
 });

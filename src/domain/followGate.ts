@@ -68,6 +68,10 @@ export const gateSettings = (get: (key: string) => string | undefined): GateSett
  * opened (`own-thread`) and one somebody asked it to keep up with (`asked`).
  * A one-on-one thread is somebody talking TO it, and a command line is an
  * instruction: both are answered at once, exactly as before.
+ *
+ * `oneOnOne` is read from the thread itself, not from the route label: a
+ * one-on-one thread is followed for good once it starts (auto-add), so from
+ * the second message on its route reads `asked`.
  */
 export const gateApplies = (opts: {
   readonly enabled: boolean;
@@ -75,7 +79,31 @@ export const gateApplies = (opts: {
   readonly route: string;
   /** The text is a command line (`X/jv ...`). */
   readonly isCommand: boolean;
-}): boolean => opts.enabled && !opts.isCommand && (opts.route === "asked" || opts.route === "own-thread");
+  /** The thread is just the bot and this author (`isOneOnOneThread`). */
+  readonly oneOnOne?: boolean;
+}): boolean =>
+  opts.enabled && !opts.isCommand && !opts.oneOnOne && (opts.route === "asked" || opts.route === "own-thread");
+
+/**
+ * Where an untagged message in a followed thread goes: buffered behind the
+ * gate, or answered at once. The routing decision of `app.message`, pure.
+ * `allowed` is the allowlist: somebody off it is not buffered, since their
+ * message would be ignored anyway and must not cost a gate call.
+ */
+export const gateRoute = (opts: Parameters<typeof gateApplies>[0] & { readonly wired: boolean; readonly allowed: boolean }): "gate" | "now" =>
+  opts.wired && opts.allowed && gateApplies(opts) ? "gate" : "now";
+
+/**
+ * The author a batch runs as: the least-privileged one. The turn's role,
+ * tool policy and access all come from whoever it runs as, and a lower-role
+ * user's request must never ride on a higher-role author's "+1" in the same
+ * window. `rank` orders roles (higher is more privileged); ties keep the
+ * earliest author.
+ */
+export const leastPrivilegedAuthor = <T extends { readonly userId: string }>(
+  items: readonly T[],
+  rank: (userId: string) => number,
+): T => items.reduce((low, i) => (rank(i.userId) < rank(low.userId) ? i : low), items[0]!);
 
 /** One message waiting in a batch. */
 export type BufferedMessage = {

@@ -52,14 +52,19 @@ export type FollowGateDeps<T extends BufferedMessage> = {
   gateTimeoutMs?: number;
 };
 
+/** One buffered message's promise: resolved when its batch is dealt with, rejected when the turn failed. */
+type Waiter = { resolve: () => void; reject: (err: unknown) => void };
+
 type Entry<T extends BufferedMessage> = {
   batch: Batch<T>;
-  waiters: (() => void)[];
+  waiters: Waiter[];
   timer?: unknown;
   /** The gate is being asked right now. */
   asking: boolean;
   /** A message arrived while it was: the answer is about an older batch. */
   stale: boolean;
+  /** Dropped by `cancel` while the model was reading: nothing is left to answer. */
+  cancelled: boolean;
 };
 
 export const createFollowGate = <T extends BufferedMessage>(deps: FollowGateDeps<T>) => {
@@ -88,8 +93,8 @@ export const createFollowGate = <T extends BufferedMessage>(deps: FollowGateDeps
     }
   };
 
-  const settle = (e: Entry<T>): void => {
-    for (const done of e.waiters) done();
+  const settle = (e: Entry<T>, err?: unknown): void => {
+    for (const w of e.waiters) (err === undefined ? w.resolve() : w.reject(err));
   };
 
   const fire = async (k: GateKey): Promise<void> => {
@@ -110,12 +115,22 @@ export const createFollowGate = <T extends BufferedMessage>(deps: FollowGateDeps
       e.asking = false;
     }
 
+    // A message that bypasses the gate took the batch over while it was read.
+    if (e.cancelled) return;
+
     // Somebody wrote while the model was reading: its answer is about a batch
     // that no longer exists. The new message already restarted the window.
+    // Past the cap the window cannot restart (it is due at once), so asking
+    // again would loop for as long as people keep typing and never answer:
+    // anything but `skip` answers the whole current batch instead.
     if (e.stale) {
-      deps.log(gateLogLine({ ...k, size, decision, note: "superseded by a newer message" }));
-      arm(k, e);
-      return;
+      if (deps.now() < capOf(e.batch, settings) || decision.verdict === "skip") {
+        deps.log(gateLogLine({ ...k, size, decision, note: "superseded by a newer message" }));
+        arm(k, e);
+        return;
+      }
+      decision = { ...decision, verdict: "reply" };
+      deps.log(gateLogLine({ ...k, size, decision, note: "superseded past the cap, answering the whole batch" }));
     }
 
     const outcome = outcomeOf(decision.verdict, e.batch, deps.now(), settings);
@@ -142,9 +157,14 @@ export const createFollowGate = <T extends BufferedMessage>(deps: FollowGateDeps
     // the next batch instead of joining one already answered.
     entries.delete(id);
     if (outcome.action === "reply") {
+      let failure: unknown;
       await deps.run({ ...k, items: e.batch.items }).catch((err: unknown) => {
+        failure = err ?? new Error("follow gate turn failed");
         deps.log(`follow gate turn failed channel=${k.channel} thread=${k.threadTs}: ${err instanceof Error ? err.message : String(err)}`);
       });
+      // The rows were held for this turn: a failure marks them failed, not done.
+      settle(e, failure);
+      return;
     }
     settle(e);
   };
@@ -155,22 +175,42 @@ export const createFollowGate = <T extends BufferedMessage>(deps: FollowGateDeps
      * caller can keep its inbox row open until then.
      */
     submit: (k: GateKey, msg: T): Promise<void> =>
-      new Promise<void>((resolve) => {
+      new Promise<void>((resolve, reject) => {
         const id = keyOf(k);
         const e = entries.get(id);
         const batch = addToBatch(e?.batch, msg, deps.now(), deps.settings());
         if (e) {
           e.batch = batch;
-          e.waiters.push(resolve);
+          e.waiters.push({ resolve, reject });
           if (e.asking) e.stale = true;
           // While the model is reading, the timer is not the one to move.
           if (!e.asking) arm(k, e);
           return;
         }
-        const fresh: Entry<T> = { batch, waiters: [resolve], asking: false, stale: false };
+        const fresh: Entry<T> = { batch, waiters: [{ resolve, reject }], asking: false, stale: false, cancelled: false };
         entries.set(id, fresh);
         arm(k, fresh);
       }),
+    /**
+     * A message that bypasses the gate (a tag, a command line, a one-on-one
+     * thread) is answered at once, with the buffered messages already in its
+     * thread context. The pending batch is dropped so it cannot fire later into
+     * a second, out-of-order answer, and its waiters settle so their inbox rows
+     * close. Returns how many buffered messages were dropped.
+     */
+    cancel: (k: GateKey, why: string): number => {
+      const id = keyOf(k);
+      const e = entries.get(id);
+      if (!e) return 0;
+      entries.delete(id);
+      if (e.timer !== undefined) timers.clear(e.timer);
+      e.timer = undefined;
+      e.cancelled = true;
+      const size = e.batch.items.length;
+      deps.log(gateLogLine({ ...k, size, decision: { verdict: "skip", reason: why }, note: "batch taken over by a message that bypasses the gate" }));
+      settle(e);
+      return size;
+    },
     /** Threads with messages waiting, for tests and diagnostics. */
     pending: (): number => entries.size,
   };

@@ -5,6 +5,8 @@ import {
   failOpen,
   formatBatchInput,
   gateApplies,
+  gateRoute,
+  leastPrivilegedAuthor,
   gateLogLine,
   gateMessage,
   gateSettings,
@@ -224,5 +226,49 @@ describe("prompts and formatting", () => {
     });
     expect(line).toBe("follow gate channel=C1 thread=9.9 batch=3 verdict=skip: chatting");
     expect(gateLogLine({ channel: "C1", threadTs: "9.9", size: 1, decision: failOpen("x"), note: "n" })).toContain("(n)");
+  });
+});
+
+describe("one-on-one threads bypass the gate whatever the route says", () => {
+  // Auto-follow marks a one-on-one thread as followed, so from the second
+  // message on its route reads `asked`; the bypass comes from the thread.
+  const base = { enabled: true, route: "asked", isCommand: false };
+  test("an `asked` route is gated unless the thread is one-on-one", () => {
+    expect(gateApplies({ ...base, oneOnOne: false })).toBe(true);
+    expect(gateApplies({ ...base, oneOnOne: true })).toBe(false);
+    expect(gateApplies({ ...base, route: "own-thread", oneOnOne: true })).toBe(false);
+  });
+});
+
+describe("gateRoute", () => {
+  const base = { wired: true, allowed: true, enabled: true, route: "asked", isCommand: false, oneOnOne: false };
+  test("an untagged message in a followed thread is buffered", () => {
+    expect(gateRoute(base)).toBe("gate");
+    expect(gateRoute({ ...base, route: "own-thread" })).toBe("gate");
+  });
+  test("a one-on-one thread that autoAdd made `asked` is answered now", () => {
+    expect(gateRoute({ ...base, oneOnOne: true })).toBe("now");
+  });
+  test("a command line, the gate off, no gate wired and an unlisted author are answered now", () => {
+    expect(gateRoute({ ...base, isCommand: true })).toBe("now");
+    expect(gateRoute({ ...base, enabled: false })).toBe("now");
+    expect(gateRoute({ ...base, wired: false })).toBe("now");
+    expect(gateRoute({ ...base, allowed: false })).toBe("now");
+  });
+});
+
+describe("leastPrivilegedAuthor", () => {
+  const rank = (id: string) => ({ U0PAL0001: 1, U0ADMIN001: 3, U0OWNER001: 4 })[id as "U0PAL0001"] ?? 0;
+  const m = (userId: string, text: string) => ({ userId, text, ts: text });
+  test("a pal's request followed by an owner's +1 runs as the pal", () => {
+    const batch = [m("U0PAL0001", "deploy it"), m("U0OWNER001", "+1")];
+    expect(leastPrivilegedAuthor(batch, rank).userId).toBe("U0PAL0001");
+  });
+  test("the order does not matter, and a single author is itself", () => {
+    expect(leastPrivilegedAuthor([m("U0OWNER001", "a"), m("U0ADMIN001", "b"), m("U0PAL0001", "c")], rank).userId).toBe("U0PAL0001");
+    expect(leastPrivilegedAuthor([m("U0OWNER001", "a")], rank).userId).toBe("U0OWNER001");
+  });
+  test("a tie keeps the earliest author", () => {
+    expect(leastPrivilegedAuthor([m("U0ADMIN001", "a"), m("U0ADMIN002", "b")], () => 3).text).toBe("a");
   });
 });
