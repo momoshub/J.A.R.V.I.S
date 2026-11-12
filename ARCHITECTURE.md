@@ -143,7 +143,7 @@ no classes.
   passes (typecheck, tests, the real-Slack e2e on non-fork runs, and a `gitleaks` secret scan whose known false positives are allowlisted by value in `.gitleaks.toml`), merged only by `bin/merge-when-green.sh` (exit 4 at once on a PR that
   conflicts with its base, which GitHub never runs CI on). When it touches runtime code
   (logic, commands, adapters, `bin/` scripts, or a mixed PR) a reviewer Orca worker
-  reads it first, at most 2 rounds (each round is a real GitHub review, request changes or approve; fixes are pushes answered by a `[fix round N]` comment); docs,
+  reads it first, up to 5 rounds (each round is a real GitHub review, request changes or approve; fixes are pushes answered by a `[fix round N]` comment); docs,
   prompt text, skills and dashboard UI need no reviewer. `bin/jarvis-restart.sh` runs typecheck and tests and only
   restarts when both pass. With `SELF_PR_AUTHOR`/`SELF_PR_REVIEWER` set, the
   PR is opened as the author and reviewed, approved and merged as the reviewer

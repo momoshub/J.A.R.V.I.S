@@ -45,13 +45,13 @@ describe("selfUpdateRules with a memory skill", () => {
   });
 
   test("a standalone reviewer comes before the merge of runtime code", () => {
-    expect(short).toContain("standalone reviewer agent (Orca worker, fresh context, real PR reviews only, max 2 rounds)");
+    expect(short).toContain("standalone reviewer agent (Orca worker, fresh context, real PR reviews only, up to 5 rounds)");
     expect(short).toContain("green CI before you merge it yourself with `bin/merge-when-green.sh`");
     expect(short.indexOf("standalone reviewer agent")).toBeLessThan(short.indexOf("merge it yourself"));
     // the full rule still exists for the prompts that carry it whole
     expect(STANDALONE_REVIEW_RULE).toContain("orca orchestration worker-start");
     expect(STANDALONE_REVIEW_RULE).toContain('--agent claude --model "$BOT_WORKER_MODEL" --json');
-    expect(STANDALONE_REVIEW_RULE).toContain("At most 2 review rounds");
+    expect(STANDALONE_REVIEW_RULE).toContain("Up to 5 review rounds");
   });
 
   test("review by risk: docs and prompt text need no reviewer, runtime code does", () => {
@@ -64,11 +64,12 @@ describe("selfUpdateRules with a memory skill", () => {
     expect(short).toContain("for runtime code (logic, commands, adapters, `bin/`, or mixed)");
     expect(STANDALONE_REVIEW_RULE).toContain("adapter skills, prompt guides or dashboard UI gets no reviewer");
     expect(STANDALONE_REVIEW_RULE).toContain("a mixed PR counts as runtime code");
-    // the old blanket rule is gone, and so is the third round
+    // the old blanket rule is gone, and so is the two-round cap
     expect(STANDALONE_REVIEW_RULE).not.toContain("every fix, no exceptions");
-    expect(STANDALONE_REVIEW_RULE).not.toContain("round 3,");
-    expect(STANDALONE_REVIEW_RULE).toContain("round 2 happens only when round 1 is `VERDICT: changes` with a real blocker");
-    expect(STANDALONE_REVIEW_RULE).toContain("there is never a round 3");
+    expect(STANDALONE_REVIEW_RULE).not.toContain("never a round 3");
+    expect(STANDALONE_REVIEW_RULE).toContain("round 2 and later happen only when the previous round is `VERDICT: changes` with a real blocker");
+    expect(STANDALONE_REVIEW_RULE).toContain("there are at most 5 rounds");
+    expect(STANDALONE_REVIEW_RULE).toContain("ask the owner for approval before any further round (an approved extension is the only way past 5)");
     // CI is the gate either way
     expect(STANDALONE_REVIEW_RULE).toContain("never merge anything before green CI");
   });
@@ -173,8 +174,8 @@ describe("selfUpdateRules with no skill to read (the full block)", () => {
       STANDALONE_REVIEW_RULE.indexOf("Fix every real finding"),
     );
     // and the loop is bounded, with a way out that is not a merge
-    expect(STANDALONE_REVIEW_RULE).toContain("At most 2 review rounds");
-    expect(STANDALONE_REVIEW_RULE).toContain("after round 2,");
+    expect(STANDALONE_REVIEW_RULE).toContain("Up to 5 review rounds");
+    expect(STANDALONE_REVIEW_RULE).toContain("after round 5,");
     expect(STANDALONE_REVIEW_RULE).toContain("do not merge - leave the PR open");
     // the step sits in the flow before the merge, and the rule before the restart
     const flow = rules.split("\n").find((l) => l.includes("every change goes this way")) ?? "";
