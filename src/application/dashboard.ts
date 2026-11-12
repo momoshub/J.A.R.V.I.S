@@ -398,6 +398,10 @@ export const createDashboardService = (p: DashboardPorts) => {
     return {
       roles: policies.map((policy) => ({
         ...effectivePolicy(policy),
+        // Names stored before a rename read back under their current name, so the page shows what the bot enforces.
+        deniedCommands: effectivePolicy(policy)
+          .deniedCommands.map(currentCommandName)
+          .filter((c): c is string => !!c),
         locked: policy.role === "owner",
         members: users
           .filter((u) => u.role === policy.role || (policy.role === "owner" && u.slackId === p.ownerSlackId))

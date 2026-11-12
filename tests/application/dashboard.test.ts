@@ -249,6 +249,13 @@ describe("dashboard roles", () => {
     expect(view.editable).toBe(true);
   });
 
+  test("a role's denial stored as `review` reads back as quick-review, and `approve` is dropped", () => {
+    const store = policyStore();
+    store.rows.set("pal", { ...defaultRolePolicy("pal"), deniedCommands: ["review", "approve", "ping"] });
+    const { app } = ports({ rolePolicies: store.port });
+    expect(app.roles().roles.find((r) => r.role === "pal")?.deniedCommands).toEqual(["quick-review", "ping"]);
+  });
+
   test("saveRolePolicy persists through the port and refuses the owner and unknown names", () => {
     const store = policyStore();
     const { app } = ports({ rolePolicies: store.port });
