@@ -638,9 +638,11 @@ process that happens to be alive.
 Every 15 minutes, outside any turn, the bot looks for work that died without
 saying so: Orca tasks still `dispatched` whose worker is gone (its terminal
 exited, it settled without reporting, or Orca no longer knows the dispatch),
-and open PRs on its own repo with no commit, comment or review for 30 minutes.
+and open PRs on its own repo with no commit, comment or review for 30 minutes
+that are not simply waiting on a person (an approved PR, or one ready for review
+with every check green, is the reviewer's to move, so it is not reported).
 It DMs the owner (`OWNER_SLACK_ID`) one short message listing what is new, each
-with the Slack thread whose turn started it, and does not repeat an item for 4
+with the Slack thread that started it (recorded when the bot opens the PR), and does not repeat an item for 4
 hours - a restart does not reset that. When Orca or `gh` cannot be asked it
 says nothing rather than claim all is well; `mindful` shows the same lists on
 demand, with a "could not check" line when that happens.

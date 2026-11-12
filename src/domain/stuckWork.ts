@@ -159,12 +159,87 @@ export const terminalGone = (stdout: string, handle: string): boolean => {
 const newest = (rows: unknown, field: string): number =>
   Array.isArray(rows) ? rows.filter(isRecord).reduce((m, x) => Math.max(m, time(x[field])), 0) : 0;
 
-export type OpenPr = { readonly number: number; readonly title: string; readonly url: string; readonly lastActivityAt: number };
+export type OpenPr = {
+  readonly number: number;
+  readonly title: string;
+  readonly url: string;
+  readonly lastActivityAt: number;
+  /** The ball is in a human's court (see `awaitingHuman`); such a PR is never "quiet". */
+  readonly awaitingHuman: boolean;
+};
+
+type ChecksState = "green" | "failing" | "pending" | "none";
 
 /**
- * `gh pr list --json number,title,url,createdAt,commits,comments,reviews`:
- * each open PR with its newest commit, comment or review. Undefined when it
- * is not that shape.
+ * `statusCheckRollup` as `gh` prints it: check runs (`status`/`conclusion`) and
+ * commit statuses (`state`). Green only when there is at least one check and
+ * every one finished without failing; anything failing wins over pending.
+ */
+const checksState = (rollup: unknown): ChecksState => {
+  // CI cancels a superseded run (`cancel-in-progress`), so one check name can
+  // hold a CANCELLED run beside the run that replaced it: judge only the newest
+  // run of each check, by when it started.
+  const newestRun = new Map<string, Record<string, unknown>>();
+  (Array.isArray(rollup) ? rollup.filter(isRecord) : []).forEach((c, i) => {
+    const key = String(c.name ?? c.context ?? `#${i}`);
+    const seen = newestRun.get(key);
+    if (!seen || time(c.startedAt ?? c.completedAt) >= time(seen.startedAt ?? seen.completedAt)) newestRun.set(key, c);
+  });
+  const rows = [...newestRun.values()];
+  if (rows.length === 0) return "none";
+  let pending = false;
+  for (const c of rows) {
+    const verdict = String(c.conclusion || c.state || "").toUpperCase();
+    if (!verdict || ["PENDING", "EXPECTED", "QUEUED", "IN_PROGRESS", "WAITING", "REQUESTED"].includes(verdict)) pending = true;
+    else if (!["SUCCESS", "NEUTRAL", "SKIPPED"].includes(verdict)) return "failing";
+  }
+  return pending ? "pending" : "green";
+};
+
+// `gh` names an app author `app/<slug>` on the PR and `<slug>` (or `<slug>[bot]`) on its comments: one login either way.
+const login = (row: unknown): string =>
+  isRecord(row) && isRecord(row.author)
+    ? String(row.author.login ?? "").toLowerCase().replace(/^app\//, "").replace(/\[bot\]$/, "")
+    : "";
+
+/**
+ * Whether an open PR is waiting on a person rather than stuck. Quiet means
+ * nobody is driving it - but a PR whose code is done, whose checks are green
+ * and that nobody asked changes of is waiting for its reviewer to review,
+ * approve or merge, and nothing the bot does moves it. The signals `gh pr list`
+ * gives for free, most reliable first:
+ *  - `APPROVED`: only a merge is left, and that is a human's.
+ *  - `CHANGES_REQUESTED`: the author owes a fix, so NOT waiting on a human.
+ *  - a draft is the author's to finish, so not waiting either.
+ *  - checks failing or still running: the author's (or CI's) ball.
+ *  - checks green, ready for review, no changes requested: waiting on review.
+ *  - no checks to read (none configured): only the PR author's own last
+ *    comment, newer than the last commit, says it asked someone something.
+ * The originating thread's last message is deliberately not used: it needs a
+ * Slack read per PR per sweep, and the PR's own state already says it.
+ */
+export const awaitingHuman = (p: Record<string, unknown>): boolean => {
+  if (p.isDraft === true) return false;
+  const decision = String(p.reviewDecision ?? "").toUpperCase();
+  if (decision === "APPROVED") return true;
+  if (decision === "CHANGES_REQUESTED") return false;
+  const checks = checksState(p.statusCheckRollup);
+  if (checks === "green") return true;
+  if (checks !== "none") return false;
+  const lastComment = Array.isArray(p.comments) ? p.comments.filter(isRecord).sort((a, b) => time(b.createdAt) - time(a.createdAt))[0] : undefined;
+  return (
+    !!lastComment &&
+    login(lastComment) !== "" &&
+    login(lastComment) === login(p) &&
+    time(lastComment.createdAt) > newest(p.commits, "committedDate")
+  );
+};
+
+/**
+ * `gh pr list --json number,title,url,createdAt,commits,comments,reviews,author,
+ * isDraft,reviewDecision,statusCheckRollup`: each open PR with its newest
+ * commit, comment or review, and whether it waits on a person. Undefined when
+ * it is not that shape.
  */
 export const parseOpenPrs = (stdout: string): OpenPr[] | undefined => {
   const r = parseJson(stdout);
@@ -178,13 +253,13 @@ export const parseOpenPrs = (stdout: string): OpenPr[] | undefined => {
       newest(p.comments, "createdAt"),
       newest(p.reviews, "submittedAt"),
     );
-    return [{ number: p.number, title: str(p.title) ?? "", url, lastActivityAt }];
+    return [{ number: p.number, title: str(p.title) ?? "", url, lastActivityAt, awaitingHuman: awaitingHuman(p) }];
   });
 };
 
-/** The open PRs with nothing new for `quietMs` or longer, quietest first. */
+/** The open PRs nobody is driving: nothing new for `quietMs` or longer and not waiting on a person, quietest first. */
 export const quietPrs = (prs: readonly OpenPr[], now: number, quietMs = PR_QUIET_MS): OpenPr[] =>
-  prs.filter((p) => now - p.lastActivityAt >= quietMs).sort((a, b) => a.lastActivityAt - b.lastActivityAt);
+  prs.filter((p) => !p.awaitingHuman && now - p.lastActivityAt >= quietMs).sort((a, b) => a.lastActivityAt - b.lastActivityAt);
 
 /** `owner/repo#n`, lowercased, so one PR written two ways is one key. */
 export const prRef = (url: string): string => {
@@ -199,13 +274,15 @@ const bashCommand = (name: unknown, input: unknown): string => {
 };
 
 const WORKER_START = /\borca\s+orchestration\s+worker-start\b/;
-const PR_CREATE = /\bgh\s+pr\s+create\b/;
+// `gh pr create` by hand, or the app's helper (`bin/github-app.sh pr-create`),
+// which is how the bot opens every PR in its own org.
+const PR_CREATE = /\bgh\s+pr\s+create\b|\bgithub-app\.sh\s+pr-create\b/;
 const DISPATCH_ID = /"dispatchId"\s*:\s*"(ctx_[0-9a-f]{6,})"|\bdispatch(?:Id)?[\s=:]+(ctx_[0-9a-f]{6,})\b/g;
 const PR_URL = /https:\/\/github\.com\/[\w.-]+\/[\w.-]+\/pull\/\d+/g;
 
 /**
  * What a thread's trace shows it started: the Orca dispatches its
- * `worker-start` calls printed and the PRs its `gh pr create` calls printed.
+ * `worker-start` calls printed and the PRs its `gh pr create` or `github-app.sh pr-create` calls printed.
  * Only for naming an owner in a report - unlike `backgroundLaunches`, which
  * decides what `stop` may end, a loose match here costs a wrong link at worst,
  * so a brief written with `cat > f; orca ... worker-start` in one call still
@@ -236,6 +313,43 @@ export const traceStarts = (traceText: string): { dispatches: string[]; prs: str
   dispatches.delete("");
   return { dispatches: [...dispatches], prs: [...prs] };
 };
+
+/** How many PR -> thread records are kept; the oldest go first. */
+export const PR_THREADS_MAX = 200;
+
+/** PR -> thread records from the stored JSON (`{ "owner/repo#n": "channel/threadTs" }`). Anything malformed is forgotten. */
+export const parsePrThreads = (json: string | undefined): Record<string, string> => {
+  const r = json ? parseJson(json) : undefined;
+  if (!isRecord(r)) return {};
+  return Object.fromEntries(Object.entries(r).filter((e): e is [string, string] => typeof e[1] === "string" && e[1].includes("/")));
+};
+
+/**
+ * The record with a PR opened from a thread added. The exact answer to "which
+ * thread started this PR", written when the bot opens it, so it needs no trace
+ * to be readable later and works for a worker's PR (whose own terminal is not in
+ * any thread's trace).
+ */
+export const recordPrThread = (
+  json: string | undefined,
+  url: string,
+  owner: OwnerThread,
+): string => {
+  const kept = parsePrThreads(json);
+  const key = prRef(url);
+  delete kept[key];
+  const entries = [...Object.entries(kept), [key, `${owner.channelId}/${owner.threadTs}`] as const];
+  return JSON.stringify(Object.fromEntries(entries.slice(-PR_THREADS_MAX)));
+};
+
+/** The recorded PR -> thread map as owners. */
+export const recordedOwners = (json: string | undefined): Map<string, OwnerThread> =>
+  new Map(
+    Object.entries(parsePrThreads(json)).flatMap(([ref, v]): [string, OwnerThread][] => {
+      const i = v.indexOf("/");
+      return i > 0 && i < v.length - 1 ? [[ref, { channelId: v.slice(0, i), threadTs: v.slice(i + 1) }]] : [];
+    }),
+  );
 
 /** The key an item is remembered by, so it is not reported twice in a row. */
 export const taskKey = (t: StuckTask): string => `task:${t.taskId}`;

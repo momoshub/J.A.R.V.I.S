@@ -51,7 +51,7 @@ export type WorkerRefusal = "unknown" | "expired" | "revoked" | "pending" | "act
 
 /** What a redeem says; a refusal still names the ticket's owner when it is known, for the audit row. */
 export type WorkerRedeem =
-  | { readonly ok: true; readonly actor: string; readonly channel: string; readonly dispatchId: string; readonly id: string }
+  | { readonly ok: true; readonly actor: string; readonly channel: string; readonly dispatchId: string; readonly id: string; readonly threadTs?: string }
   | {
       readonly ok: false;
       readonly reason: WorkerRefusal;
@@ -183,7 +183,7 @@ export const createWorkerTickets = (
       if (normRepo(call.repo) !== e.repo) {
         return { ok: false, reason: "repo", message: `a worker ticket is for ${e.repo} only, not ${call.repo}`, ...who };
       }
-      return { ok: true, actor: e.actor, channel: e.channel, dispatchId: e.dispatchId, id: e.id };
+      return { ok: true, actor: e.actor, channel: e.channel, dispatchId: e.dispatchId, id: e.id, ...(e.threadTs ? { threadTs: e.threadTs } : {}) };
     },
 
     revoke: (dispatchId) => {

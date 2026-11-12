@@ -56,6 +56,8 @@ export type StuckWorkProbeConfig = {
   traceDir: string;
   now: () => number;
   quietMs?: number;
+  /** PR -> thread records written when the bot opened the PR (`stuck_pr_threads`); wins over the trace match. */
+  recordedOwners?: () => ReadonlyMap<string, OwnerThread>;
 };
 
 /** What one trace started, remembered until the file changes. */
@@ -172,7 +174,7 @@ export const createStuckWorkProbe = (config: StuckWorkProbeConfig): StuckWorkPro
     const out = await config.gh([
       // Least recently updated first: past the limit it is the busy ones that drop.
       "gh", "pr", "list", "--state", "open", "--search", "sort:updated-asc", "--limit", String(PR_LIMIT),
-      "--json", "number,title,url,createdAt,commits,comments,reviews",
+      "--json", "number,title,url,createdAt,commits,comments,reviews,author,isDraft,reviewDecision,statusCheckRollup",
     ]);
     const prs = out.code === 0 ? parseOpenPrs(out.stdout) : undefined;
     if (!prs) {
@@ -190,10 +192,11 @@ export const createStuckWorkProbe = (config: StuckWorkProbeConfig): StuckWorkPro
         const [tasks, prs] = await Promise.all([stuckTasks(problems), quiet(problems)]);
         if (tasks.length === 0 && prs.length === 0) return { tasks: [], prs: [], problems };
         const owners = findOwners(config.traceDir, config.now() - OWNER_TRACE_WINDOW_MS, traces);
+        const recorded = config.recordedOwners?.();
         const withOwner = <T>(item: T, owner: OwnerThread | undefined): T => (owner ? { ...item, owner } : item);
         return {
           tasks: tasks.map((t) => withOwner(t, t.dispatchId ? owners.dispatches.get(t.dispatchId) : undefined)),
-          prs: prs.map((p) => withOwner(p, owners.prs.get(prRef(p.url)))),
+          prs: prs.map((p) => withOwner(p, recorded?.get(prRef(p.url)) ?? owners.prs.get(prRef(p.url)))),
           problems,
         };
       } catch (e) {
