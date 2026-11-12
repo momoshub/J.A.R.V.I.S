@@ -142,10 +142,27 @@ describe("quiet PRs", () => {
       expect(waits({ statusCheckRollup: [{ state: "PENDING" }] })).toBe(false);
     });
 
+    test("a run cancelled by a newer run of the same check does not make green checks failing", () => {
+      // PR #16's real rollup: `checks` cancelled, skipped, then passed; gitleaks passed three times
+      const run = (name: string, conclusion: string, startedAt: string) => ({ name, status: "COMPLETED", conclusion, startedAt, completedAt: startedAt });
+      const rollup = [
+        run("checks", "CANCELLED", "2026-11-11T16:36:54Z"),
+        run("checks", "SKIPPED", "2026-11-11T16:36:48Z"),
+        run("checks", "SUCCESS", "2026-11-11T16:37:28Z"),
+        run("gitleaks", "SUCCESS", "2026-11-11T16:36:55Z"),
+        run("gitleaks", "SUCCESS", "2026-11-11T16:37:28Z"),
+        run("gitleaks", "SUCCESS", "2026-11-11T16:36:50Z"),
+      ];
+      expect(waits({ reviewDecision: "REVIEW_REQUIRED", statusCheckRollup: rollup })).toBe(true);
+      // the newest run is the one that counts: a cancel after the pass is not green
+      expect(waits({ statusCheckRollup: [...rollup, run("checks", "CANCELLED", "2026-11-11T17:00:00Z")] })).toBe(false);
+    });
+
     test("no checks: only the author's own last comment, newer than the last commit, is a question to someone", () => {
       const commits = [{ committedDate: "2026-11-08T09:30:00Z" }];
-      const bot = { author: { login: "jarvis[bot]" } };
-      const ask = { ...bot, createdAt: "2026-11-08T10:00:00Z" };
+      // the real shapes: an app-authored PR is `app/<slug>`, its comments `<slug>`
+      const bot = { author: { login: "app/jarvis-at-acme" } };
+      const ask = { author: { login: "jarvis-at-acme" }, createdAt: "2026-11-08T10:00:00Z" };
       expect(waits({ ...bot, commits, comments: [ask], statusCheckRollup: [] })).toBe(true);
       expect(waits({ ...bot, commits, comments: [{ author: { login: "kai" }, createdAt: "2026-11-08T10:00:00Z" }], statusCheckRollup: [] })).toBe(false);
       expect(waits({ ...bot, commits: [{ committedDate: "2026-11-08T11:00:00Z" }], comments: [ask], statusCheckRollup: [] })).toBe(false);

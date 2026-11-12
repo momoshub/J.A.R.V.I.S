@@ -1,10 +1,17 @@
 import { describe, expect, test } from "bun:test";
-import { createGithubActions } from "../../src/application/githubAppActions.ts";
+import { createGithubActions, type GithubActionDeps } from "../../src/application/githubAppActions.ts";
 import type { AllowedUser, UserRole } from "../../src/domain/types.ts";
 
 const user = (slackId: string, role: UserRole): AllowedUser => ({ slackId, role, name: slackId }) as unknown as AllowedUser;
 
-const setup = (role: UserRole | undefined, opts: { fail?: Error; threadTs?: string; onPrCreated?: (pr: { url: string; channelId: string; threadTs: string }) => void } = {}) => {
+type SetupOpts = {
+  fail?: Error;
+  threadTs?: string;
+  onPrCreated?: (pr: { url: string; channelId: string; threadTs: string }) => void;
+  resolveWorker?: GithubActionDeps["resolveWorker"];
+};
+
+const setup = (role: UserRole | undefined, opts: SetupOpts = {}) => {
   const audit: { entry: { command: string; args: string; ok: boolean; result: string; slackUserId: string }; at: number }[] = [];
   const calls: string[] = [];
   const installs: string[] = [];
@@ -35,6 +42,7 @@ const setup = (role: UserRole | undefined, opts: { fail?: Error; threadTs?: stri
     },
     audit: { add: (entry, at) => void audit.push({ entry, at }) },
     ...(opts.onPrCreated ? { onPrCreated: opts.onPrCreated } : {}),
+    ...(opts.resolveWorker ? { resolveWorker: opts.resolveWorker } : {}),
     allowedOwners: ["o"],
     slug: "jarvis-at-acme",
   });
@@ -60,6 +68,14 @@ describe("github app actions: PR -> thread record", () => {
     expect(seen).toEqual([]);
     const boom = setup("admin", { threadTs: "1.1", onPrCreated: () => { throw new Error("disk"); } });
     await expect(boom.actions.run({ ticket: "good", ...create })).resolves.toMatchObject({ number: 9 });
+  });
+
+  test("a worker's PR is recorded with the thread its ticket was minted in", async () => {
+    const seen: unknown[] = [];
+    const resolveWorker: GithubActionDeps["resolveWorker"] = () => ({ ok: true, actor: "U1", channel: "C7", dispatchId: "ctx_w1", id: "wk1", threadTs: "700.7" });
+    const { actions } = setup("admin", { resolveWorker, onPrCreated: (pr) => seen.push(pr) });
+    await actions.run({ ticket: "jvwk_test", ...create });
+    expect(seen).toEqual([{ url: "https://github.com/o/r/pull/9", channelId: "C7", threadTs: "700.7" }]);
   });
 });
 

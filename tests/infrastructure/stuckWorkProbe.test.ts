@@ -96,8 +96,13 @@ describe("stuck work probe", () => {
         { ...base, number: 16, title: "waiting", url: "https://github.com/o/r/pull/16", statusCheckRollup: green, reviewDecision: "REVIEW_REQUIRED" },
       ]),
     );
+    // the trace says #7 came from C1/100.1 ...
+    const dir = traceDir();
+    const traced = await createStuckWorkProbe({ orca: orcaFake({}).run, gh, traceDir: dir, now: () => NOW }).scan();
+    expect(traced.prs.map((p) => [p.number, p.owner])).toEqual([[7, { channelId: "C1", threadTs: "100.1" }]]);
+    // ... and the record of where it was opened wins over it
     const recorded = new Map([["o/r#7", { channelId: "C9", threadTs: "900.1" }]]);
-    const probe = createStuckWorkProbe({ orca: orcaFake({}).run, gh, traceDir: traceDir(), now: () => NOW, recordedOwners: () => recorded });
+    const probe = createStuckWorkProbe({ orca: orcaFake({}).run, gh, traceDir: dir, now: () => NOW, recordedOwners: () => recorded });
     const work = await probe.scan();
     expect(work.prs.map((p) => [p.number, p.owner])).toEqual([[7, { channelId: "C9", threadTs: "900.1" }]]);
   });

@@ -176,7 +176,16 @@ type ChecksState = "green" | "failing" | "pending" | "none";
  * every one finished without failing; anything failing wins over pending.
  */
 const checksState = (rollup: unknown): ChecksState => {
-  const rows = Array.isArray(rollup) ? rollup.filter(isRecord) : [];
+  // CI cancels a superseded run (`cancel-in-progress`), so one check name can
+  // hold a CANCELLED run beside the run that replaced it: judge only the newest
+  // run of each check, by when it started.
+  const newestRun = new Map<string, Record<string, unknown>>();
+  (Array.isArray(rollup) ? rollup.filter(isRecord) : []).forEach((c, i) => {
+    const key = String(c.name ?? c.context ?? `#${i}`);
+    const seen = newestRun.get(key);
+    if (!seen || time(c.startedAt ?? c.completedAt) >= time(seen.startedAt ?? seen.completedAt)) newestRun.set(key, c);
+  });
+  const rows = [...newestRun.values()];
   if (rows.length === 0) return "none";
   let pending = false;
   for (const c of rows) {
@@ -187,7 +196,11 @@ const checksState = (rollup: unknown): ChecksState => {
   return pending ? "pending" : "green";
 };
 
-const login = (row: unknown): string => (isRecord(row) && isRecord(row.author) ? String(row.author.login ?? "").toLowerCase() : "");
+// `gh` names an app author `app/<slug>` on the PR and `<slug>` (or `<slug>[bot]`) on its comments: one login either way.
+const login = (row: unknown): string =>
+  isRecord(row) && isRecord(row.author)
+    ? String(row.author.login ?? "").toLowerCase().replace(/^app\//, "").replace(/\[bot\]$/, "")
+    : "";
 
 /**
  * Whether an open PR is waiting on a person rather than stuck. Quiet means
