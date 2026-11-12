@@ -4,8 +4,10 @@ import {
   endedWorkerOf,
   HOUR_MS,
   isWorkerToken,
+  parseRenewArgs,
   parseTtl,
   parseWorkerTicketArgs,
+  WORKER_LIFETIME_MAX_MS,
   WORKER_TTL_DEFAULT_MS,
   WORKER_TTL_MAX_MS,
 } from "../../src/domain/workerTicket.ts";
@@ -62,5 +64,27 @@ describe("worker tokens", () => {
     expect(endedWorkerOf("x\norca worker ctx_a1 died: gone")).toBe("ctx_a1");
     expect(endedWorkerOf("orca worker ctx_a1 waiting: input")).toBeUndefined();
     expect(endedWorkerOf("nothing")).toBeUndefined();
+  });
+});
+
+describe("parseRenewArgs", () => {
+  test("an id or a dispatch id, ttl defaulting to the mint default", () => {
+    expect(parseRenewArgs(["6a547ded"])).toEqual({ ok: true, target: "6a547ded", ttlMs: WORKER_TTL_DEFAULT_MS });
+    expect(parseRenewArgs(["ctx_w1", "--ttl", "90m"])).toEqual({ ok: true, target: "ctx_w1", ttlMs: 90 * 60_000 });
+    expect(parseRenewArgs(["--ttl=2h", "ctx_w1"])).toEqual({ ok: true, target: "ctx_w1", ttlMs: 2 * HOUR_MS });
+  });
+
+  test("a ttl over the cap is passed through: the store clamps and says so", () => {
+    expect(parseRenewArgs(["ctx_w1", "--ttl", "20h"])).toMatchObject({ ok: true, ttlMs: 20 * HOUR_MS });
+  });
+
+  test("nothing, junk, two targets or a bad ttl are refused", () => {
+    for (const args of [[], ["nope"], ["ctx_a", "ctx_b"], ["ctx_a", "--ttl", "soon"], ["ctx_a", "--ttl"], ["12345"]]) {
+      expect(parseRenewArgs(args).ok).toBe(false);
+    }
+  });
+
+  test("the absolute lifetime is longer than any one renewal", () => {
+    expect(WORKER_LIFETIME_MAX_MS).toBeGreaterThan(WORKER_TTL_MAX_MS);
   });
 });

@@ -13,6 +13,12 @@
 #   github-app.sh reviewers-request <owner/repo> <number> <login|team:slug>...
 #   github-app.sh git <owner/repo> <local-repo-dir> -- <git args>...
 #   github-app.sh push <owner/repo> <local-repo-dir> <branch> [--force-with-lease]
+#   github-app.sh ticket-renew <owner/repo> [--ttl 3h]
+#
+# ticket-renew is for an Orca worker: it extends its OWN worker ticket to now +
+# ttl (default 3h, at most 6h per renewal, 24h in all from the bind) and prints
+# the new expiry. Only while the ticket is still valid; an expired one needs an
+# admin's `worker-ticket renew`. Use it before a long step, not after.
 #
 # The PR actions print GitHub's JSON answer wrapped as {"ok":true,"url":...,
 # "number":...,"github":{...}}, or {"ok":false,"error":"..."} (exit 1).
@@ -42,7 +48,7 @@
 set -uo pipefail
 
 if [ "$#" -lt 2 ]; then
-  sed -n '3,30p' "$0" >&2
+  sed -n '3,36p' "$0" >&2
   exit 2
 fi
 
@@ -233,6 +239,10 @@ elif action == "pr-merge":
 elif action in ("labels-add", "labels-remove"):
     p["number"] = number()
     p["labels"] = rest
+elif action == "ticket-renew":
+    f = flags(["--ttl"])
+    if "--ttl" in f:
+        p["ttl"] = f["--ttl"]
 elif action == "reviewers-request":
     p["number"] = number()
     p["reviewers"] = rest

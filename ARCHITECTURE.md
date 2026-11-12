@@ -145,7 +145,10 @@ no classes.
   `worker_tickets` holding only the token's sha-256): one repo, a short action
   list (no `git`/`push` by default: a worker pushes with the one-shot human
   credential), bound to its dispatch id, 3h (max 6h), ended when the
-  `watch worker` sees it finish or die, on `revoke`, or by the expiry sweep. The
+  `watch worker` sees it finish or die, on `revoke`, or by the expiry sweep. A
+  long worker extends it (`ticket-renew` through `bin/github-app.sh`, or an
+  admin's `worker-ticket renew`, which also revives one that lapsed unrevoked):
+  up to 6h per renewal, 24h from the bind in all. The
   token is handed over as a 0600 file whose PATH is the only thing in the brief
   (`JARVIS_RUN_TICKET_FILE`, read by `bin/github-app.sh`). `githubAppActions`
   redeems it against the plan's action and repo (not the raw request), still

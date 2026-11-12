@@ -1131,6 +1131,7 @@ const main = async () => {
         return { actor: resolved.ctx.actor, channel: resolved.ctx.channel, ...(resolved.ctx.threadTs ? { threadTs: resolved.ctx.threadTs } : {}) };
       },
       resolveWorker: workerTickets.redeem,
+      renewWorker: workerTickets.renewSelf,
       onPrCreated: ({ url, channelId, threadTs }) =>
         settings.set(SETTING_KEYS.stuckPrThreads, recordPrThread(settings.get(SETTING_KEYS.stuckPrThreads), url, { channelId, threadTs })),
       users,

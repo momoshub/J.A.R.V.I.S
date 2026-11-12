@@ -25,6 +25,12 @@ export const ACTIONS = [
    * `bin/github-app.sh git|push` asks for.
    */
   "git-auth",
+  /**
+   * Not a REST call either: a worker extends its own live ticket (see
+   * `application/workerTickets.ts`). Never grantable (`WORKER_ACTION_CEILING`
+   * leaves it out); every live worker ticket may use it on its own repo.
+   */
+  "ticket-renew",
 ] as const;
 export type ActionName = (typeof ACTIONS)[number];
 
@@ -53,6 +59,8 @@ export type ActionRequest = {
   method?: unknown;
   labels?: unknown;
   reviewers?: unknown;
+  /** `ticket-renew` only: how long to extend for, like `3h`. */
+  ttl?: unknown;
 };
 
 export type Plan = { ok: true; action: ActionName; repo: string; calls: GithubCall[] } | { ok: false; error: string };
@@ -92,7 +100,7 @@ export const planAction = (req: ActionRequest): Plan => {
     ]);
   }
 
-  if (action === "git-auth") return done([]);
+  if (action === "git-auth" || action === "ticket-renew") return done([]);
 
   const number = Number(req.number);
   if (!Number.isInteger(number) || number <= 0) return fail(`${action} needs a positive number`);

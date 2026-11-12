@@ -28,6 +28,7 @@ const setup = (role: UserRole = "admin") => {
       redeemed.push(call);
       return tickets.redeem(token, call);
     },
+    renewWorker: (token, ttlMs) => tickets.renewSelf(token, ttlMs),
     users: { get: (id) => (currentRole && id === "U0ADMIN0001" ? user(id, currentRole) : undefined) },
     github: {
       installationOfRepo: async (repo) => {
@@ -231,5 +232,77 @@ describe("github app actions with a worker ticket", () => {
       slug: "jarvis",
     });
     await expect(actions.run({ ticket: "jvwk_x", ...create })).rejects.toThrow("not accepted");
+  });
+});
+
+describe("ticket-renew with a worker ticket", () => {
+  const renew = { action: "ticket-renew", repo: "o/r" };
+
+  test("extends the worker's own ticket without touching GitHub, and audits it like any call", async () => {
+    const { t, tickets, actions, audit, hits, mint } = setup();
+    const { token, id } = mint({ actions: ["comment"] }); // renewing needs no grant
+    t.now += 2 * 60 * 60_000;
+    const out = await actions.run({ ticket: token, ...renew, ttl: "5h" });
+    expect(out.github).toMatchObject({ renewed: { id, ttlMs: 5 * 60 * 60_000, clamped: false, capped: false } });
+    expect(hits).toEqual([]);
+    expect(audit).toHaveLength(1);
+    expect(audit[0]).toMatchObject({ ok: true, slackUserId: "U0ADMIN0001" });
+    expect(audit[0]?.args).toContain("ticket-renew o/r ttl=5h worker=ctx_w1");
+    expect(audit[0]?.result).toContain(`ticket ${id} renewed`);
+    t.now += 4 * 60 * 60_000; // past the original 3h expiry
+    expect(tickets.redeem(token, { action: "comment", repo: "o/r" }).ok).toBe(true);
+  });
+
+  test("the default ttl is 3h and a longer one is clamped to 6h, and the answer says so", async () => {
+    const { t, actions, mint } = setup();
+    const { token } = mint();
+    const dflt = await actions.run({ ticket: token, ...renew });
+    expect(dflt.github).toMatchObject({ renewed: { ttlMs: TTL } });
+    const long = await actions.run({ ticket: token, ...renew, ttl: "20h" });
+    expect(long.github).toMatchObject({ renewed: { clamped: true, ttlMs: 6 * 60 * 60_000, expiresAt: t.now + 6 * 60 * 60_000 } });
+    expect(JSON.stringify(long.github)).toContain("clamped");
+  });
+
+  test("an expired ticket cannot renew itself, and the refusal is audited", async () => {
+    const { t, actions, audit, mint, tickets } = setup();
+    const { token, id } = mint();
+    t.now += TTL + 1;
+    await expect(actions.run({ ticket: token, ...renew })).rejects.toThrow("expired");
+    expect(audit[0]).toMatchObject({ ok: false });
+    // ... but its admin can still revive it, and then it works again
+    expect(tickets.renew(id, TTL)[0]).toMatchObject({ ok: true, wasExpired: true });
+    await expect(actions.run({ ticket: token, ...renew })).resolves.toBeDefined();
+  });
+
+  test("pending, revoked, wrong-repo and bad-ttl calls are refused", async () => {
+    const { actions, mint, tickets } = setup();
+    const pending = mint({ bind: false });
+    await expect(actions.run({ ticket: pending.token, ...renew })).rejects.toThrow("not bound");
+    const { token } = mint();
+    await expect(actions.run({ ticket: token, action: "ticket-renew", repo: "o/other" })).rejects.toThrow("o/r only");
+    await expect(actions.run({ ticket: token, ...renew, ttl: "soon" })).rejects.toThrow("ttl wants a duration");
+    tickets.revoke("ctx_w1");
+    await expect(actions.run({ ticket: token, ...renew })).rejects.toThrow("revoked");
+  });
+
+  test("a demoted minter cannot renew, and nothing is extended", async () => {
+    const { t, actions, mint, setRole, tickets } = setup();
+    const { token } = mint();
+    setRole("executer");
+    await expect(actions.run({ ticket: token, ...renew })).rejects.toThrow();
+    setRole("admin");
+    t.now += TTL + 1;
+    expect(tickets.redeem(token, { action: "comment", repo: "o/r" })).toMatchObject({ ok: false, reason: "expired" });
+  });
+
+  test("past the absolute lifetime it is refused and says so", async () => {
+    const { t, actions, mint } = setup();
+    const { token } = mint();
+    for (let i = 0; i < 4; i++) {
+      t.now += 5 * 60 * 60_000;
+      await actions.run({ ticket: token, ...renew, ttl: "6h" }).catch(() => undefined);
+    }
+    t.now += 5 * 60 * 60_000;
+    await expect(actions.run({ ticket: token, ...renew })).rejects.toThrow("24h lifetime limit");
   });
 });

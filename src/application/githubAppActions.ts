@@ -13,10 +13,10 @@ import { type ActionRequest, DENIED_MESSAGE, mayActAsApp, planAction, summarize 
 import { isAllowedOwner } from "../domain/githubApp.ts";
 import type { AllowedUser } from "../domain/types.ts";
 import type { CommandLogRepo } from "../infrastructure/db/commandLogRepo.ts";
-import { isWorkerToken } from "../domain/workerTicket.ts";
+import { isWorkerToken, parseTtl, RENEW_ACTION, WORKER_TTL_DEFAULT_MS } from "../domain/workerTicket.ts";
 import { logAndIgnore } from "./ignoredError.ts";
 import type { Clock } from "./ports.ts";
-import type { WorkerRedeem } from "./workerTickets.ts";
+import { type WorkerRedeem, type WorkerRenewal, renewalSummary } from "./workerTickets.ts";
 
 export type GithubActionDeps = {
   clock: Clock;
@@ -28,6 +28,8 @@ export type GithubActionDeps = {
    * means worker tickets are not accepted here.
    */
   resolveWorker?: (token: string, call: { action: string; repo: string }) => WorkerRedeem;
+  /** A worker extends its own live ticket (`ticket-renew`, see `workerTickets.renewSelf`). Absent means it cannot. */
+  renewWorker?: (token: string, ttlMs: number) => WorkerRenewal;
   users: { get: (slackId: string) => AllowedUser | undefined };
   github: {
     installationOfRepo: (repo: string) => Promise<number>;
@@ -87,6 +89,7 @@ const describe = (req: ActionRequest): string =>
     req.base && `base=${String(req.base)}`,
     req.event,
     req.method,
+    typeof req.ttl === "string" && req.ttl && `ttl=${req.ttl.slice(0, 12)}`,
     req.action === "pr-create" && `draft=${req.draft === true}`,
     typeof req.title === "string" && req.title && `title=${req.title.length}ch`,
     req.body !== undefined && req.action === "pr-edit" && "body=changed",
@@ -186,6 +189,19 @@ export const createGithubActions = (deps: GithubActionDeps): GithubActions => {
       const owner = plan.repo.split("/")[0] ?? "";
       if (!isAllowedOwner(owner, deps.allowedOwners)) {
         return refuse(`${owner} is not in GITHUB_APP_ALLOWED_OWNERS, so the app will not act there`);
+      }
+
+      if (plan.action === RENEW_ACTION) {
+        // Not a GitHub call: the worker extends its own ticket. Only a worker ticket has one, and
+        // `resolveWorker` already refused it if it is not live, bound, or for this repo.
+        if (!worker?.ok || !deps.renewWorker) return refuse("only a worker can renew its own ticket, and only with its worker ticket");
+        const asked = typeof req.ttl === "string" && req.ttl.trim() ? parseTtl(req.ttl) : WORKER_TTL_DEFAULT_MS;
+        if (asked === undefined) return refuse("ttl wants a duration like 3h or 90m");
+        const renewed = deps.renewWorker(ticket, asked);
+        if (!renewed.ok) return refuse(renewed.error);
+        const summary = renewalSummary(renewed, deps.clock());
+        log(true, summary);
+        return { github: { renewed: { id: renewed.id, expiresAt: renewed.expiresAt, ttlMs: renewed.ttlMs, clamped: renewed.clamped, capped: renewed.capped, message: summary } } };
       }
 
       try {

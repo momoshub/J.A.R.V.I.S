@@ -103,6 +103,27 @@ export const migrate = (db: Database): void => {
   migrateAccessReplay(db);
   migrateWorkerTickets(db);
   migrateLoops(db);
+  migrateWorkerTicketBoundAt(db);
+};
+
+/**
+ * Migration v32: when a worker ticket was bound.
+ *
+ * The absolute lifetime of a ticket (renewals stop there) counts from the bind,
+ * and `expires_at` moves with every renewal, so the bind time needs its own
+ * column. A ticket already bound had `expires_at = bound + ttl_ms`, so its bind
+ * time is recovered from that; a pending one stays 0.
+ */
+const migrateWorkerTicketBoundAt = (db: Database): void => {
+  const cols = db.query<{ name: string }, []>("PRAGMA table_info(worker_tickets)").all();
+  if (!cols.some((c) => c.name === "bound_at")) {
+    db.exec("ALTER TABLE worker_tickets ADD COLUMN bound_at INTEGER NOT NULL DEFAULT 0");
+    db.exec("UPDATE worker_tickets SET bound_at = expires_at - ttl_ms WHERE dispatch_id != ''");
+  }
+  const { user_version } = db.query<{ user_version: number }, []>("PRAGMA user_version").get() ?? {
+    user_version: 0,
+  };
+  if (user_version < 32) db.exec("PRAGMA user_version = 32;");
 };
 
 /**

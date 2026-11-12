@@ -17,6 +17,8 @@ export type WorkerTicketRow = {
   /** Empty while pending. */
   readonly dispatchId: string;
   readonly createdAt: number;
+  /** When it was bound to its dispatch (the absolute-lifetime clock starts here); 0 while pending. */
+  readonly boundAt: number;
   readonly expiresAt: number;
   readonly revokedAt?: number;
 };
@@ -27,7 +29,9 @@ export type WorkerTicketRepo = {
   byId: (id: string) => WorkerTicketRow | undefined;
   /** Every ticket of a dispatch that is not revoked yet. */
   liveOfDispatch: (dispatchId: string) => WorkerTicketRow[];
-  bind: (tokenHash: string, dispatchId: string, expiresAt: number) => void;
+  bind: (tokenHash: string, dispatchId: string, boundAt: number, expiresAt: number) => void;
+  /** Move the expiry (a renewal). */
+  setExpiry: (tokenHash: string, expiresAt: number) => void;
   revoke: (tokenHash: string, at: number) => void;
   /** Rows that expired at or before `now`, revoked or not. */
   expired: (now: number) => WorkerTicketRow[];
@@ -45,6 +49,7 @@ type Row = {
   ttl_ms: number;
   dispatch_id: string;
   created_at: number;
+  bound_at: number;
   expires_at: number;
   revoked_at: number | null;
 };
@@ -69,14 +74,15 @@ const fromRow = (r: Row): WorkerTicketRow => ({
   ttlMs: r.ttl_ms,
   dispatchId: r.dispatch_id,
   createdAt: r.created_at,
+  boundAt: r.bound_at,
   expiresAt: r.expires_at,
   ...(r.revoked_at === null ? {} : { revokedAt: r.revoked_at }),
 });
 
 export const createWorkerTicketRepo = (db: DbClient): WorkerTicketRepo => {
   const insertStmt = db.query(
-    `INSERT INTO worker_tickets (token_hash, id, actor, channel, thread_ts, repo, actions, ttl_ms, dispatch_id, created_at, expires_at)
-     VALUES ($hash, $id, $actor, $channel, $ts, $repo, $actions, $ttl, $dispatch, $created, $expires)`,
+    `INSERT INTO worker_tickets (token_hash, id, actor, channel, thread_ts, repo, actions, ttl_ms, dispatch_id, created_at, bound_at, expires_at)
+     VALUES ($hash, $id, $actor, $channel, $ts, $repo, $actions, $ttl, $dispatch, $created, $bound, $expires)`,
   );
   const hashStmt = db.query<Row, [string]>("SELECT * FROM worker_tickets WHERE token_hash = ?");
   const idStmt = db.query<Row, [string]>("SELECT * FROM worker_tickets WHERE id = ? ORDER BY created_at DESC LIMIT 1");
@@ -84,8 +90,9 @@ export const createWorkerTicketRepo = (db: DbClient): WorkerTicketRepo => {
     "SELECT * FROM worker_tickets WHERE dispatch_id = ? AND revoked_at IS NULL",
   );
   const bindStmt = db.query(
-    "UPDATE worker_tickets SET dispatch_id = $dispatch, expires_at = $expires WHERE token_hash = $hash",
+    "UPDATE worker_tickets SET dispatch_id = $dispatch, bound_at = $bound, expires_at = $expires WHERE token_hash = $hash",
   );
+  const expiryStmt = db.query("UPDATE worker_tickets SET expires_at = $expires WHERE token_hash = $hash");
   const revokeStmt = db.query("UPDATE worker_tickets SET revoked_at = $at WHERE token_hash = $hash AND revoked_at IS NULL");
   const expiredStmt = db.query<Row, [number]>("SELECT * FROM worker_tickets WHERE expires_at <= ?");
   const deleteStmt = db.query("DELETE FROM worker_tickets WHERE token_hash = ?");
@@ -103,6 +110,7 @@ export const createWorkerTicketRepo = (db: DbClient): WorkerTicketRepo => {
         $ttl: r.ttlMs,
         $dispatch: r.dispatchId,
         $created: r.createdAt,
+        $bound: r.boundAt,
         $expires: r.expiresAt,
       }),
     byHash: (h) => {
@@ -114,7 +122,8 @@ export const createWorkerTicketRepo = (db: DbClient): WorkerTicketRepo => {
       return r ? fromRow(r) : undefined;
     },
     liveOfDispatch: (d) => dispatchStmt.all(d).map(fromRow),
-    bind: (hash, dispatch, expires) => void bindStmt.run({ $hash: hash, $dispatch: dispatch, $expires: expires }),
+    bind: (hash, dispatch, bound, expires) => void bindStmt.run({ $hash: hash, $dispatch: dispatch, $bound: bound, $expires: expires }),
+    setExpiry: (hash, expires) => void expiryStmt.run({ $hash: hash, $expires: expires }),
     revoke: (hash, at) => void revokeStmt.run({ $hash: hash, $at: at }),
     expired: (now) => expiredStmt.all(now).map(fromRow),
     delete: (h) => void deleteStmt.run(h),
