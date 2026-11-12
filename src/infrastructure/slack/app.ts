@@ -57,11 +57,26 @@ import {
   MENU_VIEW,
   needsArguments,
 } from "../../domain/commandMenu.ts";
-import { annotateMentions, extractMentionIds } from "../../domain/mentions.ts";
+import { annotateMentions, extractMentionIds, hasContent } from "../../domain/mentions.ts";
 import { isTimeout } from "../../domain/threadSession.ts";
 import { toMrkdwn } from "../../domain/slackFormat.ts";
 import { MAX_BLOCKS, readableText, toBlockMessage, type Block } from "../../domain/blockKit.ts";
 import { couldFollowThread, followVerdict, isOneOnOneThread, isSpeech, startsAutoFollow } from "../../domain/threadFollow.ts";
+import {
+  formatBatchInput,
+  gateRoute,
+  takesOverBatch,
+  gateSettings,
+  GATE_CONTEXT_LINES,
+  leastPrivilegedAuthor,
+  type GateContextLine,
+} from "../../domain/followGate.ts";
+import { ROLES } from "../../domain/rolePolicy.ts";
+import { decideAccess } from "../../domain/access.ts";
+import { reviewRequestIn } from "../../domain/reviewRequest.ts";
+import { createFollowGate } from "../../application/followGate.ts";
+import { createGateModel } from "../../application/followGateModel.ts";
+import type { ToolPolicy } from "../../domain/toolPolicy.ts";
 import { unfollowOnReaction } from "../../application/followReaction.ts";
 import { collapsedBlocks, collapseSteps } from "../../domain/collapseSteps.ts";
 import { usageFooter } from "../../domain/usageFooter.ts";
@@ -157,6 +172,12 @@ type Deps = RespondDeps & {
   kitViews?: Pick<KitViewRepo, "get">;
   /** The log channel a stop press is reported to; empty or absent: only logged. */
   stopLogChannel?: () => string;
+  /**
+   * The policy the follow gate's model runs on: the pal model, no tools, a
+   * short timeout. Absent, the gate is off and followed threads behave as
+   * they did before it existed.
+   */
+  gatePolicy?: () => ToolPolicy;
 };
 
 /** The slice of the Slack WebClient the handler needs (kept minimal for testing). */
@@ -348,6 +369,11 @@ export type Incoming = {
   client: SlackClient;
   /** An untagged reply under a thread this bot started. */
   following?: boolean;
+  /**
+   * The messages a followed thread buffered, oldest first, when the turn is
+   * for several at once. `text`, `userId` and `messageTs` are the newest's.
+   */
+  batch?: readonly { userId: string; text: string; messageTs: string }[];
   /** Set when it came from the gateway inbox: which row, and which attempt at it. */
   inbox?: { rowId: number; attempt: number };
   say: (msg: { text: string; blocks?: Block[]; thread_ts?: string; reply_broadcast?: boolean }) => Promise<unknown>;
@@ -376,7 +402,18 @@ export const createHandler =
 
   return async (msg: Incoming): Promise<void> => {
     const displayName = await resolveName(msg.client, msg.userId);
-    const text = await annotate(msg.client, msg.text);
+    const batched = msg.batch && msg.batch.length > 1 ? msg.batch : undefined;
+    // One input for the whole batch, in order, each line under its author.
+    const text = batched
+      ? formatBatchInput(
+          await Promise.all(
+            batched.map(async (b) => ({
+              author: (await resolveName(msg.client, b.userId)) ?? `<@${b.userId}>`,
+              text: await annotate(msg.client, b.text),
+            })),
+          ),
+        )
+      : await annotate(msg.client, msg.text);
 
     // When following, held until the turn is plainly working: most of those
     // say nothing, and a stream opened up front is in the channel before
@@ -431,6 +468,7 @@ export const createHandler =
           messageTs: msg.messageTs,
           viaSlash: false,
           following: msg.following === true,
+          ...(batched ? { batched: true } : {}),
           interrupted: (msg.inbox?.attempt ?? 1) > 1,
           ...(msg.inbox ? { inboxRowId: msg.inbox.rowId } : {}),
         },
@@ -930,6 +968,101 @@ export const createSlackApp = (config: SlackAppConfig, deps: Deps) => {
       : undefined;
   // The real WebClient is a superset of the minimal SlackClient seam.
   const asClient = (client: WebClient) => client as unknown as SlackClient;
+
+  /**
+   * The gate in front of untagged messages in a followed thread: buffer, wait
+   * for quiet, ask the cheap model, and only then run the main turn on the
+   * whole batch (`domain/followGate.ts`, `application/followGate.ts`).
+   */
+  type GateItem = {
+    userId: string;
+    text: string;
+    ts: string;
+    client: SlackClient;
+    say: Incoming["say"];
+    teamId?: string;
+    inbox?: Incoming["inbox"];
+  };
+  const gateNames = new Map<string, string>();
+  const gateNameOf = async (client: SlackClient, id: string): Promise<string> => {
+    const hit = gateNames.get(id);
+    if (hit) return hit;
+    const name = (await fetchDisplayName(client, id)) ?? id;
+    gateNames.set(id, name);
+    return name;
+  };
+  /** The few messages before the batch, oldest first; empty when Slack will not say. */
+  const gateContext = async (
+    client: SlackClient,
+    channel: string,
+    threadTs: string,
+    beforeTs: string,
+    me: string | undefined,
+  ): Promise<GateContextLine[]> => {
+    try {
+      const res = (await (client as unknown as {
+        conversations: {
+          replies: (a: unknown) => Promise<{ messages?: { user?: string; bot_id?: string; text?: string; ts?: string }[] }>;
+        };
+      }).conversations.replies({ channel, ts: threadTs, limit: 200 })) ?? {};
+      const before = (res.messages ?? []).filter((x) => x.text?.trim() && x.ts !== undefined && x.ts < beforeTs);
+      return await Promise.all(
+        before.slice(-GATE_CONTEXT_LINES).map(async (x) => ({
+          author: x.user ? await gateNameOf(client, x.user) : "a bot",
+          text: x.text ?? "",
+          ...(x.user && x.user === me ? { own: true } : {}),
+        })),
+      );
+    } catch (err) {
+      log(`follow gate context failed channel=${channel} thread=${threadTs}: ${err instanceof Error ? err.message : String(err)}`);
+      return [];
+    }
+  };
+  const gateModel = deps.gatePolicy
+    ? createGateModel({ llm: deps.llm, policy: deps.gatePolicy, botName: () => config.botName })
+    : undefined;
+  const followGate = createFollowGate<GateItem>({
+    settings: () => gateSettings((k) => deps.settings?.get(k)),
+    now: () => deps.clock(),
+    log,
+    decide: async ({ channel, threadTs, items }) => {
+      if (!gateModel) throw new Error("no gate model wired");
+      const last = items[items.length - 1]!;
+      const me = await deps.slack?.botUserId().catch(ignoreQuietly("bot user id lookup"));
+      return gateModel({
+        channel,
+        threadTs,
+        actor: last.userId,
+        context: await gateContext(last.client, channel, threadTs, items[0]!.ts, me),
+        batch: await Promise.all(
+          items.map(async (i) => ({ author: await gateNameOf(i.client, i.userId), text: i.text })),
+        ),
+      });
+    },
+    run: async ({ channel, threadTs, items }) => {
+      const last = items[items.length - 1]!;
+      // Role, tool policy and access come from whoever the turn runs as: the
+      // least-privileged author in the batch, never just the newest.
+      const rankOf = (userId: string): number => {
+        const d = decideAccess(userId, deps.ownerSlackId, deps.users.get);
+        return d.allowed ? ROLES.length - ROLES.indexOf(d.user.role) : 0;
+      };
+      const runAs = leastPrivilegedAuthor(items, rankOf);
+      await handle({
+        channelId: channel,
+        userId: runAs.userId,
+        teamId: runAs.teamId,
+        inbox: last.inbox,
+        text: last.text,
+        threadTs,
+        messageTs: last.ts,
+        client: last.client,
+        following: true,
+        batch: items.map((i) => ({ userId: i.userId, text: i.text, messageTs: i.ts })),
+        say: last.say,
+      });
+    },
+  });
   const retireOnReply = async (client: unknown, m: Parameters<typeof retireOpenKit>[2]) =>
     retireOpenKit(client, await deps.slack?.botUserId().catch(ignoreQuietly("bot user id lookup")), m, log);
 
@@ -937,6 +1070,18 @@ export const createSlackApp = (config: SlackAppConfig, deps: Deps) => {
   app.event("app_mention", async ({ event, client, say, context }) => {
     const e = event as { channel: string; user?: string; text: string; ts: string; thread_ts?: string };
     if (!e.user) return;
+    // A tag that runs a chat turn for an allowed user takes the buffered batch
+    // over (the turn reads it in the thread). A stranger's tag (an access
+    // request) or a command line answers none of it: the batch fires on its own.
+    if (
+      takesOverBatch({
+        allowed: decideAccess(e.user, deps.ownerSlackId, deps.users.get).allowed,
+        isCommand: commandLineOf(e.text, config.commandPrefix) !== undefined || reviewRequestIn(e.text) !== undefined,
+        hasText: hasContent(e.text),
+      })
+    ) {
+      followGate.cancel({ channel: e.channel, threadTs: threadKeyOf(e) }, "tagged message");
+    }
     void retireOnReply(client, { ...e, user: e.user });
     await autoFollow(asClient(client), e.channel, threadKeyOf(e), e.user);
     await handle({
@@ -1548,7 +1693,9 @@ export const createSlackApp = (config: SlackAppConfig, deps: Deps) => {
       // Only look the thread up when the answer could still depend on it: the
       // lookup is a Slack call, and an explicit follow already settles it. A
       // thread that is just it and one person is followed too, setting or not.
-      const info = asked ? undefined : await threadInfo(asClient(client), m.channel, m.thread_ts!);
+      // Always looked up (cached 30s): a one-on-one thread must be recognised
+      // from the thread even after auto-follow made it `asked`.
+      const info = await threadInfo(asClient(client), m.channel, m.thread_ts!);
       const ownThread = !!info && !ownThreadsOff && info.author === me;
       const oneOnOne =
         !!info && isOneOnOneThread({ participants: info.participants, author: m.user!, botUserId: me });
@@ -1566,6 +1713,49 @@ export const createSlackApp = (config: SlackAppConfig, deps: Deps) => {
           (info ? ` author=${info.author ?? "?"} participants=${info.participants.join(",") || "none"}` : ""),
       );
       if (!verdict.follow) return;
+      // Tagged messages, DMs, one-on-one threads and command lines are never
+      // held: they are answered at once, as before. Only the untagged routes
+      // into a thread it is a guest in wait for a quiet moment and the gate.
+      // Somebody off the allowlist is not buffered either - their message
+      // would be ignored anyway, and must not cost a gate call.
+      const route = gateRoute({
+        wired: !!deps.gatePolicy,
+        enabled: gateSettings((k) => deps.settings?.get(k)).enabled,
+        route: verdict.why,
+        isCommand: commandLineOf(m.text!, config.commandPrefix) !== undefined || reviewRequestIn(m.text!) !== undefined,
+        oneOnOne,
+        allowed: decideAccess(m.user!, deps.ownerSlackId, deps.users.get).allowed,
+      });
+      if (route === "gate") {
+        // Held until the batch is skipped or answered, so the inbox row stays
+        // `running` meanwhile and a restart redelivers it.
+        await followGate.submit(
+          { channel: m.channel, threadTs: m.thread_ts! },
+          {
+            userId: m.user!,
+            text: m.text!,
+            ts: m.ts,
+            client: asClient(client),
+            say: say as Incoming["say"],
+            teamId: context.teamId,
+            inbox: inboxOf(context as InboxContext),
+          },
+        );
+        return;
+      }
+      // Answered at once (a one-on-one thread, the gate off): a batch still
+      // buffered for this thread is taken over, not answered later out of order
+      // - but only by a message that runs a chat turn for an allowed user. A
+      // stranger or a command line leaves it to fire on its own.
+      if (
+        takesOverBatch({
+          allowed: decideAccess(m.user!, deps.ownerSlackId, deps.users.get).allowed,
+          isCommand: commandLineOf(m.text!, config.commandPrefix) !== undefined || reviewRequestIn(m.text!) !== undefined,
+          hasText: hasContent(m.text!),
+        })
+      ) {
+        followGate.cancel({ channel: m.channel, threadTs: m.thread_ts! }, "message answered at once");
+      }
       await handle({
         channelId: m.channel,
         userId: m.user!,

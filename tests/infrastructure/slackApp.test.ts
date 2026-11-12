@@ -418,6 +418,65 @@ describe("createHandler streaming truth table", () => {
     expect(said).toEqual([{ text: "the index is missing" }]);
   });
 
+  test("a batch reaches the model as one input: every message, in order, with its author", async () => {
+    let seen = "";
+    const llm: LlmPort = {
+      complete: async (p) => {
+        seen = p.messages[p.messages.length - 1]?.content ?? "";
+        return "on it";
+      },
+    };
+    const { handle, msg, said } = build({ llm, streamUpdates: false });
+    await handle({
+      ...msg("third", "000.9"),
+      following: true,
+      batch: [
+        { userId: OWNER, text: "first", messageTs: "1.1" },
+        { userId: "U0PAL0002", text: "second", messageTs: "1.2" },
+        { userId: OWNER, text: "third", messageTs: "1.3" },
+      ],
+    });
+    expect(seen).toContain("3 messages");
+    expect(seen.indexOf("Kai: first")).toBeGreaterThan(-1);
+    expect(seen.indexOf("Kai: first")).toBeLessThan(seen.indexOf("second"));
+    expect(seen.indexOf("second")).toBeLessThan(seen.indexOf("Kai: third"));
+    expect(said).toEqual([{ text: "on it" }]);
+  });
+
+  test("a batch of one reads exactly as a lone message did", async () => {
+    let seen = "";
+    const llm: LlmPort = {
+      complete: async (p) => {
+        seen = p.messages[p.messages.length - 1]?.content ?? "";
+        return "ok";
+      },
+    };
+    const { handle, msg } = build({ llm, streamUpdates: false });
+    await handle({ ...msg("only this", "000.9"), following: true, batch: [{ userId: OWNER, text: "only this", messageTs: "1.1" }] });
+    expect(seen).toBe("only this");
+  });
+
+  test("a batch that mentions a PR url and the word review is not run as a review command", async () => {
+    let asked = false;
+    const llm: LlmPort = {
+      complete: async () => {
+        asked = true;
+        return "no command here";
+      },
+    };
+    const { handle, msg } = build({ llm, streamUpdates: false });
+    await handle({
+      ...msg("https://github.com/o/r/pull/1", "000.9"),
+      following: true,
+      batch: [
+        { userId: OWNER, text: "can someone review this", messageTs: "1.1" },
+        { userId: "U0PAL0002", text: "https://github.com/o/r/pull/1", messageTs: "1.2" },
+      ],
+    });
+    // went to the chat brain, not to the review command
+    expect(asked).toBe(true);
+  });
+
   test("no broadcast when the reply is a plain post inside an existing thread", async () => {
     const { handle, msg, said } = build({ llm: streamingLlm("plain post"), streamUpdates: false });
     await handle(msg("hi", "000.9"));

@@ -67,6 +67,7 @@ import { decideAccess } from "./domain/access.ts";
 import { createDriftRepo } from "./infrastructure/db/driftRepo.ts";
 import { createSelfIssueRepo } from "./infrastructure/db/selfIssueRepo.ts";
 import { noTools } from "./domain/toolPolicy.ts";
+import { GATE_TIMEOUT_MS } from "./application/followGate.ts";
 import { createClaudeJsonReader, unlistedLocalMcpServers } from "./infrastructure/llm/mcpConfig.ts";
 import { createReminderSender } from "./application/reminders.ts";
 import { createLoopRunner } from "./application/loops.ts";
@@ -953,7 +954,20 @@ const main = async () => {
       commandPrefix: config.commandPrefix,
       slashCommand: config.slashCommand,
     },
-    { ...deps, kitViews, log: activity.line, stopLogChannel: logChannel },
+    {
+      ...deps,
+      kitViews,
+      log: activity.line,
+      stopLogChannel: logChannel,
+      // The follow gate reads a batch on the pal model (Haiku by default), with no tools.
+      gatePolicy: () => ({
+        skipPermissions: false,
+        cwd: sandboxCwd,
+        model: modelsForRoles().pal,
+        disallowedTools: noTools(config.dbMcpServers),
+        timeoutMs: GATE_TIMEOUT_MS,
+      }),
+    },
   );
   slackApp = slack;
   await slack.start();

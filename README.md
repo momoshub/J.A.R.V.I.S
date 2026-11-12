@@ -737,6 +737,79 @@ says it in the thread; the figure is stored in `orca_worker_usage`.
 forgotten the dispatch), and `worker-cost <run_...>` totals a Run. Nobody is
 invoiced this on a subscription; it is what the work would cost at API prices.
 
+## Followed threads: wait, then ask a cheap model
+
+The bot answers untagged messages in a thread it follows (one it started, or one
+somebody pointed it at with `follow`). It used to run a full main-model turn for
+each message and let that turn decide to stay quiet, which is the expensive way
+to say nothing, and replies burst when people sent several lines in a row. Now
+those messages wait in a short per-thread buffer first:
+
+1. Every new message in the thread resets a quiet window (default 25s). A hard cap
+   counted from the first buffered message (default 90s) means a busy thread is
+   never held for ever.
+2. When the window ends, a cheap model (the `pal` model, Haiku by default, no tools)
+   reads the batch plus the few messages before it and answers `reply`, `skip` or
+   `wait`, with a short reason. `wait` buys one more quiet window, still under the
+   cap; at the cap `wait` counts as `reply`. When unsure it answers `reply`, and an
+   error, a timeout or an answer that cannot be read is a `reply` too.
+3. Only `reply` runs the main turn, once, with every buffered message in order and
+   who wrote each.
+
+Never held, and handled exactly as before: tagged messages, DMs, threads that are
+just the bot and one person, command lines (`//bot ...`) and spoken review
+requests. A message from somebody off the allowlist is not buffered either. A
+one-on-one thread is recognised from the thread itself (the bot has written and
+exactly one human has), not from why it is followed: it is followed for good from
+its second message on, which makes its route read "asked", and it must still never
+wait.
+
+A message that is not held is answered at once, and takes over whatever the thread
+had buffered only when it will itself run a chat turn for an allowed user (allowed,
+not a command line, has text beyond the tag): that turn reads the buffered messages
+in its thread context, so the pending batch is dropped and its inbox rows settle,
+and it cannot fire later into a second, out-of-order answer. A message from
+somebody off the allowlist (untagged, or an @-mention that becomes an access
+request) and a command line answer none of the buffered messages, so they leave the
+batch alone to fire on its own. Past the hard cap the gate never loops: a newer
+message arriving while the model reads does not restart the window. Any answer
+except `skip` replies with the whole current batch; a `skip` settles only the
+messages the gate actually read (they were skipped) and carries the unseen ones
+into a fresh batch with a new cap, so a skip never swallows a message the model
+did not see and a busy thread cannot hold its rows open for ever. The batch runs as its least-privileged author (role, tools and access), so a
+lower-role request plus a higher-role "+1" in the same window never runs on the
+higher role's tools. A turn that fails marks its rows failed, not done.
+
+A restart does not lose the buffer: a message's inbox row stays open until its
+batch is answered or skipped, so after a restart the row is redelivered and the
+message is buffered again.
+
+**Settings** (the `settings` table, edited like `follow_own_threads`; read per
+message, so a change needs no restart):
+
+| key | default | meaning |
+| --- | --- | --- |
+| `follow_gate` | on | `off` goes back to one main turn per message |
+| `follow_debounce_seconds` | `25` | quiet time after the latest message before the batch is judged |
+| `follow_debounce_max_seconds` | `90` | longest a batch is held, from its first message (at most 600) |
+
+Not a number, or not above zero, means the default; the cap is never shorter than the
+quiet window. The gate uses the model for the `pal` role (`CLAUDE_MODEL_PAL`, or
+`model:pal`), see [Model per role](#model-per-role-and-per-channel).
+
+**Tuning.** Every decision logs one line, including `skip`, so you can see what the
+gate is keeping quiet about:
+
+```
+follow gate channel=C0123 thread=1731.0001 batch=3 verdict=skip: people are talking among themselves
+```
+
+A line for a window that was extended, a verdict that was superseded by a newer
+message, or a gate that timed out says so in parentheses. If it skips things it
+should have answered, read the reasons first (the prompt is `gateSystem` in
+`src/domain/followGate.ts`), or set `follow_gate=off` while you decide. If replies
+come too late, lower `follow_debounce_seconds`.
+
 ## One turn at a time
 
 A thread's turns run one after another, never beside each other. Two messages a

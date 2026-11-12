@@ -110,6 +110,20 @@ no classes.
   the thread that started each (recorded when the app opened the PR, else found in the traces; an item is not repeated for 4 hours);
   `mindful` shows the same two lists on demand.
   None of them hold a session or a queue slot while they wait.
+- **Followed threads: debounce and gate.** An untagged message in a thread the bot
+  follows (the `asked` and `own-thread` routes; tagged messages, DMs, one-on-one
+  threads and command lines skip all of this) is not a turn yet. `app.ts` hands it
+  to `followGate` (`application/followGate.ts`), which keeps one batch per thread in
+  memory: each arrival resets a quiet window (`follow_debounce_seconds`, 25s), a cap
+  from the first message (`follow_debounce_max_seconds`, 90s, at most 600s) bounds
+  the wait. When it ends the pal model reads the batch and the few messages before
+  it and says `reply`, `skip` or `wait` (`wait` buys one more window, still under the
+  cap; an error, a timeout or an unreadable answer is `reply`). Only `reply` runs the
+  main turn, once, on all the buffered messages in order. The listener awaits the
+  batch, so each message's inbox row stays `running` while it is buffered: a restart
+  redelivers those rows and they are buffered again, instead of waiting in memory
+  alone. Like the other timers it holds no session and no queue slot while it waits,
+  and `follow_gate=off` removes it.
 - **GitHub App.** A loopback listener (`GITHUB_APP_PORT`, reached through
   Tailscale Funnel) verifies each webhook, answers 202 and hands it to
   `githubApp`, which keeps only real calls (a mention of the app or its label,
@@ -185,6 +199,7 @@ No I/O, no frameworks. Just data shapes and functions of their inputs.
 - `threadSession.ts`, `agentSession.ts` - one CLI session per thread and when it may be resumed
 - `adapter.ts`, `adapterCheck.ts` - memory as a checked, versioned directory (facts + skills) instead of an ever-growing list
 - `ciGate.ts` (domain) - CI verdict of a PR from its check rollup, what a CI-gate poll should do, the spec of a gate's watch row
+- `threadFollow.ts`, `followGate.ts` - which untagged thread messages the bot answers, and the pure rules of the gate in front of a followed thread (settings, bypass, batch windows, verdict parsing, the gate's prompt)
 - `watch.ts`, `reminder.ts`, `loop.ts`, `selfUpdate.ts`, `runControl.ts`, `threadBackground.ts` - waits, reminders, draining restart, stopping a turn and the background agents its thread started
 - `workerUsage.ts` - an Orca worker's tokens summed from its Claude Code transcript (deduped per message) and priced per model (the one price table)
 - `offlineAlarm.ts` - the dead man's switch notice and its back-online edit
@@ -207,6 +222,7 @@ Orchestrates the domain and depends on **ports**, not concrete adapters.
 - `cloudwatch.ts` (application) + `domain/cloudwatch.ts` + `infrastructure/aws/cloudwatchCli.ts` + `db/cloudwatchRepo.ts` - the `cloudwatch` command: Logs Insights run by the bot's own `aws` CLI (a turn's `aws logs` stays denied), a scan estimate from the log group's stored size, owner runs after a warning, executer/admin park a `cloudwatch_requests` row behind `jv:cloudwatch:confirm|cancel` buttons decided in code (never a model turn), every request audited
 - `commands.ts`, `commandTickets.ts`, `workerTickets.ts`, `commandLimits.ts`, `brainRun.ts` - the command registry (configurable prefix + slash, role gates, help), the brain's tickets, allowances and result delivery. The command definitions live in `commands/`, one file per group (`chat`, `schedule`, `people`, `adapter`, `learnings`, `errands`, `review`, `runtime`, `slack`, `cloudwatch`), with `commands/shared.ts` for the deps, the `CommandDef` type and the helpers more than one group uses
 - `threadQueue.ts`, `runRegistry.ts` - one turn per thread, and stopping one
+- `followGate.ts` (application), `followGateModel.ts` - the per-thread buffer for a followed thread (a quiet window, a hard cap, injectable timers) and the cheap pal-model call that says reply, skip or wait
 - `ciGate.ts` (application) - the CI gate of `review`: idempotent request-changes and approve against GitHub's own state, the watcher row for a running CI, and its poll
 - `watcher.ts`, `reminders.ts`, `loops.ts`, `reviewInbox.ts`, `reviewGuard.ts`, `innerChild.ts`, `offlineAlarm.ts`, `orcaQuestions.ts`, `stuckSweeper.ts` - the timers (`orcaQuestions` also sits on the tool-trace sink, linking each Orca worker to the thread that started it)
 - `githubApp.ts` - calls from the GitHub App: dedupe/queue, identity mapping, the turn, the answer back

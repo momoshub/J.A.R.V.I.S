@@ -51,7 +51,7 @@ export const SCHEDULE_COMMANDS: readonly CommandDef[] = [
       }
       deps.follows.add(target.channel, target.ts, actor.slackId, deps.clock());
       void rest;
-      return `following that thread now - I will read every message in it and answer when I actually have something, without being tagged. Most of the time that means staying quiet. \`${prefix} follow off\` to stop 👀`;
+      return `following that thread now - I will read every message in it and answer when I actually have something, without being tagged. Most of the time that means staying quiet: messages wait for a quiet moment and a cheap check first (\`follow_gate\`, \`follow_debounce_seconds\`, \`follow_debounce_max_seconds\`), then I answer the batch once. \`${prefix} follow off\` to stop 👀`;
     },
   },
   {

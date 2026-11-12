@@ -38,6 +38,15 @@ export const SETTING_KEYS = {
   noteMinRole: "note_min_role",
   /** Answer replies under a thread the bot itself started ("off" to disable). */
   followOwnThreads: "follow_own_threads",
+  /**
+   * "off" removes the gate in front of followed threads: every untagged message
+   * there starts a main turn at once, as before. Default on.
+   */
+  followGate: "follow_gate",
+  /** Seconds of quiet in a followed thread before its batch is judged. Default 25. */
+  followDebounceSeconds: "follow_debounce_seconds",
+  /** Longest a followed thread's batch is held, from its first message. Default 90, at most 600. */
+  followDebounceMaxSeconds: "follow_debounce_max_seconds",
   /** Channel the inner child announces and runs its self-fixes in. Empty = off. */
   innerChildChannel: "inner_child_channel",
   /** "off" pauses the inner child without forgetting its channel. */
