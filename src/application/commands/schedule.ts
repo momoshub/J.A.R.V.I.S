@@ -9,7 +9,7 @@ import {
   type LiveRun,
   type MindfulView,
 } from "../../domain/mindful.ts";
-import { MAX_LOOPS_PER_USER, nextRun, parseLoopArgs, scheduleText } from "../../domain/loop.ts";
+import { MAX_LOOPS_PER_USER, cleanName, loopRef, nextRun, parseLoopArgs, scheduleText } from "../../domain/loop.ts";
 import { proposeScriptLoop } from "../loopApproval.ts";
 import { type CommandDef, RANK, parseWindow } from "./shared.ts";
 
@@ -218,8 +218,8 @@ export const SCHEDULE_COMMANDS: readonly CommandDef[] = [
     // Every fire is a model turn with nobody present, so it spends tokens
     // unattended - a standing decision, not a one-off request.
     minRole: "admin",
-    usage: "every <monday 9am | day at 18:00 | 6h | week> <prompt> | every <schedule> -- <shell command> (my own turn only, at the owner's ask, then the owner approves) | list | cancel <id>",
-    summary: "on a schedule, run a prompt as a real turn; runs report to your DM. A script loop is never typed: ask me in plain words and I write it, the owner approves it",
+    usage: "every <monday 9am | day at 18:00 | 6h | week> [--name \"PR board\"] <prompt> | every <schedule> [--name <name>] -- <shell command> (my own turn only, at the owner's ask, then the owner approves) | list | rename <id> <name> | cancel <id>",
+    summary: "on a schedule, run a prompt as a real turn; runs report to your DM under its name (--name, else the first words of the prompt; rename later). A script loop is never typed: ask me in plain words and I write it, the owner approves it",
     run: async ({ deps, actor, args, rest, prefix, threadTs, channelId, fromBrainRun }) => {
       if (!deps.loops) return "I have nowhere to keep a loop right now.";
       const now = deps.clock();
@@ -235,11 +235,26 @@ export const SCHEDULE_COMMANDS: readonly CommandDef[] = [
             const what = l.command ? `\`${l.command.slice(0, 80)}\`` : l.prompt.slice(0, 80);
             // A pending one has no next run: it never runs until the owner approves it.
             return l.state === "pending"
-              ? `- #${l.id} script ${l.schedule} - pending the owner's approval, never runs until then: ${what}`
-              : `- #${l.id} ${l.command ? "script" : "prompt"} ${l.schedule} - next ${formatWhen(l.nextAt, offset)} (${humanLead(l.nextAt - now)}): ${what}`;
+              ? `- #${l.id} *${l.name}* script ${l.schedule} - pending the owner's approval, never runs until then: ${what}`
+              : `- #${l.id} *${l.name}* ${l.command ? "script" : "prompt"} ${l.schedule} - next ${formatWhen(l.nextAt, offset)} (${humanLead(l.nextAt - now)}): ${what}`;
           })
           .join("\n");
       }
+
+      if (sub === "rename" && args.length >= 3) {
+        const id = Number((args[1] ?? "").replace(/^#/, ""));
+        const l = Number.isInteger(id) ? deps.loops.get(id) : undefined;
+        if (!l || (l.state !== "active" && l.state !== "pending")) return `There is no active loop #${args[1]}.`;
+        if (l.createdBy !== actor.slackId && actor.role !== "owner") {
+          return `#${l.id} is not yours to rename - ask <@${l.createdBy}>.`;
+        }
+        // Quotes around the name are optional; Slack-safe either way.
+        const name = cleanName(args.slice(2).join(" ").replace(/^["“'‘]|["”'’]$/g, ""));
+        if (!name || !deps.loops.rename(l.id, name, now)) return `Say the new name: \`${prefix} loop rename ${l.id} PR board\`.`;
+        return `renamed ${loopRef(l.id, l.name)} to ${loopRef(l.id, name)}`;
+      }
+
+      if (sub === "rename") return `Say which loop and the new name: \`${prefix} loop rename <id> <name>\`.`;
 
       if ((sub === "cancel" || sub === "stop" || sub === "rm") && args.length === 2) {
         const id = Number((args[1] ?? "").replace(/^#/, ""));
@@ -251,12 +266,12 @@ export const SCHEDULE_COMMANDS: readonly CommandDef[] = [
         // A pending loop was never live: cancelling it deletes it, and its buttons go dead.
         if (l.state === "pending") deps.loops.discard(l.id);
         else deps.loops.settle(l.id, "cancelled", now);
-        return `cancelled loop #${l.id}`;
+        return `cancelled ${loopRef(l.id, l.name)}`;
       }
 
       const parsed = parseLoopArgs(rest);
       if (!parsed.ok) {
-        return `${parsed.error}. \`${prefix} loop every monday 9am search the web for new slang and update my slang learning\``;
+        return `${parsed.error}. \`${prefix} loop every monday 9am --name "Slang" search the web for new slang and update my slang learning\``;
       }
       // Shell on a timer is never typed, by anyone: a pasted line is exactly what an injected message looks like.
       if (parsed.command && !fromBrainRun) {
@@ -276,19 +291,20 @@ export const SCHEDULE_COMMANDS: readonly CommandDef[] = [
           channelId,
           threadTs: threadTs ?? "",
           createdBy: actor.slackId,
+          name: parsed.name,
           schedule: scheduleText(parsed.schedule),
           prompt: "",
           command: parsed.command,
           nextAt,
         });
         if (!proposed.ok) return proposed.error;
-        return `🔐 script loop #${proposed.loop.id} (${proposed.loop.schedule}) is PENDING: nothing is scheduled and nothing runs until the owner presses Approve on the DM I just sent with the exact command. Reject, or no answer in 24h, deletes it. Tell the person that.`;
+        return `🔐 script ${loopRef(proposed.loop.id, proposed.loop.name)} (${proposed.loop.schedule}) is PENDING: nothing is scheduled and nothing runs until the owner presses Approve on the DM I just sent with the exact command. Reject, or no answer in 24h, deletes it. Tell the person that.`;
       }
       const l = deps.loops.add(
-        { channelId, threadTs: threadTs ?? "", createdBy: actor.slackId, schedule: scheduleText(parsed.schedule), prompt: parsed.prompt, command: parsed.command, nextAt },
+        { channelId, threadTs: threadTs ?? "", createdBy: actor.slackId, name: parsed.name, schedule: scheduleText(parsed.schedule), prompt: parsed.prompt, command: parsed.command, nextAt },
         now,
       );
-      return `🔁 loop #${l.id}: ${l.schedule}, first run ${formatWhen(nextAt, offset)} (${humanLead(nextAt - now)}). Each run starts a turn in your DM with me, as you. (\`${prefix} loop cancel ${l.id}\`)`;
+      return `🔁 ${loopRef(l.id, l.name)}: ${l.schedule}, first run ${formatWhen(nextAt, offset)} (${humanLead(nextAt - now)}). Each run starts a turn in your DM with me, as you. (\`${prefix} loop rename ${l.id} <name>\`, \`${prefix} loop cancel ${l.id}\`)`;
     },
   },
   {

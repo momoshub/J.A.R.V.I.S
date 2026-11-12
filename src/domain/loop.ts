@@ -22,6 +22,33 @@ export const DEFAULT_LOOP_MINUTES = 9 * 60;
 /** Active loops one person may own. */
 export const MAX_LOOPS_PER_USER = 10;
 export const MAX_PROMPT_CHARS = 2000;
+/** A name is a label in a DM header, not a description. */
+export const MAX_NAME_CHARS = 40;
+/** How many words of the prompt a derived name keeps. */
+const DERIVED_NAME_WORDS = 4;
+
+/**
+ * A name that is safe to put in a Slack message: no mrkdwn markers, no
+ * `<...>` link / mention syntax, no `&` entities, one line, clipped. What is
+ * left is plain words, so a name can never become a link, a mention or bold.
+ */
+export const cleanName = (raw: string): string =>
+  raw
+    .replace(/[<>&*_~`|\\]/g, " ")
+    .replace(/\s+/g, " ")
+    .trim()
+    .slice(0, MAX_NAME_CHARS)
+    .trim();
+
+/** The first few words of what the loop does, as a name, for a loop nobody named. */
+export const deriveName = (prompt: string, command: string = ""): string => {
+  const words = (prompt.trim() || command.trim()).split(/\s+/).filter(Boolean);
+  return cleanName(words.slice(0, DERIVED_NAME_WORDS).join(" ")) || (command ? "script" : "loop");
+};
+
+/** How a loop is referred to in every message: `PR board - loop #3`. */
+export const loopRef = (id: number, name: string, noun: string = "loop"): string =>
+  name ? `${name} - ${noun} #${id}` : `${noun} #${id}`;
 
 /** `pending`: a script loop a turn wrote, waiting for the owner's Approve. It never runs. */
 export type LoopState = "pending" | "active" | "cancelled" | "failed";
@@ -45,21 +72,34 @@ export const approvalCore = (schedule: string, command: string): readonly [strin
 ];
 
 /** The approval DM: the exact shell and schedule, so what is approved is what runs. */
-export const approvalText = (id: number, schedule: string, command: string, ttlMs: number = PENDING_TTL_MS): string =>
+export const approvalText = (
+  id: number,
+  schedule: string,
+  command: string,
+  ttlMs: number = PENDING_TTL_MS,
+  name: string = "",
+): string =>
   [
-    `🔐 I wrote a script loop (#${id}) and it needs your OK before it ever runs.`,
+    `🔐 I wrote a script loop (${loopRef(id, name)}) and it needs your OK before it ever runs.`,
     approvalCore(schedule, command)[0],
     "command (runs as me, with no turn):",
     approvalCore(schedule, command)[1],
     `Approve starts it, Reject deletes it. No answer in ${Math.round(ttlMs / 3_600_000)}h also deletes it.`,
   ].join("\n");
 
-export const settledLoopText = (kind: "approved" | "rejected" | "expired", id: number, by?: string): string =>
-  kind === "approved"
-    ? `✅ script loop #${id} approved${by ? ` by <@${by}>` : ""} - it runs on its schedule now`
+export const settledLoopText = (
+  kind: "approved" | "rejected" | "expired",
+  id: number,
+  by?: string,
+  name: string = "",
+): string => {
+  const ref = loopRef(id, name, "script loop");
+  return kind === "approved"
+    ? `✅ ${ref} approved${by ? ` by <@${by}>` : ""} - it runs on its schedule now`
     : kind === "rejected"
-      ? `❌ script loop #${id} rejected${by ? ` by <@${by}>` : ""} - deleted`
-      : `⌛ script loop #${id} expired with no answer - deleted`;
+      ? `❌ ${ref} rejected${by ? ` by <@${by}>` : ""} - deleted`
+      : `⌛ ${ref} expired with no answer - deleted`;
+};
 
 export type Schedule =
   | { readonly kind: "interval"; readonly everyMs: number }
@@ -94,6 +134,8 @@ export type ParsedLoop =
   | {
       readonly ok: true;
       readonly schedule: Schedule;
+      /** Given with `--name`, else the first words of the prompt (or command). Slack-safe. */
+      readonly name: string;
       /** Prompt mode: what the turn is asked. Empty in script mode. */
       readonly prompt: string;
       /** Script mode: the shell command, run with no turn. Empty in prompt mode. */
@@ -144,37 +186,61 @@ const readSchedule = (words: readonly string[]): { schedule: Schedule; used: num
 export const unslackShell = (text: string): string =>
   unescapeSlack(text.replace(/<((?:https?|mailto):[^|>\s]+)(?:\|[^>]*)?>/g, "$1"));
 
+const NAME_FLAG = /^--name(?:=|\s+|$)/;
+
+/** What follows the schedule: an optional `--name <word | "words">`, then the rest. `undefined` when there is no flag. */
+const readName = (tail: string): { name: string; rest: string } | { error: string } | undefined => {
+  if (!NAME_FLAG.test(tail)) return undefined;
+  const value = tail.replace(NAME_FLAG, "");
+  const quoted = /^(["“'‘])/.exec(value);
+  if (quoted) {
+    const close = { '"': '"', "“": "”", "'": "'", "‘": "’" }[quoted[1] as string] as string;
+    const end = value.indexOf(close, 1);
+    if (end < 0) return { error: "close the quote after `--name`" };
+    return { name: cleanName(value.slice(1, end)), rest: value.slice(end + 1).trim() };
+  }
+  const word = /^\S+/.exec(value)?.[0];
+  if (!word) return { error: "say a name after `--name`, e.g. `--name \"PR board\"`" };
+  return { name: cleanName(word), rest: value.slice(word.length).trim() };
+};
+
 /**
  * `every monday 9am <prompt>`, `every day at 18:00 <prompt>`, `every 6h <prompt>`,
  * `every week <prompt>`; or, for a script, `every 15m -- <shell command>`. The
  * schedule is the shortest prefix that reads as one; everything after it is
- * the prompt (or command), verbatim.
+ * the prompt (or command), verbatim. A name may sit between the two:
+ * `every 6h --name "PR board" <prompt>`; without one it is derived.
  */
 export const parseLoopArgs = (rest: string): ParsedLoop => {
   const words = rest.trim().split(/\s+/).filter(Boolean);
   const read = readSchedule(words);
   if (!read) return { ok: false, error: USAGE };
   const { schedule, used } = read;
-  const script = words[used] === "--";
+  // The text after the schedule words, spacing and quoting intact.
+  let tail = rest.trim();
+  for (let i = 0; i < used; i++) tail = tail.replace(/^\S+\s*/, "");
+  const named = readName(tail);
+  if (named && "error" in named) return { ok: false, error: named.error };
+  const body = named ? named.rest : tail;
+  const script = /^--(\s|$)/.test(body);
   const min = script ? MIN_SCRIPT_INTERVAL_MS : MIN_INTERVAL_MS;
   if (schedule.kind === "interval" && schedule.everyMs < min) {
     return { ok: false, error: `the shortest ${script ? "script " : ""}loop is every ${script ? "5m" : "1h"}` };
   }
   if (script) {
-    // Everything after the first standalone `--`, spacing and quoting intact.
-    const command = unslackShell(rest.slice(rest.search(/(^|\s)--(\s|$)/)).replace(/^\s*--/, "").trim());
+    const command = unslackShell(body.replace(/^--/, "").trim());
     if (!command) return { ok: false, error: "say which command to run each time" };
     if (command.length > MAX_PROMPT_CHARS) {
       return { ok: false, error: `keep the command under ${MAX_PROMPT_CHARS} characters` };
     }
-    return { ok: true, schedule, prompt: "", command };
+    return { ok: true, schedule, name: named?.name || deriveName("", command), prompt: "", command };
   }
-  const prompt = words.slice(used).join(" ").trim();
+  const prompt = body.split(/\s+/).filter(Boolean).join(" ");
   if (!prompt) return { ok: false, error: "say what to do each time" };
   if (prompt.length > MAX_PROMPT_CHARS) {
     return { ok: false, error: `keep the prompt under ${MAX_PROMPT_CHARS} characters` };
   }
-  return { ok: true, schedule, prompt, command: "" };
+  return { ok: true, schedule, name: named?.name || deriveName(prompt), prompt, command: "" };
 };
 
 /** Reads a stored schedule back; `undefined` for anything this did not write. */
@@ -200,5 +266,5 @@ export const nextRun = (s: Schedule, after: number, offsetMin: number): number =
 };
 
 /** What the turn is told: it is scheduled, nobody is waiting, keep it short. */
-export const loopTurnText = (id: number, schedule: string, prompt: string): string =>
-  `[loop ${id}] Scheduled run (${schedule}) - nobody is watching live. Do the task below and keep your reply short: what you did and anything that needs a person, nothing else.\n\n${prompt}`;
+export const loopTurnText = (id: number, schedule: string, prompt: string, name: string = ""): string =>
+  `[loop ${id}] Scheduled run${name ? ` of "${name}"` : ""} (${schedule}) - nobody is watching live. Do the task below and keep your reply short: what you did and anything that needs a person, nothing else.\n\n${prompt}`;
