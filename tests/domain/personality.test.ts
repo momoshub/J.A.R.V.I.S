@@ -319,6 +319,29 @@ describe("the command budget", () => {
   });
 });
 
+describe("quick-review is never the brain's to run", () => {
+  const prompt = buildSystemPrompt({
+    learnings: [],
+    runScript: "/run.sh",
+    runUrl: "http://loopback/run",
+    runTicket: "tk",
+    commandPrefix: "//bot",
+  });
+
+  test("the preset command list no longer offers review, and examples do not ask for one", () => {
+    expect(prompt).not.toContain("`review`, `ticket`");
+    expect(prompt).not.toContain('"review this PR"');
+    expect(prompt).not.toContain("a `review` nobody asked for");
+  });
+
+  test("the brain is told it never runs one, and how a person asks", () => {
+    expect(prompt).toContain("`quick-review` is NOT yours to run, ever");
+    expect(prompt).toContain("`review <pr-url>` or `approve <pr-url>`");
+    expect(prompt).toContain("`//bot quick-review <pr-url>`");
+    expect(prompt).toContain("never review a PR by hand in its place");
+  });
+});
+
 describe("being asked for the raw path is not a loophole", () => {
   const prompt = buildSystemPrompt({
     learnings: [],

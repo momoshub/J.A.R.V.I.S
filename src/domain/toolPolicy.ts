@@ -2,7 +2,7 @@
  * Per-role tool policy for the Claude CLI brain.
  *
  * - owner / admin: full access (skip permissions, any tool, the normal cwd)
- * - pal: sandboxed read-only tools in a fixed scratch dir (may still use `review`)
+ * - pal: sandboxed read-only tools in a fixed scratch dir (may still use `quick-review`)
  * - executer: sandboxed, tools assigned from the control deck, plus the read-only databases
  *   and the code tools - edit files, commit, push a branch and open a PR - the
  *   Agent/Task tool for parallel or long work in its own process, and the

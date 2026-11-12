@@ -91,12 +91,43 @@ describe("dispatchCommand", () => {
     expect(out).not.toContain("Did you mean");
   });
 
-  test("a bare PR url is a review nobody bothered to name", async () => {
-    const deps = build();
-    const out = await dispatchCommand(deps, actor(), "C1", "https://github.com/o/r/pull/7");
-    expect(out).not.toContain("do not recognise");
-    // it reached `review`, which asks for a token or gets on with it
-    expect(out.toLowerCase()).not.toContain("which pr");
+  test("a bare PR url is not guessed into a review - it points at quick-review", async () => {
+    const out = await dispatchCommand(build(), actor(), "C1", "https://github.com/o/r/pull/7");
+    expect(out).toContain("do not recognise");
+    expect(out).toContain("//bot quick-review <pr-url>");
+    expect(slackCalls.posts).toEqual([]);
+  });
+
+  test("the retired `review` and `approve` are not commands: they point at quick-review and run nothing", async () => {
+    const approved: string[] = [];
+    const github: GitHubPort = {
+      whoami: async () => undefined,
+      reviewDecision: async () => undefined,
+      approve: async (url) => {
+        approved.push(url);
+        return { ok: true };
+      },
+    };
+    const deps = { ...build(), github };
+    for (const word of ["approve", "review"]) {
+      const out = await dispatchCommand(deps, actor(), "C1", `${word} https://github.com/o/r/pull/1`);
+      expect(out).toContain(`do not recognise \`${word}\``);
+      expect(out).toContain("//bot quick-review <pr-url>");
+    }
+    expect(approved).toEqual([]);
+  });
+
+  test("quick-review is not offered to, or run for, the brain's own run bridge", async () => {
+    const out = await dispatchCommand(build(), actor(), "C1", "quick-review https://github.com/o/r/pull/1", {
+      fromBrainRun: true,
+    });
+    expect(out).toContain("runs only when a person asks");
+    expect(await dispatchCommand(build(), actor(), "C1", "rv https://github.com/o/r/pull/1", { fromBrainRun: true })).toContain(
+      "runs only when a person asks",
+    );
+    // a typed line is the person's own ask, and still gets past the guard
+    const typed = await dispatchCommand(build(), actor(), "C1", "quick-review https://github.com/o/r/pull/1");
+    expect(typed).not.toContain("runs only when a person asks");
   });
 
   test("`<command> help` explains it instead of running it", async () => {
@@ -108,9 +139,10 @@ describe("dispatchCommand", () => {
     expect(slackCalls.posts).toEqual([]);
   });
 
-  test("review keeps its own, better help", async () => {
-    const out = await dispatchCommand(build(), actor(), "C1", "review help");
-    expect(out).toContain("review");
+  test("quick-review keeps its own, better help", async () => {
+    const out = await dispatchCommand(build(), actor(), "C1", "quick-review help");
+    expect(out).toContain("quick-review");
+    expect(out).toContain("only when a person asks");
     expect(out).not.toContain("needs *pal* access");
   });
 
@@ -725,74 +757,12 @@ describe("dispatchCommand", () => {
     expect(out).toContain("not recording");
   });
 
-  test("approve approves, with no brain and no review", async () => {
-    // five attempts in the real log at `approve <pr-url>`, all of them answered
-    // with "I do not recognise `approve`"
-    const PR = "https://github.com/o/r/pull/1";
-    const approved: string[] = [];
-    const github: GitHubPort = {
-      whoami: async () => ({ login: "kai-at-acme", name: "Kai" }),
-      reviewDecision: async () => undefined,
-      approve: async (url) => {
-        approved.push(url);
-        return { ok: true };
-      },
-    };
-    const brainRan = { yes: false };
-    const watch: LlmPort = {
-      complete: async () => {
-        brainRan.yes = true;
-        return "";
-      },
-    };
-    const out = await dispatchCommand(
-      { ...build(), github, llm: watch },
-      actor(),
-      "C1",
-      `approve <${PR}|o/r#1>`,
-    );
-    expect(approved).toEqual([PR]);
-    expect(brainRan.yes).toBe(false);
-    expect(out).toContain("approved");
-    expect(out).toContain("nobody read it"); // it says what it did not do
-  });
-
-  test("approve, investigate and forget are closed to a pal", async () => {
-    const approved: string[] = [];
-    const github: GitHubPort = {
-      whoami: async () => undefined,
-      reviewDecision: async () => undefined,
-      approve: async (url) => {
-        approved.push(url);
-        return { ok: true };
-      },
-    };
-    const deps = { ...build(), github };
+  test("investigate and forget are closed to a pal", async () => {
+    const deps = build();
     const pal = actor({ slackId: "U0PAL0008", role: "pal" });
     deps.users.upsert(pal);
-    expect(await dispatchCommand(deps, pal, "C1", "approve https://github.com/o/r/pull/1")).toContain("needs *admin*");
-    expect(approved).toEqual([]);
     expect(await dispatchCommand(deps, pal, "C1", "investigate why")).toContain("needs *executer*");
     expect(await dispatchCommand(deps, pal, "C1", "forget")).toContain("needs *executer*");
-  });
-
-  test("approve will not go round a repo that approves only after a clean review", async () => {
-    const PR = "https://github.com/o/strict/pull/2";
-    const approved: string[] = [];
-    const github: GitHubPort = {
-      whoami: async () => ({ login: "kai", name: "Kai" }),
-      reviewDecision: async () => undefined,
-      approve: async (url) => {
-        approved.push(url);
-        return { ok: true };
-      },
-    };
-    const deps = { ...build(), github };
-    deps.settings = createSettingsRepo(db);
-    deps.settings.set("review_policy:o/strict", "approve-after");
-    const out = await dispatchCommand(deps, actor(), "C1", `approve ${PR}`);
-    expect(approved).toEqual([]);
-    expect(out).toContain("only after a clean review");
   });
 
   test("rv --policy first approves in code before the brain runs, announced after 'reviewing'", async () => {

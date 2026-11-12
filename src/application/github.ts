@@ -2,7 +2,7 @@
  * GitHub port - the PR actions the bot takes itself, without going through the
  * brain.
  *
- * The `review` command approves up front as a fixed, unconditional step: it is
+ * The `quick-review` command approves up front as a fixed, unconditional step: it is
  * not a judgement call, so it must not wait on a model that first spends half a
  * minute reading the PR. The concrete implementation shells out to `gh`.
  */
@@ -18,7 +18,7 @@ export type ApproveResult =
 
 export type { Reviewer } from "../domain/types.ts";
 
-/** What `review` needs to know about a PR to gate it on CI. */
+/** What `quick-review` needs to know about a PR to gate it on CI. */
 export type PrSnapshot = {
   readonly state: PrState;
   readonly ci: CiStatus;
@@ -51,7 +51,7 @@ export type GitHubPort = {
   requestChanges?: (prUrl: string, body: string) => Promise<ApproveResult>;
   /**
    * State, CI and our own latest review of a PR, or undefined when it cannot be
-   * read. Never throws. Absent: `review` has no CI gate.
+   * read. Never throws. Absent: `quick-review` has no CI gate.
    */
   snapshot?: (prUrl: string) => Promise<PrSnapshot | undefined>;
   /** The authenticated account, or undefined if it cannot be resolved. Never throws. */

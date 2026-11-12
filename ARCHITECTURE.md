@@ -89,9 +89,9 @@ no classes.
   a `watches` row whose check is `ci-gate:{...}` is not shell and hands back no
   turn: `watcher` calls `application/ciGate.ts` instead, which polls the PR's
   checks once a minute and approves or requests changes itself (the CI gate of
-  `review`, deadline one hour; see "CI comes first" in the README);
-  `reviewInbox` polls GitHub for review requests and runs `review` as the
-  requester; `orcaQuestions` reads the Orca mailbox of every Run a thread
+  `quick-review`, deadline one hour; see "CI comes first" in the README);
+  `reviewInbox` polls GitHub for review requests and only announces them in a
+  channel (a quick review starts only when a person asks, never from here); `orcaQuestions` reads the Orca mailbox of every Run a thread
   started a worker in (linked from the turn's tool trace as `worker-start`
   prints it) and hands each question a worker is still blocked on to that
   thread as a turn that answers it with `orca orchestration reply`, once per
@@ -209,7 +209,7 @@ No I/O, no frameworks. Just data shapes and functions of their inputs.
 - `systemStatus.ts`, `orcaStatus.ts`, `systemBlocks.ts` - `sys`: the host verdict and numbers, Orca's runtime/runs/tasks parsed from its CLI JSON and counted, and the Block Kit message (header, fields, trend, Orca table) with the plain report as its fallback
 - `innerChild.ts`, `voiceDrift.ts` - the self-review triage, and the cheap voice-drift check, nudge and log lines
 - `githubApp.ts` - webhook signature, owner allowlist, trigger detection and what the GitHub App says
-- `*Prompt.ts` - prompts for the preset tasks (review, ticket, investigate, read, note, workflow, ...)
+- `*Prompt.ts` - prompts for the preset tasks (quick-review, ticket, investigate, read, note, workflow, ...)
 - `blockKit.ts`, `kitEvents.ts`, `slackFormat.ts`, `slackLinks.ts` - Slack formatting, Block Kit (model fences are normalised against Slack's min-length rules and can be rendered as words when Slack refuses them) and links
 - `usageFooter.ts`, `collapseSteps.ts`, `messageFooter.ts` - the one grey line under a message: who wrote it (Jarvis, inner child Jarvis, watch, reminder, ...), what the turn cost, the step summary, and when it was last updated (restamped on every edit); `signedText` posts plain text as one `markdown` block (never folded behind "Show more", unlike a long section) up to Slack's 12k markdown cap, and `sectionChunks` cuts the rest (and the `signedSections` fallback) into sections Slack accepts, hard-splitting long lines and keeping code fences closed
 
@@ -226,7 +226,7 @@ Orchestrates the domain and depends on **ports**, not concrete adapters.
 - `commands.ts`, `commandTickets.ts`, `workerTickets.ts`, `commandLimits.ts`, `brainRun.ts` - the command registry (configurable prefix + slash, role gates, help), the brain's tickets, allowances and result delivery. The command definitions live in `commands/`, one file per group (`chat`, `schedule`, `people`, `adapter`, `learnings`, `errands`, `review`, `runtime`, `slack`, `cloudwatch`), with `commands/shared.ts` for the deps, the `CommandDef` type and the helpers more than one group uses
 - `threadQueue.ts`, `runRegistry.ts` - one turn per thread, and stopping one
 - `followGate.ts` (application), `followGateModel.ts` - the per-thread buffer for a followed thread (a quiet window, a hard cap, injectable timers) and the cheap pal-model call that says reply, skip or wait
-- `ciGate.ts` (application) - the CI gate of `review`: idempotent request-changes and approve against GitHub's own state, the watcher row for a running CI, and its poll
+- `ciGate.ts` (application) - the CI gate of `quick-review`: idempotent request-changes and approve against GitHub's own state, the watcher row for a running CI, and its poll
 - `watcher.ts`, `reminders.ts`, `loops.ts`, `reviewInbox.ts`, `reviewGuard.ts`, `innerChild.ts`, `offlineAlarm.ts`, `orcaQuestions.ts`, `stuckSweeper.ts` - the timers (`orcaQuestions` also sits on the tool-trace sink, linking each Orca worker to the thread that started it)
 - `githubApp.ts` - calls from the GitHub App: dedupe/queue, identity mapping, the turn, the answer back
 - `workflow.ts`, `workflowFront.ts`, `workflowContinue.ts` - long tasks driven from one thread on a durable session
@@ -292,7 +292,7 @@ Concrete implementations of the seams and the transports.
   owner-only (`ORCA_DENY` in `--disallowedTools` for the other three, since an
   Orca worker runs with full host permissions); an executer gets code jobs
   done in its own process with the Agent tool, and the prompt is role-aware
-  (`orca` flag on `buildSystemPrompt`). `review` is a
+  (`orca` flag on `buildSystemPrompt`). `quick-review` is a
   preset that always runs full-access. On top of that, a per-role policy edited
   from the dashboard (`role_policies`) can switch a role off or deny it
   commands, tools and MCP servers - it only ever takes away, and never touches

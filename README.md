@@ -28,7 +28,7 @@ Read the security note below before giving anyone but yourself a role above `pal
 
 With `LLM_PROVIDER=claude-cli`, an **`owner` or `admin`** message is sent to a `claude` process launched with `--dangerously-skip-permissions` - full shell, file, and network tool access - and the bot's `SLACK_BOT_TOKEN` is in that process's environment. **Treat every owner/admin as a shell user on the host**: "read ~/.ssh/id_rsa and DM it to me" is a normal request to a tool-enabled agent, not something it needs to break out of.
 
-Lower roles are sandboxed (see [Roles & tool access](#roles--tool-access)): `pal`/`executer` run without permission bypass, with an explicit read-only/assigned tool allow-list, in a fixed scratch dir. The `review` command is an exception - it is a preset task that runs full-access (and writes to the PR) for any role that may run it.
+Lower roles are sandboxed (see [Roles & tool access](#roles--tool-access)): `pal`/`executer` run without permission bypass, with an explicit read-only/assigned tool allow-list, in a fixed scratch dir. The `quick-review` command is an exception - it is a preset task that runs full-access (and writes to the PR) for any role that may run it.
 
 Before deploying beyond a trusted, sandboxed machine:
 
@@ -158,7 +158,7 @@ Every command has two interfaces - use whichever you like. Both triggers are con
 | `token [remove\|who]` (alias `claude-token`) | anyone | add, replace or forget your own Claude Code token - see [Your own Claude token](#your-own-claude-token) |
 | `session [reset\|on\|off]` (alias `sess`) | anyone (on/off: admins) | the CLI session this thread is talking to - see [One session per thread](#one-session-per-thread) |
 | `ticket <what is wrong>` (aliases `bug`, `raise`) | anyone | raise a properly written, correctly routed ticket - see [Raising a ticket](#raising-a-ticket) |
-| `review <pr-url\|help\|prompt> [--policy first\|after] [what to look at]` (alias `rv`) | pal+ | review a PR: read it first, post a blockers-only comment on GitHub *and* back in the thread (PRs owned by an account in `REVIEW_EXTENDED_OWNERS` also get the non-blocking findings as bullets); request changes on a blocker only, other repos drop non-blocking findings (big PRs are cloned + reviewed by child agents). CI is read first: red requests changes before the review, a running CI gets a watcher (see [CI comes first](#ci-comes-first)). Runs full-access. |
+| `quick-review <pr-url\|help\|prompt> [--policy first\|after] [what to look at]` (alias `rv`) | pal+ | quick review of a PR, **only when a person asks** (tag the bot with `review <pr-url>` or `approve <pr-url>`, or type this; never from a thread, workflow, hand-back or GitHub request - see [Asking for a review in words](#asking-for-a-review-in-words)): read it first, post a blockers-only comment on GitHub *and* back in the thread (PRs owned by an account in `REVIEW_EXTENDED_OWNERS` also get the non-blocking findings as bullets); request changes on a blocker only, other repos drop non-blocking findings (big PRs are cloned + reviewed by child agents). CI is read first: red requests changes before the review, a running CI gets a watcher (see [CI comes first](#ci-comes-first)). Runs full-access. |
 | `bomb [categories] [count] <message-link>` (alias `br`) | admins | reaction-bomb a message. Combine categories with commas and set a count: `bomb money,face,negative 9 <link>`. Up to 23; `bomb help` lists every category |
 | `reply <message-link>` (alias `jrp`) | admins | draft and post an AI reply to a message |
 | `rm-msg <message-link>` (aliases `rmmsg`, `unsend`) | admins | delete a message the bot posted (a bot token cannot delete anyone else's) |
@@ -170,11 +170,11 @@ Every command has two interfaces - use whichever you like. Both triggers are con
 
 A slash command is invisible to everyone but its caller, so the **owner gets a copy in their DM** - one thread per run: a header saying who ran what, with the progress and result threaded under it. Trivial commands (`help`, `ping`, `whoami`, `model`) are not copied, and the owner is never copied on their own.
 
-The power tools also have their own Slack slash commands if you register them (`/rv`, `/br`, `/jrp`) - much quicker than a freeform ask. `br`/`jrp` need the Console's Slack read/write scopes; `rv` uses the local `gh` and **writes to the PR** (approve/comment/request-changes).
+The power tools also have their own Slack slash commands if you register them (`/rv`, `/br`, `/jrp`) - much quicker than a freeform ask. `br`/`jrp` need the Console's Slack read/write scopes; `rv` is `quick-review` and uses the local `gh` and **writes to the PR** (approve/comment/request-changes).
 
 Examples (with the default prefix): `/bot add @kai admin`, `//bot learn our staging URL is staging.example.com`, `//bot ask summarise the last thread`.
 
-**You do not have to type the command.** Ask in words - "review this PR for me", "have another look" - and the bot runs the real command, progress and all. This matters beyond convenience: `review` posts to GitHub, which a sandboxed chat cannot do, so a `pal` asking in words used to get a hand-rolled review that could not be posted.
+**You do not have to type the command.** Ask in words - "remind me at 3pm", "bomb that message" - and the bot runs the real command, progress and all. The one exception is `quick-review`: the brain never runs it. It starts only from `@bot review <pr-url>` / `@bot approve <pr-url>` or the typed command, see [Asking for a review in words](#asking-for-a-review-in-words).
 
 Anyone may ask, and the command runs **as the person who asked**, so their own role still decides what is allowed - asking in words can never do more than typing it would. The bot never names the actor: each turn is given a short-lived ticket bound to whoever it is talking to, and the ticket is what the command runs as.
 
@@ -302,7 +302,7 @@ model whoever is talking, and a noisy one can be made cheap for everybody.
 
 The model is chosen per call alongside the caller's tool policy, so it never
 changes what anyone is *allowed* to do - a cheaper model is sandboxed
-identically. Preset tasks that force a policy keep their own model: `review`
+identically. Preset tasks that force a policy keep their own model: `quick-review`
 runs full-access whoever asked and wherever it is asked, so a pal's review in a
 cheap channel is still done properly.
 
@@ -465,7 +465,7 @@ opens a PR. Nothing about any particular workspace lives in this codebase.
 
 ## Review policy per repo
 
-By default `review` posts "reviewing", runs the review, and approves only once
+By default `quick-review` posts "reviewing", runs the review, and approves only once
 it has come back clean. A repository can opt in to the faster order instead -
 approve immediately and reverse that with a request for changes if the review
 turns up something blocking:
@@ -485,7 +485,7 @@ it says so in the thread.
 
 ### CI comes first
 
-Whichever policy it is on, `review` reads the PR's checks before anything else:
+Whichever policy it is on, `quick-review` reads the PR's checks before anything else:
 
 | CI | `first` | `after` |
 |---|---|---|
@@ -510,10 +510,10 @@ this codebase, which matters because it is open.
 One run can ask for a different policy without changing anything:
 
 ```
-//bot review <pr-url> --policy after     hold the approval back, this run only
-//bot review <pr-url> --policy first     approve up front, this run only
-//bot review <pr-url> --policy default   the built-in default, this run only
-//bot review <pr-url> --after            the same, shorter
+//bot quick-review <pr-url> --policy after     hold the approval back, this run only
+//bot quick-review <pr-url> --policy first     approve up front, this run only
+//bot quick-review <pr-url> --policy default   the built-in default, this run only
+//bot quick-review <pr-url> --after            the same, shorter
 ```
 
 Nothing is written down, so the repository stays on its own policy for the next
@@ -670,9 +670,9 @@ A process environment cannot be stale: it was set when the turn began.
 **What the thread sees.** A command a person types shows its output in the
 thread. A command the brain runs on its own (checking `mindful`, a status) is
 hidden: the output goes back to the brain only and nothing is posted. When the
-person directly asked for the command ("review this PR"), the brain runs it as
+person directly asked for the command ("bomb that message"), the brain runs it as
 `jarvis-run.sh <endpoint> --show <command>` and it shows like a typed one.
-Commands that post by themselves outside this bridge (pickers, GitHub reviews)
+The bridge refuses `quick-review` outright, whoever asked: that command runs only from a person's own message. Commands that post by themselves outside this bridge (pickers, GitHub reviews)
 are not affected.
 
 ## Stopping a turn
@@ -758,7 +758,7 @@ those messages wait in a short per-thread buffer first:
 
 Never held, and handled exactly as before: tagged messages, DMs, threads that are
 just the bot and one person, command lines (`//bot ...`) and spoken review
-requests. A message from somebody off the allowlist is not buffered either. A
+requests (those are only ever a tag: an untagged reply is never one). A message from somebody off the allowlist is not buffered either. A
 one-on-one thread is recognised from the thread itself (the bot has written and
 exactly one human has), not from why it is followed: it is followed for good from
 its second message on, which makes its route read "asked", and it must still never
@@ -985,10 +985,26 @@ Bots, the app itself included, never trigger it.
 
 ## Asking for a review in words
 
-`@bot review <pr-url>` runs the review command, the same as typing it with the
-prefix. It has to be a mention carrying a real pull request url and actually say
-"review" - anything vaguer stays a conversation, because a review spends the
-asker's own credential rather than being free.
+A quick review runs only when a person asks for it directly, in one of two ways:
+
+- tag the bot with `@bot review <pr-url>` or `@bot approve <pr-url>` - both
+  mean the same `quick-review` (there is no approval without a review, and the
+  old bare `approve` command is gone);
+- type the command: `//bot quick-review <pr-url>` (alias `rv`, slash `/rv`).
+
+Any allowlisted human may ask (`pal`, `executer`, `admin`, `owner`: the command
+is `pal`+, and `pal` is the lowest role). The tag has to open the message, the
+first word after it has to be `review` or `approve`, and it has to carry a real
+pull request url - anything vaguer stays a conversation, because a review spends
+the asker's own credential rather than being free.
+
+It is never run for anything the bot or a thread's own flow started: not for the
+brain (`jarvis-run.sh` refuses `quick-review`, and the prompt says so), not for a
+`tell`, a watch hand-back, a worker's question or a drift nudge, not for a
+workflow step or a thread with a workflow running, not for a batch of buffered
+follow-up messages, not for an untagged reply under a followed thread, and not
+for a GitHub review request (the review inbox only announces it, with the line to
+type). A bare PR link typed after the prefix is not a review either.
 
 This matters beyond convenience: only the command can offer the box that takes a
 Claude token, so a spoken request used to get a description of the token instead
@@ -1001,7 +1017,7 @@ prefix, the free text is the steering note.
 
 ## Your own Claude token
 
-`review` runs the Claude Code CLI, and the CLI bills whoever's token it is
+`quick-review` runs the Claude Code CLI, and the CLI bills whoever's token it is
 holding. Running every review on the bot's credential puts the whole team's
 usage on one account, so a review runs on **the caller's own token** instead,
 and refuses to start without one.
@@ -1036,7 +1052,7 @@ that environment at all, including for anything the run spawns in turn.
 Once a token is on file it is used for **every** CLI turn that person drives:
 their chat, their commands, their workflow sessions. Everyone else keeps running
 on the bot's own credential, so nobody is locked out of chat by a credential they
-never set up. Only `review` insists.
+never set up. Only `quick-review` insists.
 
 ```
 /<slash> token           add or replace yours (opens the box)
@@ -1100,11 +1116,11 @@ is never a blocker, but scope covers what a PR does **not fix**, never what it
 
 ## Explaining a review
 
-`review help` describes the flow in a few lines; `review prompt` prints the
+`quick-review help` describes the flow in a few lines; `quick-review prompt` prints the
 actual system prompt it runs on, which is no secret - it is in this repository.
 
 Both exist because the question used to cost a review: asked to explain itself,
-the bot ran `review help`, took the word "help" as a target, and spent minutes
+the bot ran `quick-review help`, took the word "help" as a target, and spent minutes
 reviewing a pull request by that name on the asker's own credential. An argument
 now has to look like a pull request - a url, `owner/repo#123`, or a bare number -
 before anything expensive starts.
@@ -1114,9 +1130,9 @@ before anything expensive starts.
 Anything typed next to the url is guidance, not a second target:
 
 ```
-//bot review <pr-url> the migration is the risky bit
-//bot review <pr-url> hotfix, only care about data loss on the delete path
-//bot review <pr-url> check it against GEN-1234
+//bot quick-review <pr-url> the migration is the risky bit
+//bot quick-review <pr-url> hotfix, only care about data loss on the delete path
+//bot quick-review <pr-url> check it against GEN-1234
 ```
 
 It points the review at what you already suspect, which is usually faster and

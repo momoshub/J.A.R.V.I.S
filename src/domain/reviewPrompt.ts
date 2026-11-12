@@ -1,5 +1,5 @@
 /**
- * Review-mode system prompt (the `review` command).
+ * Review-mode system prompt (the `quick-review` command).
  *
  * A preset, tightly-scoped task with FULL tools (gh read+write, git, shell, the
  * Task tool for child agents). The comment carries blockers only: a clean PR
@@ -207,7 +207,7 @@ ${SLACK_FORMAT}
  * How the review works, in words, for someone asking rather than requesting one.
  *
  * It exists because the question used to cost a review: asked to explain itself,
- * the bot ran `review help` and spent minutes reviewing a pull request named
+ * the bot ran `quick-review help` and spent minutes reviewing a pull request named
  * "help" on the asker's own credential.
  *
  * `full` prints the real system prompt instead of the summary. It is not a
@@ -225,7 +225,8 @@ export const reviewHelp = (
 ): string => {
   if (full) return reviewPrompt([sampleUrl], botName, undefined, [], maxAgents, undefined, extendedOwners);
   return [
-    `*How I review a PR* - \`${prefix} review <pr-url>\``,
+    `*How I review a PR* - \`${prefix} quick-review <pr-url>\` (or tag me: \`review <pr-url>\` / \`approve <pr-url>\`)`,
+    "*when*: only when a person asks - tagging me or typing the command. never because of a GitHub review request, a workflow, a thread I am working in or anything I started myself",
     "",
     "*0.* CI first: red and I request changes on the spot, saying which checks failed, then review and comment anyway. green or still running goes on, and a running CI gets a watcher that runs outside the review (up to an hour): it requests changes if CI goes red, and under approve-after it approves once CI is green",
     "*1.* I gather it: `gh pr view`, the diff, and the checks. a merged or closed PR gets the same treatment as an open one, never skipped",
@@ -240,9 +241,9 @@ export const reviewHelp = (
     "*6.* a short wrap-up lands back in the thread with what I did and the headline blocker",
     "",
     "*approval* only after a clean review by default, and never while CI is red or still running; a repo can opt in to up front (CI not red), reversed if I find a blocker or CI goes red. `--policy first|after` changes it for one run. a merged or closed PR never gets a change request from the CI watcher",
-    "*steering*: anything typed next to the url aims the review, e.g. `review <url> the migration is the risky bit`",
+    "*steering*: anything typed next to the url aims the review, e.g. `quick-review <url> the migration is the risky bit`",
     `*cost*: it runs on *your own* Claude token, never mine - \`${prefix} token\` adds one`,
     "",
-    `\`${prefix} review prompt\` prints the actual system prompt I run on`,
+    `\`${prefix} quick-review prompt\` prints the actual system prompt I run on`,
   ].join("\n");
 };

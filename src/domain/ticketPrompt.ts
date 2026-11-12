@@ -1,7 +1,7 @@
 /**
  * Ticket-mode system prompt (the `ticket` command).
  *
- * A preset, tightly-scoped task like `review`: full tools, writes to the
+ * A preset, tightly-scoped task like `quick-review`: full tools, writes to the
  * tracker, and for a genuinely small fix opens the PR too.
  *
  * The whole design rests on one rule - **read, do not guess**. A ticket that

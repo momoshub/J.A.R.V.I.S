@@ -173,7 +173,7 @@ describe("reviews run on the caller's own Claude token", () => {
 
   test("any command's help is quiet, so the brain reads it without posting it", () => {
     expect(isQuietCommand("bomb help")).toBe(true);
-    expect(isQuietCommand("review help")).toBe(true);
+    expect(isQuietCommand("quick-review help")).toBe(true);
     expect(isQuietCommand("ticket --help")).toBe(true);
     expect(isQuietCommand("help")).toBe(true);
     expect(isQuietCommand("ticket help me the page is broken")).toBe(false);
@@ -603,12 +603,6 @@ describe("per-repo review policy", () => {
     expect(lines[1]).toBe(`✅ approved ${OTHER}`);
   });
 
-  test("a bare approve still works on a repo with no explicit policy", async () => {
-    const { deps, calls } = withPolicy();
-    expect(await dispatchCommand(deps, actor(), "C1", `approve ${OTHER}`)).toContain(`✅ approved ${OTHER}`);
-    expect(calls).toEqual([OTHER]);
-  });
-
   test("on approve-after nothing is approved up front", async () => {
     const { deps, calls, lines, reply, sys } = withPolicy(undefined);
     await dispatchCommand(deps, actor(), "C1", "review-policy acme/report-exports after");
@@ -778,14 +772,13 @@ describe("per-repo review policy", () => {
     expect(lines[1]).toBe(`✅ approved ${OTHER}`);
   });
 
-  test("an author hold blocks a bare approve and an executer's --policy first", async () => {
+  test("an author hold blocks an executer's --policy first", async () => {
     const { deps, calls, reply } = withPolicy(undefined);
     deps.github!.author = async () => "app/morcela-agent";
     await dispatchCommand(deps, actor(), "C1", "review-policy @morcela-agent after");
     const exec = actor({ slackId: "U0EXE0007", role: "executer" });
     deps.users.upsert(exec);
 
-    expect(await dispatchCommand(deps, actor(), "C1", `approve ${PR}`)).toContain("only after a clean review");
     expect(await dispatchCommand(deps, exec, "C1", `rv ${PR} --policy first`, { reply })).toContain("only an admin");
     expect(calls).toEqual([]);
   });

@@ -215,12 +215,7 @@ export const dispatchCommand = async (
   const slash = opts.slash ?? DEFAULT_SLASH_COMMAND;
   const trimmed = line.trim();
   const name = (trimmed.split(/\s+/)[0] || "help").toLowerCase();
-  // `//bot <pr-url>` is not a typo, it is somebody asking for a review and
-  // leaving the verb out. It was typed that way five times and answered with
-  // "I do not recognise https://github.com/..." every time. The whole line is
-  // then the review's arguments, url included.
-  const unnamedReview = !byName.has(name) && (PR_URL.test(name) || /^[\w.-]+\/[\w.-]+#\d+$/.test(name));
-  const rest = unnamedReview ? trimmed : trimmed.slice(name.length).trim();
+  const rest = trimmed.slice(name.length).trim();
   const args = rest.length ? rest.split(/\s+/) : [];
 
   const log = (command: string, ok: boolean, result: string) =>
@@ -230,7 +225,7 @@ export const dispatchCommand = async (
       deps.clock(),
     );
 
-  const command = unnamedReview ? byName.get("review") : byName.get(name);
+  const command = byName.get(name);
   if (!command) {
     // Name the near miss rather than sending someone to read forty lines to
     // find the word they almost typed. Only commands their role can actually
@@ -240,10 +235,23 @@ export const dispatchCommand = async (
       ...(c.aliases ?? []),
     ]);
     const near = nearestCommand(name, reachable);
-    const msg = near
+    // A quick review is somebody's direct ask, spelled out: a bare PR link or
+    // the retired `review` / `approve` is not guessed into one.
+    const msg = /^(review|approve)$/.test(name) || PR_URL.test(name) || /^[\w.-]+\/[\w.-]+#\d+$/.test(name)
+      ? `I do not recognise \`${name}\`. For a quick review of a PR: \`${prefix} quick-review <pr-url>\`.`
+      : near
       ? `I do not recognise \`${name}\`. Did you mean \`${prefix} ${near}\`? \`${prefix} help\` has the rest.`
       : `I do not recognise \`${name}\`. Try \`${prefix} help\`.`;
     log(name, false, msg);
+    return msg;
+  }
+  // A quick review runs only when a person asks for it themselves. The brain's
+  // run bridge is the one path where nobody typed the line: a turn the bot
+  // started (a watch, `tell`, a workflow step, a worker's question) or a chat
+  // turn deciding on its own must never start one.
+  if (opts.fromBrainRun && command.name === "quick-review") {
+    const msg = `\`quick-review\` runs only when a person asks for it: \`@bot review <pr-url>\` in Slack, or \`${prefix} quick-review <pr-url>\`. I do not start one myself.`;
+    log(command.name, false, msg);
     return msg;
   }
   if (RANK[actor.role] < RANK[command.minRole]) {

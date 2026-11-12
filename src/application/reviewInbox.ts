@@ -1,15 +1,15 @@
 /**
  * Review inbox - a timer that asks GitHub which PRs requested a review from the
- * bot's account, posts each new request into a channel, and runs `review` in
- * that post's thread as the person who asked.
+ * bot's account and posts each new request into a channel, with the line a
+ * person types to have it reviewed.
+ *
+ * It only ANNOUNCES. A quick review runs when a human asks for it in Slack
+ * (`@bot review <pr>` or `quick-review <pr>`), never because GitHub said so:
+ * a review spends the asker's own Claude token and nobody asked here. It used
+ * to start one in the post's thread as the requester; that auto-run is gone.
  *
  * Polling, not a webhook: the bot runs on a laptop with no public address, and
- * a minute of delay on a review that takes ten is nothing.
- *
- * Two hard rules ride on it. The review is always review-then-approve, never
- * approve up front. And it only runs on the requester's own Claude token - no
- * token on file, no review, just a line saying so. Nobody is asked for one
- * here: they asked GitHub, not Slack, and the ask belongs to `token`.
+ * a minute of delay on an announcement is nothing.
  */
 import {
   advanceCursor,
@@ -17,10 +17,7 @@ import {
   githubLinkKey,
   matchByName,
   newRequests,
-  noTokenOnFile,
-  reviewLine,
   type ReviewRequest,
-  unknownRequester,
 } from "../domain/reviewInbox.ts";
 import type { AllowedUser } from "../domain/types.ts";
 import type { Clock } from "./ports.ts";
@@ -45,11 +42,8 @@ export type ReviewInboxDeps = {
   /** A GitHub account's display name, for matching to Slack. */
   githubName: (login: string) => Promise<string | undefined>;
   users: { get: (slackId: string) => AllowedUser | undefined; list: () => AllowedUser[] };
-  hasToken: (slackId: string) => boolean;
-  /** Post; returns the ts so the review can go in its thread. */
-  post: (channel: string, text: string, threadTs?: string) => Promise<string | undefined>;
-  /** Run a command line as `actor` in a thread. Resolves when it is done. */
-  runReview: (req: { actor: AllowedUser; channelId: string; threadTs: string; line: string }) => Promise<void>;
+  /** Post the announcement into the channel. */
+  post: (channel: string, text: string) => Promise<string | undefined>;
   prefix: string;
   log?: (msg: string) => void;
   onError?: (e: unknown) => void;
@@ -87,26 +81,8 @@ export const createReviewInbox = (deps: ReviewInboxDeps): ReviewInbox => {
 
   const handle = async (channel: string, account: string, r: ReviewRequest): Promise<void> => {
     const slackId = await slackIdOf(r.requester);
-    const ts = await deps.post(channel, announceRequest(r, slackId, account));
-    if (!ts) {
-      log(`could not post ${r.prUrl} into ${channel}`);
-      return;
-    }
-    const actor = slackId ? deps.users.get(slackId) : undefined;
-    if (!slackId || !actor) {
-      await deps.post(channel, unknownRequester(r.requester, deps.prefix), ts);
-      return;
-    }
-    if (!deps.hasToken(slackId)) {
-      await deps.post(channel, noTokenOnFile(slackId, deps.prefix), ts);
-      return;
-    }
-    // Not awaited: a review takes ten minutes, and the next request should not
-    // sit behind it.
-    const line = reviewLine(r.prUrl, actor.role === "pal");
-    void deps
-      .runReview({ actor, channelId: channel, threadTs: ts, line })
-      .catch((e) => log(`review of ${r.prUrl} failed: ${e instanceof Error ? e.message : String(e)}`));
+    const ts = await deps.post(channel, announceRequest(r, slackId, account, deps.prefix));
+    if (!ts) log(`could not post ${r.prUrl} into ${channel}`);
   };
 
   const tick = async (): Promise<void> => {

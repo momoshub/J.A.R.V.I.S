@@ -173,7 +173,7 @@ const schema = z
     SELF_PR_AUTHOR: z.string().optional(),
     SELF_PR_REVIEWER: z.string().optional(),
 
-    // GitHub owners (comma separated, case-insensitive) whose PRs `review`
+    // GitHub owners (comma separated, case-insensitive) whose PRs `quick-review`
     // posts non-blocking findings for, on top of the blockers every review
     // posts. Empty: blockers only, everywhere.
     REVIEW_EXTENDED_OWNERS: z.string().optional(),

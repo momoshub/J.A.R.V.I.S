@@ -142,7 +142,7 @@ export const parsePolicyArg = (args: readonly string[]): PolicyArg => {
  * A review that is not given a url is still allowed to run on a shorthand the
  * brain can resolve - `owner/repo#123`, `#123`, a bare number beside a repo -
  * because people type those. What it must never do is treat any stray word as
- * a target: `review help` once spawned a full review of a pull request called
+ * a target: `quick-review help` once spawned a full review of a pull request called
  * "help", on the asker's own credential, to answer a question about reviewing.
  */
 export const looksLikePrRef = (token: string): boolean => {

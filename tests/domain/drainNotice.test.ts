@@ -124,8 +124,15 @@ describe("what waits for the next process while a restart is pending", () => {
     const ask = "Hey <!subteam^S1>, could you review and approve https://github.com/o/r/pull/9 when you get a chance?";
     expect(waitsForRestart("events_api", msg(ask), P)).toBe(false);
     expect(waitsForRestart("events_api", msg("X/jv review 12"), P)).toBe(false);
-    expect(waitsForRestart("events_api", reply(ask), P)).toBe(true);
-    expect(waitsForRestart("events_api", dm(ask), P)).toBe(true);
+    // untagged replies and DMs are chat turns on a budget, never a spoken quick-review
+    expect(waitsForRestart("events_api", reply(ask), P)).toBe(false);
+    expect(waitsForRestart("events_api", dm(ask), P)).toBe(false);
+  });
+  test("only a tag opening with review or approve is a spoken quick-review that waits", () => {
+    const pr = "https://github.com/o/r/pull/9";
+    expect(waitsForRestart("events_api", msg(`<@UBOT> approve ${pr}`, "app_mention"), P)).toBe(true);
+    expect(waitsForRestart("events_api", msg(`<@UBOT> could you review ${pr}`, "app_mention"), P)).toBe(false);
+    expect(waitsForRestart("events_api", reply(`<@UBOT> review ${pr}`), P)).toBe(false);
   });
   test("slash commands and buttons wait; other events (reactions, stop) do not", () => {
     expect(waitsForRestart("slash_commands", { command: "/jv" }, P)).toBe(true);

@@ -7,7 +7,7 @@
  *   its result comes back to the caller even when the person asked for it, and
  *   `show` does not change that.
  * - `show` is the PERSON's ask. A command the brain runs on its own - checking
- *   `mindful`, starting a `review` nobody requested - is HIDDEN by default: the
+ *   `mindful`, starting a `quick-review` nobody requested - is HIDDEN by default: the
  *   output goes back to the brain only, and nothing at all is posted, no
  *   progress and no result. The brain passes `--show` only when the person in
  *   the thread directly asked for that command, and then it is an errand whose
@@ -18,7 +18,7 @@
  * commands post their own output, so `users` printed nothing anywhere: the
  * brain trusted the prompt and summarised a list nobody had seen. Then every
  * command the brain ran posted, and its own status checks (`mindful`, a
- * `review` it started unasked, "`review` ran past its time limit") landed in
+ * `quick-review` it started unasked, "`quick-review` ran past its time limit") landed in
  * the thread as noise. Now the outcome says in so many words whether the thread
  * has it.
  *
@@ -70,7 +70,7 @@ export const runForBrain = async (deps: BrainRunDeps): Promise<BrainRunOutcome> 
   // thread hears nothing - no progress, no result, no late failure.
   // It still gets a `reply`, a sink that collects instead of posting: commands
   // read a missing `reply` as "no Slack" and take a one-shot path, so a hidden
-  // `review` once skipped its approve-after and CI hand-off entirely.
+  // `quick-review` once skipped its approve-after and CI hand-off entirely.
   if (!deps.show) {
     const lines: string[] = [];
     const collected = (text: string) => [...lines, text].filter((t) => t.trim()).join("\n\n");
@@ -86,7 +86,7 @@ export const runForBrain = async (deps: BrainRunDeps): Promise<BrainRunOutcome> 
 
   const run = deps.start(deps.post);
   // Do not make the caller wait. The chat turn is a CLI process on a
-  // chat-length timeout, and a `review` or `ticket` runs for minutes -
+  // chat-length timeout, and a `quick-review` or `ticket` runs for minutes -
   // blocking here would kill that turn over a command that is working fine.
   const settled = await Promise.race([
     run.then((text) => ({ done: true as const, text })),

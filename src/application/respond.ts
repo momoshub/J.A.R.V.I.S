@@ -37,7 +37,7 @@ export type RespondDeps = HandleMessageDeps & Pick<FrontDeps, "workerCalls"> & {
   runs?: RunRegistry;
   /** Background agents a thread's turns left running, so `stop` ends them too. */
   backgroundAgents?: BackgroundAgentsPort;
-  /** One review per PR at a time, across the review inbox and `review`. */
+  /** One review per PR at a time, across every `quick-review` ask. */
   reviewGuard?: ReviewGuard;
   /** True while a restart waits for running turns; pending workflow steps hold. */
   draining?: () => boolean;
@@ -62,17 +62,29 @@ export const respond = async (
 ): Promise<HandleResult> => {
   const line = commandLineOf(inbound.text, deps.commandPrefix);
   if (line === undefined) {
-    // "@bot review <pr url>" is the command, not a conversation about it. Said
-    // in words it used to reach the chat brain, which would describe a review
-    // rather than run one - and describe the token rather than offer the box
-    // that takes it. Same words, same path, whichever way it was typed.
-    // `!` is the legacy trigger and needs no configured prefix, so this works
-    // the same whether or not the instance set one.
-    // Not for a turn the bot started itself (`unprompted`: tell, a watch
-    // hand-back, a worker question, a drift nudge): its text is an internal
-    // steer, and a `tell` carrying a PR url and "review" was run as a review
-    // of that PR in the target thread instead of reaching its session.
-    const asked = inbound.unprompted || inbound.batched ? undefined : reviewRequestIn(inbound.text);
+    // "@bot review <pr url>" and "@bot approve <pr url>" are the quick-review
+    // command, not a conversation about it. Said in words they used to reach
+    // the chat brain, which would describe a review rather than run one - and
+    // describe the token rather than offer the box that takes it. `!` is the
+    // legacy trigger and needs no configured prefix, so this works the same
+    // whether or not the instance set one.
+    // Only for a message a person tagged the bot in (`mentioned`), and never
+    // for anything the bot or a thread's own flow started: a turn the bot
+    // began itself (`unprompted`: tell, a watch hand-back, a worker question,
+    // a drift nudge) carries an internal steer, a batch is pieced together from
+    // several authors, an untagged follow-up was not addressed to it, a
+    // workflow step or worker lane is the workflow talking, and a thread with
+    // a workflow running is that workflow's. A quick review is somebody's
+    // direct ask or it does not run.
+    const humanAsk =
+      inbound.mentioned === true &&
+      !inbound.unprompted &&
+      !inbound.batched &&
+      !inbound.following &&
+      !inbound.autoContinue &&
+      !inbound.workerLane &&
+      !(inbound.threadTs !== undefined && deps.workflows?.activeFor(inbound.channelId, inbound.threadTs) !== undefined);
+    const asked = humanAsk ? reviewRequestIn(inbound.text) : undefined;
     if (asked) return respond(deps, { ...inbound, text: `!${asked}` }, sink);
 
     // One function, shared with the agent-session stop handler: if the two ever

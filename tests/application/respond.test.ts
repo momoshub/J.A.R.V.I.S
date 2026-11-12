@@ -91,27 +91,68 @@ describe("respond", () => {
     expect((await respond(gated, { channelId: "C1", slackUserId: OWNER, text: "!whoami" })).kind).toBe("reply");
   });
 
-  test("asking for a review in words runs the command, not a chat reply", async () => {
+  const REVIEW_PR = "https://github.com/o/r/pull/1";
+
+  /** A respond() whose chat brain records that it ran; `workflowThread` puts a live workflow under the thread. */
+  const withBrain = (workflowThread?: string) => {
+    const db = openDatabase(":memory:");
+    let t = 1;
+    const workflows = createWorkflowRepo(db);
+    if (workflowThread) {
+      workflows.start({ channelId: "C1", threadTs: workflowThread, sessionId: "s1", task: "the blog", startedBy: OWNER }, 1);
+    }
+    const ran = { brain: false };
+    const deps: RespondDeps = {
+      users: createUserRepo(db),
+      messages: createMessageRepo(db),
+      llm: { complete: async () => ((ran.brain = true), "I would love to review that for you") },
+      clock: () => t++,
+      ownerSlackId: OWNER,
+      contextWindow: 10,
+      workflows,
+    };
+    return { deps, ran };
+  };
+
+  test("a human tagging the bot with review or approve runs quick-review, not a chat reply", async () => {
     // the gap this closes: `@bot review <url>` reached the chat brain, which
     // talked about the review - and about the token - instead of running one
-    // and offering the box that takes it
-    let asked: string | undefined;
-    const deps = build({
-      complete: async (p) => {
-        asked = p.system;
-        return "I would love to review that for you";
-      },
-    });
-    const res = await respond(deps, {
-      channelId: "C1",
-      slackUserId: OWNER,
-      text: "<@UBOT> review https://github.com/o/r/pull/1",
-    });
+    // and offering the box that takes it. `approve` is the same ask.
+    for (const verb of ["review", "approve"]) {
+      const { deps, ran } = withBrain();
+      const res = await respond(deps, {
+        channelId: "C1",
+        slackUserId: OWNER,
+        text: `<@UBOT> ${verb} ${REVIEW_PR}`,
+        mentioned: true,
+      });
+      expect(ran.brain).toBe(false); // the chat brain never ran
+      if (res.kind === "reply") {
+        // the quick-review command answered: no token store wired here, so it refuses
+        expect(res.text).toContain("caller's own");
+      }
+    }
+  });
 
-    expect(asked).toBeUndefined(); // the chat brain never ran
-    if (res.kind === "reply") {
-      // the review command answered: no token store wired here, so it refuses
-      expect(res.text).toContain("caller's own");
+  test("quick-review never starts from anything but a human's tag", async () => {
+    const text = `<@UBOT> review ${REVIEW_PR}`;
+    const cases: [string, Partial<Parameters<typeof respond>[1]>, string?][] = [
+      ["no tag (a DM or a followed thread's reply)", { mentioned: undefined }],
+      ["an untagged follow-up", { mentioned: true, following: true }],
+      ["a turn the bot started itself", { mentioned: true, unprompted: true }],
+      ["a batch of buffered messages", { mentioned: true, batched: true }],
+      ["a workflow step", { mentioned: true, autoContinue: true }],
+      ["a worker's question", { mentioned: true, unprompted: true, workerLane: true }],
+      ["a thread driving a workflow", { mentioned: true, threadTs: "7.7" }, "7.7"],
+    ];
+    for (const [why, extra, workflowThread] of cases) {
+      const { deps, ran } = withBrain(workflowThread);
+      const res = await respond(deps, { channelId: "C1", slackUserId: OWNER, text, ...extra });
+      // nothing was turned into the command: whatever answered, it was not quick-review
+      const answer = res.kind === "reply" ? res.text : "";
+      expect(answer, why).not.toContain("caller's own");
+      expect(answer, why).not.toContain("Which PR");
+      if (!extra.autoContinue) expect(ran.brain, why).toBe(true);
     }
   });
 

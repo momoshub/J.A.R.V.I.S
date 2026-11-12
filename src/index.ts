@@ -476,7 +476,7 @@ const main = async () => {
   // retries: 0 so a rate-limited call fails fast instead of hanging.
   const slackWeb = new WebClient(config.slackBotToken, { retryConfig: { retries: 0 } });
   const slackAdmin = createSlackAdmin(slackWeb, clock);
-  // `review` approves, requests changes and reads CI through this one gh port; the
+  // `quick-review` approves, requests changes and reads CI through this one gh port; the
   // gate puts a running CI on the watcher's timer (see the watcher below).
   const github = createGhCli();
   const ciGate = createCiGate({
@@ -622,7 +622,7 @@ const main = async () => {
     roleDisabled: disabledRoleOf(userStore, rolePolicies.get),
     rawUsers: userStore,
     slack: slackAdmin,
-    // `review` approves through this directly, before the brain starts.
+    // `quick-review` approves through this directly, before the brain starts.
     github,
     ciGate,
     // Long tasks driven from a thread, each holding its own CLI session.
@@ -689,7 +689,7 @@ const main = async () => {
     noTools: noTools(config.dbMcpServers),
     draft,
     toolPolicy,
-    // A person's own Claude Code credential: required by `review`, used by every
+    // A person's own Claude Code credential: required by `quick-review`, used by every
     // other turn of theirs when they have one on file.
     claudeTokens,
     totp,
@@ -1046,8 +1046,8 @@ const main = async () => {
     log: (msg) => console.error(`[loop] ${msg}`),
     onError: onDbError,
   });
-  // GitHub review requests of the bot's account, posted and reviewed in a
-  // channel as whoever asked - on their own token, review before approve.
+  // GitHub review requests of the bot's account, announced in a channel. Nothing
+  // is reviewed from here: a quick review runs only when a person asks for it.
   const ghRequests = createGhReviewRequests();
   const reviewInbox = createReviewInbox({
     clock,
@@ -1058,18 +1058,7 @@ const main = async () => {
     account: async () => (await deps.github?.whoami())?.login,
     githubName: ghRequests.githubName,
     users,
-    hasToken: (id) => claudeTokens?.has(id) ?? false,
-    post: async (channel, text, thread) => (await slackAdmin.post(channel, text, thread, SIGNATURES.reviewInbox))?.ts,
-    runReview: async ({ actor, channelId, threadTs, line }) => {
-      const reply = async (text: string) => void (await slackAdmin.post(channelId, text, threadTs, SIGNATURES.reviewInbox));
-      const out = await dispatchCommand(deps, actor, channelId, line, {
-        prefix: config.commandPrefix,
-        slash: config.slashCommand,
-        threadTs,
-        reply,
-      });
-      if (out.trim()) await reply(out);
-    },
+    post: async (channel, text) => (await slackAdmin.post(channel, text, undefined, SIGNATURES.reviewInbox))?.ts,
     prefix: config.commandPrefix,
     log: (msg) => console.error(`[review-inbox] ${msg}`),
   });

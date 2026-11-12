@@ -1,4 +1,4 @@
-/** PR review and its settings: approve, review, logsource, review-inbox, github-app, review-policy. */
+/** PR review and its settings: quick-review, logsource, review-inbox, github-app, review-policy. */
 
 import { reviewHelp, reviewPrompt } from "../../domain/reviewPrompt.ts";
 import {
@@ -73,58 +73,15 @@ const reviewPoliciesOf = async (
 
 export const REVIEW_COMMANDS: readonly CommandDef[] = [
   {
-    name: "approve",
-    // An approval nobody read, under the GitHub account I act with.
-    minRole: "admin",
-    usage: "<pr-url> [pr-url...]",
-    summary: "approve a PR without reviewing it",
-    /**
-     * The most-guessed command that did not exist. Five people-months of log
-     * say `approve <pr-url>`, every time answered with "I do not recognise
-     * `approve`", once typed as "approvel without review please".
-     *
-     * It is not a new power: it is the up-front approval a repo can opt in to
-     * with the review left off. A repository or author EXPLICITLY set to
-     * approve only AFTER a clean review is an admin's decision, so a bare
-     * approval there is not on offer at any role. The built-in default (also
-     * approve-after) is not such a decision, so it does not block this.
-     *
-     * No brain, so no Claude token and no cost. Every approval is a row in the
-     * command log against the person who asked for it.
-     */
-    run: async ({ deps, args, prefix }) => {
-      if (!deps.github) return "I have no GitHub access wired up right now.";
-      const urls = [...new Set(args.flatMap((a) => a.match(PR_URL) ?? []))];
-      if (urls.length === 0) return `Which PR? \`${prefix} approve <pr-url>\``;
-      const policies = await reviewPoliciesOf(deps, urls, "approve-first");
-      const held = urls.filter((u) => policies.get(u) === "approve-after");
-      const lines: string[] = [];
-      for (const url of urls) {
-        if (held.includes(url)) {
-          lines.push(`⚠️ ${url} - that repo or author approves only after a clean review. \`${prefix} review ${url}\``);
-          continue;
-        }
-        const res = await deps.github.approve(url);
-        lines.push(res.ok ? `✅ approved ${url}` : `⚠️ could not approve ${url} - ${res.error}`);
-      }
-      // Say what it did NOT do. An approval with no review behind it is worth
-      // one line of honesty, not a silent green tick.
-      if (lines.some((l) => l.startsWith("✅"))) {
-        lines.push(`_approved as asked, nobody read it - \`${prefix} review <pr-url>\` if you want that too_`);
-      }
-      return lines.join("\n");
-    },
-  },
-  {
-    name: "review",
+    name: "quick-review",
     aliases: ["rv"],
     ownHelp: true,
     minRole: "pal",
     usage: "<pr-url> [pr-url...] [--policy first|after] [what to look at]",
-    summary: "review a PR: blockers-only comment on GitHub and here (owners set in REVIEW_EXTENDED_OWNERS: non-blocking findings too)",
+    summary: "quick review of a PR, only when asked (tag me `review <pr>` or type this): blockers-only comment on GitHub and here (owners set in REVIEW_EXTENDED_OWNERS: non-blocking findings too)",
     run: async (ctx) => {
       const { deps, actor, args, prefix, reply, channelId } = ctx;
-      if (args.length === 0) return `Which PR? \`${prefix} review <pr-url>\``;
+      if (args.length === 0) return `Which PR? \`${prefix} quick-review <pr-url>\``;
       if (!deps.llm) return "My brain is not wired up right now.";
       // A review runs on the caller's own Claude Code credential, never the
       // bot's: it is the long, expensive job, and the usage belongs to whoever
@@ -133,7 +90,7 @@ export const REVIEW_COMMANDS: readonly CommandDef[] = [
       const oauthToken = tokenFor(deps, actor);
       if (!oauthToken) {
         return deps.claudeTokens
-          ? askForToken(ctx, `review ${args.join(" ")}`.trim())
+          ? askForToken(ctx, `quick-review ${args.join(" ")}`.trim())
           : "I have nowhere to keep a Claude Code token right now, and a review only ever runs on the caller's own. Ask an admin to check the token store.";
       }
       // A policy asked for on the line itself, for this run only. Pulled out
@@ -158,7 +115,7 @@ export const REVIEW_COMMANDS: readonly CommandDef[] = [
       const shorthand = urls.length === 0 ? rest.filter(looksLikePrRef) : [];
       const wanted = urls.length > 0 ? urls : shorthand;
       if (wanted.length === 0) {
-        return `Which PR? \`${prefix} review <pr-url>\` - or \`${prefix} review help\` for how I do it.`;
+        return `Which PR? \`${prefix} quick-review <pr-url>\` - or \`${prefix} quick-review help\` for how I do it.`;
       }
       // Anything typed alongside the urls is guidance: "the migration is the
       // risky bit", "hotfix, correctness only". It aims the review; the prompt
@@ -184,8 +141,8 @@ export const REVIEW_COMMANDS: readonly CommandDef[] = [
       const approvedUpFront: string[] = [];
       // What each PR is on for this run: the flag if one was given, otherwise
       // whatever the repository is configured for.
-      // A pal's review never approves up front: that would be `approve` with
-      // extra steps, and `approve` is not theirs to run. Nor is the policy, so
+      // A pal's review never approves up front: that would hand out an
+      // approval nobody asked for. Nor is the policy, so
       // they get no say in it for a run either.
       const palOnly = RANK[actor.role] < RANK.executer;
       if (palOnly && asked !== undefined) {
@@ -206,7 +163,7 @@ export const REVIEW_COMMANDS: readonly CommandDef[] = [
       }
       const policyFor = (url: string): ReviewPolicy =>
         palOnly ? "approve-after" : (override ?? configured.get(url) ?? DEFAULT_REVIEW_POLICY);
-      // One review per PR. A GitHub review request and a `review` typed here
+      // One review per PR. Two asks for the same PR
       // both land in this command, and two runs mean two approvals and two
       // comments on the same PR. A PR already in hand is pointed at, not redone.
       const busy: string[] = [];
@@ -447,7 +404,7 @@ export const REVIEW_COMMANDS: readonly CommandDef[] = [
     name: "review-inbox",
     minRole: "pal",
     usage: "| channel <#channel>|off | link <github-login> [@someone] | unlink <github-login>",
-    summary: "where GitHub review requests of my account are posted and reviewed, and who is who",
+    summary: "where GitHub review requests of my account are announced (never reviewed by themselves), and who is who",
     run: ({ deps, actor, args, prefix }) => {
       const settings = deps.settings;
       if (!settings) return "I have nowhere to keep settings right now.";
@@ -466,7 +423,7 @@ export const REVIEW_COMMANDS: readonly CommandDef[] = [
         settings.set(SETTING_KEYS.reviewInboxChannel, id);
         // From now: a backlog of old requests is not what this was turned on for.
         settings.set(SETTING_KEYS.reviewInboxCursor, new Date(deps.clock()).toISOString());
-        return `review requests of my GitHub account now land in <#${id}>, reviewed first and approved only if clean, on the requester's own token`;
+        return `review requests of my GitHub account are now announced in <#${id}>; nothing is reviewed by itself, a person asks with \`review <pr-url>\` or \`quick-review <pr-url>\``;
       }
 
       if (sub === "link" || sub === "unlink") {
@@ -495,7 +452,7 @@ export const REVIEW_COMMANDS: readonly CommandDef[] = [
         .map((e) => `- \`${e.key.slice(GITHUB_LINK_PREFIX.length)}\` -> <@${e.value}>`);
       return [
         channel
-          ? `review requests of my GitHub account land in <#${channel}>, reviewed then approved only if clean, on the requester's own token`
+          ? `review requests of my GitHub account are announced in <#${channel}>; nothing is reviewed by itself`
           : `review inbox is off - \`${prefix} review-inbox channel #channel\``,
         ...(links.length ? ["GitHub links:", ...links] : []),
       ].join("\n");

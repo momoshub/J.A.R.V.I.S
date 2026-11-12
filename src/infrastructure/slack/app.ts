@@ -369,6 +369,8 @@ export type Incoming = {
   client: SlackClient;
   /** An untagged reply under a thread this bot started. */
   following?: boolean;
+  /** A person tagged the bot in this message (`app_mention`). */
+  mentioned?: boolean;
   /**
    * The messages a followed thread buffered, oldest first, when the turn is
    * for several at once. `text`, `userId` and `messageTs` are the newest's.
@@ -468,6 +470,7 @@ export const createHandler =
           messageTs: msg.messageTs,
           viaSlash: false,
           following: msg.following === true,
+          ...(msg.mentioned ? { mentioned: true } : {}),
           ...(batched ? { batched: true } : {}),
           interrupted: (msg.inbox?.attempt ?? 1) > 1,
           ...(msg.inbox ? { inboxRowId: msg.inbox.rowId } : {}),
@@ -1090,6 +1093,7 @@ export const createSlackApp = (config: SlackAppConfig, deps: Deps) => {
       teamId: context.teamId,
       inbox: inboxOf(context as InboxContext),
       text: e.text,
+      mentioned: true,
       threadTs: threadKeyOf(e),
       messageTs: e.ts,
       client: asClient(client),
@@ -1722,7 +1726,7 @@ export const createSlackApp = (config: SlackAppConfig, deps: Deps) => {
         wired: !!deps.gatePolicy,
         enabled: gateSettings((k) => deps.settings?.get(k)).enabled,
         route: verdict.why,
-        isCommand: commandLineOf(m.text!, config.commandPrefix) !== undefined || reviewRequestIn(m.text!) !== undefined,
+        isCommand: commandLineOf(m.text!, config.commandPrefix) !== undefined,
         oneOnOne,
         allowed: decideAccess(m.user!, deps.ownerSlackId, deps.users.get).allowed,
       });
@@ -1750,7 +1754,7 @@ export const createSlackApp = (config: SlackAppConfig, deps: Deps) => {
       if (
         takesOverBatch({
           allowed: decideAccess(m.user!, deps.ownerSlackId, deps.users.get).allowed,
-          isCommand: commandLineOf(m.text!, config.commandPrefix) !== undefined || reviewRequestIn(m.text!) !== undefined,
+          isCommand: commandLineOf(m.text!, config.commandPrefix) !== undefined,
           hasText: hasContent(m.text!),
         })
       ) {
@@ -1825,7 +1829,7 @@ export const createSlackApp = (config: SlackAppConfig, deps: Deps) => {
       await reply(ephemeral).catch(() => reply({ response_type: "ephemeral", text: ephemeral.text }));
     };
   app.command(config.slashCommand, runSlash(""));
-  app.command("/rv", runSlash("review"));
+  app.command("/rv", runSlash("quick-review"));
   app.command("/br", runSlash("bomb"));
   app.command("/jrp", runSlash("reply"));
 

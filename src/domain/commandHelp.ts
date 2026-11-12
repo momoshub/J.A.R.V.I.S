@@ -7,7 +7,7 @@
  * "help" as the bug report. It ran for the better part of an hour and died at
  * the timeout having posted nothing - the single worst entry in the command log.
  *
- * `review` had already been given this exact guard after `review help` reviewed
+ * `quick-review` had already been given this exact guard after `review help` reviewed
  * a PR named "help" on the caller's own credential. A fix written for one
  * command is a fix nobody else gets, so it lives here now and every command has
  * it. The ones that answer `help` better themselves opt out.
