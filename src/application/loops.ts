@@ -50,6 +50,8 @@ export type LoopRunnerDeps = {
    * it. A script loop is shell, so it asks for more than a prompt loop does.
    */
   mayRun?: (slackUserId: string, script: boolean) => boolean;
+  /** Runs first on every tick: deletes pending script loops nobody approved in time. */
+  sweep?: () => Promise<unknown>;
   log?: (msg: string) => void;
   onError?: (e: unknown) => void;
 };
@@ -88,6 +90,8 @@ export const createLoopRunner = (deps: LoopRunnerDeps): LoopRunner => {
 
   const one = async (l: Loop): Promise<void> => {
     const now = deps.clock();
+    // Never run what is not active, whatever the query handed over: a pending script loop is unapproved shell.
+    if (l.state !== "active") return;
 
     if (deps.mayRun && !deps.mayRun(l.createdBy, !!l.command)) {
       deps.loops.settle(l.id, "failed", now, "creator no longer allowed");
@@ -156,6 +160,7 @@ export const createLoopRunner = (deps: LoopRunnerDeps): LoopRunner => {
       if (running) return;
       running = true;
       try {
+        await deps.sweep?.().catch(logAndIgnore("loop pending sweep"));
         let due: Loop[];
         try {
           due = deps.loops.due(deps.clock());

@@ -23,9 +23,15 @@ export type Loop = {
   readonly state: LoopState;
   readonly lastError: string;
   readonly createdAt: number;
+  /** Where the owner's Approve / Reject message sits, for a pending script loop. */
+  readonly noticeChannel: string;
+  readonly noticeTs: string;
 };
 
-export type NewLoop = Pick<Loop, "channelId" | "threadTs" | "createdBy" | "schedule" | "prompt" | "command" | "nextAt">;
+export type NewLoop = Pick<Loop, "channelId" | "threadTs" | "createdBy" | "schedule" | "prompt" | "command" | "nextAt"> & {
+  /** `pending` for a script loop awaiting approval; default `active`. */
+  readonly state?: "pending" | "active";
+};
 
 type Row = {
   id: number;
@@ -41,9 +47,11 @@ type Row = {
   state: string;
   last_error: string;
   created_at: number;
+  notice_channel: string;
+  notice_ts: string;
 };
 
-const STATES: readonly string[] = ["active", "cancelled", "failed"];
+const STATES: readonly string[] = ["pending", "active", "cancelled", "failed"];
 const asState = (v: string): LoopState => (STATES.includes(v) ? (v as LoopState) : "active");
 
 const toLoop = (r: Row): Loop => ({
@@ -60,6 +68,8 @@ const toLoop = (r: Row): Loop => ({
   state: asState(r.state),
   lastError: r.last_error,
   createdAt: r.created_at,
+  noticeChannel: r.notice_channel,
+  noticeTs: r.notice_ts,
 });
 
 export type LoopRepo = {
@@ -69,18 +79,30 @@ export type LoopRepo = {
   /** Active, soonest first. */
   active: (limit?: number) => Loop[];
   activeBy: (slackUserId: string, limit?: number) => Loop[];
+  /** Active and pending, soonest first: what `loop list` shows and the per-person cap counts. */
+  liveBy: (slackUserId: string, limit?: number) => Loop[];
+  /** Pending only, oldest first. */
+  pending: (limit?: number) => Loop[];
   get: (id: number) => Loop | undefined;
   /** Record a fire: count it and move the next one on. */
   fired: (id: number, nextAt: number, at: number) => void;
   /** Move the next fire without counting a run (a failed start). */
   reschedule: (id: number, nextAt: number, at: number, error?: string) => void;
   settle: (id: number, state: LoopState, at: number, error?: string) => void;
+  /** Remember the approval message, so it can be settled later. */
+  setNotice: (id: number, channel: string, ts: string) => void;
+  /** pending -> active with a first fire time. False when it was not pending (decided already, or gone). */
+  activate: (id: number, nextAt: number, at: number) => boolean;
+  /** Delete a loop that is still pending. False when it was not pending. */
+  discard: (id: number) => boolean;
+  /** Delete pending loops older than `ttlMs` and return them. */
+  expirePending: (now: number, ttlMs: number) => Loop[];
 };
 
 export const createLoopRepo = (db: DbClient): LoopRepo => {
   const insertStmt = db.query(
     `INSERT INTO loops (channel_id, thread_ts, created_by, schedule, prompt, command, next_at, state, created_at, updated_at)
-     VALUES ($channelId, $threadTs, $createdBy, $schedule, $prompt, $command, $nextAt, 'active', $at, $at)
+     VALUES ($channelId, $threadTs, $createdBy, $schedule, $prompt, $command, $nextAt, $state, $at, $at)
      RETURNING *`,
   );
   const dueStmt = db.query<Row, [number, number]>(
@@ -90,6 +112,15 @@ export const createLoopRepo = (db: DbClient): LoopRepo => {
   const byStmt = db.query<Row, [string, number]>(
     "SELECT * FROM loops WHERE state = 'active' AND created_by = ? ORDER BY next_at ASC LIMIT ?",
   );
+  const liveStmt = db.query<Row, [string, number]>(
+    "SELECT * FROM loops WHERE state IN ('active', 'pending') AND created_by = ? ORDER BY next_at ASC LIMIT ?",
+  );
+  const pendingStmt = db.query<Row, [number]>("SELECT * FROM loops WHERE state = 'pending' ORDER BY created_at ASC LIMIT ?");
+  const noticeStmt = db.query("UPDATE loops SET notice_channel = $channel, notice_ts = $ts WHERE id = $id");
+  const activateStmt = db.query(
+    "UPDATE loops SET state = 'active', next_at = $nextAt, updated_at = $at WHERE id = $id AND state = 'pending'",
+  );
+  const discardStmt = db.query("DELETE FROM loops WHERE id = $id AND state = 'pending'");
   const getStmt = db.query<Row, [number]>("SELECT * FROM loops WHERE id = ?");
   const firedStmt = db.query(
     `UPDATE loops SET next_at = $nextAt, last_run_at = $at, runs = runs + 1, last_error = '', updated_at = $at
@@ -113,12 +144,15 @@ export const createLoopRepo = (db: DbClient): LoopRepo => {
           $prompt: l.prompt.slice(0, 2000),
           $command: l.command.slice(0, 2000),
           $nextAt: l.nextAt,
+          $state: l.state ?? "active",
           $at: at,
         }) as Row,
       ),
     due: (now, limit = 20) => dueStmt.all(now, Math.max(1, limit)).map(toLoop),
     active: (limit = 50) => activeStmt.all(Math.max(1, limit)).map(toLoop),
     activeBy: (id, limit = 20) => byStmt.all(id, Math.max(1, limit)).map(toLoop),
+    liveBy: (id, limit = 20) => liveStmt.all(id, Math.max(1, limit)).map(toLoop),
+    pending: (limit = 50) => pendingStmt.all(Math.max(1, limit)).map(toLoop),
     get: (id) => {
       const r = getStmt.get(id);
       return r ? toLoop(r) : undefined;
@@ -128,5 +162,14 @@ export const createLoopRepo = (db: DbClient): LoopRepo => {
       void rescheduleStmt.run({ $id: id, $nextAt: nextAt, $at: at, $error: error?.slice(0, 300) ?? null }),
     settle: (id, state, at, error) =>
       void settleStmt.run({ $id: id, $state: state, $at: at, $error: error?.slice(0, 300) ?? null }),
+    setNotice: (id, channel, ts) => void noticeStmt.run({ $id: id, $channel: channel, $ts: ts }),
+    activate: (id, nextAt, at) => Number(activateStmt.run({ $id: id, $nextAt: nextAt, $at: at }).changes) > 0,
+    discard: (id) => Number(discardStmt.run({ $id: id }).changes) > 0,
+    expirePending: (now, ttlMs) =>
+      pendingStmt
+        .all(1000)
+        .filter((r) => r.created_at <= now - ttlMs)
+        .filter((r) => Number(discardStmt.run({ $id: r.id }).changes) > 0)
+        .map(toLoop),
   };
 };

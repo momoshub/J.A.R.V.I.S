@@ -10,6 +10,7 @@ import {
   type MindfulView,
 } from "../../domain/mindful.ts";
 import { MAX_LOOPS_PER_USER, nextRun, parseLoopArgs, scheduleText } from "../../domain/loop.ts";
+import { proposeScriptLoop } from "../loopApproval.ts";
 import { type CommandDef, RANK, parseWindow } from "./shared.ts";
 
 export const SCHEDULE_COMMANDS: readonly CommandDef[] = [
@@ -217,8 +218,8 @@ export const SCHEDULE_COMMANDS: readonly CommandDef[] = [
     // Every fire is a model turn with nobody present, so it spends tokens
     // unattended - a standing decision, not a one-off request.
     minRole: "admin",
-    usage: "every <monday 9am | day at 18:00 | 6h | week> <prompt> | every <schedule> -- <shell command> (owner) | list | cancel <id>",
-    summary: "on a schedule, run a prompt as a real turn (or, owner only, a shell command); runs report to your DM",
+    usage: "every <monday 9am | day at 18:00 | 6h | week> <prompt> | every <schedule> -- <shell command> (my own turn only, at the owner's ask, then the owner approves) | list | cancel <id>",
+    summary: "on a schedule, run a prompt as a real turn; runs report to your DM. A script loop is never typed: ask me in plain words and I write it, the owner approves it",
     run: async ({ deps, actor, args, rest, prefix, threadTs, channelId, fromBrainRun }) => {
       if (!deps.loops) return "I have nowhere to keep a loop right now.";
       const now = deps.clock();
@@ -227,24 +228,29 @@ export const SCHEDULE_COMMANDS: readonly CommandDef[] = [
 
       if (sub === "list" && args.length === 1) {
         // Yours, wherever you ask: a loop reports to its creator's DM, not to a thread.
-        const rows = deps.loops.activeBy(actor.slackId, 30);
+        const rows = deps.loops.liveBy(actor.slackId, 30);
         if (rows.length === 0) return "You have no loops.";
         return rows
-          .map(
-            (l) =>
-              `- #${l.id} ${l.command ? "script" : "prompt"} ${l.schedule} - next ${formatWhen(l.nextAt, offset)} (${humanLead(l.nextAt - now)}): ${l.command ? `\`${l.command.slice(0, 80)}\`` : l.prompt.slice(0, 80)}`,
-          )
+          .map((l) => {
+            const what = l.command ? `\`${l.command.slice(0, 80)}\`` : l.prompt.slice(0, 80);
+            // A pending one has no next run: it never runs until the owner approves it.
+            return l.state === "pending"
+              ? `- #${l.id} script ${l.schedule} - pending the owner's approval, never runs until then: ${what}`
+              : `- #${l.id} ${l.command ? "script" : "prompt"} ${l.schedule} - next ${formatWhen(l.nextAt, offset)} (${humanLead(l.nextAt - now)}): ${what}`;
+          })
           .join("\n");
       }
 
       if ((sub === "cancel" || sub === "stop" || sub === "rm") && args.length === 2) {
         const id = Number((args[1] ?? "").replace(/^#/, ""));
         const l = Number.isInteger(id) ? deps.loops.get(id) : undefined;
-        if (!l || l.state !== "active") return `There is no active loop #${args[1]}.`;
+        if (!l || (l.state !== "active" && l.state !== "pending")) return `There is no active loop #${args[1]}.`;
         if (l.createdBy !== actor.slackId && actor.role !== "owner") {
           return `#${l.id} is not yours to cancel - ask <@${l.createdBy}>.`;
         }
-        deps.loops.settle(l.id, "cancelled", now);
+        // A pending loop was never live: cancelling it deletes it, and its buttons go dead.
+        if (l.state === "pending") deps.loops.discard(l.id);
+        else deps.loops.settle(l.id, "cancelled", now);
         return `cancelled loop #${l.id}`;
       }
 
@@ -252,23 +258,37 @@ export const SCHEDULE_COMMANDS: readonly CommandDef[] = [
       if (!parsed.ok) {
         return `${parsed.error}. \`${prefix} loop every monday 9am search the web for new slang and update my slang learning\``;
       }
-      // Arbitrary shell as the bot, on a timer, outside any turn: the owner's alone.
+      // Shell on a timer is never typed, by anyone: a pasted line is exactly what an injected message looks like.
+      if (parsed.command && !fromBrainRun) {
+        return "A script loop is never made from a typed line, even the owner's. Ask me in plain words what to run and how often, and I will write the script and put it to the owner to approve.";
+      }
+      // From a turn it is the owner's alone, and even then it waits for their Approve.
       if (parsed.command && actor.role !== "owner") {
-        return "A script loop runs shell, so it is *owner* only. A prompt loop (`loop every <schedule> <prompt>`) is open to you.";
+        return "A script loop runs shell, so only the owner can have me create one. A prompt loop (`loop every <schedule> <prompt>`) is open to you.";
       }
-      // A turn may read untrusted pages; it must never leave behind shell that outlives it. Only a line the owner typed creates one.
-      if (parsed.command && fromBrainRun) {
-        return "I never create a script loop from my own turn, only from a line the owner types. A prompt loop is fine.";
-      }
-      if (deps.loops.activeBy(actor.slackId, MAX_LOOPS_PER_USER + 1).length >= MAX_LOOPS_PER_USER) {
+      if (deps.loops.liveBy(actor.slackId, MAX_LOOPS_PER_USER + 1).length >= MAX_LOOPS_PER_USER) {
         return `You already have ${MAX_LOOPS_PER_USER} loops. \`${prefix} loop list\`, then \`${prefix} loop cancel <id>\`.`;
       }
       const nextAt = nextRun(parsed.schedule, now, offset);
+      if (parsed.command) {
+        if (!deps.loopApproval) return "I cannot ask for the owner's approval right now, so no script loop was created.";
+        const proposed = await proposeScriptLoop(deps.loopApproval, {
+          channelId,
+          threadTs: threadTs ?? "",
+          createdBy: actor.slackId,
+          schedule: scheduleText(parsed.schedule),
+          prompt: "",
+          command: parsed.command,
+          nextAt,
+        });
+        if (!proposed.ok) return proposed.error;
+        return `🔐 script loop #${proposed.loop.id} (${proposed.loop.schedule}) is PENDING: nothing is scheduled and nothing runs until the owner presses Approve on the DM I just sent with the exact command. Reject, or no answer in 24h, deletes it. Tell the person that.`;
+      }
       const l = deps.loops.add(
         { channelId, threadTs: threadTs ?? "", createdBy: actor.slackId, schedule: scheduleText(parsed.schedule), prompt: parsed.prompt, command: parsed.command, nextAt },
         now,
       );
-      return `🔁 loop #${l.id}: ${l.schedule}, first run ${formatWhen(nextAt, offset)} (${humanLead(nextAt - now)}). ${parsed.command ? "Each run is a shell command with no turn; only a failure is sent to your DM." : "Each run starts a turn in your DM with me, as you."} (\`${prefix} loop cancel ${l.id}\`)`;
+      return `🔁 loop #${l.id}: ${l.schedule}, first run ${formatWhen(nextAt, offset)} (${humanLead(nextAt - now)}). Each run starts a turn in your DM with me, as you. (\`${prefix} loop cancel ${l.id}\`)`;
     },
   },
   {

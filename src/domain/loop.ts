@@ -23,7 +23,43 @@ export const DEFAULT_LOOP_MINUTES = 9 * 60;
 export const MAX_LOOPS_PER_USER = 10;
 export const MAX_PROMPT_CHARS = 2000;
 
-export type LoopState = "active" | "cancelled" | "failed";
+/** `pending`: a script loop a turn wrote, waiting for the owner's Approve. It never runs. */
+export type LoopState = "pending" | "active" | "cancelled" | "failed";
+
+/** How long an unanswered script loop waits before it is deleted. */
+export const PENDING_TTL_MS = 86_400_000;
+
+/** Button ids. `jv:` like every element of ours, but decided in code, never handed to the model. */
+export const LOOP_ACTION_PREFIX = "jv:loop:";
+export const LOOP_APPROVE_ACTION = `${LOOP_ACTION_PREFIX}approve`;
+export const LOOP_REJECT_ACTION = `${LOOP_ACTION_PREFIX}reject`;
+
+/** Slack reads `<url|label>`, `<!channel>`, `<@U…>` and `&…;` even inside a code fence, so the shell is shown escaped. */
+const escapeForSlack = (text: string): string =>
+  text.replaceAll("&", "&amp;").replaceAll("<", "&lt;").replaceAll(">", "&gt;");
+
+/** The lines of the approval DM that say what runs: a press counts only while the pressed message still shows them. */
+export const approvalCore = (schedule: string, command: string): readonly [string, string] => [
+  `schedule: ${schedule}`,
+  `\`\`\`${escapeForSlack(command.replaceAll("```", "'''"))}\`\`\``,
+];
+
+/** The approval DM: the exact shell and schedule, so what is approved is what runs. */
+export const approvalText = (id: number, schedule: string, command: string, ttlMs: number = PENDING_TTL_MS): string =>
+  [
+    `🔐 I wrote a script loop (#${id}) and it needs your OK before it ever runs.`,
+    approvalCore(schedule, command)[0],
+    "command (runs as me, with no turn):",
+    approvalCore(schedule, command)[1],
+    `Approve starts it, Reject deletes it. No answer in ${Math.round(ttlMs / 3_600_000)}h also deletes it.`,
+  ].join("\n");
+
+export const settledLoopText = (kind: "approved" | "rejected" | "expired", id: number, by?: string): string =>
+  kind === "approved"
+    ? `✅ script loop #${id} approved${by ? ` by <@${by}>` : ""} - it runs on its schedule now`
+    : kind === "rejected"
+      ? `❌ script loop #${id} rejected${by ? ` by <@${by}>` : ""} - deleted`
+      : `⌛ script loop #${id} expired with no answer - deleted`;
 
 export type Schedule =
   | { readonly kind: "interval"; readonly everyMs: number }

@@ -70,6 +70,7 @@ import { noTools } from "./domain/toolPolicy.ts";
 import { createClaudeJsonReader, unlistedLocalMcpServers } from "./infrastructure/llm/mcpConfig.ts";
 import { createReminderSender } from "./application/reminders.ts";
 import { createLoopRunner } from "./application/loops.ts";
+import { expirePendingLoops, type LoopApprovalDeps } from "./application/loopApproval.ts";
 import { createShellCheck } from "./infrastructure/system/shellCheck.ts";
 import { createOrcaCli, createOrcaTerminal } from "./infrastructure/system/orcaTerminal.ts";
 import { createOrcaProbe } from "./infrastructure/system/orcaProbe.ts";
@@ -521,6 +522,15 @@ const main = async () => {
     }),
   );
 
+  // A script loop a turn wrote waits here for the owner's Approve; the same object backs the button handler and the expiry sweep.
+  const loopApproval: LoopApprovalDeps = {
+    loops,
+    slack: slackAdmin,
+    clock,
+    ownerSlackId: config.ownerSlackId,
+    offsetMinutes: () => hostOffsetMin(clock()),
+    log: (l) => activity.line(`loop approval: ${l}`),
+  };
   const deps: RespondDeps = {
     users,
     messages,
@@ -542,6 +552,7 @@ const main = async () => {
     follows,
     reminders,
     loops,
+    loopApproval,
     slackWaitScript,
     orcaWorkerWait,
     workerTickets,
@@ -1012,6 +1023,8 @@ const main = async () => {
     dm: async (userId, text) => slackAdmin.postDm(userId, text, SIGNATURES.loop),
     // Unattended spend needs a role that can still start a loop: a demoted or removed creator's loops stop.
     check: createShellCheck(fullCwd),
+    // Pending script loops nobody answered in 24h are deleted, restart or not.
+    sweep: () => expirePendingLoops(loopApproval),
     mayRun: (id, script) =>
       id === config.ownerSlackId || (!script && ["admin", "owner"].includes(users.get(id)?.role ?? "")),
     log: (msg) => console.error(`[loop] ${msg}`),

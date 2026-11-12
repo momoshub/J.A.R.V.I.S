@@ -5,7 +5,9 @@ import { createLoopRunner, type LoopTurnRequest } from "../../src/application/lo
 import { dispatchCommand } from "../../src/application/commands.ts";
 import type { CheckResult } from "../../src/application/watcher.ts";
 import { createCommandLogRepo } from "../../src/infrastructure/db/commandLogRepo.ts";
-import { actor, build, db as fixtureDb } from "./commandsFixture.ts";
+import { decideLoop, expirePendingLoops, type LoopApprovalDeps } from "../../src/application/loopApproval.ts";
+import { approvalText, LOOP_APPROVE_ACTION, LOOP_REJECT_ACTION, PENDING_TTL_MS } from "../../src/domain/loop.ts";
+import { actor, build, db as fixtureDb, OWNER, slackCalls } from "./commandsFixture.ts";
 
 let db: DbClient;
 let loops: LoopRepo;
@@ -18,9 +20,9 @@ let check: CheckResult = { code: 0, output: "" };
 
 const HOUR = 3_600_000;
 
-const runner = (over: { mayRun?: (id: string, script: boolean) => boolean; noCheck?: boolean; turnFails?: boolean } = {}) =>
+const runner = (over: { repo?: LoopRepo; mayRun?: (id: string, script: boolean) => boolean; noCheck?: boolean; turnFails?: boolean } = {}) =>
   createLoopRunner({
-    loops,
+    loops: over.repo ?? loops,
     clock: () => now,
     offsetMinutes: () => 0,
     runTurn: async (req) => {
@@ -68,6 +70,8 @@ beforeEach(() => {
   failDm = false;
   check = { code: 0, output: "" };
 });
+
+const shownOf = (row: { id: number; schedule: string; command?: string | null }): string[] => [approvalText(row.id, row.schedule, row.command ?? "")];
 
 describe("loop runner: prompt mode", () => {
   test("nothing fires before it is due", async () => {
@@ -230,7 +234,22 @@ describe("loop command", () => {
     const base = build();
     const l = createLoopRepo(fixtureDb);
     const commandLog = createCommandLogRepo(fixtureDb);
-    return { deps: { ...base, loops: l, commandLog, tzOffsetMinutes: () => 0 }, l, commandLog };
+    const clock = { now: 42 };
+    const loopApproval: LoopApprovalDeps = {
+      loops: l,
+      slack: base.slack,
+      clock: () => clock.now,
+      ownerSlackId: OWNER,
+      offsetMinutes: () => 0,
+      timer: () => {},
+    };
+    return { deps: { ...base, clock: () => clock.now, loops: l, loopApproval, commandLog, tzOffsetMinutes: () => 0 }, l, commandLog, loopApproval, clock };
+  };
+
+  /** A turn's script loop for the owner, left pending. */
+  const propose = async (m: ReturnType<typeof mk>, line = "loop every 15m -- ./sync.sh") => {
+    await dispatchCommand(m.deps, OWNER_ACTOR, "C1", line, { fromBrainRun: true });
+    return m.l.pending()[0]!;
   };
 
   test("an admin creates a prompt loop from a channel and gets a short confirmation there", async () => {
@@ -255,22 +274,55 @@ describe("loop command", () => {
     expect(l.active()).toHaveLength(0);
   });
 
-  test("script mode is owner only", async () => {
+  test("a typed script loop is refused for everyone, the owner included, and stores nothing", async () => {
     const { deps, l } = mk();
-    const refused = await dispatchCommand(deps, ADMIN, "C1", "loop every 15m -- ./sync.sh");
-    expect(refused).toContain("owner");
+    for (const who of [ADMIN, OWNER_ACTOR]) {
+      const out = await dispatchCommand(deps, who, "C1", "loop every 15m -- ./sync.sh");
+      expect(out).toContain("never made from a typed line");
+      expect(out).toContain("plain words");
+    }
     expect(l.active()).toHaveLength(0);
-    const out = await dispatchCommand(deps, OWNER_ACTOR, "C1", "loop every 15m -- ./sync.sh");
-    expect(out).toContain("shell command");
-    expect(l.active()[0]?.command).toBe("./sync.sh");
+    expect(l.pending()).toHaveLength(0);
+    expect(slackCalls.buttons).toHaveLength(0);
   });
 
-  test("a script loop is never created from the bot's own turn", async () => {
+  test("a script loop from a turn is refused for a non-owner, and stores nothing", async () => {
     const { deps, l } = mk();
-    const out = await dispatchCommand(deps, OWNER_ACTOR, "C1", "loop every 5m -- true", { fromBrainRun: true });
-    expect(out).toContain("never create a script loop");
-    expect(l.active()).toHaveLength(0);
+    const out = await dispatchCommand(deps, ADMIN, "C1", "loop every 15m -- ./sync.sh", { fromBrainRun: true });
+    expect(out).toContain("only the owner");
+    expect(l.liveBy(ADMIN.slackId)).toHaveLength(0);
+    expect(slackCalls.buttons).toHaveLength(0);
+  });
+
+  test("a script loop from the owner's turn is stored PENDING and DMed with the exact command and Approve / Reject", async () => {
+    const m = mk();
+    const out = await dispatchCommand(m.deps, OWNER_ACTOR, "C1", "loop every 15m -- ./sync.sh --all", { fromBrainRun: true });
+    expect(out).toContain("PENDING");
+    expect(m.l.active()).toHaveLength(0);
+    const row = m.l.pending()[0]!;
+    expect(row.command).toBe("./sync.sh --all");
+    expect(row.state).toBe("pending");
+    const dm = slackCalls.posts.at(-1)!;
+    expect(dm.channel).toBe(OWNER);
+    expect(dm.text).toContain("./sync.sh --all");
+    expect(dm.text).toContain("every 15m");
+    expect(slackCalls.buttons).toEqual([`${LOOP_APPROVE_ACTION}:${row.id}`, `${LOOP_REJECT_ACTION}:${row.id}`]);
+    expect(row.noticeTs).not.toBe("");
+  });
+
+  test("a turn's prompt loop is unchanged: active at once, no buttons", async () => {
+    const { deps, l } = mk();
     expect(await dispatchCommand(deps, OWNER_ACTOR, "C1", "loop every 6h check slang", { fromBrainRun: true })).toContain("loop #");
+    expect(l.active()).toHaveLength(1);
+    expect(slackCalls.buttons).toHaveLength(0);
+  });
+
+  test("no way to DM the approval means no loop is kept", async () => {
+    const m = mk();
+    const deps = { ...m.deps, loopApproval: { ...m.loopApproval, slack: { ...m.deps.slack!, postDmInteractive: async () => undefined } } };
+    const out = await dispatchCommand(deps, OWNER_ACTOR, "C1", "loop every 15m -- ./sync.sh", { fromBrainRun: true });
+    expect(out).toContain("no script loop was created");
+    expect(m.l.pending()).toHaveLength(0);
   });
 
   test("a bad schedule explains itself and stores nothing", async () => {
@@ -298,10 +350,143 @@ describe("loop command", () => {
     expect(await dispatchCommand(deps, ADMIN, "C1", `loop cancel ${row?.id}`)).toContain("no active loop");
   });
 
-  test("a script loop is listed as a script", async () => {
-    const { deps } = mk();
-    await dispatchCommand(deps, OWNER_ACTOR, "C1", "loop every 15m -- ./sync.sh");
-    expect(await dispatchCommand(deps, OWNER_ACTOR, "C1", "loop list")).toMatch(/script every 15m.*`\.\/sync\.sh`/);
+  test("list shows a pending script loop as pending, then as a script once approved", async () => {
+    const m = mk();
+    const row = await propose(m);
+    expect(await dispatchCommand(m.deps, OWNER_ACTOR, "C1", "loop list")).toMatch(/script every 15m - pending.*`\.\/sync\.sh`/);
+    await decideLoop(m.loopApproval, { slackUserId: OWNER, actionId: LOOP_APPROVE_ACTION, value: String(row.id), channel: row.noticeChannel, messageTs: row.noticeTs, shown: shownOf(row) });
+    expect(await dispatchCommand(m.deps, OWNER_ACTOR, "C1", "loop list")).toMatch(/script every 15m - next.*`\.\/sync\.sh`/);
+  });
+
+  test("cancelling a pending loop deletes it and kills its buttons", async () => {
+    const m = mk();
+    const row = await propose(m);
+    expect(await dispatchCommand(m.deps, OWNER_ACTOR, "C1", `loop cancel ${row.id}`)).toContain("cancelled");
+    expect(m.l.get(row.id)).toBeUndefined();
+    expect(await decideLoop(m.loopApproval, { slackUserId: OWNER, actionId: LOOP_APPROVE_ACTION, value: String(row.id), channel: row.noticeChannel, messageTs: row.noticeTs, shown: shownOf(row) })).toEqual({ kind: "unknown" });
+  });
+
+  describe("approval", () => {
+    const press = (m: ReturnType<typeof mk>, id: number, actionId: string, by = OWNER) => {
+      const row = m.l.get(id);
+      return decideLoop(m.loopApproval, { slackUserId: by, actionId, value: String(id), channel: row?.noticeChannel, messageTs: row?.noticeTs, shown: row ? shownOf(row) : [] });
+    };
+
+    test("a press that is not on the untouched approval DM changes nothing", async () => {
+      const m = mk();
+      const row = await propose(m);
+      const base = { slackUserId: OWNER, actionId: LOOP_APPROVE_ACTION, value: String(row.id) };
+      // A button a turn posted somewhere else, carrying the right id and value.
+      expect(await decideLoop(m.loopApproval, { ...base, channel: "C0OTHER", messageTs: "1.000001" })).toEqual({ kind: "forged" });
+      expect(await decideLoop(m.loopApproval, { ...base, channel: row.noticeChannel, messageTs: "1.000001" })).toEqual({ kind: "forged" });
+      expect(await decideLoop(m.loopApproval, base)).toEqual({ kind: "forged" });
+      // The real DM, but edited after it was posted.
+      expect(await decideLoop(m.loopApproval, { ...base, channel: row.noticeChannel, messageTs: row.noticeTs, shown: shownOf(row), edited: true })).toEqual({ kind: "forged" });
+      // The real DM rewritten to show a harmless command, with no edited flag (Slack may not set one for the app's own update).
+      const harmless = approvalText(row.id, row.schedule, "echo backup ok");
+      expect(await decideLoop(m.loopApproval, { ...base, channel: row.noticeChannel, messageTs: row.noticeTs, shown: [harmless] })).toEqual({ kind: "forged" });
+      expect(await decideLoop(m.loopApproval, { ...base, channel: row.noticeChannel, messageTs: row.noticeTs, shown: [] })).toEqual({ kind: "forged" });
+      expect(await decideLoop(m.loopApproval, { ...base, actionId: LOOP_REJECT_ACTION, channel: "C0OTHER", messageTs: "1.000001" })).toEqual({ kind: "forged" });
+      expect(m.l.get(row.id)?.state).toBe("pending");
+      // What was really posted passes, as Slack hands the text back in the section.
+      const posted = slackCalls.posts.filter((p) => p.text.includes(`#${row.id}`)).at(-1)?.text ?? "";
+      expect(await decideLoop(m.loopApproval, { ...base, channel: row.noticeChannel, messageTs: row.noticeTs, shown: [posted] })).toEqual({ kind: "approved", id: row.id });
+    });
+
+    test("a pending loop never runs, even when its time has come", async () => {
+      const m = mk();
+      const row = await propose(m);
+      now = Date.UTC(2026, 10, 5, 10, 0);
+      m.l.reschedule(row.id, now - 1, now);
+      ran = [];
+      await runner({ repo: m.l }).tick();
+      await flush();
+      expect(ran).toHaveLength(0);
+      expect(m.l.get(row.id)?.runs).toBe(0);
+      expect(m.l.due(now)).toHaveLength(0);
+      // The row really is overdue: only its state keeps it quiet.
+      expect(m.l.get(row.id)?.nextAt).toBeLessThan(now);
+    });
+
+    test("the owner's Approve activates it, from now, and it then runs", async () => {
+      const m = mk();
+      const row = await propose(m);
+      m.clock.now = 1000;
+      expect(await press(m, row.id, LOOP_APPROVE_ACTION)).toEqual({ kind: "approved", id: row.id });
+      const after = m.l.get(row.id)!;
+      expect(after.state).toBe("active");
+      expect(after.nextAt).toBe(1000 + 15 * 60_000);
+      expect(slackCalls.settled.at(-1)?.text).toContain("approved");
+      // And a second press changes nothing.
+      expect(await press(m, row.id, LOOP_APPROVE_ACTION)).toEqual({ kind: "decided" });
+
+      now = after.nextAt + 1;
+      ran = [];
+      await runner({ repo: m.l }).tick();
+      await flush();
+      expect(ran).toEqual(["./sync.sh"]);
+    });
+
+    test("anyone but the owner pressing Approve or Reject changes nothing", async () => {
+      const m = mk();
+      const row = await propose(m);
+      for (const a of [LOOP_APPROVE_ACTION, LOOP_REJECT_ACTION]) {
+        expect(await press(m, row.id, a, "U0ADMIN0001")).toEqual({ kind: "refused" });
+      }
+      expect(m.l.get(row.id)?.state).toBe("pending");
+    });
+
+    test("Reject deletes it", async () => {
+      const m = mk();
+      const row = await propose(m);
+      expect(await press(m, row.id, LOOP_REJECT_ACTION)).toEqual({ kind: "rejected", id: row.id });
+      expect(m.l.get(row.id)).toBeUndefined();
+      expect(slackCalls.settled.at(-1)?.text).toContain("rejected");
+      expect(await press(m, row.id, LOOP_APPROVE_ACTION)).toEqual({ kind: "unknown" });
+    });
+
+    test("no answer in 24h deletes it: by sweep, and a late Approve cannot revive it", async () => {
+      const m = mk();
+      const row = await propose(m);
+      m.clock.now = 42 + PENDING_TTL_MS - 1;
+      expect(await expirePendingLoops(m.loopApproval)).toBe(0);
+      expect(m.l.get(row.id)?.state).toBe("pending");
+      m.clock.now = 42 + PENDING_TTL_MS;
+      expect(await expirePendingLoops(m.loopApproval)).toBe(1);
+      expect(m.l.get(row.id)).toBeUndefined();
+      expect(slackCalls.settled.at(-1)?.text).toContain("expired");
+      expect(await press(m, row.id, LOOP_APPROVE_ACTION)).toEqual({ kind: "unknown" });
+    });
+
+    test("an Approve pressed after 24h, before any sweep, deletes instead of activating", async () => {
+      const m = mk();
+      const row = await propose(m);
+      m.clock.now = 42 + PENDING_TTL_MS + 5;
+      expect(await press(m, row.id, LOOP_APPROVE_ACTION)).toEqual({ kind: "expired" });
+      expect(m.l.get(row.id)).toBeUndefined();
+      expect(m.l.active()).toHaveLength(0);
+    });
+
+    test("the runner's tick runs the sweep, so expiry survives a restart", async () => {
+      const m = mk();
+      const row = await propose(m);
+      m.clock.now = 42 + PENDING_TTL_MS + 1;
+      await createLoopRunner({
+        loops: m.l,
+        clock: () => m.clock.now,
+        offsetMinutes: () => 0,
+        runTurn: async () => {},
+        dm: async () => undefined,
+        sweep: () => expirePendingLoops(m.loopApproval),
+      }).tick();
+      expect(m.l.get(row.id)).toBeUndefined();
+    });
+
+    test("a pending loop counts toward the per-person cap", async () => {
+      const m = mk();
+      for (let i = 0; i < 10; i++) await propose(m, `loop every ${i + 5}m -- ./s${i}.sh`);
+      expect(await dispatchCommand(m.deps, OWNER_ACTOR, "C1", "loop every 6h x", { fromBrainRun: true })).toContain("already have 10");
+    });
   });
 
   test("the owner can cancel anyone's", async () => {
