@@ -142,7 +142,7 @@ Every command has two interfaces - use whichever you like. Both triggers are con
 | `whoami` | anyone | show your role |
 | `model` | anyone | show the brain and current model |
 | `ask <question>` | anyone | one-shot question to the brain |
-| `model [role\|subagent\|worker\|plan\|here\|#channel] [name\|default]` | anyone (setting: admins) | show the brain; admins pin a model per role or channel, or for subagents, Orca workers, planning and loop fires |
+| `model [role\|subagent\|worker\|plan\|loop\|here\|#channel] [name\|default]` | anyone (setting: admins) | show the brain; admins pin a model per role or channel, or for subagents, Orca workers, planning and loop fires |
 | `logsource [grafana,datadog\|default]` | anyone (setting: admins) | where it looks for logs - see [Investigating](#investigating) |
 | `cloudwatch [--group /log/group] [--last 15m \| --from <t> --to <t>] [--region r] [--limit n] <insights query>` (alias `cw`), `cloudwatch help`, `cloudwatch default <group\|reset>` | executer and up (owner runs it directly, executer and admin confirm first) | query CloudWatch Logs Insights directly - see [CloudWatch](#cloudwatch) |
 | `forget` | anyone | wipe the bot's memory of this channel |
