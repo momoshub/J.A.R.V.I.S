@@ -121,11 +121,30 @@ export const createFollowGate = <T extends BufferedMessage>(deps: FollowGateDeps
     // Somebody wrote while the model was reading: its answer is about a batch
     // that no longer exists. The new message already restarted the window.
     // Past the cap the window cannot restart (it is due at once), so asking
-    // again would loop for as long as people keep typing and never answer:
-    // anything but `skip` answers the whole current batch instead.
+    // again would loop for as long as people keep typing and never settle
+    // anything. There, a `skip` settles the messages the gate actually saw (they
+    // were skipped) and carries only the unseen ones into a fresh batch with a
+    // new cap; anything else answers the whole current batch.
     if (e.stale) {
-      if (deps.now() < capOf(e.batch, settings) || decision.verdict === "skip") {
+      const now = deps.now();
+      if (now < capOf(e.batch, settings)) {
         deps.log(gateLogLine({ ...k, size, decision, note: "superseded by a newer message" }));
+        arm(k, e);
+        return;
+      }
+      if (decision.verdict === "skip") {
+        const unseen = e.batch.items.slice(size);
+        deps.log(
+          gateLogLine({ ...k, size, decision, note: `superseded past the cap, skipped the ${size} seen, ${unseen.length} unseen carried over` }),
+        );
+        const seenWaiters = e.waiters.slice(0, size);
+        e.waiters = e.waiters.slice(size);
+        for (const w of seenWaiters) w.resolve();
+        if (unseen.length === 0) {
+          entries.delete(id);
+          return;
+        }
+        e.batch = unseen.reduce<Batch<T> | undefined>((b, m) => addToBatch(b, m, now, settings), undefined)!;
         arm(k, e);
         return;
       }

@@ -764,13 +764,19 @@ exactly one human has), not from why it is followed: it is followed for good fro
 its second message on, which makes its route read "asked", and it must still never
 wait.
 
-A message that is not held is answered at once and takes over whatever the thread
-had buffered: a tag, a command line or a one-on-one reply drops the pending batch
-and settles its inbox rows, so the batch cannot fire later into a second,
-out-of-order answer (the earlier messages are in the thread context the answer
-already reads). Past the hard cap the gate never asks again: any answer except
-`skip`, including one superseded by a newer message, replies with the whole current
-batch. The batch runs as its least-privileged author (role, tools and access), so a
+A message that is not held is answered at once, and takes over whatever the thread
+had buffered only when it will itself run a chat turn for an allowed user (allowed,
+not a command line, has text beyond the tag): that turn reads the buffered messages
+in its thread context, so the pending batch is dropped and its inbox rows settle,
+and it cannot fire later into a second, out-of-order answer. A message from
+somebody off the allowlist (untagged, or an @-mention that becomes an access
+request) and a command line answer none of the buffered messages, so they leave the
+batch alone to fire on its own. Past the hard cap the gate never loops: a newer
+message arriving while the model reads does not restart the window. Any answer
+except `skip` replies with the whole current batch; a `skip` settles only the
+messages the gate actually read (they were skipped) and carries the unseen ones
+into a fresh batch with a new cap, so a skip never swallows a message the model
+did not see and a busy thread cannot hold its rows open for ever. The batch runs as its least-privileged author (role, tools and access), so a
 lower-role request plus a higher-role "+1" in the same window never runs on the
 higher role's tools. A turn that fails marks its rows failed, not done.
 

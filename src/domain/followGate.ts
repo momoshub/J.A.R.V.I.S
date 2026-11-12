@@ -94,6 +94,21 @@ export const gateRoute = (opts: Parameters<typeof gateApplies>[0] & { readonly w
   opts.wired && opts.allowed && gateApplies(opts) ? "gate" : "now";
 
 /**
+ * Does a message answered at once take the thread's pending batch over?
+ *
+ * Only when it will itself run a chat turn for an allowed user: that turn reads
+ * the buffered messages in its thread context, so they are answered. A
+ * stranger's message (ignored, or an access request) and a command line (runs
+ * as a command, reads no thread) answer nothing, so the batch is left alone to
+ * fire on its own. `hasText` is the text with the bot's mention removed.
+ */
+export const takesOverBatch = (opts: {
+  readonly allowed: boolean;
+  readonly isCommand: boolean;
+  readonly hasText: boolean;
+}): boolean => opts.allowed && !opts.isCommand && opts.hasText;
+
+/**
  * The author a batch runs as: the least-privileged one. The turn's role,
  * tool policy and access all come from whoever it runs as, and a lower-role
  * user's request must never ride on a higher-role author's "+1" in the same

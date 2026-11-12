@@ -57,7 +57,7 @@ import {
   MENU_VIEW,
   needsArguments,
 } from "../../domain/commandMenu.ts";
-import { annotateMentions, extractMentionIds } from "../../domain/mentions.ts";
+import { annotateMentions, extractMentionIds, hasContent } from "../../domain/mentions.ts";
 import { isTimeout } from "../../domain/threadSession.ts";
 import { toMrkdwn } from "../../domain/slackFormat.ts";
 import { MAX_BLOCKS, readableText, toBlockMessage, type Block } from "../../domain/blockKit.ts";
@@ -65,6 +65,7 @@ import { couldFollowThread, followVerdict, isOneOnOneThread, isSpeech, startsAut
 import {
   formatBatchInput,
   gateRoute,
+  takesOverBatch,
   gateSettings,
   GATE_CONTEXT_LINES,
   leastPrivilegedAuthor,
@@ -1069,8 +1070,18 @@ export const createSlackApp = (config: SlackAppConfig, deps: Deps) => {
   app.event("app_mention", async ({ event, client, say, context }) => {
     const e = event as { channel: string; user?: string; text: string; ts: string; thread_ts?: string };
     if (!e.user) return;
-    // A tag is answered at once: whatever the thread had buffered is taken over.
-    followGate.cancel({ channel: e.channel, threadTs: threadKeyOf(e) }, "tagged message");
+    // A tag that runs a chat turn for an allowed user takes the buffered batch
+    // over (the turn reads it in the thread). A stranger's tag (an access
+    // request) or a command line answers none of it: the batch fires on its own.
+    if (
+      takesOverBatch({
+        allowed: decideAccess(e.user, deps.ownerSlackId, deps.users.get).allowed,
+        isCommand: commandLineOf(e.text, config.commandPrefix) !== undefined || reviewRequestIn(e.text) !== undefined,
+        hasText: hasContent(e.text),
+      })
+    ) {
+      followGate.cancel({ channel: e.channel, threadTs: threadKeyOf(e) }, "tagged message");
+    }
     void retireOnReply(client, { ...e, user: e.user });
     await autoFollow(asClient(client), e.channel, threadKeyOf(e), e.user);
     await handle({
@@ -1732,10 +1743,19 @@ export const createSlackApp = (config: SlackAppConfig, deps: Deps) => {
         );
         return;
       }
-      // Answered at once (a command line, a one-on-one thread, the gate off):
-      // a batch still buffered for this thread is taken over, not answered
-      // later out of order.
-      followGate.cancel({ channel: m.channel, threadTs: m.thread_ts! }, "message answered at once");
+      // Answered at once (a one-on-one thread, the gate off): a batch still
+      // buffered for this thread is taken over, not answered later out of order
+      // - but only by a message that runs a chat turn for an allowed user. A
+      // stranger or a command line leaves it to fire on its own.
+      if (
+        takesOverBatch({
+          allowed: decideAccess(m.user!, deps.ownerSlackId, deps.users.get).allowed,
+          isCommand: commandLineOf(m.text!, config.commandPrefix) !== undefined || reviewRequestIn(m.text!) !== undefined,
+          hasText: hasContent(m.text!),
+        })
+      ) {
+        followGate.cancel({ channel: m.channel, threadTs: m.thread_ts! }, "message answered at once");
+      }
       await handle({
         channelId: m.channel,
         userId: m.user!,

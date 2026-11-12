@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { createFollowGate, type GateTimers } from "../../src/application/followGate.ts";
-import { failOpen, gateSettings, type GateDecision, type GateSettings } from "../../src/domain/followGate.ts";
+import { failOpen, gateSettings, takesOverBatch, type GateDecision, type GateSettings } from "../../src/domain/followGate.ts";
 
 type Timer = { at: number; fn: () => void; id: number };
 
@@ -371,24 +371,58 @@ describe("past the hard cap", () => {
     expect(t.gate.pending()).toBe(0);
   });
 
-  test("a superseded `skip` is still never allowed to swallow the newer message", async () => {
+  test("past the cap a superseded `skip` settles the seen messages and carries the unseen one into a fresh batch", async () => {
     const t = setup({
       verdicts: async (n) => {
         await new Promise<void>((r) => t.clock.timers.set(() => r(), 3_000));
         return n === 1 ? { verdict: "skip", reason: "chat" } : { verdict: "reply", reason: "asked" };
       },
     });
+    const done: string[] = [];
+    const sub = (text: string, ts: string) => void t.gate.submit(K, item(text, ts)).then(() => done.push(text));
     for (let i = 0; i < 4; i++) {
-      void t.gate.submit(K, item(`m${i}`, String(i)));
+      sub(`m${i}`, String(i));
       await t.clock.advance(20_000);
     }
-    void t.gate.submit(K, item("m4", "4"));
+    sub("m4", "4");
     await t.clock.advance(11_500);
-    void t.gate.submit(K, item("late", "9"));
-    await t.clock.advance(30_000);
+    sub("late", "9");
+    await t.clock.advance(1_500); // the first ask returns: skip, superseded, past the cap
+    expect(done).toEqual(["m0", "m1", "m2", "m3", "m4"]); // the seen ones are settled, the unseen is not
+    expect(t.gate.pending()).toBe(1);
+    await t.clock.advance(60_000);
     expect(t.asked).toHaveLength(2);
-    expect(t.ran).toHaveLength(1);
-    expect(t.ran[0]!.map((x) => x.text)).toEqual(["m0", "m1", "m2", "m3", "m4", "late"]);
+    expect(t.asked[1]!.map((x) => x.text)).toEqual(["late"]);
+    expect(t.ran.map((b) => b.map((x) => x.text))).toEqual([["late"]]);
+    expect(done).toContain("late");
+  });
+
+  test("steady messages with every answer `skip`: every waiter settles and no batch outgrows the cap", async () => {
+    const sizes: number[] = [];
+    const t = setup({
+      verdicts: async (_n, items) => {
+        sizes.push(items.length);
+        await new Promise<void>((r) => t.clock.timers.set(() => r(), 3_000));
+        return { verdict: "skip", reason: "people talking" };
+      },
+    });
+    let settled = 0;
+    let total = 0;
+    for (let at = 0; at < 1_000_000; at += 2_500) {
+      void t.gate.submit(K, item(`m${total}`, String(total))).then(() => settled++);
+      total++;
+      await t.clock.advance(2_500);
+    }
+    // stop typing: whatever is left drains on its own
+    await t.clock.advance(300_000);
+    expect(settled).toBe(total);
+    expect(t.gate.pending()).toBe(0);
+    expect(t.ran).toHaveLength(0);
+    // 90s cap + 20s timeout-free 3s read at 2.5s a message: nothing near the 400 it was
+    const cap = Math.ceil((90_000 + 3_000) / 2_500) + 1;
+    expect(Math.max(...sizes)).toBeLessThanOrEqual(cap);
+    // and the thread was asked about a handful of times per cap, not every tick
+    expect(sizes.length).toBeLessThan((1_000_000 / 90_000) * 3);
   });
 });
 
@@ -455,5 +489,33 @@ describe("a turn that fails", () => {
     void gate.submit(K, item("b", "2")).then(() => out.push("b ok"), (e: Error) => out.push(`b ${e.message}`));
     await clock.advance(25_000);
     expect(out).toEqual(["a brain crashed", "b brain crashed"]);
+  });
+});
+
+describe("takesOverBatch: only a chat turn for an allowed user answers the buffered messages", () => {
+  test("an allowed user's message with content takes the batch over", () => {
+    expect(takesOverBatch({ allowed: true, isCommand: false, hasText: true })).toBe(true);
+  });
+  test("a stranger (untagged or @-mention) leaves the batch alone", () => {
+    expect(takesOverBatch({ allowed: false, isCommand: false, hasText: true })).toBe(false);
+  });
+  test("a command line leaves the batch alone", () => {
+    expect(takesOverBatch({ allowed: true, isCommand: true, hasText: true })).toBe(false);
+  });
+  test("a bare tag with nothing else leaves the batch alone", () => {
+    expect(takesOverBatch({ allowed: true, isCommand: false, hasText: false })).toBe(false);
+  });
+
+  test("when the batch is left alone it fires on its own and is answered, not dropped", async () => {
+    const t = setup({ verdicts: [{ verdict: "reply", reason: "asked" }] });
+    const done: string[] = [];
+    void t.gate.submit(K, item("A", "1")).then(() => done.push("A"));
+    await t.clock.advance(5_000);
+    void t.gate.submit(K, item("B", "2")).then(() => done.push("B"));
+    // a stranger writes: the app does not call cancel
+    if (takesOverBatch({ allowed: false, isCommand: false, hasText: true })) t.gate.cancel(K, "stranger");
+    await t.clock.advance(30_000);
+    expect(t.ran.map((b) => b.map((x) => x.text))).toEqual([["A", "B"]]);
+    expect(done).toEqual(["A", "B"]);
   });
 });
