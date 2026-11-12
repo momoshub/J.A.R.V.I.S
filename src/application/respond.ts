@@ -72,7 +72,7 @@ export const respond = async (
     // hand-back, a worker question, a drift nudge): its text is an internal
     // steer, and a `tell` carrying a PR url and "review" was run as a review
     // of that PR in the target thread instead of reaching its session.
-    const asked = inbound.unprompted ? undefined : reviewRequestIn(inbound.text);
+    const asked = inbound.unprompted || inbound.batched ? undefined : reviewRequestIn(inbound.text);
     if (asked) return respond(deps, { ...inbound, text: `!${asked}` }, sink);
 
     // One function, shared with the agent-session stop handler: if the two ever

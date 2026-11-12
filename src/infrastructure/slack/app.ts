@@ -62,6 +62,12 @@ import { isTimeout } from "../../domain/threadSession.ts";
 import { toMrkdwn } from "../../domain/slackFormat.ts";
 import { MAX_BLOCKS, readableText, toBlockMessage, type Block } from "../../domain/blockKit.ts";
 import { couldFollowThread, followVerdict, isOneOnOneThread, isSpeech, startsAutoFollow } from "../../domain/threadFollow.ts";
+import { formatBatchInput, gateApplies, gateSettings, GATE_CONTEXT_LINES, type GateContextLine } from "../../domain/followGate.ts";
+import { decideAccess } from "../../domain/access.ts";
+import { reviewRequestIn } from "../../domain/reviewRequest.ts";
+import { createFollowGate } from "../../application/followGate.ts";
+import { createGateModel } from "../../application/followGateModel.ts";
+import type { ToolPolicy } from "../../domain/toolPolicy.ts";
 import { unfollowOnReaction } from "../../application/followReaction.ts";
 import { collapsedBlocks, collapseSteps } from "../../domain/collapseSteps.ts";
 import { usageFooter } from "../../domain/usageFooter.ts";
@@ -157,6 +163,12 @@ type Deps = RespondDeps & {
   kitViews?: Pick<KitViewRepo, "get">;
   /** The log channel a stop press is reported to; empty or absent: only logged. */
   stopLogChannel?: () => string;
+  /**
+   * The policy the follow gate's model runs on: the pal model, no tools, a
+   * short timeout. Absent, the gate is off and followed threads behave as
+   * they did before it existed.
+   */
+  gatePolicy?: () => ToolPolicy;
 };
 
 /** The slice of the Slack WebClient the handler needs (kept minimal for testing). */
@@ -348,6 +360,11 @@ export type Incoming = {
   client: SlackClient;
   /** An untagged reply under a thread this bot started. */
   following?: boolean;
+  /**
+   * The messages a followed thread buffered, oldest first, when the turn is
+   * for several at once. `text`, `userId` and `messageTs` are the newest's.
+   */
+  batch?: readonly { userId: string; text: string; messageTs: string }[];
   /** Set when it came from the gateway inbox: which row, and which attempt at it. */
   inbox?: { rowId: number; attempt: number };
   say: (msg: { text: string; blocks?: Block[]; thread_ts?: string; reply_broadcast?: boolean }) => Promise<unknown>;
@@ -376,7 +393,18 @@ export const createHandler =
 
   return async (msg: Incoming): Promise<void> => {
     const displayName = await resolveName(msg.client, msg.userId);
-    const text = await annotate(msg.client, msg.text);
+    const batched = msg.batch && msg.batch.length > 1 ? msg.batch : undefined;
+    // One input for the whole batch, in order, each line under its author.
+    const text = batched
+      ? formatBatchInput(
+          await Promise.all(
+            batched.map(async (b) => ({
+              author: (await resolveName(msg.client, b.userId)) ?? `<@${b.userId}>`,
+              text: await annotate(msg.client, b.text),
+            })),
+          ),
+        )
+      : await annotate(msg.client, msg.text);
 
     // When following, held until the turn is plainly working: most of those
     // say nothing, and a stream opened up front is in the channel before
@@ -431,6 +459,7 @@ export const createHandler =
           messageTs: msg.messageTs,
           viaSlash: false,
           following: msg.following === true,
+          ...(batched ? { batched: true } : {}),
           interrupted: (msg.inbox?.attempt ?? 1) > 1,
           ...(msg.inbox ? { inboxRowId: msg.inbox.rowId } : {}),
         },
@@ -930,6 +959,94 @@ export const createSlackApp = (config: SlackAppConfig, deps: Deps) => {
       : undefined;
   // The real WebClient is a superset of the minimal SlackClient seam.
   const asClient = (client: WebClient) => client as unknown as SlackClient;
+
+  /**
+   * The gate in front of untagged messages in a followed thread: buffer, wait
+   * for quiet, ask the cheap model, and only then run the main turn on the
+   * whole batch (`domain/followGate.ts`, `application/followGate.ts`).
+   */
+  type GateItem = {
+    userId: string;
+    text: string;
+    ts: string;
+    client: SlackClient;
+    say: Incoming["say"];
+    teamId?: string;
+    inbox?: Incoming["inbox"];
+  };
+  const gateNames = new Map<string, string>();
+  const gateNameOf = async (client: SlackClient, id: string): Promise<string> => {
+    const hit = gateNames.get(id);
+    if (hit) return hit;
+    const name = (await fetchDisplayName(client, id)) ?? id;
+    gateNames.set(id, name);
+    return name;
+  };
+  /** The few messages before the batch, oldest first; empty when Slack will not say. */
+  const gateContext = async (
+    client: SlackClient,
+    channel: string,
+    threadTs: string,
+    beforeTs: string,
+    me: string | undefined,
+  ): Promise<GateContextLine[]> => {
+    try {
+      const res = (await (client as unknown as {
+        conversations: {
+          replies: (a: unknown) => Promise<{ messages?: { user?: string; bot_id?: string; text?: string; ts?: string }[] }>;
+        };
+      }).conversations.replies({ channel, ts: threadTs, limit: 200 })) ?? {};
+      const before = (res.messages ?? []).filter((x) => x.text?.trim() && x.ts !== undefined && x.ts < beforeTs);
+      return await Promise.all(
+        before.slice(-GATE_CONTEXT_LINES).map(async (x) => ({
+          author: x.user ? await gateNameOf(client, x.user) : "a bot",
+          text: x.text ?? "",
+          ...(x.user && x.user === me ? { own: true } : {}),
+        })),
+      );
+    } catch (err) {
+      log(`follow gate context failed channel=${channel} thread=${threadTs}: ${err instanceof Error ? err.message : String(err)}`);
+      return [];
+    }
+  };
+  const gateModel = deps.gatePolicy
+    ? createGateModel({ llm: deps.llm, policy: deps.gatePolicy, botName: () => config.botName })
+    : undefined;
+  const followGate = createFollowGate<GateItem>({
+    settings: () => gateSettings((k) => deps.settings?.get(k)),
+    now: () => deps.clock(),
+    log,
+    decide: async ({ channel, threadTs, items }) => {
+      if (!gateModel) throw new Error("no gate model wired");
+      const last = items[items.length - 1]!;
+      const me = await deps.slack?.botUserId().catch(ignoreQuietly("bot user id lookup"));
+      return gateModel({
+        channel,
+        threadTs,
+        actor: last.userId,
+        context: await gateContext(last.client, channel, threadTs, items[0]!.ts, me),
+        batch: await Promise.all(
+          items.map(async (i) => ({ author: await gateNameOf(i.client, i.userId), text: i.text })),
+        ),
+      });
+    },
+    run: async ({ channel, threadTs, items }) => {
+      const last = items[items.length - 1]!;
+      await handle({
+        channelId: channel,
+        userId: last.userId,
+        teamId: last.teamId,
+        inbox: last.inbox,
+        text: last.text,
+        threadTs,
+        messageTs: last.ts,
+        client: last.client,
+        following: true,
+        batch: items.map((i) => ({ userId: i.userId, text: i.text, messageTs: i.ts })),
+        say: last.say,
+      });
+    },
+  });
   const retireOnReply = async (client: unknown, m: Parameters<typeof retireOpenKit>[2]) =>
     retireOpenKit(client, await deps.slack?.botUserId().catch(ignoreQuietly("bot user id lookup")), m, log);
 
@@ -1566,6 +1683,36 @@ export const createSlackApp = (config: SlackAppConfig, deps: Deps) => {
           (info ? ` author=${info.author ?? "?"} participants=${info.participants.join(",") || "none"}` : ""),
       );
       if (!verdict.follow) return;
+      // Tagged messages, DMs, one-on-one threads and command lines are never
+      // held: they are answered at once, as before. Only the untagged routes
+      // into a thread it is a guest in wait for a quiet moment and the gate.
+      // Somebody off the allowlist is not buffered either - their message
+      // would be ignored anyway, and must not cost a gate call.
+      const gated =
+        !!deps.gatePolicy &&
+        gateApplies({
+          enabled: gateSettings((k) => deps.settings?.get(k)).enabled,
+          route: verdict.why,
+          isCommand: commandLineOf(m.text!, config.commandPrefix) !== undefined || reviewRequestIn(m.text!) !== undefined,
+        }) &&
+        decideAccess(m.user!, deps.ownerSlackId, deps.users.get).allowed;
+      if (gated) {
+        // Held until the batch is skipped or answered, so the inbox row stays
+        // `running` meanwhile and a restart redelivers it.
+        await followGate.submit(
+          { channel: m.channel, threadTs: m.thread_ts! },
+          {
+            userId: m.user!,
+            text: m.text!,
+            ts: m.ts,
+            client: asClient(client),
+            say: say as Incoming["say"],
+            teamId: context.teamId,
+            inbox: inboxOf(context as InboxContext),
+          },
+        );
+        return;
+      }
       await handle({
         channelId: m.channel,
         userId: m.user!,

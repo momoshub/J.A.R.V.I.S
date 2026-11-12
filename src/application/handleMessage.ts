@@ -243,6 +243,12 @@ export type InboundMessage = {
   viaSlash?: boolean;
   /** An untagged reply under a thread the bot started; nobody asked it. */
   following?: boolean;
+  /**
+   * The text is several messages a followed thread buffered, joined into one
+   * input. It is not something anybody typed as a whole, so a request pieced
+   * together from two authors must not be read as a spoken command.
+   */
+  batched?: boolean;
   /** A retry: a restart cut the first attempt at this message off part way. */
   interrupted?: boolean;
   /** The gateway inbox row this came in on, so a restart can cut its turn. */
