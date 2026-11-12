@@ -92,11 +92,28 @@ describe("github app actions: auth gate", () => {
     expect(audit[0]?.entry.args).not.toContain("B");
   });
 
-  test.each(["executer", "pal"] as const)("%s is refused before anything reaches GitHub, and audited", async (role) => {
+  test.each(["pal"] as const)("%s is refused before anything reaches GitHub, and audited", async (role) => {
     const { actions, audit, calls, installs } = setup(role);
-    await expect(actions.run({ ticket: "good", ...create })).rejects.toThrow("admin role");
+    await expect(actions.run({ ticket: "good", ...create })).rejects.toThrow("executer role");
     expect(calls).toEqual([]);
     expect(installs).toEqual([]);
+    expect(audit[0]?.entry).toMatchObject({ ok: false });
+  });
+
+  test("an executer may act as the app", async () => {
+    const { actions, audit } = setup("executer");
+    await expect(actions.run({ ticket: "good", ...create })).resolves.toBeDefined();
+    expect(audit[0]?.entry).toMatchObject({ ok: true });
+  });
+
+  test.each([
+    { action: "pr-merge", repo: "o/r", number: 1 },
+    { action: "review", repo: "o/r", number: 1, event: "APPROVE" },
+    { action: "pr-close", repo: "o/r", number: 1 },
+  ])("an executer may not $action as the app", async (req) => {
+    const { actions, audit, calls } = setup("executer");
+    await expect(actions.run({ ticket: "good", ...req })).rejects.toThrow("needs an admin or the owner");
+    expect(calls).toEqual([]);
     expect(audit[0]?.entry).toMatchObject({ ok: false });
   });
 
@@ -121,7 +138,7 @@ describe("github app actions: auth gate", () => {
 
   test("the role is the ticket's actor's, never anything in the request", async () => {
     const { actions, calls } = setup("pal");
-    await expect(actions.run({ ticket: "good", ...create, actor: "OWNER", role: "owner" } as never)).rejects.toThrow("admin role");
+    await expect(actions.run({ ticket: "good", ...create, actor: "OWNER", role: "owner" } as never)).rejects.toThrow("executer role");
     expect(calls).toEqual([]);
   });
 });
@@ -195,9 +212,19 @@ describe("github app actions: git-auth", () => {
     expect(JSON.stringify(audit)).not.toContain("tok-7");
   });
 
-  test.each(["executer", "pal"] as const)("%s is refused and gets no token", async (role) => {
+  test("an executer gets the bot identity but no token, so it can commit and never push", async () => {
+    const { actions } = setup("executer");
+    const out = await actions.run({ ticket: "good", action: "git-auth", repo: "o/r" });
+    expect(out.github).toEqual({
+      token: "",
+      name: "jarvis-at-acme[bot]",
+      email: "1234+jarvis-at-acme[bot]@users.noreply.github.com",
+    });
+  });
+
+  test.each(["pal"] as const)("%s is refused and gets no token", async (role) => {
     const { actions, installs } = setup(role);
-    await expect(actions.run({ ticket: "good", action: "git-auth", repo: "o/r" })).rejects.toThrow("admin role");
+    await expect(actions.run({ ticket: "good", action: "git-auth", repo: "o/r" })).rejects.toThrow("executer role");
     expect(installs).toEqual([]);
   });
 

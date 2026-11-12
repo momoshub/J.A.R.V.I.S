@@ -2,14 +2,23 @@
  * Acting on GitHub as the app, for a turn.
  *
  * The turn never names who it is: its ticket does, and the ticket resolves to
- * the Slack user the turn runs as. Only an admin or the owner may use the
- * app's identity, every attempt (allowed or refused) is written to the command
+ * the Slack user the turn runs as. An admin or the owner may use every action of the
+ * app's identity, an executer the `EXECUTER_ACTIONS` (commit, no push), every attempt (allowed or refused) is written to the command
  * log, and the app's private key stays in the bot - a turn gets GitHub's JSON
  * back and nothing else. The installation is looked up for the target repo's
  * own owner, so an app installed on several orgs reaches each of them; GitHub's
  * refusal (not installed, missing permission) is returned as it came.
  */
-import { type ActionRequest, DENIED_MESSAGE, mayActAsApp, planAction, summarize } from "../domain/githubAppAction.ts";
+import {
+  type ActionRequest,
+  DENIED_MESSAGE,
+  executerDenied,
+  isAppAdmin,
+  mayActAsApp,
+  planAction,
+  summarize,
+  WORKER_MINTER_DENIED,
+} from "../domain/githubAppAction.ts";
 import { isAllowedOwner } from "../domain/githubApp.ts";
 import type { AllowedUser } from "../domain/types.ts";
 import type { CommandLogRepo } from "../infrastructure/db/commandLogRepo.ts";
@@ -184,7 +193,10 @@ export const createGithubActions = (deps: GithubActionDeps): GithubActions => {
 
       if (worker && !worker.ok) refuse(worker.message);
       if (!user) refuse("whoever asked is not on the access list");
+      // A worker outlives the turn, so it keeps working (and renewing) only while its minter is admin+.
+      if (worker?.ok && user && !isAppAdmin(user.role)) refuse(WORKER_MINTER_DENIED);
       if (user && !mayActAsApp(user.role)) refuse(DENIED_MESSAGE);
+      if (user && plan.ok && !mayActAsApp(user.role, plan.action)) refuse(executerDenied(plan.action));
       if (!plan.ok) return refuse(plan.error);
       const owner = plan.repo.split("/")[0] ?? "";
       if (!isAllowedOwner(owner, deps.allowedOwners)) {
@@ -209,7 +221,12 @@ export const createGithubActions = (deps: GithubActionDeps): GithubActions => {
         if (plan.action === "git-auth") {
           // The token goes back to the helper only; the audit row never has it.
           // A worker's token is its own: one repo, git's permissions only, revoked with the ticket.
-          const auth = worker?.ok ? await workerGitAuth(installation, plan.repo, worker.id) : await gitAuth(installation);
+          // An executer gets the bot identity only: commits as the app, but no token to push with.
+          const auth = worker?.ok
+            ? await workerGitAuth(installation, plan.repo, worker.id)
+            : user && !isAppAdmin(user.role)
+              ? { token: "", ...(await botIdentity(installation)) }
+              : await gitAuth(installation);
           log(true, `git-auth ${plan.repo}`);
           return { github: auth };
         }

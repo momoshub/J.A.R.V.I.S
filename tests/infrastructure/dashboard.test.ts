@@ -58,7 +58,7 @@ describe("dashboard static + api", () => {
     const d = build({
       githubAction: async (req) => {
         seen.push(req);
-        if (req.ticket === "pal") throw new Error("needs the admin role");
+        if (req.ticket === "pal") throw new Error("needs the executer role");
         return { url: "https://github.com/o/r/pull/1", number: 1 };
       },
     });
@@ -69,7 +69,7 @@ describe("dashboard static + api", () => {
     expect(seen[0]).toMatchObject({ ticket: "t1", action: "pr-close" });
     const denied = await d.dash.handle(postJson("/api/github-app/action", { ticket: "pal", action: "pr-close" }));
     expect(denied.status).toBe(500);
-    expect(((await denied.json()) as { error: string }).error).toContain("admin role");
+    expect(((await denied.json()) as { error: string }).error).toContain("executer role");
     expect((await build().dash.handle(postJson("/api/github-app/action", { ticket: "t" }))).status).toBe(503);
   });
 

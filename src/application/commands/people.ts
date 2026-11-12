@@ -86,7 +86,7 @@ export const PEOPLE_COMMANDS: readonly CommandDef[] = [
   {
     name: "worker-ticket",
     aliases: ["wticket"],
-    // Same gate as acting as the app (`mayActAsApp`): the ticket can never carry more than its minter has.
+    // Stricter than acting as the app (`mayActAsApp`, executer+): a worker outlives the turn, so minting stays admin+.
     minRole: "admin",
     usage: "<owner/repo> <ctx_...|pending> [pr-create|comment|pr-edit|git|push|labels-add|reviewers-request ...] [--ttl 3h] | bind <id> <ctx_...> | revoke <id|ctx_...> | renew <id|ctx_...> [--ttl 3h]",
     summary: "mint a scoped GitHub App ticket for an Orca worker (one repo, a few actions, hours, revoked when it ends; `renew` extends one, 24h at most)",
