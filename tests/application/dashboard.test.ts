@@ -166,10 +166,20 @@ describe("dashboard use cases", () => {
     const { app, settings } = ports();
     expect(app.toggleCommand("", false).ok).toBe(false);
     app.toggleCommand("bomb", false);
-    app.toggleCommand("review", false);
+    app.toggleCommand("ping", false);
     app.toggleCommand("bomb", true);
-    expect(settings.get(SETTING_KEYS.disabledCommands)).toBe("review");
-    expect(app.commands().disabled).toEqual(["review"]);
+    expect(settings.get(SETTING_KEYS.disabledCommands)).toBe("ping");
+    expect(app.commands().disabled).toEqual(["ping"]);
+  });
+
+  test("a disabled `review` saved before the rename shows as quick-review and the toggle clears it", () => {
+    const { app, settings } = ports();
+    settings.set(SETTING_KEYS.disabledCommands, "review,approve,bomb");
+    // `approve` was a different command and is dropped; `review` is quick-review now
+    expect(app.commands().disabled).toEqual(["quick-review", "bomb"]);
+    app.toggleCommand("quick-review", true);
+    expect(settings.get(SETTING_KEYS.disabledCommands)).toBe("bomb");
+    expect(app.commands().disabled).toEqual(["bomb"]);
   });
 
   test("conversations page with a clamped size and ignore a blank channel on clear", async () => {

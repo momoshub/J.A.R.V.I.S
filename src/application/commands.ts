@@ -259,9 +259,7 @@ export const dispatchCommand = async (
     log(command.name, false, msg);
     return msg;
   }
-  // A denial or disable stored under the old name still holds after the rename.
-  const storedNames = command.name === "quick-review" ? [command.name, "review", "approve"] : [command.name];
-  if (command.name !== "help" && storedNames.some((n) => deps.deniedCommands?.(actor.role).has(n))) {
+  if (command.name !== "help" && deps.deniedCommands?.(actor.role).has(command.name)) {
     const msg = `The *${actor.role}* role is not allowed to run \`${command.name}\`.`;
     log(command.name, false, msg);
     return msg;
@@ -280,7 +278,7 @@ export const dispatchCommand = async (
       prefix,
     );
   }
-  if (command.name !== "help" && storedNames.some((n) => deps.disabledCommands?.().has(n))) {
+  if (command.name !== "help" && deps.disabledCommands?.().has(command.name)) {
     const msg = `\`${command.name}\` is currently disabled.`;
     log(command.name, false, msg);
     return msg;

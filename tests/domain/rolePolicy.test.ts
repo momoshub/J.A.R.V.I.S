@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import {
+  currentCommandName,
   defaultRolePolicy,
   disabledRoleReason,
   enforcedUser,
@@ -37,6 +38,13 @@ describe("role policy", () => {
     expect(isCommandDenied(deny("owner"), "ping")).toBe(false);
     expect(policyDisallow(deny("pal"))).toEqual(["Bash", "mcp__notion"]);
     expect(policyDisallow(deny("owner"))).toEqual([]);
+  });
+
+  test("names stored before the rename carry over: review is quick-review, approve is dropped", () => {
+    expect(currentCommandName("review")).toBe("quick-review");
+    expect(currentCommandName(" Review ")).toBe("quick-review");
+    expect(currentCommandName("approve")).toBeUndefined(); // denying a bare approval never meant denying a review
+    expect(currentCommandName("ping")).toBe("ping");
   });
 
   test("parse checks names, normalises servers, refuses the owner and help", () => {

@@ -116,7 +116,7 @@ import { createDraftReply } from "./application/draftReply.ts";
 import { syntheticTs } from "./domain/slackLinks.ts";
 import { toolPolicyFor } from "./domain/toolPolicy.ts";
 import { roleOf } from "./application/commands/shared.ts";
-import { effectivePolicy, policyDisallow } from "./domain/rolePolicy.ts";
+import { currentCommandName, effectivePolicy, policyDisallow } from "./domain/rolePolicy.ts";
 import { disabledRoleOf, enforceRolePolicies } from "./application/rolePolicies.ts";
 import { createRolePolicyRepo } from "./infrastructure/db/rolePolicyRepo.ts";
 import { logSourceOrder } from "./domain/investigation.ts";
@@ -311,13 +311,17 @@ const main = async () => {
     new Set(
       (settings.get(SETTING_KEYS.disabledCommands) ?? "")
         .split(",")
-        .map((s) => s.trim())
-        .filter(Boolean),
+        .map(currentCommandName)
+        .filter((c): c is string => !!c),
     );
 
   /** Commands each role's dashboard policy denies, read per call so a save needs no restart. */
   const deniedCommands = (role: Parameters<typeof rolePolicies.get>[0]): ReadonlySet<string> =>
-    new Set(effectivePolicy(rolePolicies.get(role)).deniedCommands);
+    new Set(
+      effectivePolicy(rolePolicies.get(role))
+        .deniedCommands.map(currentCommandName)
+        .filter((c): c is string => !!c),
+    );
 
   seedOwner(userStore, config.ownerSlackId, clock);
 
