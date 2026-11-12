@@ -100,6 +100,17 @@ const TOOL_PATTERN = /^[A-Za-z][\w-]*(\([^()\n]{1,300}\))?$/;
 const MCP_SERVER = /^[A-Za-z0-9][\w.-]{0,99}$/;
 const COMMAND_NAME = /^[a-z][\w-]{0,40}$/;
 
+/**
+ * A stored command name carried over a rename: `review` is now `quick-review`.
+ * `approve` was a different command (a bare approval), not a rename, so it maps
+ * to nothing and is dropped - denying it never meant denying a review.
+ */
+export const currentCommandName = (name: string): string | undefined => {
+  const n = name.trim().toLowerCase();
+  if (n === "approve") return undefined;
+  return n === "review" ? "quick-review" : n;
+};
+
 const listOf = (v: unknown): string[] => {
   const raw = Array.isArray(v) ? v : typeof v === "string" ? v.split(/[,\n]/) : [];
   return [...new Set(raw.map((s) => String(s ?? "").trim()).filter(Boolean))];
@@ -123,7 +134,15 @@ export const parseRolePolicy = (
 ): PolicyCheck => {
   if (!isRole(input.role)) return { ok: false, error: "Unknown role" };
   if (input.role === "owner") return { ok: false, error: "The owner role cannot be restricted" };
-  const deniedCommands = [...new Set(listOf(input.deniedCommands).map((c) => c.toLowerCase()))];
+  // `review` is now `quick-review` and `approve` is gone: a policy saved before
+  // that is carried over rather than refused, so it can still be re-saved.
+  const deniedCommands = [
+    ...new Set(
+      listOf(input.deniedCommands)
+        .map(currentCommandName)
+        .filter((c): c is string => c !== undefined),
+    ),
+  ];
   const badCommand = deniedCommands.find((c) => !COMMAND_NAME.test(c) || !knownCommands.includes(c));
   if (badCommand) return { ok: false, error: `Unknown command: ${badCommand}` };
   if (deniedCommands.some((c) => UNDENIABLE_COMMANDS.includes(c))) {

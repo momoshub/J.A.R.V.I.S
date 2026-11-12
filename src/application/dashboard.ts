@@ -15,6 +15,7 @@ import {
   CORE_TOOLS,
   ROLES,
   UNDENIABLE_COMMANDS,
+  currentCommandName,
   defaultRolePolicy,
   effectivePolicy,
   knownMcpServers,
@@ -162,6 +163,10 @@ const BY = "dashboard";
 
 const parseCsv = (v: string | undefined): Set<string> =>
   new Set((v ?? "").split(",").map((s) => s.trim()).filter(Boolean));
+
+/** The disabled-commands list with names carried over renames (`review` -> `quick-review`, `approve` dropped). */
+const parseDisabled = (v: string | undefined): Set<string> =>
+  new Set([...parseCsv(v)].map(currentCommandName).filter((c): c is string => !!c));
 
 const text = (v: unknown): string => String(v ?? "").trim();
 /** A page size from a query string, clamped; anything unreadable means `fallback`. */
@@ -393,6 +398,10 @@ export const createDashboardService = (p: DashboardPorts) => {
     return {
       roles: policies.map((policy) => ({
         ...effectivePolicy(policy),
+        // Names stored before a rename read back under their current name, so the page shows what the bot enforces.
+        deniedCommands: effectivePolicy(policy)
+          .deniedCommands.map(currentCommandName)
+          .filter((c): c is string => !!c),
         locked: policy.role === "owner",
         members: users
           .filter((u) => u.role === policy.role || (policy.role === "owner" && u.slackId === p.ownerSlackId))
@@ -573,13 +582,13 @@ export const createDashboardService = (p: DashboardPorts) => {
 
   commands: () => ({
     commands: listCommandInfo(),
-    disabled: [...parseCsv(p.settings.get(SETTING_KEYS.disabledCommands))],
+    disabled: [...parseDisabled(p.settings.get(SETTING_KEYS.disabledCommands))],
   }),
 
   toggleCommand: (nameIn: unknown, enabled: unknown): Outcome<null> => {
     const name = text(nameIn);
     if (!name) return refuse("Command name required");
-    const disabled = parseCsv(p.settings.get(SETTING_KEYS.disabledCommands));
+    const disabled = parseDisabled(p.settings.get(SETTING_KEYS.disabledCommands));
     if (enabled === false) disabled.add(name);
     else disabled.delete(name);
     p.settings.set(SETTING_KEYS.disabledCommands, [...disabled].join(","));

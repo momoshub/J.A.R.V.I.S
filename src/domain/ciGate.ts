@@ -2,7 +2,7 @@
  * CI-gated review: what the checks of a PR say, and the spec of the watcher
  * that waits for them.
  *
- * `review` looks at CI before anything else. Red is a change request on the
+ * `quick-review` looks at CI before anything else. Red is a change request on the
  * spot; green or still running goes on with the review, and a running CI gets
  * a watcher (a row on the watcher's timer, so nothing sleeps in a turn) that
  * settles the PR when the checks stop running. Pure: no I/O, no clock.

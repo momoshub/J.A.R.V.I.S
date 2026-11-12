@@ -76,19 +76,14 @@ export const matchByName = (
   return hits.length === 1 ? hits[0]?.slackId : undefined;
 };
 
-/** The channel post that opens the thread a review lands in. */
-export const announceRequest = (r: ReviewRequest, requesterSlackId: string | undefined, account: string): string =>
-  `👀 ${requesterSlackId ? `<@${requesterSlackId}>` : `\`${r.requester}\``} requested a review from \`${account}\` on <${r.prUrl}|${r.repo}#${r.number}> - ${r.title}`;
-
-export const unknownRequester = (login: string, prefix: string): string =>
-  `I cannot tell who \`${login}\` is on Slack, so no review. \`${prefix} review-inbox link ${login}\` from them (or an admin with \`@someone\`) fixes it`;
-
-export const noTokenOnFile = (slackId: string, prefix: string): string =>
-  `<@${slackId}> no Claude token of yours on file, so no review - a review only runs on the requester's own. \`${prefix} token\` adds one, then \`${prefix} review <pr-url>\``;
-
 /**
- * The review line to run. This path always reviews BEFORE approving; a pal's
- * review already does, and a pal may not pass `--policy` at all.
+ * The channel post for a review request. It says how to have it reviewed
+ * instead of doing it: a quick review runs only when a person asks.
  */
-export const reviewLine = (prUrl: string, palOnly: boolean): string =>
-  palOnly ? `review ${prUrl}` : `review ${prUrl} --policy after`;
+export const announceRequest = (
+  r: ReviewRequest,
+  requesterSlackId: string | undefined,
+  account: string,
+  prefix: string,
+): string =>
+  `👀 ${requesterSlackId ? `<@${requesterSlackId}>` : `\`${r.requester}\``} requested a review from \`${account}\` on <${r.prUrl}|${r.repo}#${r.number}> - ${r.title}\n_nothing runs by itself - tag me with \`review ${r.prUrl}\` or type \`${prefix} quick-review ${r.prUrl}\` for a quick one_`;

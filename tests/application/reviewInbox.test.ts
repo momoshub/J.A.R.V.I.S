@@ -26,11 +26,9 @@ const req = (over: Partial<ReviewRequest> = {}): ReviewRequest => ({
 
 let now: number;
 let store: Map<string, string>;
-let posts: { channel: string; text: string; thread?: string }[];
-let reviews: { actor: string; threadTs: string; line: string }[];
+let posts: { channel: string; text: string }[];
 let pending: ReviewRequest[];
 let people: AllowedUser[];
-let tokens: Set<string>;
 
 const inbox = (over: Partial<ReviewInboxDeps> = {}) =>
   createReviewInbox({
@@ -42,12 +40,10 @@ const inbox = (over: Partial<ReviewInboxDeps> = {}) =>
     account: async () => "bot-gh",
     githubName: async (login) => (login === "dev-gh" ? "Dev Person" : undefined),
     users: { get: (id) => people.find((p) => p.slackId === id), list: () => people },
-    hasToken: (id) => tokens.has(id),
-    post: async (channel, text, thread) => {
-      posts.push({ channel, text, thread });
+    post: async (channel, text) => {
+      posts.push({ channel, text });
       return `ts${posts.length}`;
     },
-    runReview: async ({ actor, threadTs, line }) => void reviews.push({ actor: actor.slackId, threadTs, line }),
     prefix: "X/jv",
     ...over,
   });
@@ -56,57 +52,60 @@ beforeEach(() => {
   now = T0;
   store = new Map([[KEY, "2026-11-06T10:00:00Z"]]);
   posts = [];
-  reviews = [];
   pending = [req()];
   people = [user("UDEV", "Dev Person")];
-  tokens = new Set(["UDEV"]);
 });
 
 describe("review inbox", () => {
-  test("posts the request and reviews it in the thread as the requester, review before approve", async () => {
+  test("announces the request with how to ask for a review, and runs nothing", async () => {
     await inbox().tick();
+    expect(posts).toHaveLength(1);
     expect(posts[0]?.channel).toBe("CPR");
     expect(posts[0]?.text).toContain("<@UDEV> requested a review from `bot-gh`");
-    expect(reviews).toEqual([{ actor: "UDEV", threadTs: "ts1", line: "review https://github.com/o/r/pull/7 --policy after" }]);
+    expect(posts[0]?.text).toContain("X/jv quick-review https://github.com/o/r/pull/7");
     expect(store.get(KEY)).toBe("2026-11-06T10:00:30Z");
   });
 
-  test("the same request is handled once", async () => {
+  test("it has no way to start a review: there is no runner to call", () => {
+    const keys = Object.keys(inbox() as object);
+    expect(keys).toEqual(["tick"]);
+    // The deps type has no `runReview` or `hasToken`; a regression that adds
+    // them back would fail typecheck here before it ever ran.
+    const deps: ReviewInboxDeps = {
+      clock: () => now,
+      settings: { get: () => undefined, set: () => {} },
+      channel: () => "",
+      cursorKey: KEY,
+      requests: async () => [],
+      account: async () => undefined,
+      githubName: async () => undefined,
+      users: { get: () => undefined, list: () => [] },
+      post: async () => undefined,
+      prefix: "X/jv",
+    };
+    expect("runReview" in deps).toBe(false);
+  });
+
+  test("the same request is announced once", async () => {
     const i = inbox();
     await i.tick();
     now += POLL_MS;
     await i.tick();
-    expect(reviews).toHaveLength(1);
+    expect(posts).toHaveLength(1);
   });
 
-  test("no token, no review - and no ask", async () => {
-    tokens.clear();
-    await inbox().tick();
-    expect(reviews).toHaveLength(0);
-    expect(posts[1]?.thread).toBe("ts1");
-    expect(posts[1]?.text).toContain("no Claude token");
-  });
-
-  test("an explicit link wins over the name", async () => {
+  test("an explicit link names the Slack account in the announcement", async () => {
     people.push(user("UKAI", "Kai"));
-    tokens.add("UKAI");
     store.set("github_login:dev-gh", "UKAI");
     await inbox().tick();
-    expect(reviews[0]?.actor).toBe("UKAI");
+    expect(posts[0]?.text).toContain("<@UKAI> requested");
   });
 
-  test("an unknown requester gets a line, not a review", async () => {
+  test("an unknown requester is named by their GitHub login", async () => {
     pending = [req({ requester: "stranger" })];
     await inbox().tick();
-    expect(reviews).toHaveLength(0);
+    expect(posts).toHaveLength(1);
     expect(posts[0]?.text).toContain("`stranger` requested");
-    expect(posts[1]?.text).toContain("review-inbox link stranger");
-  });
-
-  test("a pal's review drops the policy flag it may not pass", async () => {
-    people = [user("UDEV", "Dev Person", "pal")];
-    await inbox().tick();
-    expect(reviews[0]?.line).toBe("review https://github.com/o/r/pull/7");
   });
 
   test("the first run only sets the cursor", async () => {

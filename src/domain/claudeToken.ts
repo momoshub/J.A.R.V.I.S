@@ -1,7 +1,7 @@
 /**
  * A user's own Claude Code credential.
  *
- * `review` spawns the Claude Code CLI, and the CLI bills whoever's token it is
+ * `quick-review` spawns the Claude Code CLI, and the CLI bills whoever's token it is
  * holding. Run every review on the bot's own credential and one account carries
  * the whole team's usage; run it on the caller's and the cost sits with the
  * person who asked for the work.

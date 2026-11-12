@@ -147,5 +147,6 @@ export const waitsForRestart = (
   const text = typeof event.text === "string" ? event.text : "";
   const bare = text.replace(/^(\s*<@[^>]+>)+\s*/, "").trimStart().toLowerCase();
   if (commandPrefixes.some((p) => p.trim() && bare.startsWith(p.trim().toLowerCase()))) return true;
-  return reviewRequestIn(text) !== undefined;
+  // Only a tag can be a spoken quick-review: an untagged message never is.
+  return event.type === "app_mention" && reviewRequestIn(text) !== undefined;
 };

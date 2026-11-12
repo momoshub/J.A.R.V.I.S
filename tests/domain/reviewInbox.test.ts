@@ -3,8 +3,8 @@ import {
   advanceCursor,
   matchByName,
   newRequests,
+  announceRequest,
   normaliseName,
-  reviewLine,
   type ReviewRequest,
 } from "../../src/domain/reviewInbox.ts";
 
@@ -60,9 +60,15 @@ describe("review inbox domain", () => {
     expect(matchByName("ghost", undefined, [{ slackId: "U1", displayName: "Kai" }])).toBeUndefined();
   });
 
-  test("the review always waits for a clean review before approving", () => {
-    expect(reviewLine("u", false)).toBe("review u --policy after");
-    // A pal review already approves only after, and a pal may not pass --policy.
-    expect(reviewLine("u", true)).toBe("review u");
+  test("the announcement says how to ask for a review and starts none", () => {
+    const text = announceRequest(req(), "UDEV", "bot-gh", "X/jv");
+    expect(text).toContain("<@UDEV> requested a review from `bot-gh`");
+    expect(text).toContain("nothing runs by itself");
+    expect(text).toContain("`X/jv quick-review https://github.com/o/r/pull/1`");
+    expect(text).toContain("tag me with `review https://github.com/o/r/pull/1`");
+  });
+
+  test("a requester with no Slack account is named by their GitHub login", () => {
+    expect(announceRequest(req(), undefined, "bot-gh", "X/jv")).toContain("`dev` requested a review");
   });
 });

@@ -123,7 +123,7 @@ export type DashboardDeps = {
  */
 export type RunCommandRequest = {
   ticket: string;
-  /** The command line, e.g. `review https://github.com/o/r/pull/1`. */
+  /** The command line, e.g. `quick-review https://github.com/o/r/pull/1`. */
   line: string;
   /**
    * The person in the thread directly asked for this command, so its output

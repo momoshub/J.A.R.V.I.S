@@ -224,6 +224,14 @@ describe("reviewHelp", () => {
     expect(h).toContain("out of scope per the description");
   });
 
+  test("the help names quick-review and says it only runs when a person asks", () => {
+    const h = reviewHelp("//bot", false, 3, "Bot");
+    expect(h).toContain("`//bot quick-review <pr-url>`");
+    expect(h).toContain("`review <pr-url>` / `approve <pr-url>`");
+    expect(h).toContain("only when a person asks");
+    expect(h).toContain("`//bot quick-review prompt`");
+  });
+
   test("with no owners configured it says non-blocking findings are never posted", () => {
     const h = reviewHelp("X", false, 3, "Bot");
     expect(h).not.toContain("out of scope per the description");

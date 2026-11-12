@@ -132,9 +132,9 @@ export type HandleMessageDeps = {
   rawUsers?: UserRepo;
   /** Slack Web API operations, for the power-tool commands (br, jrp). */
   slack?: SlackAdminPort;
-  /** GitHub actions the bot takes itself - the up-front approve in `review`. */
+  /** GitHub actions the bot takes itself - the up-front approve in `quick-review`. */
   github?: GitHubPort;
-  /** CI gate of `review` (see `CommandDeps`). */
+  /** CI gate of `quick-review` (see `CommandDeps`). */
   ciGate?: CiGate;
   /** AI reply drafting, for jrp. */
   draft?: DraftReply;
@@ -142,7 +142,7 @@ export type HandleMessageDeps = {
   toolPolicy?: (role: UserRole, channelId?: string) => ToolPolicy;
   /** `--disallowedTools` for a no-tools turn (`noTools(DB_MCP_SERVERS)`), for `btw`. */
   noTools?: readonly string[];
-  /** GitHub owners whose PRs `review` posts non-blocking findings for. */
+  /** GitHub owners whose PRs `quick-review` posts non-blocking findings for. */
   reviewExtendedOwners?: readonly string[];
   /** Per-user Claude Code tokens: a speaker's own turns run on their credential. */
   claudeTokens?: ClaudeTokenPort;
@@ -243,6 +243,12 @@ export type InboundMessage = {
   viaSlash?: boolean;
   /** An untagged reply under a thread the bot started; nobody asked it. */
   following?: boolean;
+  /**
+   * A person tagged the bot in this message (an `app_mention`). The only kind
+   * of message a spoken `review <pr>` / `approve <pr>` may become a
+   * quick-review from (`reviewRequestIn`, `respond`).
+   */
+  mentioned?: boolean;
   /**
    * The text is several messages a followed thread buffered, joined into one
    * input. It is not something anybody typed as a whole, so a request pieced

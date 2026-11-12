@@ -1,14 +1,15 @@
 /**
  * Review guard - one review per PR at a time.
  *
- * A review can be asked for twice over: a GitHub review request lands in the
- * review inbox, and the same person also types `review <pr>` in Slack. Both
- * paths end in the `review` command, so this is where they meet. Without it
+ * A review can be asked for twice over: two people tag the bot with
+ * `review <pr>` in Slack, or one types `quick-review <pr>` while another
+ * review of it is still going. Every path ends in the `quick-review` command,
+ * so this is where they meet. Without it
  * the PR got two approvals, two comments and two runs on the asker's token.
  *
- * A claim holds while the review runs, and for a short while after: the inbox
- * polls once a minute, so a request made alongside a quick review can still
- * arrive once that review is done.
+ * A claim holds while the review runs, and for a short while after, so a
+ * second ask made alongside a quick review is pointed at it instead of
+ * running again once that review is done.
  */
 import type { Clock } from "./ports.ts";
 

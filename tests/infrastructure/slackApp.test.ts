@@ -387,6 +387,19 @@ describe("createHandler streaming truth table", () => {
     expect(said).toHaveLength(0);
   });
 
+  test("a spoken review runs the command only for a message that tagged the bot", async () => {
+    const PR = "https://github.com/o/r/pull/1";
+    let brainRan = 0;
+    const llm: LlmPort = { complete: async () => (brainRan++, "chat answer") };
+    const tagged = build({ llm, streamUpdates: false });
+    await tagged.handle({ ...tagged.msg(`<@UBOT> review ${PR}`), mentioned: true });
+    expect(brainRan).toBe(0); // quick-review took it, not the chat brain
+    // the same words with no tag (a DM, a followed thread's reply) are chat
+    const untagged = build({ llm, streamUpdates: false });
+    await untagged.handle(untagged.msg(`<@UBOT> review ${PR}`));
+    expect(brainRan).toBe(1);
+  });
+
   test("following a thread streams nothing for a note about staying quiet, and posts nothing", async () => {
     const { handle, msg, said, rec } = build({
       llm: streamingLlm("(empty reply — nothing to add here)", [

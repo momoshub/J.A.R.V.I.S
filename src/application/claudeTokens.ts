@@ -3,7 +3,7 @@
  * and what happens when someone submits one.
  *
  * Every CLI turn the bot runs on a person's behalf can run on that person's own
- * token. `review` requires one - it is the expensive, long-running job, and the
+ * token. `quick-review` requires one - it is the expensive, long-running job, and the
  * one whose cost should obviously sit with whoever asked for it. Everything else
  * uses a token when the speaker has one on file and the bot's own when they do
  * not, so nobody is locked out of chat by a credential they never set up.
@@ -51,7 +51,7 @@ export const TOKEN_INPUT = "claude_token_input";
 export type TokenRequest = {
   channelId: string;
   threadTs?: string;
-  /** The command line to run once the token is in, e.g. `review <url>`. */
+  /** The command line to run once the token is in, e.g. `quick-review <url>`. */
   line?: string;
 };
 

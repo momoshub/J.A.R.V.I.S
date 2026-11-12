@@ -133,9 +133,9 @@ export type CommandDeps = {
   stepFailures?: Map<number, number>;
   /** Slack Web API operations, for the power tools (bomb, reply). */
   slack?: SlackAdminPort;
-  /** GitHub actions the bot takes itself - the up-front approve in `review`. */
+  /** GitHub actions the bot takes itself - the up-front approve in `quick-review`. */
   github?: GitHubPort;
-  /** CI gate of `review`: look at the checks first, watch a running CI. Absent: no CI gate. */
+  /** CI gate of `quick-review`: look at the checks first, watch a running CI. Absent: no CI gate. */
   ciGate?: CiGate;
   /** Long-running workflow sessions bound to a thread. */
   workflows?: WorkflowRepo;
@@ -157,9 +157,9 @@ export type CommandDeps = {
    * database servers, so the host must wire it.
    */
   noTools?: readonly string[];
-  /** GitHub owners whose PRs `review` posts non-blocking findings for (`REVIEW_EXTENDED_OWNERS`). */
+  /** GitHub owners whose PRs `quick-review` posts non-blocking findings for (`REVIEW_EXTENDED_OWNERS`). */
   reviewExtendedOwners?: readonly string[];
-  /** Per-user Claude Code tokens. `review` requires one; everything else prefers one. */
+  /** Per-user Claude Code tokens. `quick-review` requires one; everything else prefers one. */
   claudeTokens?: ClaudeTokenPort;
   /** Shared 2FA setup keys, for the `2fa` command. */
   totp?: TotpPort;
@@ -169,7 +169,7 @@ export type CommandDeps = {
   backgroundAgents?: BackgroundAgentsPort;
   /** Per-thread turn queue; a workflow's first step takes its place in it. */
   threadQueue?: ThreadQueue;
-  /** One review per PR at a time, across the review inbox and `review`. */
+  /** One review per PR at a time, across every `quick-review` ask. */
   reviewGuard?: ReviewGuard;
   /** Read-only Grafana helper, so an investigation can reach a non-Loki datasource. */
   grafanaGetScript?: string;
@@ -245,7 +245,7 @@ export type CommandDef = {
   destructive?: boolean;
   /**
    * This command answers `help` itself, and better than the generic card can
-   * (`review help` explains the whole flow, and `review prompt` prints the
+   * (`quick-review help` explains the whole flow, and `quick-review prompt` prints the
    * real system prompt). Everything else gets the card.
    */
   ownHelp?: boolean;
