@@ -3,8 +3,8 @@
  * data. Nothing here talks to GitHub: `planAction` validates one request and
  * turns it into the REST calls that carry it out, `mayActAsApp` is the role
  * gate. The app's identity is stronger than any one person's (it can be
- * installed on orgs the caller has no access to), so acting as it is an admin
- * thing and the gate lives next to the actions, not scattered.
+ * installed on orgs the caller has no access to), so acting as it needs the
+ * executer role or above, and the gate lives next to the actions, not scattered.
  */
 import type { UserRole } from "./types.ts";
 
@@ -37,11 +37,11 @@ export type ActionName = (typeof ACTIONS)[number];
 export const REVIEW_EVENTS = ["APPROVE", "REQUEST_CHANGES", "COMMENT"] as const;
 export const MERGE_METHODS = ["merge", "squash", "rebase"] as const;
 
-/** Admin and owner may act as the app; everybody else may not. */
-export const mayActAsApp = (role: UserRole): boolean => role === "admin" || role === "owner";
+/** Executer, admin and owner may act as the app; a pal may not. */
+export const mayActAsApp = (role: UserRole): boolean => role === "executer" || role === "admin" || role === "owner";
 
 export const DENIED_MESSAGE =
-  "acting on GitHub as the app needs the admin role - ask an admin (or the owner) to do this, or use your own token";
+  "acting on GitHub as the app needs the executer role or above - ask an executer, an admin or the owner to do this, or use your own token";
 
 /** One REST call. */
 export type GithubCall = { method: "GET" | "POST" | "PATCH" | "PUT" | "DELETE"; path: string; body?: unknown };

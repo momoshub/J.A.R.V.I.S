@@ -15,7 +15,7 @@ describe("mayActAsApp", () => {
   test("admin and owner only", () => {
     expect(mayActAsApp("owner")).toBe(true);
     expect(mayActAsApp("admin")).toBe(true);
-    expect(mayActAsApp("executer")).toBe(false);
+    expect(mayActAsApp("executer")).toBe(true);
     expect(mayActAsApp("pal")).toBe(false);
   });
 });

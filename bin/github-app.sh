@@ -39,7 +39,7 @@
 # The ticket comes from JARVIS_RUN_TICKET in this process's environment (or, for
 # an Orca worker, from the file JARVIS_RUN_TICKET_FILE names), never from an
 # argument. The bot resolves it to whoever this turn runs as and only
-# acts if that person is an admin or the owner. The app's private key never
+# acts if that person is an executer, an admin or the owner. The app's private key never
 # reaches the turn; the bot holds it. (For a plain answer on the issue a GitHub
 # call came from, github-app-comment.sh needs no role.)
 #

@@ -208,9 +208,9 @@ describe("github-app.sh git and push", () => {
 
   test("the bot's refusal is printed and git does not run", async () => {
     const { dir } = clone();
-    const r = await gh(["git", "o/r", dir, "--", "commit", "-m", "x"], { ok: false, error: "needs the admin role" });
+    const r = await gh(["git", "o/r", dir, "--", "commit", "-m", "x"], { ok: false, error: "needs the executer role" });
     expect(r.code).toBe(1);
-    expect(r.stderr).toContain("needs the admin role");
+    expect(r.stderr).toContain("needs the executer role");
     expect(Bun.spawnSync({ cmd: ["git", "-C", dir, "rev-parse", "--verify", "HEAD"] }).exitCode).not.toBe(0);
   }, SLOW);
 

@@ -2,7 +2,7 @@
  * Acting on GitHub as the app, for a turn.
  *
  * The turn never names who it is: its ticket does, and the ticket resolves to
- * the Slack user the turn runs as. Only an admin or the owner may use the
+ * the Slack user the turn runs as. Only an executer, an admin or the owner may use the
  * app's identity, every attempt (allowed or refused) is written to the command
  * log, and the app's private key stays in the bot - a turn gets GitHub's JSON
  * back and nothing else. The installation is looked up for the target repo's
