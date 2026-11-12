@@ -71,6 +71,10 @@ describe("roles, persisted and enforced", () => {
     expect(roles.book.get("qa")).toBeUndefined();
     expect(roles.book.get("testers")?.grants).toEqual(["command:ping", "github:comment"]);
     expect(store.get("UQA")?.role).toBe("testers");
+    // delete is atomic with the holder check: nothing is removed while somebody holds the role
+    roles.remove("testers");
+    expect(roles.book.get("testers")).toBeDefined();
+    store.remove("UQA");
     roles.remove("testers");
     expect(roles.book.get("testers")).toBeUndefined();
   });

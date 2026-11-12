@@ -235,7 +235,8 @@ export const createGithubActions = (deps: GithubActionDeps): GithubActions => {
           // The token goes back to the helper only; the audit row never has it.
           // A worker's token is its own: one repo, git's permissions only, revoked with the ticket.
           // Only a role holding `github:push` is handed the token: without it a role gets the bot identity, so it commits as the app but cannot push with it.
-          const auth = worker?.ok
+          // A worker's token can push too, so it follows the same rule: its minter must hold `github:push`.
+          const auth = worker?.ok && user && can(book, user.role, githubPerm("push"))
             ? await workerGitAuth(installation, plan.repo, worker.id)
             : user && !can(book, user.role, githubPerm("push"))
               ? { token: "", ...(await botIdentity(installation)) }

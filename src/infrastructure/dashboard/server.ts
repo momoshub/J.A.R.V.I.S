@@ -349,6 +349,7 @@ export const createDashboard = (config: DashboardConfig, deps: DashboardDeps) =>
             grants: body.grants,
             deniedTools: body.deniedTools,
             from: body.from,
+            create: body.create === true,
           }));
         case "/api/roles/delete":
           return reply(app.deleteRole(body.name));

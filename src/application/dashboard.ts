@@ -437,12 +437,15 @@ export const createDashboardService = (p: DashboardPorts) => {
     readonly deniedTools?: unknown;
     /** A new role only: start from this role's rank, grants and denied tools when none are posted. */
     readonly from?: unknown;
+    /** Make a NEW role: refused when the name is taken, so a create can never overwrite one. */
+    readonly create?: unknown;
   }): Outcome<null> => {
     const edit = editDeps();
     if (!edit) return refuse("Roles are not wired up", 503);
     const name = text(body.name).toLowerCase();
     if (isOwnerRole(name)) return refuse("The owner role is fixed: it always holds everything and cannot be edited");
     const existing = book().get(name);
+    if (body.create === true && existing) return refuse(`There is already a role called ${name}`);
     if (!existing) {
       const bad = validRoleName(name);
       if (bad) return refuse(bad);

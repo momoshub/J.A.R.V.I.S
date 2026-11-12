@@ -6,7 +6,7 @@ import type { AllowedUser, UserRole } from "../../src/domain/types.ts";
 const user = (slackId: string, role: UserRole): AllowedUser => ({ slackId, role, name: slackId }) as unknown as AllowedUser;
 const TTL = 3 * 60 * 60_000;
 
-const setup = (role: UserRole = "admin") => {
+const setup = (role: UserRole = "admin", roles?: import("../../src/domain/roles.ts").RoleBook) => {
   const t = { now: 1000 };
   const rig = ticketRig(() => t.now);
   const tickets = rig.tickets;
@@ -54,6 +54,7 @@ const setup = (role: UserRole = "admin") => {
     audit: { add: (entry) => void audit.push(entry) },
     allowedOwners: ["o"],
     slug: "jarvis",
+    ...(roles ? { roles } : {}),
   });
   const mint = (over: Partial<{ actions: readonly string[]; bind: boolean }> = {}) => {
     const { token, id } = rig.mint({
@@ -307,5 +308,22 @@ describe("ticket-renew with a worker ticket", () => {
     }
     t.now += 5 * 60 * 60_000;
     await expect(actions.run({ ticket: token, ...renew })).rejects.toThrow("24h lifetime limit");
+  });
+});
+
+describe("a worker's token follows its minter's github:push grant", () => {
+  test("a minter holding command:worker-ticket and github:git but not github:push gets the identity with no token", async () => {
+    const { seededBook } = await import("../../src/domain/roleSeed.ts");
+    const { staticBook } = await import("../../src/domain/roles.ts");
+    const roles = staticBook([
+      ...seededBook({ commands: [{ name: "worker-ticket", minRole: "admin" }] }).list().filter((r) => r.name !== "owner"),
+      { name: "lead", rank: 1, description: "", enabled: true, grants: ["command:worker-ticket", "github:git", "github:pr-create"], deniedTools: [] },
+    ]);
+    const { actions, mint, wideTokens, minted } = setup("lead", roles);
+    const { token } = mint();
+    const out = (await actions.run({ ticket: token, action: "git-auth", repo: "o/r" })) as { github: { token: string } };
+    expect(out.github.token).toBe("");
+    expect(minted).toHaveLength(0);
+    expect(wideTokens).toHaveLength(0);
   });
 });

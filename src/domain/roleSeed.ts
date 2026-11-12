@@ -4,7 +4,7 @@
  * `pal`, `executer` and `admin` are ordinary data once seeded: the grants below
  * only decide where they START, and are chosen to reproduce what the code did
  * before roles became data (a command's `minRole`, the sandbox tiers, the GitHub
- * App gate, every `role >= admin` check). `tests/domain/roleSeed.test.ts` holds
+ * App gate, every `role >= admin` check). `tests/application/rolesParity.test.ts` holds
  * that parity for every command and GitHub App action.
  *
  * A permission added later (a new command, a new MCP server) is seeded into the

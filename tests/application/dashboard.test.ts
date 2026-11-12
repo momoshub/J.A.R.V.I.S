@@ -289,6 +289,16 @@ describe("dashboard roles", () => {
     expect(ports().app.roles().editable).toBe(false);
   });
 
+  test("create never overwrites an existing role, so the Create form cannot wipe a built-in's grants", () => {
+    const { app, repo } = withRoles();
+    const before = repo.book.get("admin")!.grants.length;
+    expect(before).toBeGreaterThan(10);
+    expect(app.saveRole({ name: "admin", create: true, from: "", description: "", rank: "", enabled: true }).ok).toBe(false);
+    expect(repo.book.get("admin")!.grants.length).toBe(before);
+    expect(app.saveRole({ name: "fresh", create: true, from: "admin" }).ok).toBe(true);
+    expect(repo.book.get("fresh")!.grants.length).toBe(before);
+  });
+
   test("deleteRole refuses while people hold it and names them; renameRole moves them along", () => {
     const { app, repo, users } = withRoles();
     app.saveRole({ name: "qa", rank: 1, grants: ["command:ping"] });

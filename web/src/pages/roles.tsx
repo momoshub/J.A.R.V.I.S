@@ -32,6 +32,7 @@ export const action = guard(async ({ request }) => {
     await post("roles/save", {
       name: fd.get("name"),
       from: fd.get("from"),
+      create: true,
       description: fd.get("description"),
       rank: fd.get("rank") ?? "",
       enabled: true,

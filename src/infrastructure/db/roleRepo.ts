@@ -119,7 +119,12 @@ export const createRoleRepo = (db: DbClient): RoleRepo => {
           throw e;
         }
       }),
-    remove: (name) => write(() => db.query("DELETE FROM roles WHERE name = $name").run({ $name: name })),
+    // Atomic with the holder check: a role someone was just given is not deleted.
+    remove: (name) =>
+      write(() => {
+        db.query("DELETE FROM roles WHERE name = $name AND NOT EXISTS (SELECT 1 FROM allowed_users WHERE role = $name)").run({ $name: name });
+        db.query("DELETE FROM settings WHERE key = $key AND NOT EXISTS (SELECT 1 FROM roles WHERE name = $name)").run({ $key: `model:${name}`, $name: name });
+      }),
     holders: (name) => holdersStmt.get(name)?.n ?? 0,
   };
 };
