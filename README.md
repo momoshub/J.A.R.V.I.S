@@ -875,7 +875,7 @@ The turn posts its answer back on the issue/PR, as the app, through
 only posts to the issue that turn's thread was opened for. If the turn ends
 without posting, its reply is posted for it.
 
-For anything wider, an **executer, an admin or the owner** can have a turn act as the app on
+For anything wider, an **admin or the owner** (or an **executer**, for commits, PR create/edit, comments, `labels-add` and reviewer requests, never push, review, merge or close) can have a turn act as the app on
 any repository it is installed on (`acme`, `cute-me-on-repos`, ...):
 
 ```
@@ -898,7 +898,7 @@ anything that talks to github.com (fetch, pull, push, ls-remote; an ssh remote
 is read as https) carries a fresh installation token. `push` pushes one branch
 to the remote of `<dir>` that points at `<owner/repo>`. The token is a one-shot
 credential: the bot hands it back for the `git-auth` action (same ticket, same
-executer+ gate, same command log row, no token in the log) and the helper puts
+same role gate (an executer gets the identity with no token, so it can commit but not push), same command log row, no token in the log) and the helper puts
 it in that one git process's environment as `http.extraheader` through
 `GIT_CONFIG_*` - never in a remote url, `.git/config`, argv or any file. A
 cherry-picked commit keeps its original author unless you pass `--reset-author`.
@@ -971,7 +971,7 @@ the ticket lives.
 
 It only acts on owners in `GITHUB_APP_ALLOWED_OWNERS`. It posts to `/api/github-app/action` with the turn's ticket (from
 `JARVIS_RUN_TICKET`, never an argument); the bot resolves it to the person the
-turn runs as, refuses unless they are executer, admin or owner, logs the call in the
+turn runs as, refuses unless their role allows that action (admin/owner: all, executer: the list above), logs the call in the
 command log, and prints GitHub's JSON (url, number) or GitHub's own error (app
 not installed, permission missing).
 

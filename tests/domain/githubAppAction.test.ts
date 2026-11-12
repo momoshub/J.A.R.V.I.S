@@ -12,11 +12,19 @@ const err = (req: Parameters<typeof planAction>[0]) => {
 };
 
 describe("mayActAsApp", () => {
-  test("admin and owner only", () => {
-    expect(mayActAsApp("owner")).toBe(true);
-    expect(mayActAsApp("admin")).toBe(true);
-    expect(mayActAsApp("executer")).toBe(true);
+  test("admin and owner run every action, a pal none", () => {
+    for (const a of ["pr-merge", "review", "pr-close", "git-auth"] as const) {
+      expect(mayActAsApp("owner", a)).toBe(true);
+      expect(mayActAsApp("admin", a)).toBe(true);
+      expect(mayActAsApp("pal", a)).toBe(false);
+    }
     expect(mayActAsApp("pal")).toBe(false);
+  });
+
+  test("an executer gets commit, PR create/edit, comment, labels-add and reviewer requests only", () => {
+    expect(mayActAsApp("executer")).toBe(true);
+    for (const a of ["git-auth", "pr-create", "pr-edit", "comment", "labels-add", "reviewers-request"] as const) expect(mayActAsApp("executer", a)).toBe(true);
+    for (const a of ["review", "pr-merge", "pr-close", "pr-reopen", "labels-remove", "ticket-renew"] as const) expect(mayActAsApp("executer", a)).toBe(false);
   });
 });
 

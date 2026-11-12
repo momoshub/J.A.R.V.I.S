@@ -203,8 +203,10 @@ describe("github app actions with a worker ticket", () => {
     const { actions, mint, setRole, hits } = setup("admin");
     const { token } = mint();
     await expect(actions.run({ ticket: token, ...create })).resolves.toBeDefined();
+    setRole("executer");
+    await expect(actions.run({ ticket: token, ...create })).rejects.toThrow("admin or the owner");
     setRole("pal");
-    await expect(actions.run({ ticket: token, ...create })).rejects.toThrow("executer role");
+    await expect(actions.run({ ticket: token, ...create })).rejects.toThrow("admin or the owner");
     setRole(undefined);
     await expect(actions.run({ ticket: token, ...create })).rejects.toThrow("not on the access list");
     expect(hits.filter((h) => h === "POST repos/o/r/pulls")).toHaveLength(1);
@@ -288,8 +290,8 @@ describe("ticket-renew with a worker ticket", () => {
   test("a demoted minter cannot renew, and nothing is extended", async () => {
     const { t, actions, mint, setRole, tickets } = setup();
     const { token } = mint();
-    setRole("pal");
-    await expect(actions.run({ ticket: token, ...renew })).rejects.toThrow();
+    setRole("executer");
+    await expect(actions.run({ ticket: token, ...renew })).rejects.toThrow("admin or the owner");
     setRole("admin");
     t.now += TTL + 1;
     expect(tickets.redeem(token, { action: "comment", repo: "o/r" })).toMatchObject({ ok: false, reason: "expired" });

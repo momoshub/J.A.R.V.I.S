@@ -106,6 +106,17 @@ describe("github app actions: auth gate", () => {
     expect(audit[0]?.entry).toMatchObject({ ok: true });
   });
 
+  test.each([
+    { action: "pr-merge", repo: "o/r", number: 1 },
+    { action: "review", repo: "o/r", number: 1, event: "APPROVE" },
+    { action: "pr-close", repo: "o/r", number: 1 },
+  ])("an executer may not $action as the app", async (req) => {
+    const { actions, audit, calls } = setup("executer");
+    await expect(actions.run({ ticket: "good", ...req })).rejects.toThrow("needs an admin or the owner");
+    expect(calls).toEqual([]);
+    expect(audit[0]?.entry).toMatchObject({ ok: false });
+  });
+
   test("somebody off the access list is refused", async () => {
     const { actions, calls } = setup(undefined);
     await expect(actions.run({ ticket: "good", ...create })).rejects.toThrow("access list");
@@ -199,6 +210,16 @@ describe("github app actions: git-auth", () => {
     expect(calls).toEqual(["7 GET users/jarvis-at-acme%5Bbot%5D"]);
     expect(audit.map((a) => a.entry.args)).toEqual(["git-auth o/r", "git-auth o/r"]);
     expect(JSON.stringify(audit)).not.toContain("tok-7");
+  });
+
+  test("an executer gets the bot identity but no token, so it can commit and never push", async () => {
+    const { actions } = setup("executer");
+    const out = await actions.run({ ticket: "good", action: "git-auth", repo: "o/r" });
+    expect(out.github).toEqual({
+      token: "",
+      name: "jarvis-at-acme[bot]",
+      email: "1234+jarvis-at-acme[bot]@users.noreply.github.com",
+    });
   });
 
   test.each(["pal"] as const)("%s is refused and gets no token", async (role) => {

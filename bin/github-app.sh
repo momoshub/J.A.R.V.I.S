@@ -39,7 +39,8 @@
 # The ticket comes from JARVIS_RUN_TICKET in this process's environment (or, for
 # an Orca worker, from the file JARVIS_RUN_TICKET_FILE names), never from an
 # argument. The bot resolves it to whoever this turn runs as and only
-# acts if that person is an executer, an admin or the owner. The app's private key never
+# acts if that person is an admin or the owner, or an executer for commits,
+# PR create/edit, comments, labels-add and reviewer requests (no push). The app's private key never
 # reaches the turn; the bot holds it. (For a plain answer on the issue a GitHub
 # call came from, github-app-comment.sh needs no role.)
 #
@@ -133,15 +134,20 @@ except Exception:
     print("no usable answer from the bot", file=sys.stderr)
     sys.exit(1)
 g = r.get("github") if r.get("ok") else None
-if not isinstance(g, dict) or not g.get("token"):
+if not isinstance(g, dict) or not g.get("name"):
     print(r.get("error") or "the bot gave no git credentials", file=sys.stderr)
     sys.exit(1)
 print(g["name"])
 print(g["email"])
-print("AUTHORIZATION: basic " + base64.b64encode(("x-access-token:" + g["token"]).encode()).decode())') || exit 1
+# No token (an executer): identity only, so commits work and nothing can be pushed as the app.
+print("AUTHORIZATION: basic " + base64.b64encode(("x-access-token:" + g["token"]).encode()).decode() if g.get("token") else "")') || exit 1
   bot_name=$(printf '%s\n' "$auth" | sed -n 1p)
   bot_email=$(printf '%s\n' "$auth" | sed -n 2p)
   header=$(printf '%s\n' "$auth" | sed -n 3p)
+  if [ "$mode" = push ] && [ -z "$header" ]; then
+    echo "pushing as the app needs an admin or the owner - push with your own credential" >&2
+    exit 1
+  fi
 
   # The credential rides in this one process's environment only (config via
   # GIT_CONFIG_*, so it is not on argv and not written anywhere). An empty

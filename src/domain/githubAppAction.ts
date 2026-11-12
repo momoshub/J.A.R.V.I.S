@@ -3,8 +3,8 @@
  * data. Nothing here talks to GitHub: `planAction` validates one request and
  * turns it into the REST calls that carry it out, `mayActAsApp` is the role
  * gate. The app's identity is stronger than any one person's (it can be
- * installed on orgs the caller has no access to), so acting as it needs the
- * executer role or above, and the gate lives next to the actions, not scattered.
+ * installed on orgs the caller has no access to), so every action is admin+ and an
+ * executer gets a short list, and the gate lives next to the actions, not scattered.
  */
 import type { UserRole } from "./types.ts";
 
@@ -37,8 +37,28 @@ export type ActionName = (typeof ACTIONS)[number];
 export const REVIEW_EVENTS = ["APPROVE", "REQUEST_CHANGES", "COMMENT"] as const;
 export const MERGE_METHODS = ["merge", "squash", "rebase"] as const;
 
-/** Executer, admin and owner may act as the app; a pal may not. */
-export const mayActAsApp = (role: UserRole): boolean => role === "executer" || role === "admin" || role === "owner";
+/** Admin and owner may run every action as the app. */
+export const isAppAdmin = (role: UserRole): boolean => role === "admin" || role === "owner";
+
+/**
+ * What an executer may do as the app: commit, open and edit a PR, comment, label it
+ * and ask for reviewers. Reviews, merges, close/reopen and label removal stay admin+,
+ * and an executer's `git-auth` carries the bot identity only, no token, so it can
+ * commit as the app but never push (or force-push) with it.
+ */
+export const EXECUTER_ACTIONS: readonly ActionName[] = ["git-auth", "pr-create", "pr-edit", "comment", "labels-add", "reviewers-request"];
+
+/**
+ * The role gate. Without an action it answers "may this role use the app at all"
+ * (a request that does not plan is refused for that reason, not this one).
+ */
+export const mayActAsApp = (role: UserRole, action?: ActionName): boolean =>
+  isAppAdmin(role) || (role === "executer" && (action === undefined || EXECUTER_ACTIONS.includes(action)));
+
+export const executerDenied = (action: string): string =>
+  `an executer may act as the app only for ${EXECUTER_ACTIONS.filter((a) => a !== "git-auth").join(", ")} and commits - ${action} needs an admin or the owner`;
+
+export const WORKER_MINTER_DENIED = "a worker ticket only works while whoever minted it is an admin or the owner";
 
 export const DENIED_MESSAGE =
   "acting on GitHub as the app needs the executer role or above - ask an executer, an admin or the owner to do this, or use your own token";
