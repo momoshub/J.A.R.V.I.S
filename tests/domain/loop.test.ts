@@ -167,6 +167,17 @@ describe("loop names", () => {
     expect(cleanName("***")).toBe("");
   });
 
+  test("cleanName reads Slack's escapes and markup as the words a person sees", () => {
+    expect(cleanName("Q&amp;A board")).toBe("Q A board");
+    expect(cleanName("R&lt;D&gt;")).toBe("R D");
+    expect(cleanName("see <https://x.y/pulls|open PRs>")).toBe("see open PRs");
+    expect(cleanName("ping <@U1|kai> in <#C1|ops> <!here>")).toBe("ping kai in ops here");
+  });
+
+  test("deriveName reads a link as its label, not its url", () => {
+    expect(deriveName("check <https://github.com/o/r/pulls|open PRs> today")).toBe("check open PRs today");
+  });
+
   test("deriveName takes the first few words of the prompt, else of the command", () => {
     expect(deriveName("check the open pull requests and summarise them for me")).toBe("check the open pull");
     expect(deriveName("  *urgent*   look at <https://x.y|this> ")).not.toMatch(/[*<>|]/);
@@ -182,8 +193,10 @@ describe("loop names", () => {
   });
 
   test("the approval and settled texts carry the name", () => {
-    expect(approvalText(7, "every 15m", "./x", PENDING_TTL_MS, "Sync")).toContain("(Sync - loop #7)");
-    expect(approvalText(7, "every 15m", "./x")).toContain("(loop #7)");
+    const named = approvalText(7, "every 15m", "./x", PENDING_TTL_MS, "Sync");
+    expect(named).toContain("script loop (#7)");
+    expect(named).toContain("name (chosen by the turn, not checked): Sync");
+    expect(approvalText(7, "every 15m", "./x")).not.toContain("name (");
     expect(settledLoopText("approved", 3, "U1", "Sync")).toContain("Sync - script loop #3 approved by <@U1>");
     expect(settledLoopText("rejected", 3, undefined, "Sync")).toContain("Sync - script loop #3 rejected");
     expect(settledLoopText("expired", 3, undefined, "Sync")).toContain("Sync - script loop #3 expired");
@@ -228,7 +241,18 @@ describe("parseLoopArgs --name", () => {
   });
 
   test("the name is made Slack-safe", () => {
-    expect(ok(parseLoopArgs('every 6h --name "<!channel> *PR*" check')).name).toBe("!channel PR");
+    expect(ok(parseLoopArgs('every 6h --name "<!channel> *PR*" check')).name).toBe("channel PR");
+  });
+
+  test("an apostrophe inside a single-quoted name stays in the name, not the prompt", () => {
+    const r = ok(parseLoopArgs("every 6h --name 'Kai's board' check the queue"));
+    expect(r.name).toBe("Kai's board");
+    expect(r.prompt).toBe("check the queue");
+  });
+
+  test("Slack-escaped input gives the same name as the brain's unescaped one", () => {
+    expect(ok(parseLoopArgs('every 6h --name "Q&amp;A board" check')).name).toBe("Q A board");
+    expect(ok(parseLoopArgs('every 6h --name "Q&A board" check')).name).toBe("Q A board");
   });
 
   test("a missing or unclosed name explains itself", () => {

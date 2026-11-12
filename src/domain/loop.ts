@@ -28,12 +28,25 @@ export const MAX_NAME_CHARS = 40;
 const DERIVED_NAME_WORDS = 4;
 
 /**
+ * Slack hands text over as mrkdwn: links as `<url|label>` / `<url>`, mentions
+ * as `<@U1|kai>` / `<#C1|name>` / `<!channel>`, and `&`, `<`, `>` escaped. Read
+ * it as the words a person sees: a link is its label, a mention its name, then
+ * the entities are undone. Links go first, since an escaped `&lt;` is text.
+ */
+const plainSlack = (text: string): string =>
+  unescapeSlack(
+    text
+      .replace(/<([^<>|]*)\|([^<>]*)>/g, "$2")
+      .replace(/<([^<>]*)>/g, (_m, inner: string) => inner.replace(/^[@#!]/, "")),
+  );
+
+/**
  * A name that is safe to put in a Slack message: no mrkdwn markers, no
  * `<...>` link / mention syntax, no `&` entities, one line, clipped. What is
  * left is plain words, so a name can never become a link, a mention or bold.
  */
 export const cleanName = (raw: string): string =>
-  raw
+  plainSlack(raw)
     .replace(/[<>&*_~`|\\]/g, " ")
     .replace(/\s+/g, " ")
     .trim()
@@ -42,7 +55,8 @@ export const cleanName = (raw: string): string =>
 
 /** The first few words of what the loop does, as a name, for a loop nobody named. */
 export const deriveName = (prompt: string, command: string = ""): string => {
-  const words = (prompt.trim() || command.trim()).split(/\s+/).filter(Boolean);
+  // Read the markup first: a link's label has spaces, so splitting on words would cut it in half.
+  const words = plainSlack(prompt.trim() || command.trim()).split(/\s+/).filter(Boolean);
   return cleanName(words.slice(0, DERIVED_NAME_WORDS).join(" ")) || (command ? "script" : "loop");
 };
 
@@ -80,10 +94,11 @@ export const approvalText = (
   name: string = "",
 ): string =>
   [
-    `🔐 I wrote a script loop (${loopRef(id, name)}) and it needs your OK before it ever runs.`,
+    `🔐 I wrote a script loop (#${id}) and it needs your OK before it ever runs.`,
     approvalCore(schedule, command)[0],
     "command (runs as me, with no turn):",
     approvalCore(schedule, command)[1],
+    ...(name ? [`name (chosen by the turn, not checked): ${name}`] : []),
     `Approve starts it, Reject deletes it. No answer in ${Math.round(ttlMs / 3_600_000)}h also deletes it.`,
   ].join("\n");
 
@@ -195,7 +210,9 @@ const readName = (tail: string): { name: string; rest: string } | { error: strin
   const quoted = /^(["“'‘])/.exec(value);
   if (quoted) {
     const close = { '"': '"', "“": "”", "'": "'", "‘": "’" }[quoted[1] as string] as string;
-    const end = value.indexOf(close, 1);
+    // A closing quote ends a word: the apostrophe in `'Kai's board'` is part of the name.
+    let end = value.indexOf(close, 1);
+    while (end >= 0 && end + 1 < value.length && !/\s/.test(value[end + 1] ?? "")) end = value.indexOf(close, end + 1);
     if (end < 0) return { error: "close the quote after `--name`" };
     return { name: cleanName(value.slice(1, end)), rest: value.slice(end + 1).trim() };
   }
