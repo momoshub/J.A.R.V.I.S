@@ -123,7 +123,16 @@ export const parseRolePolicy = (
 ): PolicyCheck => {
   if (!isRole(input.role)) return { ok: false, error: "Unknown role" };
   if (input.role === "owner") return { ok: false, error: "The owner role cannot be restricted" };
-  const deniedCommands = [...new Set(listOf(input.deniedCommands).map((c) => c.toLowerCase()))];
+  // `review` is now `quick-review` and `approve` is gone: a policy saved before
+  // that is carried over rather than refused, so it can still be re-saved.
+  const deniedCommands = [
+    ...new Set(
+      listOf(input.deniedCommands)
+        .map((c) => c.toLowerCase())
+        .filter((c) => c !== "approve")
+        .map((c) => (c === "review" ? "quick-review" : c)),
+    ),
+  ];
   const badCommand = deniedCommands.find((c) => !COMMAND_NAME.test(c) || !knownCommands.includes(c));
   if (badCommand) return { ok: false, error: `Unknown command: ${badCommand}` };
   if (deniedCommands.some((c) => UNDENIABLE_COMMANDS.includes(c))) {

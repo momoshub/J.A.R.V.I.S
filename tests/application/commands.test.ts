@@ -47,6 +47,16 @@ describe("dispatchCommand", () => {
     expect(await dispatchCommand(deps, actor(), "C1", "ping")).not.toContain("not allowed");
   });
 
+  test("a denial or disable stored under the old `review` name still stops quick-review", async () => {
+    const PR = "https://github.com/o/r/pull/1";
+    const pal = actor({ slackId: "U3", role: "pal" });
+    const denied = { ...build(), deniedCommands: () => new Set(["review"]) };
+    expect(await dispatchCommand(denied, pal, "C1", `quick-review ${PR}`)).toContain("not allowed to run `quick-review`");
+    expect(await dispatchCommand(denied, pal, "C1", `rv ${PR}`)).toContain("not allowed to run `quick-review`");
+    const disabled = { ...build(), disabledCommands: () => new Set(["review"]) };
+    expect(await dispatchCommand(disabled, pal, "C1", `quick-review ${PR}`)).toContain("currently disabled");
+  });
+
   test("managing a member of a switched-off role sees their real record: remove, add, promote, users", async () => {
     const base = build();
     const raw = base.users;

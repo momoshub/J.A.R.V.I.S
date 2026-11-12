@@ -86,7 +86,7 @@ Required / notable env (see `.env.example`):
 | `GITHUB_APP_ALLOWED_OWNERS` | repo owners the app acts for, comma list (default empty: the app acts for no owner until set) |
 | `GITHUB_APP_LABEL` | label that calls it on an issue/PR (default `jarvis`) |
 | `SELF_PR_AUTHOR` / `SELF_PR_REVIEWER` | gh logins for the bot's own PRs: the author opens the PR and answers reviews, the reviewer posts its reviews (request changes or approve) and merges. Both or neither, and not the same login (otherwise: one account) |
-| `REVIEW_EXTENDED_OWNERS` | GitHub owners, comma list (case-insensitive), whose PRs `review` also posts non-blocking findings for. Default empty: blockers only everywhere |
+| `REVIEW_EXTENDED_OWNERS` | GitHub owners, comma list (case-insensitive), whose PRs `quick-review` also posts non-blocking findings for. Default empty: blockers only everywhere |
 | `DB_MCP_SERVERS` | names of the local database MCP servers on this host (as `claude mcp list` shows them, e.g. `pg-prod,clickhouse-ro`), comma list. **Security setting:** each is denied by name to every role that may not use databases (pal, executer, side questions), and a denial has to name the server, so a server missing here is reachable by EVERY role. Default empty denies nothing - list every database server you configure (at boot the activity log warns about local servers in `~/.claude.json` that are not listed) |
 | `EXECUTER_DB_MCP_SERVERS` | the subset of `DB_MCP_SERVERS` the executer role may query; list only servers whose credential is read-only on the server side. Default empty: executers get none |
 | `DASHBOARD_PORT` | dashboard port (local, loopback-only, no auth) |
@@ -1206,7 +1206,7 @@ Each allowlisted user has a role that scopes what the brain may do when they tal
 | --- | --- |
 | `owner` | full control, cannot be removed. The only role that may run `orca` |
 | `admin` | full tool access (real shell, writes), manages users. No `orca`: it is denied by name, background work goes through the Agent tool |
-| `pal` | sandboxed read-only tools in a fixed scratch dir: GitHub read (`gh pr/issue/repo/run/release/api`, plus the GitHub MCP), Notion read (search/fetch/comments), web search + fetch, git/aws read-only. May use `review`, and may react |
+| `pal` | sandboxed read-only tools in a fixed scratch dir: GitHub read (`gh pr/issue/repo/run/release/api`, plus the GitHub MCP), Notion read (search/fetch/comments), web search + fetch, git/aws read-only. May use `quick-review`, and may react |
 | `executer` | sandboxed, tools assigned from the dashboard (Roles -> Executer tools), plus - always, in code - the read-only databases, the code tools (clone into the scratch dir, edit, commit, push a branch, open a PR) and the `Agent`/`Task` tool for parallel or long work in its own process. No `orca` |
 
 Sandboxed roles run the Claude CLI without `--dangerously-skip-permissions`, with an explicit `--allowedTools` allow-list. The `executer` allow-list is edited on the Roles page.

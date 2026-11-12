@@ -127,10 +127,32 @@ describe("respond", () => {
         mentioned: true,
       });
       expect(ran.brain).toBe(false); // the chat brain never ran
-      if (res.kind === "reply") {
-        // the quick-review command answered: no token store wired here, so it refuses
-        expect(res.text).toContain("caller's own");
-      }
+      // the quick-review command answered: no token store wired here, so it refuses
+      expect(res.kind).toBe("reply");
+      expect(res.kind === "reply" ? res.text : "").toContain("caller's own");
+    }
+  });
+
+  test("a pal, the lowest role, can tag the bot for a quick review too", async () => {
+    const { deps, ran } = withBrain();
+    deps.users.upsert({ slackId: "U0PAL0009", role: "pal", displayName: "Pal", addedBy: OWNER, createdAt: 1 });
+    const res = await respond(deps, {
+      channelId: "C1",
+      slackUserId: "U0PAL0009",
+      text: `<@UBOT> approve ${REVIEW_PR}`,
+      mentioned: true,
+    });
+    expect(ran.brain).toBe(false);
+    expect(res.kind).toBe("reply");
+    expect(res.kind === "reply" ? res.text : "").toContain("caller's own");
+  });
+
+  test("a raw quick-review line from a turn the bot started is dropped", async () => {
+    for (const extra of [{ unprompted: true }, { autoContinue: true }, { workerLane: true }]) {
+      const { deps, ran } = withBrain();
+      const res = await respond(deps, { channelId: "C1", slackUserId: OWNER, text: `!quick-review ${REVIEW_PR}`, ...extra });
+      expect(res).toEqual({ kind: "ignored" });
+      expect(ran.brain).toBe(false);
     }
   });
 

@@ -43,7 +43,7 @@ describe("role policy", () => {
     const parse = (over: Record<string, unknown>) =>
       parseRolePolicy(
         { role: "executer", enabled: true, deniedCommands: [], deniedTools: [], deniedMcpServers: [], ...over },
-        ["ping", "review", "help"],
+        ["ping", "quick-review", "help"],
       );
     expect(parse({ role: "owner" }).ok).toBe(false);
     expect(parse({ role: "god" }).ok).toBe(false);
@@ -54,7 +54,7 @@ describe("role policy", () => {
     expect(
       parse({
         enabled: false,
-        deniedCommands: "Ping, review, ping",
+        deniedCommands: "Ping, quick-review, ping",
         deniedTools: "Bash(rm:*)\nWrite",
         deniedMcpServers: ["mcp__acme-pg-prod", "notion"],
       }),
@@ -63,10 +63,15 @@ describe("role policy", () => {
       policy: {
         role: "executer",
         enabled: false,
-        deniedCommands: ["ping", "review"],
+        deniedCommands: ["ping", "quick-review"],
         deniedTools: ["Bash(rm:*)", "Write"],
         deniedMcpServers: ["acme-pg-prod", "notion"],
       },
+    });
+    // A policy saved before the rename is carried over: review -> quick-review, approve dropped.
+    expect(parse({ deniedCommands: ["review", "approve", "ping"] })).toMatchObject({
+      ok: true,
+      policy: { deniedCommands: ["quick-review", "ping"] },
     });
     // Anything but an explicit false keeps the role on.
     expect(parse({ enabled: undefined })).toMatchObject({ policy: { enabled: true } });

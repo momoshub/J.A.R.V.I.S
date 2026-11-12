@@ -280,6 +280,11 @@ export const respond = async (
   }
 
   const actor = deps.users.get(decision.user.slackId) ?? decision.user;
+  // A quick review is a person's own ask. Today every turn the bot starts wraps
+  // its text, so none lands here as a raw line; this keeps it closed if one ever does.
+  if ((inbound.unprompted || inbound.autoContinue || inbound.workerLane) && /^(quick-review|rv)(\s|$)/i.test(line.trim())) {
+    return { kind: "ignored" };
+  }
 
   // Destination for progress + direct results: a DM when invoked via slash (there
   // is no thread to reply in), otherwise the thread the message came from. Long
