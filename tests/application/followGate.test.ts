@@ -426,6 +426,31 @@ describe("past the hard cap", () => {
   });
 });
 
+describe("switching the gate off", () => {
+  test("after a superseded answer the batch answers once at its due time, with no re-arm loop", async () => {
+    let enabled = true;
+    const base = gateSettings(() => undefined);
+    const t = setup({
+      settings: () => ({ ...base, enabled }),
+      verdicts: async () => {
+        await new Promise<void>((r) => t.clock.timers.set(() => r(), 3_000));
+        return { verdict: "skip", reason: "chat" };
+      },
+    });
+    void t.gate.submit(K, item("a", "1"));
+    await t.clock.advance(26_000); // asking
+    void t.gate.submit(K, item("b", "2")); // lands mid-read: stale
+    enabled = false;
+    await t.clock.advance(2_000); // the answer returns before the cap: re-armed
+    const logsBefore = t.logs.length;
+    await t.clock.advance(60_000);
+    expect(t.ran.map((b) => b.map((x) => x.text))).toEqual([["a", "b"]]);
+    expect(t.asked).toHaveLength(1);
+    expect(t.logs.length - logsBefore).toBeLessThan(5);
+    expect(t.gate.pending()).toBe(0);
+  });
+});
+
 describe("a message that bypasses the gate (cancel)", () => {
   test("takes the pending batch over: nothing fires later, the waiters settle", async () => {
     const t = setup({});

@@ -107,10 +107,13 @@ export const createFollowGate = <T extends BufferedMessage>(deps: FollowGateDeps
     const size = sent.items.length;
 
     // Switched off while messages were waiting: no gate, just answer them.
+    // `stale` is about THIS ask: cleared whether or not the gate is asked, or a
+    // gate switched off after a superseded answer would see it stuck on and
+    // re-arm at 0ms until the cap.
+    e.stale = false;
     let decision: GateDecision = failOpen("gate off");
     if (settings.enabled) {
       e.asking = true;
-      e.stale = false;
       decision = await ask(k, sent.items);
       e.asking = false;
     }
