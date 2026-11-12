@@ -17,15 +17,17 @@ const err = (req: Parameters<typeof planAction>[0]) => {
 const book = seededBook();
 
 describe("who may act as the app", () => {
-  test("as seeded: admin and owner, every action; executer and pal none", () => {
+  test("as seeded: admin and owner every action, executer six of them (never push), pal none", () => {
     for (const role of ["owner", "admin"]) {
       expect(mayActAsApp(book, role)).toBe(true);
       for (const a of GITHUB_PERMISSION_ACTIONS) expect(can(book, role, githubPerm(a))).toBe(true);
     }
-    for (const role of ["executer", "pal"]) {
-      expect(mayActAsApp(book, role)).toBe(false);
-      for (const a of GITHUB_PERMISSION_ACTIONS) expect(can(book, role, githubPerm(a))).toBe(false);
-    }
+    expect(mayActAsApp(book, "executer")).toBe(true);
+    expect(can(book, "executer", githubPerm("pr-create"))).toBe(true);
+    expect(can(book, "executer", githubPerm("pr-merge"))).toBe(false);
+    expect(can(book, "executer", githubPerm("push"))).toBe(false);
+    expect(mayActAsApp(book, "pal")).toBe(false);
+    for (const a of GITHUB_PERMISSION_ACTIONS) expect(can(book, "pal", githubPerm(a))).toBe(false);
   });
 
   test("every REST action and both git purposes map to one grant; ticket-renew to none", () => {

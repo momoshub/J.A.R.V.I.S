@@ -168,6 +168,21 @@ describe("github-app.sh git and push", () => {
     expect(readFileSync(join(dir, ".git", "config"), "utf8")).not.toContain(basic);
     expect(Bun.spawnSync({ cmd: ["git", "config", "--get-all", "http.https://github.com/.extraheader"], cwd: dir }).exitCode).toBe(1);
   }, SLOW);
+  test("with no token (an executer) it still commits as the bot, sends no header, and push is refused", async () => {
+    const { dir, bare } = clone();
+    const idOnly = { ok: true, github: { ...bot, token: "" } };
+    const c = await gh(["git", "o/r", dir, "--", "commit", "-q", "-m", "fix: x"], idOnly);
+    expect(c.code).toBe(0);
+    expect(sh(["git", "log", "-1", "--format=%an", "HEAD"], dir)).toBe(bot.name);
+    const h = await gh(["git", "o/r", dir, "--", "config", "--get-all", "http.https://github.com/.extraheader"], idOnly);
+    expect(h.stdout).toBe("");
+    sh(["git", "checkout", "-q", "-b", "fix/x"], dir);
+    const p = await gh(["push", "o/r", dir, "fix/x"], idOnly);
+    expect(p.code).toBe(1);
+    expect(p.stderr).toContain("admin or the owner");
+    expect(Bun.spawnSync({ cmd: ["git", "--git-dir", bare, "rev-parse", "--verify", "fix/x"] }).exitCode).not.toBe(0);
+  }, SLOW);
+
   test("an ssh remote is read as https, so the header applies", async () => {
     const { dir } = clone();
     sh(["git", "remote", "add", "sshy", "git@github.com:O/R.git"], dir);
@@ -220,9 +235,9 @@ describe("github-app.sh git and push", () => {
 
   test("the bot's refusal is printed and git does not run", async () => {
     const { dir } = clone();
-    const r = await gh(["git", "o/r", dir, "--", "commit", "-m", "x"], { ok: false, error: "needs the admin role" });
+    const r = await gh(["git", "o/r", dir, "--", "commit", "-m", "x"], { ok: false, error: "needs the executer role" });
     expect(r.code).toBe(1);
-    expect(r.stderr).toContain("needs the admin role");
+    expect(r.stderr).toContain("needs the executer role");
     expect(Bun.spawnSync({ cmd: ["git", "-C", dir, "rev-parse", "--verify", "HEAD"] }).exitCode).not.toBe(0);
   }, SLOW);
 

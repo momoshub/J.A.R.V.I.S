@@ -46,19 +46,21 @@ describe("parity: the seeded roles behave exactly as the hard-coded ones did", (
     }
   });
 
-  test("every GitHub App action: admin and owner may, executer and pal may not", () => {
-    for (const a of ACTIONS) {
-      if (a === "ticket-renew") continue;
-      for (const role of ROLES) {
-        const perm = permissionFor(a, "git")!;
-        expect({ a, role, can: can(book, role, perm) }).toEqual({ a, role, can: role === "admin" || role === "owner" });
-      }
-    }
+  test("every GitHub App action: admin and owner may all (as before); executer the six PR #22 gave it, pal none", () => {
+    const EXECUTER = ["git", "pr-create", "pr-edit", "comment", "labels-add", "reviewers-request"];
     for (const a of GITHUB_PERMISSION_ACTIONS) {
-      expect(can(book, "executer", githubPerm(a))).toBe(false);
+      expect(can(book, "owner", githubPerm(a))).toBe(true);
       expect(can(book, "admin", githubPerm(a))).toBe(true);
+      expect(can(book, "executer", githubPerm(a))).toBe(EXECUTER.includes(a));
+      expect(can(book, "pal", githubPerm(a))).toBe(false);
     }
-    for (const role of ROLES) expect(mayActAsApp(book, role)).toBe(role === "admin" || role === "owner");
+    // an executer never holds push, so git-auth hands it the identity without a token
+    expect(can(book, "executer", githubPerm("push"))).toBe(false);
+    for (const a of ACTIONS) {
+      if (a === "ticket-renew" || a === "git-auth") continue;
+      expect(permissionFor(a)).toBe(githubPerm(a));
+    }
+    for (const role of ROLES) expect(mayActAsApp(book, role)).toBe(role !== "pal");
   });
 
   test("worker tickets are minted by admin and owner (command:worker-ticket)", () => {

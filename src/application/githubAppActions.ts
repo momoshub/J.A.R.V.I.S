@@ -19,6 +19,7 @@ import {
   summarize,
 } from "../domain/githubAppAction.ts";
 import { can, type RoleBook } from "../domain/roles.ts";
+import { commandPerm, githubPerm } from "../domain/permissions.ts";
 import { seededBook } from "../domain/roleSeed.ts";
 import { isAllowedOwner } from "../domain/githubApp.ts";
 import type { AllowedUser } from "../domain/types.ts";
@@ -111,6 +112,9 @@ const describe = (req: ActionRequest): string =>
     .filter((x) => x !== undefined && x !== "" && x !== null && x !== false)
     .join(" ");
 
+/** The seeded roles, for a caller with none wired: `worker-ticket` is admin and up as before. */
+const DEFAULT_BOOK: RoleBook = seededBook({ commands: [{ name: "worker-ticket", minRole: "admin" }] });
+
 export const createGithubActions = (deps: GithubActionDeps): GithubActions => {
   // The bot's numeric user id never changes, so look it up once per slug.
   let botId: number | undefined;
@@ -199,7 +203,9 @@ export const createGithubActions = (deps: GithubActionDeps): GithubActions => {
       if (!plan.ok) return refuse(plan.error);
       // Each action is its own grant, read from the stored role of whoever the ticket runs as. A worker ticket
       // is checked against its minter's role on every redeem, so demoting the minter stops the worker at once.
-      const book = deps.roles ?? seededBook();
+      const book = deps.roles ?? DEFAULT_BOOK;
+      // A worker outlives the turn, so it keeps working (and renewing) only while its minter may still mint one.
+      if (worker?.ok && user && !can(book, user.role, commandPerm("worker-ticket"))) refuse("a worker ticket only works while whoever minted it still holds the worker-ticket grant");
       if (user) {
         const perm = permissionFor(plan.action, purposeOf(req));
         const allowed = perm ? can(book, user.role, perm) : mayActAsApp(book, user.role);
@@ -228,7 +234,12 @@ export const createGithubActions = (deps: GithubActionDeps): GithubActions => {
         if (plan.action === "git-auth") {
           // The token goes back to the helper only; the audit row never has it.
           // A worker's token is its own: one repo, git's permissions only, revoked with the ticket.
-          const auth = worker?.ok ? await workerGitAuth(installation, plan.repo, worker.id) : await gitAuth(installation);
+          // Only a role holding `github:push` is handed the token: without it a role gets the bot identity, so it commits as the app but cannot push with it.
+          const auth = worker?.ok
+            ? await workerGitAuth(installation, plan.repo, worker.id)
+            : user && !can(book, user.role, githubPerm("push"))
+              ? { token: "", ...(await botIdentity(installation)) }
+              : await gitAuth(installation);
           log(true, `git-auth ${plan.repo}`);
           return { github: auth };
         }

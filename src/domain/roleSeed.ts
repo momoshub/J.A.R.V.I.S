@@ -56,6 +56,8 @@ const COMMAND_RANK: Readonly<Record<string, number>> = { pal: 0, executer: 1, ad
 const seedMinRole = (c: SeedInput["commands"][number], input: SeedInput): string =>
   c.name === "note" ? (input.floors?.note ?? "admin") : c.name === "read" ? (input.floors?.read ?? "admin") : c.minRole;
 
+const EXECUTER_GITHUB = ["git", "pr-create", "pr-edit", "comment", "labels-add", "reviewers-request"] as const;
+
 const GITHUB_ALL = GITHUB_PERMISSION_ACTIONS.map(githubPerm);
 
 /** What a built-in role grants by default. */
@@ -75,6 +77,8 @@ export const defaultGrants = (seed: string, input: SeedInput): readonly string[]
   });
   const grants: string[] = [...commands, ...mcp.map(mcpPerm)];
   if (rank >= BUILTIN_RANK.executer!) grants.push(PERM.code, PERM.shellWatch, PERM.unlimited, PERM.desktop);
+  // An executer acts as the app for commits (identity only: no `github:push`, so no token), PRs, comments, labels and reviewer requests.
+  if (rank === BUILTIN_RANK.executer!) grants.push(...EXECUTER_GITHUB.map(githubPerm));
   if (rank >= BUILTIN_RANK.admin!) {
     // `code` is the sandbox tier; full access replaces it.
     grants.splice(grants.indexOf(PERM.code), 1);

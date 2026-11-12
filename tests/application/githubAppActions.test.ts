@@ -96,7 +96,7 @@ describe("github app actions: auth gate", () => {
     expect(audit[0]?.entry.args).not.toContain("B");
   });
 
-  test.each(["executer", "pal"] as const)("%s is refused before anything reaches GitHub, and audited", async (role) => {
+  test.each(["pal"] as const)("%s is refused before anything reaches GitHub, and audited", async (role) => {
     const { actions, audit, calls, installs } = setup(role);
     await expect(actions.run({ ticket: "good", ...create })).rejects.toThrow("may not act on GitHub as the app");
     expect(calls).toEqual([]);
@@ -199,10 +199,27 @@ describe("github app actions: git-auth", () => {
     expect(JSON.stringify(audit)).not.toContain("tok-7");
   });
 
-  test.each(["executer", "pal"] as const)("%s is refused and gets no token", async (role) => {
-    const { actions, installs } = setup(role);
+  test("a pal is refused and gets no token", async () => {
+    const { actions, installs } = setup("pal");
     await expect(actions.run({ ticket: "good", action: "git-auth", repo: "o/r" })).rejects.toThrow("may not act on GitHub as the app");
     expect(installs).toEqual([]);
+  });
+
+  test("an executer gets the bot identity with an EMPTY token, so it commits as the app but cannot push", async () => {
+    const { actions, calls } = setup("executer");
+    const out = (await actions.run({ ticket: "good", action: "git-auth", repo: "o/r" })) as { github: { token: string; name: string } };
+    expect(out.github.token).toBe("");
+    expect(out.github.name).toBe("jarvis-at-acme[bot]");
+    expect(calls).toEqual(["7 GET users/jarvis-at-acme%5Bbot%5D"]);
+    await expect(actions.run({ ticket: "good", action: "git-auth", repo: "o/r", purpose: "push" })).rejects.toThrow("github:push");
+  });
+
+  test("an executer may open and edit PRs, comment, label and ask for reviewers - not merge, review, close or remove labels", async () => {
+    const { actions } = setup("executer");
+    await expect(actions.run({ ticket: "good", ...create })).resolves.toMatchObject({ number: 9 });
+    for (const action of ["pr-merge", "review", "pr-close", "pr-reopen", "labels-remove"]) {
+      await expect(actions.run({ ticket: "good", action, repo: "o/r", number: 9, event: "APPROVE", labels: ["x"], method: "merge" })).rejects.toThrow("may not act on GitHub as the app");
+    }
   });
 
   test("an owner outside the allowlist gets no token", async () => {
@@ -228,13 +245,13 @@ describe("github app actions: every action is its own grant", () => {
     expect(audit.at(-1)?.entry).toMatchObject({ ok: false });
   });
 
-  test("granting an executer the actions is all it takes - no code change", async () => {
+  test("granting an executer more is all it takes - no code change", async () => {
     const roles = staticBook(
-      seededBook().list().filter((r) => r.name !== "owner").map((r) => (r.name === "executer" ? { ...r, grants: [...r.grants, "github:pr-create", "github:comment"] } : r)),
+      seededBook().list().filter((r) => r.name !== "owner").map((r) => (r.name === "executer" ? { ...r, grants: [...r.grants, "github:pr-merge"] } : r)),
     );
     const { actions } = setup("executer", { roles });
-    await expect(actions.run({ ticket: "good", ...create })).resolves.toMatchObject({ number: 9 });
-    await expect(actions.run({ ticket: "good", action: "pr-merge", repo: "o/r", number: 9 })).rejects.toThrow("may not act on GitHub as the app");
+    await expect(actions.run({ ticket: "good", action: "pr-merge", repo: "o/r", number: 9 })).resolves.toBeDefined();
+    await expect(actions.run({ ticket: "good", action: "pr-close", repo: "o/r", number: 9 })).rejects.toThrow("may not act on GitHub as the app");
   });
 
   test("git and push are separate grants for the same token", async () => {
