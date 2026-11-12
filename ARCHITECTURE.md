@@ -107,7 +107,7 @@ no classes.
   `stuckSweeper` asks Orca every 15 minutes for tasks still `dispatched`
   whose worker is gone, and `gh` for open PRs on the bot's own repo with no
   commit, comment or review for 30 minutes, and DMs the owner what is new with
-  the thread whose trace started each (an item is not repeated for 4 hours);
+  the thread that started each (recorded when the app opened the PR, else found in the traces; an item is not repeated for 4 hours);
   `mindful` shows the same two lists on demand.
   None of them hold a session or a queue slot while they wait.
 - **GitHub App.** A loopback listener (`GITHUB_APP_PORT`, reached through

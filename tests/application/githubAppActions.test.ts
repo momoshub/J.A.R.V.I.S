@@ -4,7 +4,7 @@ import type { AllowedUser, UserRole } from "../../src/domain/types.ts";
 
 const user = (slackId: string, role: UserRole): AllowedUser => ({ slackId, role, name: slackId }) as unknown as AllowedUser;
 
-const setup = (role: UserRole | undefined, opts: { fail?: Error } = {}) => {
+const setup = (role: UserRole | undefined, opts: { fail?: Error; threadTs?: string; onPrCreated?: (pr: { url: string; channelId: string; threadTs: string }) => void } = {}) => {
   const audit: { entry: { command: string; args: string; ok: boolean; result: string; slackUserId: string }; at: number }[] = [];
   const calls: string[] = [];
   const installs: string[] = [];
@@ -12,7 +12,7 @@ const setup = (role: UserRole | undefined, opts: { fail?: Error } = {}) => {
     clock: () => 42,
     resolve: (t) => {
       if (t !== "good") throw new Error("that ticket is not valid any more");
-      return { actor: "U1", channel: "C1" };
+      return { actor: "U1", channel: "C1", ...(opts.threadTs ? { threadTs: opts.threadTs } : {}) };
     },
     users: { get: (id) => (role && id === "U1" ? user("U1", role) : undefined) },
     github: {
@@ -34,6 +34,7 @@ const setup = (role: UserRole | undefined, opts: { fail?: Error } = {}) => {
       },
     },
     audit: { add: (entry, at) => void audit.push({ entry, at }) },
+    ...(opts.onPrCreated ? { onPrCreated: opts.onPrCreated } : {}),
     allowedOwners: ["o"],
     slug: "jarvis-at-acme",
   });
@@ -41,6 +42,26 @@ const setup = (role: UserRole | undefined, opts: { fail?: Error } = {}) => {
 };
 
 const create = { action: "pr-create", repo: "o/r", head: "h", base: "master", title: "T", body: "B" };
+
+describe("github app actions: PR -> thread record", () => {
+  test("a PR opened from a thread is reported with that thread", async () => {
+    const seen: unknown[] = [];
+    const { actions } = setup("admin", { threadTs: "100.2", onPrCreated: (pr) => seen.push(pr) });
+    await actions.run({ ticket: "good", ...create });
+    expect(seen).toEqual([{ url: "https://github.com/o/r/pull/9", channelId: "C1", threadTs: "100.2" }]);
+  });
+
+  test("nothing is recorded without a thread, for another action, or when the recorder throws", async () => {
+    const seen: unknown[] = [];
+    const noThread = setup("admin", { onPrCreated: (pr) => seen.push(pr) });
+    await noThread.actions.run({ ticket: "good", ...create });
+    const comment = setup("admin", { threadTs: "1.1", onPrCreated: (pr) => seen.push(pr) });
+    await comment.actions.run({ ticket: "good", action: "comment", repo: "o/r", number: 9, body: "hi" });
+    expect(seen).toEqual([]);
+    const boom = setup("admin", { threadTs: "1.1", onPrCreated: () => { throw new Error("disk"); } });
+    await expect(boom.actions.run({ ticket: "good", ...create })).resolves.toMatchObject({ number: 9 });
+  });
+});
 
 describe("github app actions: auth gate", () => {
   test.each(["admin", "owner"] as const)("%s may act, and it is audited", async (role) => {

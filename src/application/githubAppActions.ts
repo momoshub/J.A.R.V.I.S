@@ -21,7 +21,7 @@ import type { WorkerRedeem } from "./workerTickets.ts";
 export type GithubActionDeps = {
   clock: Clock;
   /** Resolve a turn's ticket to who it runs as; throws with a plain message if it will not. */
-  resolve: (ticket: string) => { actor: string; channel: string };
+  resolve: (ticket: string) => { actor: string; channel: string; threadTs?: string };
   /**
    * Resolve a worker ticket (`jvwk_...`, see `workerTickets.ts`) for ONE call:
    * it checks the action and the repo against what the ticket grants. Absent
@@ -42,6 +42,11 @@ export type GithubActionDeps = {
     request: (installationId: number, method: string, path: string, body?: unknown) => Promise<unknown>;
   };
   audit: Pick<CommandLogRepo, "add">;
+  /**
+   * A PR was opened from a Slack thread (a turn's, or its worker's): remember
+   * which, so the stuck-work report can link the thread whoever ran the command.
+   */
+  onPrCreated?: (pr: { url: string; channelId: string; threadTs: string }) => void;
   /**
    * Owners the app may act on (`GITHUB_APP_ALLOWED_OWNERS`). The app is public,
    * so anybody can install it; acting as it is limited to the same owners the
@@ -197,6 +202,14 @@ export const createGithubActions = (deps: GithubActionDeps): GithubActions => {
         const out = outs.length === 1 ? outs[0] : outs;
         const summary = summarize(out);
         log(true, summary.url ?? `${plan.action} ok`);
+        const threadTs = worker?.ok ? worker.threadTs : "threadTs" in ctx ? ctx.threadTs : undefined;
+        if (plan.action === "pr-create" && summary.url && threadTs && ctx.channel) {
+          try {
+            deps.onPrCreated?.({ url: summary.url, channelId: ctx.channel, threadTs });
+          } catch (e) {
+            logAndIgnore("record PR thread")(e);
+          }
+        }
         return { ...summary, github: out ?? null };
       } catch (e) {
         log(false, errText(e));

@@ -6,6 +6,10 @@ import {
   parseOpenPrs,
   parseRunPage,
   parseSeen,
+  parsePrThreads,
+  recordedOwners,
+  recordPrThread,
+  PR_THREADS_MAX,
   terminalGone,
   prRef,
   quietPrs,
@@ -108,11 +112,46 @@ describe("quiet PRs", () => {
 
   test("only 30 minutes of nothing counts, quietest first", () => {
     const prs = [
-      { number: 1, title: "", url: "u1", lastActivityAt: now - 29 * MIN },
-      { number: 2, title: "", url: "u2", lastActivityAt: now - 31 * MIN },
-      { number: 3, title: "", url: "u3", lastActivityAt: now - 120 * MIN },
+      { number: 1, title: "", url: "u1", lastActivityAt: now - 29 * MIN, awaitingHuman: false },
+      { number: 2, title: "", url: "u2", lastActivityAt: now - 31 * MIN, awaitingHuman: false },
+      { number: 3, title: "", url: "u3", lastActivityAt: now - 120 * MIN, awaitingHuman: false },
+      { number: 4, title: "", url: "u4", lastActivityAt: now - 600 * MIN, awaitingHuman: true },
     ];
     expect(quietPrs(prs, now).map((p) => p.number)).toEqual([3, 2]);
+  });
+
+  describe("waiting on a person is not quiet", () => {
+    const green = [{ __typename: "CheckRun", status: "COMPLETED", conclusion: "SUCCESS" }, { __typename: "StatusContext", state: "SUCCESS" }];
+    const waits = (fields: Record<string, unknown>) => parseOpenPrs(JSON.stringify([pr(1, fields)]))?.[0]?.awaitingHuman;
+
+    test("green checks on a PR ready for review: the reviewer's ball (the #16 case)", () => {
+      expect(waits({ statusCheckRollup: green, reviewDecision: "REVIEW_REQUIRED", isDraft: false })).toBe(true);
+      expect(waits({ statusCheckRollup: green, reviewDecision: "" })).toBe(true);
+      expect(waits({ statusCheckRollup: [{ conclusion: "SKIPPED" }, { conclusion: "NEUTRAL" }] })).toBe(true);
+    });
+
+    test("approved: only a merge is left, which is a human's", () => {
+      expect(waits({ reviewDecision: "APPROVED", statusCheckRollup: [{ conclusion: "FAILURE" }] })).toBe(true);
+    });
+
+    test("changes requested, a draft, failing or running checks: still the author's ball", () => {
+      expect(waits({ statusCheckRollup: green, reviewDecision: "CHANGES_REQUESTED" })).toBe(false);
+      expect(waits({ statusCheckRollup: green, isDraft: true })).toBe(false);
+      expect(waits({ statusCheckRollup: [...green, { conclusion: "FAILURE" }] })).toBe(false);
+      expect(waits({ statusCheckRollup: [...green, { status: "IN_PROGRESS", conclusion: "" }] })).toBe(false);
+      expect(waits({ statusCheckRollup: [{ state: "PENDING" }] })).toBe(false);
+    });
+
+    test("no checks: only the author's own last comment, newer than the last commit, is a question to someone", () => {
+      const commits = [{ committedDate: "2026-11-08T09:30:00Z" }];
+      const bot = { author: { login: "jarvis[bot]" } };
+      const ask = { ...bot, createdAt: "2026-11-08T10:00:00Z" };
+      expect(waits({ ...bot, commits, comments: [ask], statusCheckRollup: [] })).toBe(true);
+      expect(waits({ ...bot, commits, comments: [{ author: { login: "kai" }, createdAt: "2026-11-08T10:00:00Z" }], statusCheckRollup: [] })).toBe(false);
+      expect(waits({ ...bot, commits: [{ committedDate: "2026-11-08T11:00:00Z" }], comments: [ask], statusCheckRollup: [] })).toBe(false);
+      expect(waits({ ...bot, commits, comments: [], statusCheckRollup: [] })).toBe(false);
+      expect(waits({ ...bot, commits, comments: [ask] })).toBe(true);
+    });
   });
 
   test("one PR written two ways is one key", () => {
@@ -140,6 +179,14 @@ describe("traceStarts", () => {
       result("1", "https://github.com/Cute/J.A.R.V.I.S./pull/92\n"),
     ].join("\n");
     expect(traceStarts(trace).prs).toEqual(["cute/j.a.r.v.i.s.#92"]);
+  });
+
+  test("finds PRs opened through the app's helper, which is how the bot opens its own", () => {
+    const trace = [
+      call("1", "bin/github-app.sh pr-create momoshub/J.A.R.V.I.S. --head h --base main --title t --body-file /tmp/b"),
+      result("1", '{"url":"https://github.com/momoshub/J.A.R.V.I.S./pull/16","number":16}'),
+    ].join("\n");
+    expect(traceStarts(trace).prs).toEqual(["momoshub/j.a.r.v.i.s.#16"]);
   });
 
   test("a PR or dispatch merely read is not a start", () => {
@@ -215,5 +262,32 @@ describe("stuckDm", () => {
     expect(text).toContain("`task_1` \"review PR 9\" - worker exited - <https://acme.slack.com/archives/C1/p12|thread>");
     expect(text).toContain("<https://github.com/o/r/pull/9|#9> \"fix x\" - quiet 45m - no thread");
     expect(text).toContain("`X/jv mindful`");
+  });
+});
+
+describe("recorded PR threads", () => {
+  const url = "https://github.com/Momoshub/J.A.R.V.I.S./pull/16";
+
+  test("a PR opened from a thread is remembered by its normalized ref and read back as an owner", () => {
+    const json = recordPrThread(undefined, url, { channelId: "C1", threadTs: "100.2" });
+    expect(parsePrThreads(json)).toEqual({ "momoshub/j.a.r.v.i.s.#16": "C1/100.2" });
+    expect(recordedOwners(json).get(prRef(url))).toEqual({ channelId: "C1", threadTs: "100.2" });
+  });
+
+  test("the same PR again replaces its record, and only the newest are kept", () => {
+    let json = recordPrThread(undefined, url, { channelId: "C1", threadTs: "1.1" });
+    json = recordPrThread(json, url, { channelId: "C2", threadTs: "2.2" });
+    expect(Object.keys(parsePrThreads(json))).toHaveLength(1);
+    expect(recordedOwners(json).get(prRef(url))).toEqual({ channelId: "C2", threadTs: "2.2" });
+    for (let i = 0; i < PR_THREADS_MAX + 5; i++) json = recordPrThread(json, `https://github.com/o/r/pull/${i + 100}`, { channelId: "C", threadTs: `${i}.0` });
+    const kept = parsePrThreads(json);
+    expect(Object.keys(kept)).toHaveLength(PR_THREADS_MAX);
+    expect(kept["momoshub/j.a.r.v.i.s.#16"]).toBeUndefined();
+  });
+
+  test("malformed storage is forgotten, never thrown", () => {
+    expect(parsePrThreads("nope")).toEqual({});
+    expect(parsePrThreads('{"a":1,"b":"no-slash"}')).toEqual({});
+    expect(recordedOwners('{"o/r#1":"C1/"}').size).toBe(0);
   });
 });

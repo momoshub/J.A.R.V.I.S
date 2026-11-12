@@ -87,6 +87,21 @@ describe("stuck work probe", () => {
     expect(orca.calls.filter((c) => c.startsWith("orchestration run-list"))).toHaveLength(1);
   });
 
+  test("a PR waiting on its reviewer is not reported, and a recorded thread wins over the trace match", async () => {
+    const green = [{ __typename: "CheckRun", status: "COMPLETED", conclusion: "SUCCESS" }];
+    const base = { createdAt: "2026-11-08T09:00:00Z", commits: [], comments: [], reviews: [] };
+    const gh = ghFake(
+      JSON.stringify([
+        { ...base, number: 7, title: "stuck", url: "https://github.com/o/r/pull/7", statusCheckRollup: [{ conclusion: "FAILURE" }] },
+        { ...base, number: 16, title: "waiting", url: "https://github.com/o/r/pull/16", statusCheckRollup: green, reviewDecision: "REVIEW_REQUIRED" },
+      ]),
+    );
+    const recorded = new Map([["o/r#7", { channelId: "C9", threadTs: "900.1" }]]);
+    const probe = createStuckWorkProbe({ orca: orcaFake({}).run, gh, traceDir: traceDir(), now: () => NOW, recordedOwners: () => recorded });
+    const work = await probe.scan();
+    expect(work.prs.map((p) => [p.number, p.owner])).toEqual([[7, { channelId: "C9", threadTs: "900.1" }]]);
+  });
+
   test("Orca down and gh failing are problems, never 'nothing stuck'", async () => {
     const probe = createStuckWorkProbe({ orca: orcaFake({}).run, gh: ghFake("", 1), traceDir: "/nonexistent", now: () => NOW });
     const work = await probe.scan();

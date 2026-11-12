@@ -56,6 +56,8 @@ export const SETTING_KEYS = {
   orcaTerminalHandle: "orca_terminal_handle",
   /** JSON of stuck-work items already DMed to the owner, with when, so none repeats within hours. */
   stuckSweepSeen: "stuck_sweep_seen",
+  /** PR -> thread records written when the bot opens a PR, for the stuck-work report. */
+  stuckPrThreads: "stuck_pr_threads",
   /** AWS region `cloudwatch` queries when none is given. Empty = us-west-2. */
   cloudwatchRegion: "cloudwatch_region",
   /** Log group(s) `cloudwatch` queries when none is given, comma separated. Empty = must be named. */

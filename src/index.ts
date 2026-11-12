@@ -131,6 +131,7 @@ import type { CommandLogRepo } from "./infrastructure/db/commandLogRepo.ts";
 import type { LlmPort, ToolTraceSink, UsageSink } from "./application/ports.ts";
 import { createToolTraceLog, readTraceCalls } from "./infrastructure/llm/toolTraceLog.ts";
 import { createBackgroundAgents, defaultRunner } from "./infrastructure/llm/backgroundAgents.ts";
+import { recordedOwners, recordPrThread } from "./domain/stuckWork.ts";
 import { createStuckWorkProbe } from "./infrastructure/system/stuckWorkProbe.ts";
 import { createStuckSweeper } from "./application/stuckSweeper.ts";
 import { SWEEP_TICK_MS } from "./domain/stuckWork.ts";
@@ -370,6 +371,7 @@ const main = async () => {
     gh: defaultRunner(repoPath),
     traceDir: join(config.logDir, "threads"),
     now: clock,
+    recordedOwners: () => recordedOwners(settings.get(SETTING_KEYS.stuckPrThreads)),
   });
   // Model per role: a dashboard/command override wins, otherwise the env value,
   // otherwise the adapter default. Read per call so a change needs no restart.
@@ -1112,9 +1114,11 @@ const main = async () => {
       resolve: (ticket) => {
         const resolved = commandTickets.redeem(ticket);
         if (!resolved.ok) throw new Error(refusalMessage(resolved.reason, resolved.limit));
-        return { actor: resolved.ctx.actor, channel: resolved.ctx.channel };
+        return { actor: resolved.ctx.actor, channel: resolved.ctx.channel, ...(resolved.ctx.threadTs ? { threadTs: resolved.ctx.threadTs } : {}) };
       },
       resolveWorker: workerTickets.redeem,
+      onPrCreated: ({ url, channelId, threadTs }) =>
+        settings.set(SETTING_KEYS.stuckPrThreads, recordPrThread(settings.get(SETTING_KEYS.stuckPrThreads), url, { channelId, threadTs })),
       users,
       github: appClient,
       audit: commandLog,
