@@ -308,11 +308,11 @@ describe("dispatchCommand", () => {
     expect(await dispatchCommand(deps, actor(), "C1", "model banana haiku")).toContain("A role, an agent kind or a channel");
   });
 
-  test("subagent, worker and plan models show their defaults and are set like a role's", async () => {
+  test("subagent, worker, plan and loop models show their defaults and are set like a role's", async () => {
     const deps = build();
     deps.settings = createSettingsRepo(db);
     expect(await dispatchCommand(deps, actor(), "C1", "model")).toContain(
-      "Handed-off work: subagent `sonnet`, worker `sonnet`, plan `opus`.",
+      "Handed-off work: subagent `sonnet`, worker `sonnet`, plan `opus`, loop `sonnet`.",
     );
     expect(await dispatchCommand(deps, actor(), "C1", "model plan")).toContain("*plan* uses the default, `opus`");
 
@@ -327,6 +327,10 @@ describe("dispatchCommand", () => {
     await dispatchCommand(deps, actor(), "C1", "model worker default");
     expect(deps.settings.get("model:worker")).toBe("");
     expect(await dispatchCommand(deps, actor(), "C1", "model worker")).toContain("uses the default, `sonnet`");
+
+    expect(await dispatchCommand(deps, actor(), "C1", "model loop")).toContain("*loop* uses the default, `sonnet`");
+    await dispatchCommand(deps, actor(), "C1", "model loop haiku");
+    expect(deps.settings.get("model:loop")).toBe("haiku");
   });
 
   test("model default clears the override, and junk is refused", async () => {

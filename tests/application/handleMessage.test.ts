@@ -436,6 +436,24 @@ describe("handleMessage", () => {
     expect(policy?.model).toBe("haiku"); // the channel decided, not the role
   });
 
+  test("a forced model beats the channel's and the role's", async () => {
+    let policy: { model?: string; skipPermissions?: boolean } | undefined;
+    const deps = build({
+      complete: async (p) => {
+        policy = p.policy;
+        return "ok";
+      },
+    });
+    deps.toolPolicy = () => ({ skipPermissions: true, model: "opus" });
+
+    await handleMessage(deps, { channelId: "C1", slackUserId: OWNER, text: "hi", model: "sonnet" });
+    expect(policy?.model).toBe("sonnet");
+    expect(policy?.skipPermissions).toBe(true); // only the model moves
+
+    await handleMessage(deps, { channelId: "C1", slackUserId: OWNER, text: "hi again" });
+    expect(policy?.model).toBe("opus"); // an ordinary turn keeps the role's
+  });
+
   test("a thread keeps one session, and later turns only carry what is new", async () => {
     const seen: LlmCompleteParams[] = [];
     const deps = build({

@@ -116,6 +116,8 @@ export type HandleMessageDeps = {
     unprompted?: boolean;
     /** In a workflow thread, run on the worker's lane (see `InboundMessage`). */
     workerLane?: boolean;
+    /** A loop's scheduled fire: runs on the `loop` model (see `InboundMessage.model`). */
+    loop?: boolean;
   }) => Promise<void>;
   /** Timer for a workflow's next step; injected so tests need not wait. */
   continueTimer?: (fn: () => void, ms: number) => void;
@@ -287,6 +289,8 @@ export type InboundMessage = {
    * workflow it changes nothing.
    */
   workerLane?: boolean;
+  /** Forces the turn's model, over the role and channel model (a loop's fire). */
+  model?: string;
 };
 
 /** What a turn says when the model said nothing. A placeholder, not an answer. */
@@ -377,7 +381,8 @@ export const handleMessage = async (
   const participants = collectParticipants(deps, history, inbound);
   // Needed before the prompt is built: a sandboxed turn cannot read the
   // adapter's files, so it must not be offered skills it could never open.
-  const policy = deps.toolPolicy?.(decision.user.role, inbound.channelId);
+  const rolePolicy = deps.toolPolicy?.(decision.user.role, inbound.channelId);
+  const policy = rolePolicy && inbound.model ? { ...rolePolicy, model: inbound.model } : rolePolicy;
   const promptOptions: Parameters<typeof buildSystemPromptParts>[0] = {
     botName: ctx.botName,
     base: ctx.base,
