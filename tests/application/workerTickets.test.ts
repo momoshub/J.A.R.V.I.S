@@ -3,7 +3,7 @@ import { revokeOnWorkerEnd, tokenId, type WorkerTicketGrant } from "../../src/ap
 import { createWorkerTicketRepo } from "../../src/infrastructure/db/workerTicketRepo.ts";
 import { openDatabase } from "../../src/infrastructure/db/client.ts";
 import { ticketRig } from "./workerTicketFixture.ts";
-import { PENDING_TTL_MS, WORKER_TTL_MAX_MS } from "../../src/domain/workerTicket.ts";
+import { PENDING_TTL_MS, WORKER_LIFETIME_MAX_MS, WORKER_TTL_MAX_MS } from "../../src/domain/workerTicket.ts";
 import { createCommandTickets } from "../../src/application/commandTickets.ts";
 
 const grant: WorkerTicketGrant = {
@@ -177,7 +177,7 @@ describe("persistence and ending", () => {
     expect(ended).toEqual([id]);
   });
 
-  test("sweep ends what expired: file gone, row gone, onEnd told; live ones and revoked ones are not told twice", () => {
+  test("sweep deletes what is over for good: file gone, row gone; revoked ones are not told twice, a lapsed bound one waits for a renewal", () => {
     const { t, rig, tickets, id, mint } = setup();
     const ended: string[] = [];
     tickets.onEnd((i) => void ended.push(i));
@@ -190,20 +190,28 @@ describe("persistence and ending", () => {
     expect(tickets.sweep()).toBe(1);
     expect(rig.repo.byId(doomed.id)).toBeUndefined();
     expect(ended).toEqual([]);
-    t.now += grant.ttlMs;
-    expect(tickets.sweep()).toBe(1);
-    expect(ended).toEqual([id]);
-    expect(rig.files.size).toBe(0);
     expect(tickets.redeem(doomed.token, call)).toMatchObject({ ok: false, reason: "unknown" });
+    // The live one lapses: its GitHub token goes (once), its row and file stay for a renewal.
+    t.now += grant.ttlMs;
+    expect(tickets.sweep()).toBe(0);
+    expect(tickets.sweep()).toBe(0);
+    expect(ended).toEqual([id]);
+    expect(rig.files.has(id)).toBe(true);
+    // Past the absolute lifetime nothing can revive it.
+    t.now = 1000 + WORKER_LIFETIME_MAX_MS;
+    expect(tickets.sweep()).toBe(1);
+    expect(rig.files.size).toBe(0);
+    expect(rig.repo.byId(id)).toBeUndefined();
   });
 
-  test("an expired ticket seen at redeem also ends it, so its GitHub token is revoked", () => {
+  test("an expired ticket seen at redeem lapses it, so its GitHub token is revoked (once); the row stays renewable", () => {
     const { t, tickets, token, id } = setup();
     const ended: string[] = [];
     tickets.onEnd((i) => void ended.push(i));
     tickets.bind(id, "U0ADMIN0001", "ctx_w1");
     t.now += grant.ttlMs + 1;
     expect(tickets.redeem(token, call)).toMatchObject({ ok: false, reason: "expired" });
+    expect(tickets.redeem(token, call)).toMatchObject({ ok: false, reason: "expired", message: expect.stringContaining(`worker-ticket renew ${id}`) });
     expect(ended).toEqual([id]);
   });
 
@@ -215,5 +223,130 @@ describe("persistence and ending", () => {
     tickets.bind(id, "U0ADMIN0001", "ctx_w1");
     expect(tickets.revoke("ctx_w1")).toBe(1);
     expect(tickets.redeem(token, call)).toMatchObject({ ok: false, reason: "revoked" });
+  });
+});
+
+describe("renewal", () => {
+  const HOUR = 60 * 60_000;
+  const bound = () => {
+    const s = setup();
+    s.tickets.bind(s.id, "U0ADMIN0001", "ctx_w1");
+    return s;
+  };
+
+  test("an admin extends a live ticket to now + ttl, by id or by dispatch", () => {
+    const { t, tickets, token, id } = bound();
+    t.now += HOUR; // 2h of the 3h left
+    const [byId] = tickets.renew(id, 3 * HOUR);
+    expect(byId).toMatchObject({ ok: true, id, dispatchId: "ctx_w1", expiresAt: t.now + 3 * HOUR, ttlMs: 3 * HOUR, clamped: false, capped: false, wasExpired: false });
+    t.now += 2 * HOUR + 1; // past the ORIGINAL expiry
+    expect(tickets.redeem(token, call).ok).toBe(true);
+    const [byDispatch] = tickets.renew("ctx_w1", HOUR);
+    expect(byDispatch).toMatchObject({ ok: true });
+  });
+
+  test("a renewal never shortens a ticket", () => {
+    const { t, tickets, id } = bound();
+    const before = 1000 + grant.ttlMs;
+    const [r] = tickets.renew(id, 10 * 60_000);
+    expect(r).toMatchObject({ ok: true, expiresAt: before });
+    expect(t.now).toBe(1000);
+  });
+
+  test("one renewal adds at most the per-renewal max, and says it was clamped", () => {
+    const { t, tickets, id } = bound();
+    const [r] = tickets.renew(id, 20 * HOUR);
+    expect(r).toMatchObject({ ok: true, clamped: true, ttlMs: WORKER_TTL_MAX_MS, expiresAt: t.now + WORKER_TTL_MAX_MS });
+  });
+
+  test("an expired ticket that was never revoked is revived: same token, file kept, GitHub token reissued on use", () => {
+    const { t, rig, tickets, token, id } = bound();
+    const ended: string[] = [];
+    tickets.onEnd((i) => void ended.push(i));
+    t.now += grant.ttlMs + 1;
+    expect(tickets.redeem(token, call)).toMatchObject({ ok: false, reason: "expired" });
+    expect(tickets.sweep()).toBe(0);
+    expect(rig.files.get(id)).toBe(token);
+    const [r] = tickets.renew(id, 2 * HOUR);
+    expect(r).toMatchObject({ ok: true, wasExpired: true, expiresAt: t.now + 2 * HOUR });
+    expect(tickets.redeem(token, call).ok).toBe(true);
+    // lapsing again tells onEnd again: it is a new life
+    t.now += 2 * HOUR + 1;
+    tickets.redeem(token, call);
+    expect(ended).toEqual([id, id]);
+  });
+
+  test("pending, revoked and unknown tickets are refused with a clear message", () => {
+    const { tickets, id, mint } = setup();
+    expect(tickets.renew(id, HOUR)[0]).toMatchObject({ ok: false, error: expect.stringContaining("not bound") });
+    tickets.bind(id, "U0ADMIN0001", "ctx_w1");
+    tickets.revoke("ctx_w1");
+    expect(tickets.renew(id, HOUR)[0]).toMatchObject({ ok: false, error: expect.stringContaining("revoked") });
+    expect(tickets.renew("ctx_w1", HOUR)[0]).toMatchObject({ ok: false, error: expect.stringContaining("no worker ticket") });
+    expect(tickets.renew("deadbeef", HOUR)[0]).toMatchObject({ ok: false, error: expect.stringContaining("no worker ticket") });
+    expect(mint(grant).id).not.toBe(id);
+  });
+
+  test("the absolute lifetime counts from the bind: renewals are cut at it, then refused", () => {
+    const { t, tickets, token, id } = bound();
+    let r = tickets.renew(id, 6 * HOUR)[0];
+    for (let i = 0; i < 4 && r?.ok; i++) {
+      t.now += 5 * HOUR;
+      r = tickets.renew(id, 6 * HOUR)[0];
+    }
+    const end = 1000 + WORKER_LIFETIME_MAX_MS;
+    expect(r).toMatchObject({ ok: true, capped: true, expiresAt: end });
+    expect(tickets.redeem(token, call).ok).toBe(true);
+    expect(tickets.renew(id, HOUR)[0]).toMatchObject({ ok: true, expiresAt: end });
+    t.now = end;
+    expect(tickets.renew(id, HOUR)[0]).toMatchObject({ ok: false, error: expect.stringContaining("24h lifetime limit") });
+    expect(tickets.redeem(token, call)).toMatchObject({ ok: false, reason: "expired", message: expect.stringContaining("24h lifetime limit") });
+  });
+
+  test("a ticket past its limit cannot be revived even if it was never swept", () => {
+    const { t, tickets, id } = bound();
+    t.now += WORKER_LIFETIME_MAX_MS + 1;
+    expect(tickets.renew(id, HOUR)[0]).toMatchObject({ ok: false });
+  });
+
+  test("a worker renews its own live ticket, any action grant, but not an expired one", () => {
+    const { t, tickets, token } = bound();
+    t.now += HOUR;
+    expect(tickets.renewSelf(token, 4 * HOUR)).toMatchObject({ ok: true, expiresAt: t.now + 4 * HOUR, actor: "U0ADMIN0001" });
+    expect(tickets.redeem(token, { action: "ticket-renew", repo: "o/r" }).ok).toBe(true);
+    expect(tickets.redeem(token, { action: "ticket-renew", repo: "o/other" })).toMatchObject({ ok: false, reason: "repo" });
+    t.now += 5 * HOUR;
+    expect(tickets.renewSelf(token, HOUR)).toMatchObject({ ok: false, error: expect.stringContaining("cannot renew itself"), actor: "U0ADMIN0001" });
+    expect(tickets.renew("ctx_w1", HOUR)[0]).toMatchObject({ ok: true, wasExpired: true });
+  });
+
+  test("self-renew refuses pending, revoked and made-up tokens", () => {
+    const { tickets, token, id } = setup();
+    expect(tickets.renewSelf(token, HOUR)).toMatchObject({ ok: false, error: expect.stringContaining("not bound") });
+    tickets.bind(id, "U0ADMIN0001", "ctx_w1");
+    tickets.revoke("ctx_w1");
+    expect(tickets.renewSelf(token, HOUR)).toMatchObject({ ok: false, error: expect.stringContaining("revoked") });
+    expect(tickets.renewSelf("jvwk_guess", HOUR)).toMatchObject({ ok: false });
+  });
+
+  test("a lapsed ticket can still be revoked by its minter, so its file goes", () => {
+    const { t, rig, tickets, id } = bound();
+    t.now += grant.ttlMs + 1;
+    expect(tickets.revokeId(id, "U0OTHER0001")).toBe(false);
+    expect(tickets.revokeId(id, "U0ADMIN0001")).toBe(true);
+    expect(rig.files.has(id)).toBe(false);
+  });
+
+  test("a restart keeps the bind time: the lifetime limit survives it", () => {
+    const db = openDatabase(":memory:");
+    const t = { now: 1000 };
+    const first = ticketRig(() => t.now, createWorkerTicketRepo(db));
+    const { id } = first.mint(grant);
+    first.tickets.bind(id, "U0ADMIN0001", "ctx_w1");
+    t.now += 10 * HOUR;
+    const second = ticketRig(() => t.now, createWorkerTicketRepo(db));
+    expect(second.tickets.renew(id, 6 * HOUR)[0]).toMatchObject({ ok: true });
+    t.now = 1000 + WORKER_LIFETIME_MAX_MS;
+    expect(second.tickets.renew(id, HOUR)[0]).toMatchObject({ ok: false });
   });
 });

@@ -111,6 +111,73 @@ describe("the worker-ticket command", () => {
   });
 });
 
+describe("worker-ticket renew", () => {
+  const HOUR = 60 * 60_000;
+  const clocked = () => {
+    const t = { now: 1000 };
+    const rig = ticketRig(() => t.now);
+    return { t, rig, deps: { ...build(), clock: () => t.now, workerTickets: rig.tickets } };
+  };
+  const mintBound = async (deps: ReturnType<typeof clocked>["deps"], rig: ReturnType<typeof clocked>["rig"]) => {
+    const out = await dispatchCommand(deps, admin(), "C1", "worker-ticket o/r ctx_w1", brain);
+    return { id: out.match(/Worker ticket (\w{8})/)?.[1] ?? "", token: rig.tokenOf(idOfFile(fileOf(out))), out };
+  };
+
+  test("the mint result tells the brain a worker can renew itself, and how", async () => {
+    const { rig, deps } = clocked();
+    const { id, out } = await mintBound(deps, rig);
+    expect(out).toContain("ticket-renew");
+    expect(out).toContain(`worker-ticket renew ${id}`);
+    expect(out).toContain("24h");
+    expect(out).not.toContain("jvwk_");
+  });
+
+  test("extends by id or dispatch, default 3h, and revives a lapsed ticket", async () => {
+    const { t, rig, deps } = clocked();
+    const { id, token } = await mintBound(deps, rig);
+    t.now += 4 * HOUR; // lapsed: its worker never ended
+    expect(rig.tickets.redeem(token, { action: "comment", repo: "o/r" })).toMatchObject({ ok: false, reason: "expired" });
+    const out = await dispatchCommand(deps, admin(), "C1", `worker-ticket renew ${id}`);
+    expect(out).toContain(`ticket ${id} renewed: good for 3h more`);
+    expect(out).toContain("had expired");
+    expect(rig.tickets.redeem(token, { action: "comment", repo: "o/r" }).ok).toBe(true);
+    expect(await dispatchCommand(deps, admin(), "C1", "worker-ticket renew ctx_w1 --ttl 90m")).toContain("renewed");
+  });
+
+  test("a ttl over 6h is clamped and says so; the 24h limit says so too", async () => {
+    const { t, rig, deps } = clocked();
+    const { id } = await mintBound(deps, rig);
+    expect(await dispatchCommand(deps, admin(), "C1", `worker-ticket renew ${id} --ttl 20h`)).toContain("clamped");
+    t.now += 20 * HOUR;
+    expect(await dispatchCommand(deps, admin(), "C1", `worker-ticket renew ${id} --ttl 6h`)).toContain("cannot be renewed past");
+    t.now += 4 * HOUR;
+    expect(await dispatchCommand(deps, admin(), "C1", `worker-ticket renew ${id}`)).toContain("24h lifetime limit");
+  });
+
+  test("pending, revoked and unknown are refused plainly", async () => {
+    const { rig, deps } = clocked();
+    const pending = await dispatchCommand(deps, admin(), "C1", "worker-ticket o/r pending", brain);
+    const pid = pending.match(/Worker ticket (\w{8})/)?.[1] ?? "";
+    expect(await dispatchCommand(deps, admin(), "C1", `worker-ticket renew ${pid}`)).toContain("not bound");
+    await mintBound(deps, rig);
+    await dispatchCommand(deps, admin(), "C1", "worker-ticket revoke ctx_w1");
+    expect(await dispatchCommand(deps, admin(), "C1", "worker-ticket renew ctx_w1")).toContain("Not renewed");
+    expect(await dispatchCommand(deps, admin(), "C1", "worker-ticket renew deadbeef")).toContain("Not renewed");
+  });
+
+  test("bad arguments print the usage; pal and executer cannot renew", async () => {
+    const { rig, deps } = clocked();
+    const { id, token } = await mintBound(deps, rig);
+    expect(await dispatchCommand(deps, admin(), "C1", "worker-ticket renew")).toContain("worker-ticket renew <id|ctx_...>");
+    expect(await dispatchCommand(deps, admin(), "C1", `worker-ticket renew ${id} --ttl soon`)).toContain("--ttl wants");
+    for (const role of ["pal", "executer"] as const) {
+      const out = await dispatchCommand(deps, actor({ role }), "C1", `worker-ticket renew ${id}`);
+      expect(out).not.toContain("renewed");
+    }
+    expect(rig.tickets.redeem(token, { action: "comment", repo: "o/r" }).ok).toBe(true);
+  });
+});
+
 describe("who may set the run-bridge marker", () => {
   test("only the composition root's /api/commands/run handler does, after redeeming a turn ticket", async () => {
     const hits: string[] = [];

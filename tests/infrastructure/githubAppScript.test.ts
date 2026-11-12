@@ -64,6 +64,12 @@ describe("github-app.sh", () => {
     expect((await run(["reviewers-request", "o/r", "5", "bob", "team:core"])).json()).toMatchObject({ reviewers: ["bob", "team:core"] });
   }, SLOW);
 
+  test("ticket-renew sends the repo and an optional ttl, and takes nothing else", async () => {
+    expect((await run(["ticket-renew", "o/r"])).json()).toEqual({ ticket: TICKET, action: "ticket-renew", repo: "o/r" });
+    expect((await run(["ticket-renew", "o/r", "--ttl", "5h"])).json()).toEqual({ ticket: TICKET, action: "ticket-renew", repo: "o/r", ttl: "5h" });
+    expect((await run(["ticket-renew", "o/r", "5h"])).code).toBe(2);
+  }, SLOW);
+
   test("refuses without a ticket, and never takes one as an argument", async () => {
     expect((await run(["pr-close", "o/r", "5"], { JARVIS_RUN_TICKET: "" })).code).toBe(3);
     const r = await run(["pr-close", "o/r", "5", "--ticket", "abc"]);

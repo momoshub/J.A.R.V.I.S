@@ -922,6 +922,7 @@ mint one):
 worker-ticket <owner/repo> pending [pr-create|comment|pr-edit|git|push|labels-add|reviewers-request ...] [--ttl 3h]
 worker-ticket bind <id> <ctx_...>      # after worker-start prints the dispatch id
 worker-ticket revoke <id|ctx_...>
+worker-ticket renew <id|ctx_...> [--ttl 3h]   # admin; also revives one that lapsed but was never revoked
 ```
 
 The result holds `JARVIS_RUN_TICKET_FILE=<path>`, **never the token**: the token
@@ -936,6 +937,15 @@ expires in 3 hours (max 6) and ends when the worker finishes or dies (the turn's
 `watch worker`), on `worker-ticket revoke`, or at expiry. Tickets are rows in
 `worker_tickets` (only the sha-256 of the token), so they survive a restart; a
 sweep at boot and every 5 minutes ends the expired ones. No new setting.
+
+**Long workers renew.** A worker that outlasts its TTL extends its own live ticket
+with `bin/github-app.sh ticket-renew <owner/repo> [--ttl 3h]` (default 3h, at most
+6h per renewal; an expired ticket cannot renew itself). An admin can run
+`worker-ticket renew <id|ctx_...>`, which also works on a ticket that lapsed but
+was never revoked (its worker is still running): such a ticket keeps its token
+file until the limit instead of being deleted at its expiry. Nothing lives past
+24 hours from the bind however often it is renewed, and every renewal is
+audited like a mint.
 
 **Pushing is not part of the default grant.** A worker pushes with the
 org's own one-shot human credential (the `kai-at-acme` of the rule above; where
