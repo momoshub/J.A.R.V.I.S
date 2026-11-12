@@ -1,6 +1,8 @@
 import { describe, expect, test } from "bun:test";
 import { createGithubActions, type GithubActionDeps } from "../../src/application/githubAppActions.ts";
 import type { AllowedUser, UserRole } from "../../src/domain/types.ts";
+import { staticBook, type Role, type RoleBook } from "../../src/domain/roles.ts";
+import { seededBook } from "../../src/domain/roleSeed.ts";
 
 const user = (slackId: string, role: UserRole): AllowedUser => ({ slackId, role, name: slackId }) as unknown as AllowedUser;
 
@@ -9,6 +11,7 @@ type SetupOpts = {
   threadTs?: string;
   onPrCreated?: (pr: { url: string; channelId: string; threadTs: string }) => void;
   resolveWorker?: GithubActionDeps["resolveWorker"];
+  roles?: RoleBook;
 };
 
 const setup = (role: UserRole | undefined, opts: SetupOpts = {}) => {
@@ -41,6 +44,7 @@ const setup = (role: UserRole | undefined, opts: SetupOpts = {}) => {
       },
     },
     audit: { add: (entry, at) => void audit.push({ entry, at }) },
+    ...(opts.roles ? { roles: opts.roles } : {}),
     ...(opts.onPrCreated ? { onPrCreated: opts.onPrCreated } : {}),
     ...(opts.resolveWorker ? { resolveWorker: opts.resolveWorker } : {}),
     allowedOwners: ["o"],
@@ -94,7 +98,7 @@ describe("github app actions: auth gate", () => {
 
   test.each(["executer", "pal"] as const)("%s is refused before anything reaches GitHub, and audited", async (role) => {
     const { actions, audit, calls, installs } = setup(role);
-    await expect(actions.run({ ticket: "good", ...create })).rejects.toThrow("admin role");
+    await expect(actions.run({ ticket: "good", ...create })).rejects.toThrow("may not act on GitHub as the app");
     expect(calls).toEqual([]);
     expect(installs).toEqual([]);
     expect(audit[0]?.entry).toMatchObject({ ok: false });
@@ -121,7 +125,7 @@ describe("github app actions: auth gate", () => {
 
   test("the role is the ticket's actor's, never anything in the request", async () => {
     const { actions, calls } = setup("pal");
-    await expect(actions.run({ ticket: "good", ...create, actor: "OWNER", role: "owner" } as never)).rejects.toThrow("admin role");
+    await expect(actions.run({ ticket: "good", ...create, actor: "OWNER", role: "owner" } as never)).rejects.toThrow("may not act on GitHub as the app");
     expect(calls).toEqual([]);
   });
 });
@@ -197,7 +201,7 @@ describe("github app actions: git-auth", () => {
 
   test.each(["executer", "pal"] as const)("%s is refused and gets no token", async (role) => {
     const { actions, installs } = setup(role);
-    await expect(actions.run({ ticket: "good", action: "git-auth", repo: "o/r" })).rejects.toThrow("admin role");
+    await expect(actions.run({ ticket: "good", action: "git-auth", repo: "o/r" })).rejects.toThrow("may not act on GitHub as the app");
     expect(installs).toEqual([]);
   });
 
@@ -205,5 +209,46 @@ describe("github app actions: git-auth", () => {
     const { actions, installs } = setup("owner");
     await expect(actions.run({ ticket: "good", action: "git-auth", repo: "stranger/r" })).rejects.toThrow("GITHUB_APP_ALLOWED_OWNERS");
     expect(installs).toEqual([]);
+  });
+});
+
+/** The seeded roles plus a custom one holding exactly `grants`: what an owner does with `role grant`. */
+const withRole = (name: string, grants: string[]): RoleBook =>
+  staticBook([...seededBook().list().filter((r) => r.name !== "owner"), { name, rank: 1, description: "", enabled: true, grants, deniedTools: [] } as Role]);
+
+describe("github app actions: every action is its own grant", () => {
+  test("a role holding github:comment may comment and nothing else, and is refused (audited) for the rest", async () => {
+    const roles = withRole("triager", ["github:comment"]);
+    const { actions, calls, audit } = setup("triager", { roles });
+    await expect(actions.run({ ticket: "good", action: "comment", repo: "o/r", number: 9, body: "hi" })).resolves.toBeDefined();
+    expect(calls).toHaveLength(1);
+    await expect(actions.run({ ticket: "good", action: "pr-merge", repo: "o/r", number: 9 })).rejects.toThrow("github:pr-merge");
+    await expect(actions.run({ ticket: "good", ...create })).rejects.toThrow("github:pr-create");
+    expect(calls).toHaveLength(1);
+    expect(audit.at(-1)?.entry).toMatchObject({ ok: false });
+  });
+
+  test("granting an executer the actions is all it takes - no code change", async () => {
+    const roles = staticBook(
+      seededBook().list().filter((r) => r.name !== "owner").map((r) => (r.name === "executer" ? { ...r, grants: [...r.grants, "github:pr-create", "github:comment"] } : r)),
+    );
+    const { actions } = setup("executer", { roles });
+    await expect(actions.run({ ticket: "good", ...create })).resolves.toMatchObject({ number: 9 });
+    await expect(actions.run({ ticket: "good", action: "pr-merge", repo: "o/r", number: 9 })).rejects.toThrow("may not act on GitHub as the app");
+  });
+
+  test("git and push are separate grants for the same token", async () => {
+    const gitOnly = setup("g", { roles: withRole("g", ["github:git"]) });
+    await expect(gitOnly.actions.run({ ticket: "good", action: "git-auth", repo: "o/r" })).resolves.toBeDefined();
+    await expect(gitOnly.actions.run({ ticket: "good", action: "git-auth", repo: "o/r", purpose: "push" })).rejects.toThrow("github:push");
+    const pushOnly = setup("p", { roles: withRole("p", ["github:push"]) });
+    await expect(pushOnly.actions.run({ ticket: "good", action: "git-auth", repo: "o/r", purpose: "push" })).resolves.toBeDefined();
+    await expect(pushOnly.actions.run({ ticket: "good", action: "git-auth", repo: "o/r" })).rejects.toThrow("github:git");
+  });
+
+  test("a role switched off, or removed, holds nothing", async () => {
+    const off = staticBook(seededBook().list().filter((r) => r.name !== "owner").map((r) => (r.name === "admin" ? { ...r, enabled: false } : r)));
+    await expect(setup("admin", { roles: off }).actions.run({ ticket: "good", ...create })).rejects.toThrow("may not act on GitHub as the app");
+    await expect(setup("ghost", { roles: off }).actions.run({ ticket: "good", ...create })).rejects.toThrow("may not act on GitHub as the app");
   });
 });

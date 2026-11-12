@@ -3,8 +3,12 @@ import { createDashboardService, usageWindowMs, type DashboardPorts, type Memory
 import type { AllowedUser } from "../../src/domain/types.ts";
 import { SETTING_KEYS } from "../../src/infrastructure/db/settingsRepo.ts";
 import { createNameResolver } from "../../src/application/nameResolver.ts";
-import { ROLES, defaultRolePolicy, type RolePolicy } from "../../src/domain/rolePolicy.ts";
-import type { UserRole } from "../../src/domain/types.ts";
+import { listCommandInfo } from "../../src/application/commands.ts";
+import { seedRoles } from "../../src/application/roles.ts";
+import { openDatabase } from "../../src/infrastructure/db/client.ts";
+import { createRoleRepo } from "../../src/infrastructure/db/roleRepo.ts";
+import { readLegacyPolicies } from "../../src/infrastructure/db/rolePolicyRepo.ts";
+import { createSettingsRepo } from "../../src/infrastructure/db/settingsRepo.ts";
 
 const OWNER = "UOWNER1";
 
@@ -83,7 +87,7 @@ describe("dashboard use cases", () => {
     expect(app.saveUser(" U1 ", "admin").ok).toBe(true);
     expect(users.get("U1")).toEqual({ slackId: "U1", role: "admin", displayName: "Ann", addedBy: "dashboard", createdAt: 5 });
     // Bad input is refused, never quietly turned into pal.
-    expect(app.saveUser("U2", "owner")).toEqual({ ok: false, error: "Pick admin, executer or pal", status: 400 });
+    expect(app.saveUser("U2", "owner")).toEqual({ ok: false, error: "Pick one of the roles on the Roles page", status: 400 });
     expect(users.has("U2")).toBe(false);
   });
 
@@ -216,77 +220,114 @@ describe("dashboard use cases", () => {
   });
 });
 
-const policyStore = () => {
-  const rows = new Map<UserRole, RolePolicy>();
-  return {
-    rows,
-    port: {
-      list: () => ROLES.map((r) => rows.get(r) ?? defaultRolePolicy(r)),
-      save: (p: RolePolicy) => void rows.set(p.role, p),
-    },
-  };
+/** Stored roles over a real in-memory database, seeded the way the bot seeds them at boot. */
+const roleStore = () => {
+  const db = openDatabase(":memory:");
+  const repo = createRoleRepo(db);
+  const input = () => ({
+    commands: listCommandInfo().map((c) => ({ name: c.name, minRole: c.minRole })),
+    dbServers: ["pg-prod"],
+    executerDbServers: [] as string[],
+    extraMcpServers: [] as string[],
+  });
+  seedRoles({ repo, settings: createSettingsRepo(db), clock: () => 1, legacyPolicies: () => readLegacyPolicies(db), input });
+  return repo;
 };
 
 describe("dashboard roles", () => {
-  test("roles lists every role with members, and offers only commands within its rank", () => {
-    const store = policyStore();
-    const { app, users } = ports({ rolePolicies: store.port });
-    users.set(OWNER, { slackId: OWNER, role: "owner", displayName: "Kai", addedBy: "system", createdAt: 1 });
-    users.set("U1", { slackId: "U1", role: "pal", displayName: "Ann", addedBy: "x", createdAt: 1 });
+  const withRoles = () => {
+    const repo = roleStore();
+    const env = ports({ roleRepo: repo, dbMcpServers: ["pg-prod"] });
+    env.users.set(OWNER, { slackId: OWNER, role: "owner", displayName: "Kai", addedBy: "system", createdAt: 1 });
+    env.users.set("U1", { slackId: "U1", role: "pal", displayName: "Ann", addedBy: "x", createdAt: 1 });
+    return { ...env, repo };
+  };
+
+  test("roles lists every role with members and grants, and everything that can be granted", () => {
+    const { app } = withRoles();
     const view = app.roles();
-    expect(view.roles.map((r) => r.role)).toEqual(["owner", "admin", "executer", "pal"]);
-    const owner = view.roles.find((r) => r.role === "owner")!;
-    const pal = view.roles.find((r) => r.role === "pal")!;
+    expect(view.roles.map((r) => r.name)).toEqual(["owner", "admin", "executer", "pal"]);
+    const owner = view.roles.find((r) => r.name === "owner")!;
+    const pal = view.roles.find((r) => r.name === "pal")!;
     expect(owner.locked).toBe(true);
     expect(owner.members).toEqual([{ slackId: OWNER, name: "Kai" }]);
     expect(pal.members).toEqual([{ slackId: "U1", name: "Ann" }]);
-    // `tell` is admin+: nothing to tick for a pal. `help` can never be denied.
-    expect(pal.commands).not.toContain("tell");
-    expect(pal.commands).not.toContain("help");
-    expect(owner.commands).toContain("tell");
+    expect(pal.locked).toBe(false);
+    expect(pal.grants).toContain("command:ping");
+    expect(pal.grants).not.toContain("command:tell");
+    expect(view.catalogue.map((c) => c.id)).toEqual(expect.arrayContaining(["command:tell", "github:pr-merge", "mcp:pg-prod", "tools:orca"]));
+    // managing roles is never a permission anyone can be granted
+    expect(view.catalogue.map((c) => c.id)).not.toContain("command:role");
     expect(view.tools).toContain("Bash");
     expect(view.mcpServers).toContain("pg-prod");
     expect(view.editable).toBe(true);
+    expect(view.defaultRole).toBe("pal");
   });
 
-  test("a role's denial stored as `review` reads back as quick-review, and `approve` is dropped", () => {
-    const store = policyStore();
-    store.rows.set("pal", { ...defaultRolePolicy("pal"), deniedCommands: ["review", "approve", "ping"] });
-    const { app } = ports({ rolePolicies: store.port });
-    expect(app.roles().roles.find((r) => r.role === "pal")?.deniedCommands).toEqual(["quick-review", "ping"]);
-  });
-
-  test("saveRolePolicy persists through the port and refuses the owner and unknown names", () => {
-    const store = policyStore();
-    const { app } = ports({ rolePolicies: store.port });
+  test("saveRole creates a custom role, edits a built-in, and refuses the owner, bad names and unknown permissions", () => {
+    const { app, repo } = withRoles();
     const save = (over: Record<string, unknown>) =>
-      app.saveRolePolicy({ role: "pal", enabled: true, deniedCommands: [], deniedTools: [], deniedMcpServers: [], ...over });
-    expect(save({ role: "owner", enabled: false }).ok).toBe(false);
-    expect(save({ deniedCommands: ["nope-not-a-command"] }).ok).toBe(false);
+      app.saveRole({ name: "qa", rank: 1, description: "tests", enabled: true, grants: ["command:ping"], deniedTools: [], ...over });
+    expect(save({ name: "owner" }).ok).toBe(false);
+    expect(save({ name: "Not A Name" }).ok).toBe(false);
+    expect(save({ name: "list" }).ok).toBe(false);
+    expect(save({ grants: ["command:nope"] }).ok).toBe(false);
+    expect(save({ grants: ["command:role"] }).ok).toBe(false);
+    expect(save({ rank: -1 }).ok).toBe(false);
     expect(save({ deniedTools: ["rm -rf /"] }).ok).toBe(false);
-    expect(save({ enabled: false, deniedCommands: ["ping"], deniedTools: ["Bash"], deniedMcpServers: ["mcp__notion"] }).ok).toBe(true);
-    expect(store.rows.get("pal")).toEqual({
-      role: "pal",
-      enabled: false,
-      deniedCommands: ["ping"],
-      deniedTools: ["Bash"],
-      deniedMcpServers: ["notion"],
-    });
-    expect(app.roles().roles.find((r) => r.role === "pal")?.enabled).toBe(false);
-    // Without a store nothing can be saved, and roles still read as defaults.
-    expect(ports().app.saveRolePolicy({ role: "pal", enabled: false, deniedCommands: [], deniedTools: [], deniedMcpServers: [] }).ok).toBe(false);
+    expect(save({ grants: ["command:ping", "github:pr-create", "mcp:pg-prod"], deniedTools: ["Bash(rm:*)"] }).ok).toBe(true);
+    expect(repo.book.get("qa")).toMatchObject({ rank: 1, description: "tests", enabled: true, deniedTools: ["Bash(rm:*)"] });
+    expect([...(repo.book.get("qa")?.grants ?? [])].sort()).toEqual(["command:ping", "github:pr-create", "mcp:pg-prod"]);
+    // a built-in is data like any other: take a grant away, give another
+    const pal = repo.book.get("pal")!;
+    expect(save({ name: "pal", rank: 0, grants: pal.grants.filter((g) => g !== "command:ping").concat("github:comment") }).ok).toBe(true);
+    expect(repo.book.get("pal")?.grants).toContain("github:comment");
+    expect(repo.book.get("pal")?.grants).not.toContain("command:ping");
+    expect(repo.book.get("pal")?.seed).toBe("pal");
+    // Without a store nothing can be saved, and roles still read as the seeded defaults.
+    expect(ports().app.saveRole({ name: "qa", grants: [] })).toMatchObject({ ok: false, status: 503 });
     expect(ports().app.roles().editable).toBe(false);
   });
 
-  test("assignRole moves an existing user, never the owner and never into owner", () => {
-    const { app, users } = ports();
-    users.set("U1", { slackId: "U1", role: "pal", displayName: "Ann", addedBy: "x", createdAt: 1 });
-    users.set(OWNER, { slackId: OWNER, role: "owner", displayName: "Kai", addedBy: "system", createdAt: 1 });
+  test("deleteRole refuses while people hold it and names them; renameRole moves them along", () => {
+    const { app, repo, users } = withRoles();
+    app.saveRole({ name: "qa", rank: 1, grants: ["command:ping"] });
+    users.set("U1", { ...users.get("U1")!, role: "qa" });
+    const refused = app.deleteRole("qa");
+    expect(refused.ok).toBe(false);
+    expect(refused.ok ? "" : refused.error).toContain("U1");
+    expect(app.renameRole("qa", "tester").ok).toBe(true);
+    expect(repo.book.get("qa")).toBeUndefined();
+    expect(repo.book.get("tester")?.grants).toEqual(["command:ping"]);
+    app.assignRole("U1", "pal");
+    expect(app.deleteRole("tester").ok).toBe(true);
+    expect(repo.book.get("tester")).toBeUndefined();
+    expect(app.deleteRole("owner").ok).toBe(false);
+    // the role an approved request lands on cannot be deleted
+    expect(app.deleteRole("pal").ok).toBe(false);
+    expect(app.setDefaultRole("executer").ok).toBe(true);
+    expect(app.roles().defaultRole).toBe("executer");
+  });
+
+  test("assignRole moves an existing user into any role, never the owner and never into owner", () => {
+    const { app, users } = withRoles();
+    app.saveRole({ name: "qa", rank: 1, grants: [] });
+    expect(app.assignRole("U1", "qa").ok).toBe(true);
+    expect(users.get("U1")?.role).toBe("qa");
     expect(app.assignRole("U1", "executer").ok).toBe(true);
-    expect(users.get("U1")?.role).toBe("executer");
     expect(app.assignRole("U1", "owner").ok).toBe(false);
+    expect(app.assignRole("U1", "nobody").ok).toBe(false);
     expect(app.assignRole(OWNER, "pal").ok).toBe(false);
     expect(app.assignRole("U404", "pal")).toMatchObject({ ok: false, status: 404 });
+  });
+
+  test("a user saved with a custom role keeps it; no role means the default one", () => {
+    const { app, users } = withRoles();
+    app.saveRole({ name: "qa", rank: 1, grants: [] });
+    expect(app.saveUser("U7", "qa").ok).toBe(true);
+    expect(users.get("U7")?.role).toBe("qa");
+    expect(app.saveUser("U8", undefined).ok).toBe(true);
+    expect(users.get("U8")?.role).toBe("pal");
   });
 });
 
@@ -328,7 +369,7 @@ describe("dashboard user edits", () => {
     expect(app.updateUser({ slackId: "U1", githubLogins: "bad login!" }).ok).toBe(false);
     const taken = app.updateUser({ slackId: "U1", githubLogins: "bea" });
     expect(taken).toMatchObject({ ok: false, error: "bea is already linked to Bea (U2)" });
-    expect(app.updateUser({ slackId: "U1", role: "owner" })).toMatchObject({ ok: false, error: "Pick admin, executer or pal" });
+    expect(app.updateUser({ slackId: "U1", role: "owner" })).toMatchObject({ ok: false, error: "Pick one of the roles on the Roles page" });
     expect(app.updateUser({ slackId: "U1", role: "admn" }).ok).toBe(false);
     expect(app.updateUser({ slackId: OWNER, newSlackId: "U7" }).ok).toBe(false);
     expect(app.updateUser({ slackId: OWNER, role: "pal" }).ok).toBe(false);

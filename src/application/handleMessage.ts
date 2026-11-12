@@ -25,6 +25,10 @@ import { hasContent } from "../domain/mentions.ts";
 import type { Clock, LlmPort, LlmStreamSink, LlmUsage } from "./ports.ts";
 import type { PromptContext, StoredMessage, UserRole } from "../domain/types.ts";
 import { mayUseOrca, type ToolPolicy } from "../domain/toolPolicy.ts";
+import { PERM, type PermissionInfo } from "../domain/permissions.ts";
+import type { RoleRepo } from "../infrastructure/db/roleRepo.ts";
+import { can, type RoleBook } from "../domain/roles.ts";
+import { seededBook } from "../domain/roleSeed.ts";
 import type { MessageRepo } from "../infrastructure/db/messageRepo.ts";
 import type { UserRepo } from "../infrastructure/db/userRepo.ts";
 import type { LearningsRepo } from "../infrastructure/db/learningsRepo.ts";
@@ -121,8 +125,8 @@ export type HandleMessageDeps = {
   continueTimer?: (fn: () => void, ms: number) => void;
   /** Set of disabled command names (managed from the dashboard). */
   disabledCommands?: () => ReadonlySet<string>;
-  /** Commands each role's dashboard policy denies (see `CommandDeps`). */
-  deniedCommands?: (role: UserRole) => ReadonlySet<string>;
+  /** The stored roles: what each is granted (see `CommandDeps`). Absent means the seeded defaults. */
+  roles?: RoleBook;
   /**
    * The role an allowlisted person holds when that role is switched off. They
    * are told so in one line rather than raised to the owner as a stranger.
@@ -130,6 +134,11 @@ export type HandleMessageDeps = {
   roleDisabled?: (slackId: string) => UserRole | undefined;
   /** The allowlist without role policies, for the commands that manage people. */
   rawUsers?: UserRepo;
+  /** The role store and its permission catalogue, for the `role` command. */
+  roleRepo?: RoleRepo;
+  roleCatalogue?: () => readonly PermissionInfo[];
+  /** Fixed scratch directory of the sandboxed tier, for side questions. */
+  sandboxCwd?: string;
   /** Slack Web API operations, for the power-tool commands (br, jrp). */
   slack?: SlackAdminPort;
   /** GitHub actions the bot takes itself - the up-front approve in `quick-review`. */
@@ -377,6 +386,7 @@ export const handleMessage = async (
   const participants = collectParticipants(deps, history, inbound);
   // Needed before the prompt is built: a sandboxed turn cannot read the
   // adapter's files, so it must not be offered skills it could never open.
+  const book = deps.roles ?? seededBook();
   const policy = deps.toolPolicy?.(decision.user.role, inbound.channelId);
   const promptOptions: Parameters<typeof buildSystemPromptParts>[0] = {
     botName: ctx.botName,
@@ -397,17 +407,17 @@ export const handleMessage = async (
     // It drives the real screen somebody is sitting at, so it is offered only
     // to the roles whose tool policy grants it: full access, and executers for
     // browser testing.
-    macUiScript: canDrive(decision.user.role) ? deps.macUiScript : undefined,
-    agentDesktop: canDrive(decision.user.role) ? deps.agentDesktop : undefined,
-    desktopScript: canDrive(decision.user.role) ? deps.desktopScript : undefined,
+    macUiScript: canDrive(book, decision.user.role) ? deps.macUiScript : undefined,
+    agentDesktop: canDrive(book, decision.user.role) ? deps.agentDesktop : undefined,
+    desktopScript: canDrive(book, decision.user.role) ? deps.desktopScript : undefined,
     // ... and keep a durable fact, but only when talking to someone who could
     // have taught it one by hand. Learnings apply to everyone, everywhere.
-    learnUrl: canTeach(decision.user.role) ? deps.learnUrl : undefined,
+    learnUrl: canTeach(book, decision.user.role) ? deps.learnUrl : undefined,
     // Working on its own source is admin+, and not as a formality: a bad change
     // restarted into is a crash-loop that cannot be fixed from Slack.
-    repoPath: canTeach(decision.user.role) ? deps.repoPath : undefined,
-    restartScript: canTeach(decision.user.role) ? deps.restartScript : undefined,
-    selfPrAccounts: canTeach(decision.user.role) ? deps.selfPrAccounts : undefined,
+    repoPath: canTeach(book, decision.user.role) ? deps.repoPath : undefined,
+    restartScript: canTeach(book, decision.user.role) ? deps.restartScript : undefined,
+    selfPrAccounts: canTeach(book, decision.user.role) ? deps.selfPrAccounts : undefined,
     // Offered to everyone: the command's own role gate decides what actually
     // runs, so asking in words can never do more than typing it would.
     runUrl: deps.runUrl,
@@ -422,10 +432,10 @@ export const handleMessage = async (
     // A watch belongs to a thread it can come back to, and setting one needs
     // the role that `watch` is gated on - offering it to anyone else would be
     // describing a door that is locked.
-    canWatch: !!deps.watches && !!inbound.threadTs && canTeach(decision.user.role),
+    canWatch: !!deps.watches && !!inbound.threadTs && canTeach(book, decision.user.role),
     // Orca workers run with full permissions on the host: owner only, everyone
     // else is told to use the Agent tool in their own process.
-    orca: mayUseOrca(decision.user.role),
+    orca: mayUseOrca(decision.user.role, book),
     following: inbound.following === true,
     interrupted: inbound.interrupted === true,
     commandPrefix: deps.commandPrefix,
@@ -628,8 +638,8 @@ const withAttachments = (m: SlackMessage): string => {
 };
 
 /** Roles allowed to teach the bot - the same gate the `learn` command applies. */
-const canTeach = (role: UserRole): boolean => role === "admin" || role === "owner";
-const canDrive = (role: UserRole): boolean => canTeach(role) || role === "executer";
+const canTeach = (book: RoleBook, role: UserRole): boolean => can(book, role, PERM.selfUpdate);
+const canDrive = (book: RoleBook, role: UserRole): boolean => can(book, role, PERM.desktop);
 
 /** Distinct people who have spoken in this channel, resolved to names we know. */
 const collectParticipants = (

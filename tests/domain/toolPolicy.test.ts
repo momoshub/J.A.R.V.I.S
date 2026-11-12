@@ -1,4 +1,6 @@
 import { describe, expect, test } from "bun:test";
+import { builtinRoles } from "../../src/domain/roleSeed.ts";
+import { staticBook } from "../../src/domain/roles.ts";
 import {
   DATADOG_MCP_SERVER,
   DATADOG_READ_TOOLS,
@@ -24,6 +26,13 @@ const DB_MCP_SERVERS = dbServerTools(DB_NAMES);
 const EXECUTER_DB_SERVERS = dbServerTools(EXEC_DB_NAMES);
 const SANDBOX_DISALLOW = sandboxDisallow(DB_NAMES);
 const NO_TOOLS = noTools(DB_NAMES);
+const SEED = { commands: [], dbServers: DB_NAMES, executerDbServers: EXEC_DB_NAMES, extraMcpServers: [] };
+/** The seeded roles with `edit` applied to each, as an owner would by editing their grants. */
+const bookWith = (edit: (r: ReturnType<typeof builtinRoles>[number]) => ReturnType<typeof builtinRoles>[number]) =>
+  staticBook(builtinRoles(SEED).map(edit));
+/** Only these roles hold `mcp:notion`: the old `note_min_role` floor, as grants. */
+const notionHeldBy = (holders: readonly string[]) =>
+  bookWith((r) => ({ ...r, grants: [...r.grants.filter((g) => g !== "mcp:notion"), ...(holders.includes(r.name) ? ["mcp:notion"] : [])] }));
 const opts = {
   fullCwd: "/work",
   sandboxCwd: "/scratch",
@@ -354,8 +363,8 @@ describe("orca is the owner's alone", () => {
     expect(p.disallowedTools).toContain("Bash(orca:*)");
   });
 
-  test("a role-policy denial is added next to the orca denial, not instead of it", () => {
-    const p = toolPolicyFor("admin", { ...opts, roleDisallow: ["WebSearch"] });
+  test("a role's extra denied tool is added next to the orca denial, not instead of it", () => {
+    const p = toolPolicyFor("admin", { ...opts, roles: bookWith((r) => (r.name === "admin" ? { ...r, deniedTools: ["WebSearch"] } : r)) });
     expect(p.disallowedTools).toContain("WebSearch");
     expect(p.disallowedTools).toContain("Bash(orca:*)");
   });
@@ -398,26 +407,26 @@ describe("the host's Notion MCP server", () => {
     }
   });
 
-  test("lowering the floor pre-approves it for a sandboxed role", () => {
+  test("granting the Notion server pre-approves it for a sandboxed role", () => {
     for (const role of ["executer", "pal"] as const) {
-      const p = toolPolicyFor(role, { ...opts, notionFloor: "pal" });
+      const p = toolPolicyFor(role, { ...opts, roles: notionHeldBy(["pal", "executer", "admin"]) });
       expect(p.allowedTools).toContain(NOTION_MCP_SERVER);
       expect(p.disallowedTools).not.toContain(NOTION_MCP_SERVER);
     }
-    const exe = toolPolicyFor("executer", { ...opts, notionFloor: "executer" });
+    const exe = toolPolicyFor("executer", { ...opts, roles: notionHeldBy(["executer", "admin"]) });
     expect(exe.allowedTools).toContain(NOTION_MCP_SERVER);
-    expect(toolPolicyFor("pal", { ...opts, notionFloor: "executer" }).disallowedTools).toContain(NOTION_MCP_SERVER);
+    expect(toolPolicyFor("pal", { ...opts, roles: notionHeldBy(["executer", "admin"]) }).disallowedTools).toContain(NOTION_MCP_SERVER);
   });
 
-  test("raising the floor to owner takes it from admin", () => {
-    expect(toolPolicyFor("admin", { ...opts, notionFloor: "owner" }).disallowedTools).toContain(NOTION_MCP_SERVER);
-    expect(toolPolicyFor("owner", { ...opts, notionFloor: "owner" }).disallowedTools).not.toContain(NOTION_MCP_SERVER);
+  test("withdrawing the Notion grant takes it from admin", () => {
+    expect(toolPolicyFor("admin", { ...opts, roles: notionHeldBy([]) }).disallowedTools).toContain(NOTION_MCP_SERVER);
+    expect(toolPolicyFor("owner", { ...opts, roles: notionHeldBy([]) }).disallowedTools).not.toContain(NOTION_MCP_SERVER);
   });
 
   test("a side question never gets it, and Slack posting stays denied to everyone", () => {
     expect(NO_TOOLS).toContain(NOTION_MCP_SERVER);
     for (const role of ["owner", "admin", "executer", "pal"] as const) {
-      expect(toolPolicyFor(role, { ...opts, notionFloor: "pal" }).disallowedTools).toContain("mcp__claude_ai_Slack__slack_send_message");
+      expect(toolPolicyFor(role, { ...opts, roles: notionHeldBy(["pal", "executer", "admin"]) }).disallowedTools).toContain("mcp__claude_ai_Slack__slack_send_message");
     }
   });
 });
@@ -450,11 +459,11 @@ describe("the host's Datadog MCP server", () => {
       expect(denied).not.toContain(DATADOG_MCP_SERVER); // reads stay open
     }
     // a lowered Notion floor does not change it
-    expect(toolPolicyFor("pal", { ...opts, notionFloor: "pal" }).disallowedTools).toContain("mcp__datadog__create_datadog_notebook");
+    expect(toolPolicyFor("pal", { ...opts, roles: notionHeldBy(["pal", "executer", "admin"]) }).disallowedTools).toContain("mcp__datadog__create_datadog_notebook");
   });
 
-  test("a dashboard roleDisallow still stacks on top", () => {
-    const p = toolPolicyFor("pal", { ...opts, roleDisallow: ["WebFetch"] });
+  test("a role's extra denied tools still stack on top", () => {
+    const p = toolPolicyFor("pal", { ...opts, roles: bookWith((r) => (r.name === "pal" ? { ...r, deniedTools: ["WebFetch"] } : r)) });
     expect(p.disallowedTools).toContain("WebFetch");
     expect(p.disallowedTools).toContain("mcp__datadog__execute_code");
   });

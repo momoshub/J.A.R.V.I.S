@@ -71,7 +71,8 @@ import {
   leastPrivilegedAuthor,
   type GateContextLine,
 } from "../../domain/followGate.ts";
-import { ROLES } from "../../domain/rolePolicy.ts";
+import { rankOf as roleRank } from "../../domain/roles.ts";
+import { seededBook } from "../../domain/roleSeed.ts";
 import { decideAccess } from "../../domain/access.ts";
 import { reviewRequestIn } from "../../domain/reviewRequest.ts";
 import { createFollowGate } from "../../application/followGate.ts";
@@ -1048,7 +1049,8 @@ export const createSlackApp = (config: SlackAppConfig, deps: Deps) => {
       // least-privileged author in the batch, never just the newest.
       const rankOf = (userId: string): number => {
         const d = decideAccess(userId, deps.ownerSlackId, deps.users.get);
-        return d.allowed ? ROLES.length - ROLES.indexOf(d.user.role) : 0;
+        // Higher outranks lower; someone not allowed ranks below every role.
+        return d.allowed ? roleRank(deps.roles ?? seededBook(), d.user.role) + 1 : 0;
       };
       const runAs = leastPrivilegedAuthor(items, rankOf);
       await handle({

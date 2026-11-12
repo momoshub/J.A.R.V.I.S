@@ -115,14 +115,17 @@ import { createCiGate } from "./application/ciGate.ts";
 import { createDraftReply } from "./application/draftReply.ts";
 import { syntheticTs } from "./domain/slackLinks.ts";
 import { toolPolicyFor } from "./domain/toolPolicy.ts";
-import { roleOf } from "./application/commands/shared.ts";
-import { currentCommandName, effectivePolicy, policyDisallow } from "./domain/rolePolicy.ts";
+import { currentCommandName } from "./domain/rolePolicy.ts";
 import { disabledRoleOf, enforceRolePolicies } from "./application/rolePolicies.ts";
-import { createRolePolicyRepo } from "./infrastructure/db/rolePolicyRepo.ts";
+import { catalogueFor, seedRoles } from "./application/roles.ts";
+import { createRoleRepo } from "./infrastructure/db/roleRepo.ts";
+import { readLegacyPolicies } from "./infrastructure/db/rolePolicyRepo.ts";
+import { commandPerm } from "./domain/permissions.ts";
+import { can as roleCan } from "./domain/roles.ts";
 import { logSourceOrder } from "./domain/investigation.ts";
 import { createDashboard } from "./infrastructure/dashboard/server.ts";
 import { runForBrain } from "./application/brainRun.ts";
-import { dispatchCommand, isQuietCommand } from "./application/commands.ts";
+import { dispatchCommand, isQuietCommand, listCommandInfo } from "./application/commands.ts";
 import { createCommandTickets, refusalMessage } from "./application/commandTickets.ts";
 import { createWorkerTickets, revokeOnWorkerEnd } from "./application/workerTickets.ts";
 import { createWorkerTicketRepo } from "./infrastructure/db/workerTicketRepo.ts";
@@ -205,8 +208,10 @@ const main = async () => {
   // The bot reads its allowlist through the role policies, so a switched-off
   // role grants nothing anywhere; the dashboard alone gets the raw store.
   const userStore = createUserRepo(db);
-  const rolePolicies = createRolePolicyRepo(db);
-  const users = enforceRolePolicies(userStore, rolePolicies.get);
+  // Roles are data: the stored rows are read per check, and a switched-off role grants nothing anywhere.
+  const roleRepo = createRoleRepo(db);
+  const roles = roleRepo.book;
+  const users = enforceRolePolicies(userStore, roles);
   const messages = createMessageRepo(db);
   const learnings = createLearningsRepo(db);
   // Memory as a checked, versioned adapter in the database, mirrored to disk.
@@ -232,6 +237,15 @@ const main = async () => {
     console.error("[adapter] could not load, serving the last good read:", err),
   );
   const settings = createSettingsRepo(db);
+  // The built-in roles and what each grants: written on the first boot after roles became data (folding in the
+  // old deny lists and the note/read floors), and only new permissions after that.
+  const roleSeedInput = () => ({
+    commands: listCommandInfo().map((c) => ({ name: c.name, minRole: c.minRole })),
+    dbServers: config.dbMcpServers,
+    executerDbServers: config.executerDbMcpServers,
+    extraMcpServers: (settings.get(SETTING_KEYS.roleMcpServers) ?? "").split(",").map((s) => s.trim()).filter(Boolean),
+  });
+  seedRoles({ repo: roleRepo, settings, clock: () => Date.now(), legacyPolicies: () => readLegacyPolicies(db), input: roleSeedInput });
   // Separate database on purpose: the main one is committed, and user tokens
   // must never be able to reach git. Encrypted under a key kept beside it.
   adoptDatabase(config.tokenDatabasePath, config.tokenDatabaseMigrateFrom, { mode: 0o600, log: console.log });
@@ -315,14 +329,6 @@ const main = async () => {
         .filter((c): c is string => !!c),
     );
 
-  /** Commands each role's dashboard policy denies, read per call so a save needs no restart. */
-  const deniedCommands = (role: Parameters<typeof rolePolicies.get>[0]): ReadonlySet<string> =>
-    new Set(
-      effectivePolicy(rolePolicies.get(role))
-        .deniedCommands.map(currentCommandName)
-        .filter((c): c is string => !!c),
-    );
-
   seedOwner(userStore, config.ownerSlackId, clock);
 
   // The bot's identity lives in the DB; env values only bootstrap a fresh clone.
@@ -382,12 +388,10 @@ const main = async () => {
   // otherwise the adapter default. Read per call so a change needs no restart.
   const modelsForRoles = () => {
     const pick = (role: string, fallback?: string) => settings.get(modelKey(role))?.trim() || fallback;
-    return {
-      pal: pick("pal", config.claudeModelPal),
-      executer: pick("executer"),
-      admin: pick("admin"),
-      owner: pick("owner"),
-    };
+    // One entry per stored role. The cheap model env value is where the lowest built-in (`pal`) started.
+    return Object.fromEntries(
+      roles.list().map((r) => [r.name, pick(r.name, r.seed === "pal" ? config.claudeModelPal : undefined)] as const),
+    );
   };
   const toolPolicy = (role: Parameters<typeof toolPolicyFor>[0], channelId?: string) =>
     toolPolicyFor(role, {
@@ -414,10 +418,9 @@ const main = async () => {
         .split(/[,\n]/)
         .map((s) => s.trim())
         .filter(Boolean),
-      // The role's dashboard policy: denied tools and MCP servers, read per turn.
-      roleDisallow: policyDisallow(rolePolicies.get(role)),
-      // The host's Notion MCP server writes as the host, like `note`: same floor.
-      notionFloor: roleOf(settings.get(SETTING_KEYS.noteMinRole)?.trim().toLowerCase()),
+      // What the role is granted - tool tiers, MCP servers, Orca - read per turn from the stored roles.
+      roles,
+      extraMcpServers: roleSeedInput().extraMcpServers,
     });
 
   // Every finished run is recorded: who asked, what for, what it consumed.
@@ -622,8 +625,11 @@ const main = async () => {
       }
     },
     disabledCommands,
-    deniedCommands,
-    roleDisabled: disabledRoleOf(userStore, rolePolicies.get),
+    roles,
+    roleRepo,
+    roleCatalogue: () => catalogueFor(roleSeedInput(), listCommandInfo()),
+    sandboxCwd,
+    roleDisabled: disabledRoleOf(userStore, roles),
     rawUsers: userStore,
     slack: slackAdmin,
     // `quick-review` approves through this directly, before the brain starts.
@@ -670,6 +676,7 @@ const main = async () => {
       settings,
       clock,
       ownerSlackId: config.ownerSlackId,
+      roles,
       log: (l) => activity.line(`cloudwatch: ${l}`),
     },
     // Per-person allowances live here, set with the `limit` command.
@@ -802,7 +809,8 @@ const main = async () => {
       uiAccess: uiAccess.read,
       users: userStore,
       dbMcpServers: config.dbMcpServers,
-      rolePolicies,
+      executerDbMcpServers: config.executerDbMcpServers,
+      roleRepo,
       messages,
       learnings,
       kitViews,
@@ -1045,8 +1053,12 @@ const main = async () => {
     check: createShellCheck(fullCwd),
     // Pending script loops nobody answered in 24h are deleted, restart or not.
     sweep: () => expirePendingLoops(loopApproval),
-    mayRun: (id, script) =>
-      id === config.ownerSlackId || (!script && ["admin", "owner"].includes(users.get(id)?.role ?? "")),
+    mayRun: (id, script) => {
+      if (id === config.ownerSlackId) return true;
+      // A script loop is the owner's alone; a prompt loop needs whatever grants `loop` to its creator.
+      const role = users.get(id)?.role;
+      return !script && role !== undefined && roleCan(roles, role, commandPerm("loop"));
+    },
     log: (msg) => console.error(`[loop] ${msg}`),
     onError: onDbError,
   });
@@ -1128,6 +1140,7 @@ const main = async () => {
       onPrCreated: ({ url, channelId, threadTs }) =>
         settings.set(SETTING_KEYS.stuckPrThreads, recordPrThread(settings.get(SETTING_KEYS.stuckPrThreads), url, { channelId, threadTs })),
       users,
+      roles,
       github: appClient,
       audit: commandLog,
       allowedOwners: config.githubApp.allowedOwners,

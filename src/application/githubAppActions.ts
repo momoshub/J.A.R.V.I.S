@@ -9,7 +9,17 @@
  * own owner, so an app installed on several orgs reaches each of them; GitHub's
  * refusal (not installed, missing permission) is returned as it came.
  */
-import { type ActionRequest, DENIED_MESSAGE, mayActAsApp, planAction, summarize } from "../domain/githubAppAction.ts";
+import {
+  type ActionRequest,
+  deniedMessage,
+  mayActAsApp,
+  permissionFor,
+  planAction,
+  purposeOf,
+  summarize,
+} from "../domain/githubAppAction.ts";
+import { can, type RoleBook } from "../domain/roles.ts";
+import { seededBook } from "../domain/roleSeed.ts";
 import { isAllowedOwner } from "../domain/githubApp.ts";
 import type { AllowedUser } from "../domain/types.ts";
 import type { CommandLogRepo } from "../infrastructure/db/commandLogRepo.ts";
@@ -31,6 +41,8 @@ export type GithubActionDeps = {
   /** A worker extends its own live ticket (`ticket-renew`, see `workerTickets.renewSelf`). Absent means it cannot. */
   renewWorker?: (token: string, ttlMs: number) => WorkerRenewal;
   users: { get: (slackId: string) => AllowedUser | undefined };
+  /** The stored roles; each action needs its own `github:<action>` grant. Absent means the seeded defaults. */
+  roles?: RoleBook;
   github: {
     installationOfRepo: (repo: string) => Promise<number>;
     installationToken: (installationId: number) => Promise<string>;
@@ -184,8 +196,15 @@ export const createGithubActions = (deps: GithubActionDeps): GithubActions => {
 
       if (worker && !worker.ok) refuse(worker.message);
       if (!user) refuse("whoever asked is not on the access list");
-      if (user && !mayActAsApp(user.role)) refuse(DENIED_MESSAGE);
       if (!plan.ok) return refuse(plan.error);
+      // Each action is its own grant, read from the stored role of whoever the ticket runs as. A worker ticket
+      // is checked against its minter's role on every redeem, so demoting the minter stops the worker at once.
+      const book = deps.roles ?? seededBook();
+      if (user) {
+        const perm = permissionFor(plan.action, purposeOf(req));
+        const allowed = perm ? can(book, user.role, perm) : mayActAsApp(book, user.role);
+        if (!allowed) refuse(deniedMessage(book, user.role, plan.action, purposeOf(req)));
+      }
       const owner = plan.repo.split("/")[0] ?? "";
       if (!isAllowedOwner(owner, deps.allowedOwners)) {
         return refuse(`${owner} is not in GITHUB_APP_ALLOWED_OWNERS, so the app will not act there`);

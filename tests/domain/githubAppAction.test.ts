@@ -1,5 +1,8 @@
 import { describe, expect, test } from "bun:test";
-import { mayActAsApp, planAction } from "../../src/domain/githubAppAction.ts";
+import { ACTIONS, deniedMessage, mayActAsApp, permissionFor, planAction, purposeOf } from "../../src/domain/githubAppAction.ts";
+import { seededBook } from "../../src/domain/roleSeed.ts";
+import { can } from "../../src/domain/roles.ts";
+import { GITHUB_PERMISSION_ACTIONS, githubPerm } from "../../src/domain/permissions.ts";
 
 const ok = (req: Parameters<typeof planAction>[0]) => {
   const p = planAction(req);
@@ -11,12 +14,38 @@ const err = (req: Parameters<typeof planAction>[0]) => {
   return p.ok ? "" : p.error;
 };
 
-describe("mayActAsApp", () => {
-  test("admin and owner only", () => {
-    expect(mayActAsApp("owner")).toBe(true);
-    expect(mayActAsApp("admin")).toBe(true);
-    expect(mayActAsApp("executer")).toBe(false);
-    expect(mayActAsApp("pal")).toBe(false);
+const book = seededBook();
+
+describe("who may act as the app", () => {
+  test("as seeded: admin and owner, every action; executer and pal none", () => {
+    for (const role of ["owner", "admin"]) {
+      expect(mayActAsApp(book, role)).toBe(true);
+      for (const a of GITHUB_PERMISSION_ACTIONS) expect(can(book, role, githubPerm(a))).toBe(true);
+    }
+    for (const role of ["executer", "pal"]) {
+      expect(mayActAsApp(book, role)).toBe(false);
+      for (const a of GITHUB_PERMISSION_ACTIONS) expect(can(book, role, githubPerm(a))).toBe(false);
+    }
+  });
+
+  test("every REST action and both git purposes map to one grant; ticket-renew to none", () => {
+    for (const a of ACTIONS) {
+      if (a === "ticket-renew") expect(permissionFor(a)).toBeUndefined();
+      else if (a === "git-auth") {
+        expect(permissionFor(a, "git")).toBe("github:git");
+        expect(permissionFor(a, "push")).toBe("github:push");
+      } else expect(permissionFor(a)).toBe(`github:${a}`);
+    }
+    expect(purposeOf({ purpose: "push" })).toBe("push");
+    expect(purposeOf({})).toBe("git");
+    expect(purposeOf({ purpose: "x" })).toBe("git");
+  });
+
+  test("the refusal names the grant and who holds it", () => {
+    const msg = deniedMessage(book, "pal", "pr-merge");
+    expect(msg).toContain("pal");
+    expect(msg).toContain("github:pr-merge");
+    expect(msg).toContain("admin");
   });
 });
 

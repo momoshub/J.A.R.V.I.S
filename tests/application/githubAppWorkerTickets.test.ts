@@ -204,7 +204,7 @@ describe("github app actions with a worker ticket", () => {
     const { token } = mint();
     await expect(actions.run({ ticket: token, ...create })).resolves.toBeDefined();
     setRole("pal");
-    await expect(actions.run({ ticket: token, ...create })).rejects.toThrow("admin role");
+    await expect(actions.run({ ticket: token, ...create })).rejects.toThrow("may not act on GitHub as the app");
     setRole(undefined);
     await expect(actions.run({ ticket: token, ...create })).rejects.toThrow("not on the access list");
     expect(hits.filter((h) => h === "POST repos/o/r/pulls")).toHaveLength(1);

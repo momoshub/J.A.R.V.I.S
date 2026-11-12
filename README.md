@@ -32,7 +32,7 @@ Lower roles are sandboxed (see [Roles & tool access](#roles--tool-access)): `pal
 
 Before deploying beyond a trusted, sandboxed machine:
 
-- keep `owner`/`admin` tiny and trusted (the owner cannot be removed); give everyone else `pal`/`executer`
+- keep `owner` and any role holding `tools:full-access` (`admin`, as seeded) tiny and trusted (the owner cannot be removed); give everyone else a sandboxed role (`pal`/`executer`, or a custom one)
 - run in a container / low-privilege user with a scoped filesystem and limited network egress
 - keep the dashboard on loopback (default) and the token secret
 - rotate any tokens that have appeared in logs or chat
@@ -139,7 +139,7 @@ Every command has two interfaces - use whichever you like. Both triggers are con
 | --- | --- | --- |
 | `help` | anyone | list the commands you can run |
 | `ping` | anyone | check the bot is awake |
-| `whoami` | anyone | show your role |
+| `whoami` | anyone | show your role, its rank and description, and how many permissions it grants |
 | `model` | anyone | show the brain and current model |
 | `ask <question>` | anyone | one-shot question to the brain |
 | `model [role\|subagent\|worker\|plan\|here\|#channel] [name\|default]` | anyone (setting: admins) | show the brain; admins pin a model per role or channel, or for subagents, Orca workers and planning |
@@ -149,7 +149,7 @@ Every command has two interfaces - use whichever you like. Both triggers are con
 | `sys` (alias `vitals`) | admins | how the host, the bot and Orca are doing, as Block Kit: a verdict header, cpu/memory/swap/disk/battery/host/bot/turns fields, the last hour's trend, then Orca's runtime, active runs, workers by status and a table of live workers (one "unreachable" line when Orca is down or slow). The message text keeps the plain report as the fallback |
 | `users` | admins | list the allowlist |
 | `worker-cost <ctx_...\|run_...>` (alias `wcost`) | admins | tokens and list-price cost of an Orca worker, or every worker in a Run - see [What an Orca worker cost](#what-an-orca-worker-cost) |
-| `add @user [pal\|executer\|admin]` | admins (admin role: owner only) | grant access |
+| `add @user [role]` | `command:add` (admin as seeded); only roles ranking below your own | grant access under any role, custom ones included; no role given means the default one (`pal`); an unknown role name is refused |
 | `remove @user` | admins (admins: owner only) | revoke access |
 | `learn <fact>` | admins | teach a durable fact |
 | `learnings` / `relearn <id> <text>` / `unlearn <id>` | admins | list, reword or delete learnings |
@@ -162,11 +162,12 @@ Every command has two interfaces - use whichever you like. Both triggers are con
 | `bomb [categories] [count] <message-link>` (alias `br`) | admins | reaction-bomb a message. Combine categories with commas and set a count: `bomb money,face,negative 9 <link>`. Up to 23; `bomb help` lists every category |
 | `reply <message-link>` (alias `jrp`) | admins | draft and post an AI reply to a message |
 | `rm-msg <message-link>` (aliases `rmmsg`, `unsend`) | admins | delete a message the bot posted (a bot token cannot delete anyone else's) |
-| `workflow <task>` / `workflow stop [<thread-link>]` / `workflow status` (alias `wf`) | executers+ | start a long task in this thread and keep talking to it (see [Workflows](#workflows)) |
+| `workflow <task>` / `workflow stop [<thread-link>]` / `workflow status` (alias `wf`) | `command:workflow` (executer and up as seeded) | start a long task in this thread and keep talking to it (see [Workflows](#workflows)) |
 | `limit [@user] [n\|default]` (alias `quota`) | anyone (setting: admins) | show command allowance; admins set someone's |
 | `mindful [hours]` / `mindful continue\|reply <thread-link>` (aliases `mind`, `whatsup`) | admins | everything it is doing: stuck turns (a failed last turn; one a person stopped is not stuck), Orca tasks whose worker is gone and quiet PRs on its own repo (each with the thread that started it), what is running and waiting, and what it cost - see [Stuck work](#stuck-work) |
 | `loop every <monday 9am\|day at 18:00\|6h\|week> <prompt>` / `loop list` / `loop cancel <id>` | admins | run a prompt on a schedule, as a real turn, with nobody present. A shell loop is never typed (not even by the owner): ask me in plain words and I write the script, post the exact command and schedule to the owner's DM and only run it after the owner presses Approve (Reject, or 24h with no answer, deletes it; `loop list` shows it as pending meanwhile). Times are the host's clock, like `remind`; a prompt loop is at most hourly (`every 1h` at the fastest) and a shell loop `every 5m`. Each fire starts a fresh top-level message in the creator's **DM** with the bot and runs the turn under it as the creator (prefixed `[loop <id>]`, told to keep it short) - nothing is posted in the channel or thread it was created in, which only gets a short confirmation. A shell loop runs no turn and spends no tokens; only a failure (non-zero exit or timeout) sends one short line to the creator's DM, and the loop carries on. A run missed while the bot was down happens once on startup, never a backlog. Ten loops per person. `loop help` for the card |
-| `promote @user` / `demote @user` | owner | change role |
+| `promote @user [role]` / `demote @user [role]` | owner | change role: to the named one, else to the highest role below owner / the least-privileged one |
+| `role list` / `show <role>` / `perms [filter]` / `create <name> [from <role>] [description]` / `grant <role> <perm...>` / `revoke <role> <perm...>` / `delete <role>` / `rename <old> <new>` / `rank <role> <n>` / `describe <role> <text>` / `on\|off <role>` / `default <role>` / `denytools <role> <pattern...\|none>` (alias `roles`) | owner only, never grantable | see and edit roles and the permissions they grant - see [Roles & tool access](#roles--tool-access) |
 
 A slash command is invisible to everyone but its caller, so the **owner gets a copy in their DM** - one thread per run: a header saying who ran what, with the progress and result threaded under it. Trivial commands (`help`, `ping`, `whoami`, `model`) are not copied, and the owner is never copied on their own.
 
@@ -384,8 +385,7 @@ cannot reach a setup-token turn, so the host registers its own server once:
 `claude mcp add --scope user --transport http notion https://mcp.notion.com/mcp`, then
 authenticate it in `/mcp`. From then on a turn sees `mcp__notion__notion-*`
 (search, fetch, create and update pages including properties like Status,
-comments). Unverified until set up on the host: unlike the local database servers this is a remote OAuth server, so check with `claude mcp list` and a real call from a chat turn that it loads under the setup token; if it does not, the prompt falls back to `read`/`note`. It writes as the host's Notion identity, so it follows `note`'s floor:
-`note access <role>` (default admin). Other connectors are not widened.
+comments). Unverified until set up on the host: unlike the local database servers this is a remote OAuth server, so check with `claude mcp list` and a real call from a chat turn that it loads under the setup token; if it does not, the prompt falls back to `read`/`note`. It writes as the host's Notion identity, so it is the `mcp:notion` grant (seeded from the old `note` floor, admin and up). Other connectors are not widened.
 
 ### Why tickets use the host's login
 
@@ -875,8 +875,12 @@ The turn posts its answer back on the issue/PR, as the app, through
 only posts to the issue that turn's thread was opened for. If the turn ends
 without posting, its reply is posted for it.
 
-For anything wider, an **admin or the owner** can have a turn act as the app on
-any repository it is installed on (`acme`, `cute-me-on-repos`, ...):
+For anything wider, a turn can act as the app on any repository it is installed on
+(`acme`, `cute-me-on-repos`, ...) when the person it runs as holds the action's grant
+(`github:<action>`, one per action below: `git` and `push` are separate grants, and `push`
+must use the `push` subcommand). As seeded that is the **admin and the owner**; the owner
+grants any of them to another role (`role grant executer github:pr-create github:comment`)
+with no code change:
 
 ```
 bin/github-app.sh pr-create <owner/repo> --head <branch> --base <branch> --title <t> --body-file <f> [--draft]
@@ -898,7 +902,7 @@ anything that talks to github.com (fetch, pull, push, ls-remote; an ssh remote
 is read as https) carries a fresh installation token. `push` pushes one branch
 to the remote of `<dir>` that points at `<owner/repo>`. The token is a one-shot
 credential: the bot hands it back for the `git-auth` action (same ticket, same
-admin/owner gate, same command log row, no token in the log) and the helper puts
+grant gate, same command log row, no token in the log) and the helper puts
 it in that one git process's environment as `http.extraheader` through
 `GIT_CONFIG_*` - never in a remote url, `.git/config`, argv or any file. A
 cherry-picked commit keeps its original author unless you pass `--reset-author`.
@@ -913,8 +917,8 @@ In the `acme` org, every PR is committed and opened as the app
 `kai-at-acme`.
 
 **Orca workers** outlive the turn that started them, and a turn's ticket is
-gone after 20 minutes, so a worker gets its own scoped one. In the turn (admin or
-owner, through the run helper; the command refuses anything that is not the
+gone after 20 minutes, so a worker gets its own scoped one. In the turn (a role holding
+`command:worker-ticket`, admin and owner as seeded, through the run helper; the command refuses anything that is not the
 brain's own run bridge, so a typed line, a schedule, an errand or the menu never
 mint one):
 
@@ -1200,20 +1204,35 @@ Mode needs no request URL).
 
 ## Roles & tool access
 
-Each allowlisted user has a role that scopes what the brain may do when they talk to it:
+**Only `owner` is hard-coded**: it always exists, always holds every permission, and can never be restricted, renamed or deleted. Every other role is data in the database - a name, a rank, a description and the permissions it **grants** - that the owner edits with the `role` command or on the dashboard's Roles page, with no code change and no restart. `pal`, `executer` and `admin` are just the roles an instance starts with: on the first boot after upgrading they are seeded with the grants the code used to hard-wire (so nothing changes for anyone), the old dashboard deny lists are folded into those grants, and the old `note_min_role` / `read_min_role` floors become who holds `command:note` / `command:read`. After that you can take a grant from `admin`, give `executer` the GitHub App, or create a `qa` role from scratch.
 
-| role | tool access |
+A permission is an id; `role perms [filter]` and the Roles page list them all:
+
+| permission | grants |
 | --- | --- |
-| `owner` | full control, cannot be removed. The only role that may run `orca` |
-| `admin` | full tool access (real shell, writes), manages users. No `orca`: it is denied by name, background work goes through the Agent tool |
-| `pal` | sandboxed read-only tools in a fixed scratch dir: GitHub read (`gh pr/issue/repo/run/release/api`, plus the GitHub MCP), Notion read (search/fetch/comments), web search + fetch, git/aws read-only. May use `quick-review`, and may react |
-| `executer` | sandboxed, tools assigned from the dashboard (Roles -> Executer tools), plus - always, in code - the read-only databases, the code tools (clone into the scratch dir, edit, commit, push a branch, open a PR) and the `Agent`/`Task` tool for parallel or long work in its own process. No `orca` |
+| `command:<name>` | running that command (a command's `minRole` in code is only where its grant is seeded) |
+| `github:<action>` | acting on GitHub as the App: `pr-create`, `comment`, `review`, `pr-edit`, `pr-close`, `pr-reopen`, `pr-merge`, `labels-add`, `labels-remove`, `reviewers-request`, `git` (commit as the App), `push` (push a branch with its token) |
+| `mcp:<server>` | using an MCP server in a chat turn: `notion`, `datadog`, each `DB_MCP_SERVERS` entry, plus any server named on the Roles page. A server a role lacks the grant for is denied by name |
+| `tools:full-access` | chat turns run the CLI with full access (real shell, writes, the normal cwd). Without it the role is sandboxed: an explicit `--allowedTools` allow-list in a fixed scratch dir |
+| `tools:code` | the sandboxed code tools: clone into the scratch dir, edit, commit, push a branch, open a PR, the `Agent`/`Task` tool for parallel or long work, and the browser tools (the dashboard's code-tier tool list replaces the read-only base) |
+| `tools:orca` | starting Orca workers, which run with full host permissions - only the owner as seeded |
+| `chat:self-update`, `chat:desktop` | the self-update flow, learn url and watches offered in chat; driving the screen |
+| `commands:unlimited`, `commands:approve` | not held back by the per-window command allowance (`pal` is); pressing the approve / reject buttons on a held command |
+| `access:decide` | deciding access requests |
+| `settings:manage` | the configuration sub-actions of commands: model, review-agents, review policy overrides, logsource, review-inbox moves, ticket config, cloudwatch default group, someone's allowance, `token who`, `note parent` |
+| `review:policy`, `runs:stop-any`, `secrets:2fa-manage`, `watch:shell`, `reminders:manage-all`, `cloudwatch:direct` | choosing a review policy; stopping someone else's turn or session; adding and removing 2FA setup keys; shell-check watches (and seeing everyone's watches); everyone's reminders; CloudWatch without the Confirm step |
 
-Sandboxed roles run the Claude CLI without `--dangerously-skip-permissions`, with an explicit `--allowedTools` allow-list. The `executer` allow-list is edited on the Roles page.
+As seeded: `owner` holds everything. `admin` has `tools:full-access` (no `tools:orca`: `Bash(orca:*)` is denied by name), every command at or below admin, all twelve `github:` actions and the admin sub-actions. `executer` is sandboxed with `tools:code`, the read-only database servers (`EXECUTER_DB_MCP_SERVERS`) and executer-level commands, and no GitHub App. `pal` is sandboxed read-only (GitHub read, Notion read, web, read-only git and aws), may use `quick-review` and react, and is held to the per-window command allowance.
 
-**Orca is owner-only.** An Orca worker runs with full permissions on the host Mac, so a role that could start one would step out of its own sandbox. `Bash(orca:*)` (and the installed paths, `ORCA_DENY` in `src/domain/toolPolicy.ts`) is in `--disallowedTools` for `pal`, `executer` and `admin`, because an allow-list never refuses - only a denial does. An `executer` still gets a code job done inside its own sandboxed CLI process: it clones into the scratch dir, edits, commits, pushes and opens the PR, and uses the Agent tool (foreground, or `run_in_background`) for parallel or long work - a subagent inherits the same sandboxed permissions, so nothing is escaped. `Agent` and `Task` are in `EXECUTER_CODE_TOOLS`, so they do not depend on the dashboard tool list (which replaces the defaults when it is not empty). The prompt follows the role: owner turns keep the Orca wording (workers, `watch worker`, the Orca reviewer for a self-fix), every other role is told to use the Agent tool and never to call `orca`, in chat and in a workflow. Preset commands run under the bot's own owner policy, so they are untouched: `fanout` (admin+) still starts Orca workers itself, and the bot's own reads (`sys`, `worker-cost`, `stop`, the stuck-work sweeper, worker questions) still call `orca`. Limit: the denial matches the command as typed, so a wrapper such as `bash -c "orca ..."` or an unlisted install path is not caught.
+**What cannot be granted** (guardrails, not role ceilings): *managing roles* is the owner's alone - `role` and the Roles page never work for anyone else, and even a hand-edited grant for it does nothing. A role only adds, changes or removes people whose role **ranks below its own** (`role rank`), so an admin still cannot hand out or take away admin, and nobody can be given `owner`. A role cannot grant what its editor does not hold. Everything else that used to be a ceiling is a grant now, including worker-ticket minting (`command:worker-ticket`; the minter's own `github:` grants are re-checked on every call, so demoting them stops their workers) and the Notion, database and Orca limits.
 
-**Role policies** (dashboard -> Roles, stored in `role_policies`): each role can be switched off, and can be denied commands, CLI tools and whole MCP servers on top of what the code already denies it. A policy only takes away - the most a role may do (a command's minimum role, the sandbox deny lists) stays fixed in code, so the Roles page lists only the commands within a role's rank. A switched-off role grants nothing: its members are treated as not on the allowlist everywhere (chat, commands, buttons, GitHub calls) and are told their role is off instead of being raised as an access request. Their pending watches stop too (a watch predicate is shell run as the bot). Admins still see and manage them from Slack (`users` marks them, `remove`/`add`/`promote`/`demote` act on their real record). Denied tools and servers go into `--disallowedTools` for every turn of that role, full-access roles included; denied commands are refused at dispatch and left out of `help`. The owner role is always on and never restricted, whatever is saved. Saves apply to the next message, no restart. Preset full-access tasks (`review`, `investigate`, `ticket`, ...) keep their own fixed tool policy; deny the command itself to keep a role away from one.
+**Switching a role off** treats its members as not on the allowlist for every check in the bot (chat, commands, buttons, GitHub calls), and they are told so rather than raised as an access request. **Deleting** a role is refused while anyone holds it (they are named: move them with `add @user <role>` first) and for the role an approved access request lands on (`role default`, else the least-privileged one). **Renaming** moves everyone who holds it, and its `model:<role>` override, along. A permission added by a later release is seeded into the built-in roles only, never into a custom one, and a revoke you made is never undone.
+
+Sandboxed roles run the Claude CLI without `--dangerously-skip-permissions`, with an explicit `--allowedTools` allow-list; the code-tier list is edited on the Roles page. `quick-review` is a preset that always runs full-access (and writes to the PR) for whoever may run it.
+
+**Orca is a grant, and the owner's as seeded.** An Orca worker runs with full permissions on the host Mac, so a role that could start one would step out of its own sandbox. `Bash(orca:*)` (and the installed paths, `ORCA_DENY` in `src/domain/toolPolicy.ts`) is in `--disallowedTools` for every role without `tools:orca`, because an allow-list never refuses - only a denial does. An `executer` still gets a code job done inside its own sandboxed process (clone, edit, commit, push a branch, open the PR) and fans out with the `Agent`/`Task` tool, which is in its tool list in code so the dashboard list cannot drop it. The prompt is role-aware: a role without `tools:orca` is told to use the Agent tool for background work, and to use an Agent for the self-fix reviewer. The denial matches the command as typed, so `bash -c "orca ..."` is not caught.
+
+**Extra denied tools**: each role can also carry CLI tool patterns (`Bash(rm:*)`) it is refused whatever it is granted (`role denytools`, or the Roles page). `owner` is never restricted.
 
 Two more helpers are granted to every role for the same reason: `bin/slack-file.sh` (downloads a Slack attachment, and refuses any url that is not a Slack file) and `bin/jarvis-run.sh` (asks the bot to run one of its own commands, gated by the caller's role).
 
@@ -1231,7 +1250,7 @@ The sidebar collapses to a slim rail of icons, with each page's full name as the
 
 - **Overview** - counts for users, conversations, stored turns, learnings, then an Activity section over the last 7/30/90 days (`GET /api/stats?days=`): messages per day, brain runs per day (chat and workflow turns, failures in the tooltip), list-price spend per day, the most-run commands, the most active people (turns plus commands) and how many threads were live today and this week. Hand-drawn SVG charts (no chart library), one series and one axis per chart, a hover tooltip on each, coloured only through the theme variables so dark mode just works. Days are the host's local days, and quiet days are drawn as zeros rather than skipped. Read from `messages`, `turn_log`, `llm_usage`, `command_log` and `thread_sessions` (`db/statsRepo.ts`); stored turns are cleared before a DB commit, so the messages chart only covers what is still stored
 - **Users** - manage the allowlist: add someone by searching the workspace (name, @handle or Slack id - email too once `users:read.email` is granted) and picking them from a dropdown with avatar, name, display name and title, then a role; someone already on the list is marked and adding changes their role. The search is `GET /api/slack/members?q=`, filtered server-side over a `users.list` copy held in memory (every cursor page, deleted accounts and bots left out, refreshed at most every 10 minutes, the last good copy kept when a refresh fails). Pasting a raw `U…` id still works when the directory is unavailable. Then edit each person's Slack id, Slack name, GitHub logins (the `github_login:` links the review inbox and GitHub App use) and role inline. The owner's id and role are protected; their name and GitHub logins are editable
-- **Roles** - switch each role on or off, untick the commands, tools and MCP servers it may not use, assign people to it, and edit the executer tool allow-list (see [Roles & tool access](#roles--tool-access)). The owner role is shown but locked
+- **Roles** - the owner's page: tick the permissions each role grants (commands, GitHub App actions, tool tiers, MCP servers), set its rank and description, switch it on or off, create a role (optionally copying one), rename or delete one, choose the default role, name an MCP server, assign people to it, and edit the code-tier tool allow-list (see [Roles & tool access](#roles--tool-access)). The owner role is shown but locked
 - **Memory** - with a memory adapter: teach one fact, edit any adapter file by hand (one whole file per save, checked by the same gate as `adapter refine` and kept as a revision; blank a file to remove it), or revert to an earlier revision. Without an adapter it is the flat **Learnings** list: edit one in place and save, or delete it
 - **Identity** - edit the bot name, "thinking" label, and system prompt (persona), or reset the persona to default
 - **Conversations** - browse the bot's own stored memory (SQLite), read turns, clear a channel. Both lists scroll instead of paging: the channel list loads the next page as you reach the bottom (`GET /api/conversations?cursor=`, cursor `<lastAt>:<channelId>`), and a conversation opens scrolled to its newest turn in reading order, loading older turns as you scroll up while keeping your place (`GET /api/conversation?channel=&before=<message id>`, 50 a page, `nextBefore` until the first turn). Every channel is shown as name and id (`#team-chat (C0TEAM00001)`, a DM as the person), and every person as name and id - never a bare Slack id, here, in the command log or on Spend. Names come from `conversations.info` / `users.info`, cached in the dashboard process (6 h, failures 10 min) so a page render does not call Slack per row; `conversations.info` needs the `*:read` scopes below

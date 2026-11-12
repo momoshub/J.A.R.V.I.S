@@ -31,8 +31,10 @@ import {
   DEFAULT_SLASH_COMMAND,
   LEADING_MENTION,
   PR_URL,
-  RANK,
 } from "./commands/shared.ts";
+import { commandPerm, permissionCatalogue } from "../domain/permissions.ts";
+import { can, roleNamesWith, type RoleBook } from "../domain/roles.ts";
+import { seededBook } from "../domain/roleSeed.ts";
 import { CHAT_COMMANDS } from "./commands/chat.ts";
 import { SCHEDULE_COMMANDS } from "./commands/schedule.ts";
 import { PEOPLE_COMMANDS } from "./commands/people.ts";
@@ -43,6 +45,7 @@ import { REVIEW_COMMANDS } from "./commands/review.ts";
 import { RUNTIME_COMMANDS } from "./commands/runtime.ts";
 import { SLACK_COMMANDS } from "./commands/slack.ts";
 import { CLOUDWATCH_COMMANDS } from "./commands/cloudwatch.ts";
+import { ROLE_COMMANDS } from "./commands/roles.ts";
 export {
   DEFAULT_COMMAND_PREFIX,
   DEFAULT_SLASH_COMMAND,
@@ -72,9 +75,9 @@ export const COMMANDS: readonly CommandDef[] = [
       // else - the dashboard, a test, a transport with no interactivity. The
       // list is still the fallback rather than an error, because help that
       // fails is worse than help that is merely old-fashioned.
-      const denied = deps.deniedCommands?.(actor.role) ?? new Set<string>();
-      const menu = buildCommandMenu(listCommandInfo().filter((c) => !denied.has(c.name)), actor.role);
-      const listed = renderHelp(actor.role, prefix, slash, denied);
+      const book = bookOf(deps);
+      const menu = buildCommandMenu(listCommandInfo(), (name) => mayRun(book, actor.role, name));
+      const listed = renderHelp(book, actor.role, prefix, slash);
       // Only a person gets a menu. Without a reply wired this is the brain
       // asking itself what it can run, and a picker posted into the thread
       // would be the noise this command is quiet to avoid.
@@ -107,6 +110,7 @@ export const COMMANDS: readonly CommandDef[] = [
   ...CHAT_COMMANDS,
   ...SCHEDULE_COMMANDS,
   ...PEOPLE_COMMANDS,
+  ...ROLE_COMMANDS,
   ...ADAPTER_COMMANDS,
   ...LEARNINGS_COMMANDS,
   ...ERRANDS_COMMANDS,
@@ -122,12 +126,19 @@ for (const c of COMMANDS) {
   for (const a of c.aliases ?? []) byName.set(a, c);
 }
 
-/** What this role may run: its rank reaches `minRole` and its policy does not deny it. */
-const runnable = (role: UserRole, denied: ReadonlySet<string> = new Set()) => (c: CommandDef): boolean =>
-  RANK[role] >= RANK[c.minRole] && !denied.has(c.name);
+/** The roles as stored, or the seeded defaults where nothing is wired. A command's `minRole` is only that seed. */
+const DEFAULT_BOOK: RoleBook = seededBook({ commands: COMMANDS.map((c) => ({ name: c.name, minRole: c.minRole })) });
+export const bookOf = (deps: { roles?: RoleBook }): RoleBook => deps.roles ?? DEFAULT_BOOK;
 
-const renderHelp = (role: UserRole, prefix: string, slash: string, denied?: ReadonlySet<string>): string => {
-  const lines = COMMANDS.filter(runnable(role, denied)).map(
+/** May this role run the command? Its grant decides; `help` is how anyone finds out what else they can do, so it is always open. */
+export const mayRun = (book: RoleBook, role: UserRole, command: string): boolean =>
+  command === "help" || can(book, role, commandPerm(command));
+
+/** What this role may run: the commands it holds a grant for. */
+const runnable = (book: RoleBook, role: UserRole) => (c: CommandDef): boolean => mayRun(book, role, c.name);
+
+const renderHelp = (book: RoleBook, role: UserRole, prefix: string, slash: string): string => {
+  const lines = COMMANDS.filter(runnable(book, role)).map(
     (c) => `- \`${c.name}${c.usage ? ` ${c.usage}` : ""}\` - ${c.summary}`,
   );
   return [
@@ -185,6 +196,9 @@ export const listCommandInfo = (): CommandInfo[] =>
     destructive: c.destructive === true,
   }));
 
+/** Who may run a command, as words for a refusal: the roles holding its grant. */
+const holders = (book: RoleBook, command: string): string => roleNamesWith(book, commandPerm(command));
+
 export type DispatchOptions = {
   prefix?: string;
   slash?: string;
@@ -230,7 +244,7 @@ export const dispatchCommand = async (
     // Name the near miss rather than sending someone to read forty lines to
     // find the word they almost typed. Only commands their role can actually
     // run, so a suggestion is never a door that turns out to be locked.
-    const reachable = COMMANDS.filter(runnable(actor.role, deps.deniedCommands?.(actor.role))).flatMap((c) => [
+    const reachable = COMMANDS.filter(runnable(bookOf(deps), actor.role)).flatMap((c) => [
       c.name,
       ...(c.aliases ?? []),
     ]);
@@ -254,13 +268,10 @@ export const dispatchCommand = async (
     log(command.name, false, msg);
     return msg;
   }
-  if (RANK[actor.role] < RANK[command.minRole]) {
-    const msg = `That command needs *${command.minRole}* access. You are *${actor.role}*.`;
-    log(command.name, false, msg);
-    return msg;
-  }
-  if (command.name !== "help" && deps.deniedCommands?.(actor.role).has(command.name)) {
-    const msg = `The *${actor.role}* role is not allowed to run \`${command.name}\`.`;
+  const book = bookOf(deps);
+  // The grant is the gate: the roles are data, and a command's `minRole` is only where the grant started.
+  if (!mayRun(book, actor.role, command.name)) {
+    const msg = `That command needs *${holders(book, command.name)}* access. You are *${actor.role}*.`;
     log(command.name, false, msg);
     return msg;
   }
@@ -272,7 +283,7 @@ export const dispatchCommand = async (
         name: command.name,
         usage: command.usage,
         summary: command.summary,
-        minRole: command.minRole,
+        minRole: holders(book, command.name),
         aliases: command.aliases,
       },
       prefix,
@@ -313,6 +324,9 @@ export const dispatchCommand = async (
       reply: opts.reply,
       fromBrainRun: opts.fromBrainRun === true,
       trivialCommands: TRIVIAL_COMMANDS,
+      roles: book,
+      catalogue: deps.roleCatalogue?.() ?? permissionCatalogue({ commands: listCommandInfo(), mcpServers: ["notion", "datadog"] }),
+      can: (permission) => can(book, actor.role, permission),
     });
     log(command.name, true, result);
     return result;

@@ -23,8 +23,9 @@ import { postedBody } from "../../domain/ghCommand.ts";
 import { failedList } from "../../domain/ciGate.ts";
 import { tokenFor } from "../claudeTokens.ts";
 import { authorReviewPolicyKey, reviewPolicyKey, SETTING_KEYS } from "../../infrastructure/db/settingsRepo.ts";
-import { type CommandDeps, PR_URL, type CommandDef, RANK, askForToken, reviewAgentsOf, botNameOf } from "./shared.ts";
+import { type CommandDeps, PR_URL, type CommandDef, askForToken, reviewAgentsOf, botNameOf } from "./shared.ts";
 import { logAndIgnore } from "../ignoredError.ts";
+import { PERM } from "../../domain/permissions.ts";
 
 /** Ceiling for a relayed GitHub body in one Slack message. */
 const RELAYED_BODY_CHARS = 3000;
@@ -144,7 +145,7 @@ export const REVIEW_COMMANDS: readonly CommandDef[] = [
       // A pal's review never approves up front: that would hand out an
       // approval nobody asked for. Nor is the policy, so
       // they get no say in it for a run either.
-      const palOnly = RANK[actor.role] < RANK.executer;
+      const palOnly = !ctx.can(PERM.reviewPolicy);
       if (palOnly && asked !== undefined) {
         return "Review policy is not a pal's to set. Drop `--policy` - a pal review approves only after a clean one anyway.";
       }
@@ -158,8 +159,8 @@ export const REVIEW_COMMANDS: readonly CommandDef[] = [
       const explicit = await reviewPoliciesOf(deps, urls, "approve-first");
       const configured = await reviewPoliciesOf(deps, urls);
       const loosened = override === "approve-first" && urls.some((u) => explicit.get(u) === "approve-after");
-      if (loosened && RANK[actor.role] < RANK.admin) {
-        return "That repo or author is set to approve only after a clean review, and only an admin can override that for a run.";
+      if (loosened && !ctx.can(PERM.manageSettings)) {
+        return "That repo or author is set to approve only after a clean review, and only someone who manages settings can override that for a run.";
       }
       const policyFor = (url: string): ReviewPolicy =>
         palOnly ? "approve-after" : (override ?? configured.get(url) ?? DEFAULT_REVIEW_POLICY);
@@ -376,14 +377,14 @@ export const REVIEW_COMMANDS: readonly CommandDef[] = [
     usage: "[grafana,datadog|default]",
     summary: "where I look for logs, in order",
     run: (ctx) => {
-      const { deps, actor, rest, prefix } = ctx;
+      const { deps, rest, prefix } = ctx;
       const describe = (order: readonly string[]) =>
         `I look for logs in this order: ${order.map((s) => `*${s}*`).join(" → ")}.\nNever by hand: ${DENIED_LOG_SOURCES.map((s) => `*${s}*`).join(", ")} - it bills per GB scanned. \`${prefix} cloudwatch help\` is the one allowed path.`;
 
       const wanted = rest.trim().toLowerCase();
       if (!wanted) return describe(logSourceOrder(deps.settings?.get(SETTING_KEYS.logSources)));
 
-      if (RANK[actor.role] < RANK.admin) return "Only admins can change where I look.";
+      if (!ctx.can(PERM.manageSettings)) return "You are not allowed to change where I look.";
       if (wanted === "default" || wanted === "reset") {
         deps.settings?.set(SETTING_KEYS.logSources, "");
         return describe(logSourceOrder(undefined));
@@ -405,14 +406,14 @@ export const REVIEW_COMMANDS: readonly CommandDef[] = [
     minRole: "pal",
     usage: "| channel <#channel>|off | link <github-login> [@someone] | unlink <github-login>",
     summary: "where GitHub review requests of my account are announced (never reviewed by themselves), and who is who",
-    run: ({ deps, actor, args, prefix }) => {
+    run: ({ can, deps, actor, args, prefix }) => {
       const settings = deps.settings;
       if (!settings) return "I have nowhere to keep settings right now.";
       const sub = (args[0] ?? "").toLowerCase();
-      const admin = RANK[actor.role] >= RANK.admin;
+      const admin = can(PERM.manageSettings);
 
       if (sub === "channel") {
-        if (!admin) return "Only admins can move the review inbox.";
+        if (!admin) return "You are not allowed to move the review inbox.";
         const raw = args[1] ?? "";
         if (/^(off|none|stop)$/i.test(raw)) {
           settings.remove(SETTING_KEYS.reviewInboxChannel);
@@ -434,7 +435,7 @@ export const REVIEW_COMMANDS: readonly CommandDef[] = [
         // Yourself is anyone's call; somebody else's is an admin's, since it
         // decides whose token a review runs on.
         if ((target && target !== actor.slackId) || (current && current !== actor.slackId)) {
-          if (!admin) return "That links someone else - only an admin can do that.";
+          if (!admin) return "That links someone else - only someone who manages settings can do that.";
         }
         if (sub === "unlink") {
           settings.remove(githubLinkKey(login));
@@ -463,12 +464,12 @@ export const REVIEW_COMMANDS: readonly CommandDef[] = [
     minRole: "pal",
     usage: "| channel <#channel>|off",
     summary: "where calls from the GitHub App (an @mention or the label on an issue/PR) are posted and run",
-    run: ({ deps, actor, args, prefix }) => {
+    run: ({ can, deps, args, prefix }) => {
       const settings = deps.settings;
       if (!settings) return "I have nowhere to keep settings right now.";
       const sub = (args[0] ?? "").toLowerCase();
       if (sub === "channel") {
-        if (RANK[actor.role] < RANK.admin) return "Only admins can move where GitHub calls land.";
+        if (!can(PERM.manageSettings)) return "You are not allowed to move where GitHub calls land.";
         const raw = args[1] ?? "";
         if (/^(off|none|default)$/i.test(raw)) {
           settings.remove(SETTING_KEYS.githubAppChannel);
@@ -494,7 +495,7 @@ export const REVIEW_COMMANDS: readonly CommandDef[] = [
     usage: "[owner/repo | author:<login>] [first|after|default]",
     summary: "how a repo or PR author gets approved: up front, or only after a clean review",
     run: (ctx) => {
-      const { deps, actor, args, prefix } = ctx;
+      const { deps, args, prefix } = ctx;
       const describe = (p: ReviewPolicy) =>
         p === "approve-after"
           ? "approved *only after* the review, and only if nothing is blocking and CI is green"
@@ -537,7 +538,7 @@ export const REVIEW_COMMANDS: readonly CommandDef[] = [
           : `\`${repo}\` uses the default, *${DEFAULT_REVIEW_POLICY}* - ${describe(DEFAULT_REVIEW_POLICY)}.`;
       }
 
-      if (RANK[actor.role] < RANK.admin) return "Only admins can change a review policy.";
+      if (!ctx.can(PERM.manageSettings)) return "You are not allowed to change a review policy.";
       const want = (args[1] ?? "").toLowerCase();
       if (want === "default" || want === "reset") {
         deps.settings?.set(key, "");

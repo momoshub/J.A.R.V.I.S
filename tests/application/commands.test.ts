@@ -8,12 +8,14 @@ import { createReminderRepo } from "../../src/infrastructure/db/reminderRepo.ts"
 import { createWorkflowRepo } from "../../src/infrastructure/db/workflowRepo.ts";
 import { DEFAULT_SNUB_REPLY } from "../../src/domain/snub.ts";
 import { createReviewGuard } from "../../src/application/reviewGuard.ts";
-import { commandLineOf, dispatchCommand, type CommandDeps } from "../../src/application/commands.ts";
+import { commandLineOf, dispatchCommand, listCommandInfo, type CommandDeps } from "../../src/application/commands.ts";
 import { respond, type RespondDeps } from "../../src/application/respond.ts";
 import type { LlmPort } from "../../src/application/ports.ts";
 import type { GitHubPort } from "../../src/application/github.ts";
 import { BOMB_SIZE } from "../../src/domain/emoji.ts";
 import { OWNER, db, actor, slackCalls, build } from "./commandsFixture.ts";
+import { seededBook } from "../../src/domain/roleSeed.ts";
+import { staticBook } from "../../src/domain/roles.ts";
 
 describe("commandLineOf", () => {
   const P = "X/jarvis";
@@ -36,15 +38,18 @@ describe("commandLineOf", () => {
 });
 
 describe("dispatchCommand", () => {
-  test("a role's dashboard policy denies a command, hides it from help, and never touches the owner", async () => {
-    const denied = new Set(["ping", "help"]);
-    const deps = { ...build(), deniedCommands: (role: string) => (role === "owner" ? new Set<string>() : denied) };
-    const pal = actor({ slackId: "U3", role: "pal" });
-    expect(await dispatchCommand(deps, pal, "C1", "ping")).toBe("The *pal* role is not allowed to run `ping`.");
-    const help = await dispatchCommand(deps, pal, "C1", "help");
+  test("a role without the grant is refused the command, it leaves help, and the owner is untouched", async () => {
+    const base = build();
+    const book = seededBook({ commands: listCommandInfo().map((c) => ({ name: c.name, minRole: c.minRole })) });
+    // the owner revoked `ping` from pal: the stored role simply lacks the grant
+    const pal = book.get("pal")!;
+    const deps = { ...base, roles: staticBook([{ ...pal, grants: pal.grants.filter((g) => g !== "command:ping") }, ...book.list().filter((r) => r.name !== "pal")]) };
+    const asPal = actor({ slackId: "U3", role: "pal" });
+    expect(await dispatchCommand(deps, asPal, "C1", "ping")).toBe("That command needs *executer or admin* access. You are *pal*.");
+    const help = await dispatchCommand(deps, asPal, "C1", "help");
     expect(help).not.toContain("`ping`");
     expect(help).toContain("`whoami`");
-    expect(await dispatchCommand(deps, actor(), "C1", "ping")).not.toContain("not allowed");
+    expect(await dispatchCommand(deps, actor(), "C1", "ping")).not.toContain("needs");
   });
 
   test("managing a member of a switched-off role sees their real record: remove, add, promote, users", async () => {
@@ -161,7 +166,7 @@ describe("dispatchCommand", () => {
     const deps2 = build();
     const admin = actor({ slackId: "U2", role: "admin" });
     const out = await dispatchCommand(deps2, admin, "C1", "add <@U1> admin");
-    expect(out).toContain("Only the owner");
+    expect(out).toContain("rank below your own");
     expect(deps2.users.get("U1")).toBeUndefined();
   });
 
@@ -276,7 +281,7 @@ describe("dispatchCommand", () => {
     expect(deps.settings.get("model:pal")).toBe("haiku");
 
     const pal = actor({ slackId: "U0PAL0001", role: "pal" });
-    expect(await dispatchCommand(deps, pal, "C1", "model pal opus")).toContain("Only admins");
+    expect(await dispatchCommand(deps, pal, "C1", "model pal opus")).toContain("You are not allowed");
     expect(deps.settings.get("model:pal")).toBe("haiku");
     // but a pal may look
     expect(await dispatchCommand(deps, pal, "C1", "model pal")).toContain("haiku");
@@ -303,7 +308,7 @@ describe("dispatchCommand", () => {
     deps.settings = createSettingsRepo(db);
     const pal = actor({ slackId: "U0PAL0001", role: "pal" });
 
-    expect(await dispatchCommand(deps, pal, "C1", "model here haiku")).toContain("Only admins");
+    expect(await dispatchCommand(deps, pal, "C1", "model here haiku")).toContain("You are not allowed");
     expect(deps.settings.get("model:channel:C1")).toBeUndefined();
     expect(await dispatchCommand(deps, actor(), "C1", "model banana haiku")).toContain("A role, an agent kind or a channel");
   });
@@ -321,7 +326,7 @@ describe("dispatchCommand", () => {
     expect(await dispatchCommand(deps, actor(), "C1", "model")).toContain("worker `haiku`");
 
     const pal = actor({ slackId: "U0PAL0001", role: "pal" });
-    expect(await dispatchCommand(deps, pal, "C1", "model subagent opus")).toContain("Only admins");
+    expect(await dispatchCommand(deps, pal, "C1", "model subagent opus")).toContain("You are not allowed");
     expect(deps.settings.get("model:subagent")).toBeUndefined();
 
     await dispatchCommand(deps, actor(), "C1", "model worker default");
@@ -376,9 +381,9 @@ describe("dispatchCommand", () => {
     const run = (line: string) => dispatchCommand({ ...deps, watches }, pal, "C1", line, { threadTs: "9.8" });
 
     const shell = await run("watch promote it -- rm -rf ~");
-    expect(shell).toContain("needs *executer*");
+    expect(shell).toContain("needs the *watch:shell* permission");
     // naming a wait does not smuggle the shell past the gate either
-    expect(await run("watch pr https://github.com/o/r/pull/9 promote it -- uname -a")).toContain("needs *executer*");
+    expect(await run("watch pr https://github.com/o/r/pull/9 promote it -- uname -a")).toContain("needs the *watch:shell* permission");
     expect(watches.waiting()).toEqual([]);
 
     expect(await run("watch pr https://github.com/o/r/pull/9 promote it")).toContain("to be merged");
@@ -520,7 +525,7 @@ describe("dispatchCommand", () => {
       "watch do it -- true",
       { threadTs: "9.9" },
     );
-    expect(out).toContain("needs *executer*");
+    expect(out).toContain("needs the *watch:shell* permission");
   });
 
   test("watch cancel ends the ones on this thread", async () => {
@@ -761,8 +766,8 @@ describe("dispatchCommand", () => {
     const deps = build();
     const pal = actor({ slackId: "U0PAL0008", role: "pal" });
     deps.users.upsert(pal);
-    expect(await dispatchCommand(deps, pal, "C1", "investigate why")).toContain("needs *executer*");
-    expect(await dispatchCommand(deps, pal, "C1", "forget")).toContain("needs *executer*");
+    expect(await dispatchCommand(deps, pal, "C1", "investigate why")).toContain("needs *executer or admin*");
+    expect(await dispatchCommand(deps, pal, "C1", "forget")).toContain("needs *executer or admin*");
   });
 
   test("rv --policy first approves in code before the brain runs, announced after 'reviewing'", async () => {
@@ -1307,7 +1312,7 @@ describe("ticket", () => {
   test("a pal can raise one but cannot reconfigure where they go", async () => {
     const deps = withSettings();
     const pal = actor({ slackId: "U0PAL0001", role: "pal" });
-    expect(await dispatchCommand(deps, pal, "C1", "ticket config tracker https://evil")).toContain("Only admins");
+    expect(await dispatchCommand(deps, pal, "C1", "ticket config tracker https://evil")).toContain("You are not allowed");
     expect(deps.settings!.get("ticket_tracker")).toBeUndefined();
   });
 
@@ -1410,7 +1415,7 @@ describe("follow", () => {
       "follow",
       { threadTs: "1.1" },
     );
-    expect(out).toContain("needs *executer*");
+    expect(out).toContain("needs *executer or admin*");
   });
 
   test("list names what it is keeping up with", async () => {

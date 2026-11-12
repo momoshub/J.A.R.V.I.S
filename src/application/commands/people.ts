@@ -2,6 +2,8 @@
 
 import { validateRemoval, validateRoleChange } from "../../domain/access.ts";
 import type { UserRole } from "../../domain/types.ts";
+import { highestRole, lowestRole } from "../../domain/roles.ts";
+import { defaultRoleOf } from "../roles.ts";
 import { spendReport } from "../../domain/spendReport.ts";
 import { workerCostReport } from "../workerCost.ts";
 import { humanDuration } from "../../domain/watch.ts";
@@ -14,7 +16,7 @@ const changeRole = (ctx: Context, slackId: string, next: UserRole, requireExisti
   const records = recordsOf(ctx.deps);
   const target = records.get(slackId);
   if (requireExisting && !target) return "I do not know that user - add them first.";
-  const err = validateRoleChange(ctx.actor.role, target?.role ?? "pal", next, slackId === ctx.deps.ownerSlackId);
+  const err = validateRoleChange(ctx.roles, ctx.actor.role, target?.role, next, slackId === ctx.deps.ownerSlackId);
   if (err) return err;
   if (target) records.setRole(slackId, next);
   else
@@ -86,7 +88,7 @@ export const PEOPLE_COMMANDS: readonly CommandDef[] = [
   {
     name: "worker-ticket",
     aliases: ["wticket"],
-    // Same gate as acting as the app (`mayActAsApp`): the ticket can never carry more than its minter has.
+    // The `command:worker-ticket` grant (admin and up as seeded). The minter's own `github:*` grants are re-checked on every redeem, so a ticket can never carry more than its minter holds.
     minRole: "admin",
     usage: "<owner/repo> <ctx_...|pending> [pr-create|comment|pr-edit|git|push|labels-add|reviewers-request ...] [--ttl 3h] | bind <id> <ctx_...> | revoke <id|ctx_...> | renew <id|ctx_...> [--ttl 3h]",
     summary: "mint a scoped GitHub App ticket for an Orca worker (one repo, a few actions, hours, revoked when it ends; `renew` extends one, 24h at most)",
@@ -172,12 +174,15 @@ export const PEOPLE_COMMANDS: readonly CommandDef[] = [
   {
     name: "add",
     minRole: "admin",
-    usage: "@user [pal|executer|admin]",
-    summary: "grant access (admin role is owner-only)",
+    usage: "@user [role]",
+    summary: "grant access (any role that ranks below yours, custom ones included; default role if none given)",
     run: (ctx) => {
       const slackId = slackIdOf(ctx.args[0]);
-      if (!slackId) return `Who? \`${ctx.prefix} add @user [pal|executer|admin]\``;
-      return changeRole(ctx, slackId, roleOf(ctx.args[1]?.toLowerCase()) ?? "pal", false);
+      if (!slackId) return `Who? \`${ctx.prefix} add @user [role]\` (\`${ctx.prefix} role list\` shows the roles)`;
+      const named = ctx.args[1]?.toLowerCase();
+      const next = named ? roleOf(ctx.roles, named) : defaultRoleOf(ctx.roles, ctx.deps.settings);
+      if (!next) return named ? `There is no role called *${named}*. \`${ctx.prefix} role list\` shows them.` : "There is no role to give.";
+      return changeRole(ctx, slackId, next, false);
     },
   },
   {
@@ -191,7 +196,7 @@ export const PEOPLE_COMMANDS: readonly CommandDef[] = [
       if (!slackId) return `Who? \`${ctx.prefix} remove @user\``;
       const target = recordsOf(ctx.deps).get(slackId);
       if (!target) return "They are not on the list to begin with.";
-      const err = validateRemoval(ctx.actor.role, target.role, slackId === ctx.deps.ownerSlackId);
+      const err = validateRemoval(ctx.roles, ctx.actor.role, target.role, slackId === ctx.deps.ownerSlackId);
       if (err) return err;
       recordsOf(ctx.deps).remove(slackId);
       return `Access revoked for <@${slackId}>.`;
@@ -200,21 +205,30 @@ export const PEOPLE_COMMANDS: readonly CommandDef[] = [
   {
     name: "promote",
     minRole: "owner",
-    usage: "@user",
-    summary: "make someone an admin",
+    usage: "@user [role]",
+    summary: "move someone up: to the named role, else to the highest role below owner",
     run: (ctx) => {
       const slackId = slackIdOf(ctx.args[0]);
-      return slackId ? changeRole(ctx, slackId, "admin", true) : `Who? \`${ctx.prefix} promote @user\``;
+      if (!slackId) return `Who? \`${ctx.prefix} promote @user [role]\``;
+      const named = ctx.args[1]?.toLowerCase();
+      const next = named ? roleOf(ctx.roles, named) : highestRole(ctx.roles)?.name;
+      if (!next) return named ? `There is no role called *${named}*. \`${ctx.prefix} role list\` shows them.` : "There is no role to promote to.";
+      return changeRole(ctx, slackId, next, true);
     },
   },
   {
     name: "demote",
     minRole: "owner",
-    usage: "@user",
-    summary: "drop someone to pal",
+    usage: "@user [role]",
+    summary: "move someone down: to the named role, else to the lowest-ranked one",
     run: (ctx) => {
       const slackId = slackIdOf(ctx.args[0]);
-      return slackId ? changeRole(ctx, slackId, "pal", true) : `Who? \`${ctx.prefix} demote @user\``;
+      if (!slackId) return `Who? \`${ctx.prefix} demote @user [role]\``;
+      const named = ctx.args[1]?.toLowerCase();
+      const lowest = lowestRole(ctx.roles)?.name;
+      const next = named ? roleOf(ctx.roles, named) : lowest;
+      if (!next) return named ? `There is no role called *${named}*. \`${ctx.prefix} role list\` shows them.` : "There is no role to demote to.";
+      return changeRole(ctx, slackId, next, true);
     },
   },
 ];

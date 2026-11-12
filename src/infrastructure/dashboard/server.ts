@@ -21,7 +21,7 @@ import type { UserRepo } from "../db/userRepo.ts";
 import type { LearningsRepo } from "../db/learningsRepo.ts";
 import type { KitViewRepo } from "../db/kitViewRepo.ts";
 import type { SettingsRepo } from "../db/settingsRepo.ts";
-import type { RolePolicyRepo } from "../db/rolePolicyRepo.ts";
+import type { RoleRepo } from "../db/roleRepo.ts";
 import type { StatsRepo } from "../db/statsRepo.ts";
 import { createSlackDirectory } from "../../application/slackDirectory.ts";
 import { createNameResolver } from "../../application/nameResolver.ts";
@@ -42,8 +42,10 @@ export type DashboardConfig = {
 export type DashboardDeps = {
   /** The RAW allowlist (not the role-enforced view): the deck edits members of a switched-off role too. */
   users: UserRepo;
-  /** Per-role policy; the bot enforces from the same rows. */
-  rolePolicies?: RolePolicyRepo;
+  /** The stored roles; the bot enforces from the same rows. */
+  roleRepo?: RoleRepo;
+  /** The subset of the database servers an executer may query, for the seeded permission catalogue. */
+  executerDbMcpServers?: readonly string[];
   /** Local database MCP servers (`DB_MCP_SERVERS`), offered for denial. */
   dbMcpServers?: readonly string[];
   messages: MessageRepo;
@@ -98,7 +100,7 @@ export type DashboardDeps = {
   githubComment?: (req: { ticket: string; repo: string; number: number; body: string }) => Promise<{ url?: string }>;
   /**
    * Act on GitHub as the app (create/edit/close/merge a PR, review, label,
-   * request reviewers). Ticketed; the bot requires the admin role of whoever
+   * request reviewers). Ticketed; the bot requires the `github:<action>` grant of whoever
    * the ticket resolves to. Returns GitHub's JSON.
    */
   githubAction?: (req: { ticket: string } & Record<string, unknown>) => Promise<Record<string, unknown>>;
@@ -231,7 +233,8 @@ export const createDashboard = (config: DashboardConfig, deps: DashboardDeps) =>
       ? createSlackDirectory({ clock: deps.clock, listMembers: deps.slack.listMembers })
       : undefined,
     resolveNames: deps.slack ? (ids) => deps.slack!.resolveNames([...ids]) : undefined,
-    rolePolicies: deps.rolePolicies,
+    roleRepo: deps.roleRepo,
+    executerDbMcpServers: deps.executerDbMcpServers,
     // One cache for the life of the server, so opening a page never costs a
     // Slack call per row - see `nameResolver.ts`.
     names: createNameResolver({
@@ -337,14 +340,24 @@ export const createDashboard = (config: DashboardConfig, deps: DashboardDeps) =>
         case "/api/roles":
           app.setExecuterTools(body.executerTools);
           return ok();
-        case "/api/roles/policy":
-          return reply(app.saveRolePolicy({
-            role: body.role,
+        case "/api/roles/save":
+          return reply(app.saveRole({
+            name: body.name,
+            rank: body.rank,
+            description: body.description,
             enabled: body.enabled,
-            deniedCommands: body.deniedCommands,
+            grants: body.grants,
             deniedTools: body.deniedTools,
-            deniedMcpServers: body.deniedMcpServers,
+            from: body.from,
           }));
+        case "/api/roles/delete":
+          return reply(app.deleteRole(body.name));
+        case "/api/roles/rename":
+          return reply(app.renameRole(body.from, body.to));
+        case "/api/roles/default":
+          return reply(app.setDefaultRole(body.name));
+        case "/api/roles/mcp-server":
+          return reply(app.addMcpServer(body.server));
         case "/api/roles/assign":
           return reply(app.assignRole(body.slackId, body.role));
         case "/api/kit/views":

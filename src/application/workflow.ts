@@ -12,6 +12,7 @@ import { frontPrompt, workflowPrompt } from "../domain/workflowPrompt.ts";
 import { createMarkerFilter, parseContinue } from "../domain/workflowContinue.ts";
 import { createSteerFilter, FRONT_TIMEOUT_MS, frontMessage, parseSteers } from "../domain/workflowFront.ts";
 import { mayUseOrca, PAL_TOOLS } from "../domain/toolPolicy.ts";
+import type { RoleBook } from "../domain/roles.ts";
 import { tokenFor, type ClaudeTokenPort } from "./claudeTokens.ts";
 import type { AllowedUser, UserRole, Workflow } from "../domain/types.ts";
 import type { ToolPolicy } from "../domain/toolPolicy.ts";
@@ -24,7 +25,7 @@ export const WORKFLOW_TIMEOUT_MS = 900_000;
 /** Billing kind of a worker step - also how its tool calls are found in the trace. */
 export const WORKER_BILL_KIND = "workflow";
 
-/** Lowest role that may drive a workflow (executer, admin, owner). */
+/** Where `command:workflow` was seeded: executer, admin, owner. The grant decides who may drive a workflow now. */
 export const WORKFLOW_MIN_ROLE: UserRole = "executer";
 
 export type WorkflowDeps = {
@@ -32,6 +33,8 @@ export type WorkflowDeps = {
   llm?: LlmPort;
   clock: Clock;
   toolPolicy?: (role: UserRole, channelId?: string) => ToolPolicy;
+  /** The stored roles (Orca is a grant). Absent means the seeded defaults. */
+  roles?: RoleBook;
   botInfo?: () => { botName: string; model: string };
   /** Fresh session id; injected so tests are deterministic. */
   newSessionId?: () => string;
@@ -89,7 +92,7 @@ export const runWorkflowTurn = async (
   const base = deps.toolPolicy?.(actor.role, workflow.channelId) ?? { skipPermissions: true };
   let usage: LlmUsage | undefined;
   const params = {
-    system: workflowPrompt(name, workflow.task, mayUseOrca(actor.role)),
+    system: workflowPrompt(name, workflow.task, mayUseOrca(actor.role, deps.roles)),
     // Only the new message: the session is holding the rest of the conversation.
     messages: [{ role: "user" as const, content: message, speakerId: actor.slackId }],
     assistantName: name,

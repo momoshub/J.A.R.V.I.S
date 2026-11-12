@@ -12,8 +12,8 @@ import { tellPrompt } from "../../src/domain/tellPrompt.ts";
 import { createCommandTickets } from "../../src/application/commandTickets.ts";
 import type { SlackAdminPort } from "../../src/application/slackAdmin.ts";
 import type { LlmPort } from "../../src/application/ports.ts";
-import { createRolePolicyRepo } from "../../src/infrastructure/db/rolePolicyRepo.ts";
-import { defaultRolePolicy } from "../../src/domain/rolePolicy.ts";
+import { seededBook } from "../../src/domain/roleSeed.ts";
+import { staticBook } from "../../src/domain/roles.ts";
 import { disabledRoleOf, enforceRolePolicies } from "../../src/application/rolePolicies.ts";
 
 const OWNER = "U0OWNER0001";
@@ -75,13 +75,15 @@ describe("respond", () => {
 
   test("a switched-off role reaches neither commands nor chat, and is told why", async () => {
     const deps = build(llm("should not run"));
-    const policies = createRolePolicyRepo(openDatabase(":memory:"));
     deps.users.upsert({ slackId: "Uadm", role: "admin", displayName: "A", addedBy: "x", createdAt: 1 });
-    policies.save({ ...defaultRolePolicy("admin"), enabled: false }, "dashboard", 1);
+    // the owner switched the admin role off: the stored role says so
+    const seeded = seededBook();
+    const book = staticBook(seeded.list().map((r) => (r.name === "admin" ? { ...r, enabled: false } : r)));
     const gated: RespondDeps = {
       ...deps,
-      users: enforceRolePolicies(deps.users, policies.get),
-      roleDisabled: disabledRoleOf(deps.users, policies.get),
+      roles: book,
+      users: enforceRolePolicies(deps.users, book),
+      roleDisabled: disabledRoleOf(deps.users, book),
     };
     for (const text of ["!whoami", "hello there"]) {
       const res = await respond(gated, { channelId: "C1", slackUserId: "Uadm", text });
@@ -392,8 +394,15 @@ describe("respond", () => {
 
   test("owner can add a member via command end to end", async () => {
     const deps = build(llm("x"));
-    await respond(deps, { channelId: "C1", slackUserId: OWNER, text: "!add <@UNEW> member" });
+    await respond(deps, { channelId: "C1", slackUserId: OWNER, text: "!add <@UNEW>" });
     expect(deps.users.get("UNEW")?.role).toBe("pal");
+  });
+
+  test("a role word that is not a role is refused, not silently turned into the default", async () => {
+    const deps = build(llm("x"));
+    const res = await respond(deps, { channelId: "C1", slackUserId: OWNER, text: "!add <@UNEW> member" });
+    expect(res.kind === "reply" ? res.text : "").toContain("no role called *member*");
+    expect(deps.users.get("UNEW")).toBeUndefined();
   });
 });
 

@@ -7,6 +7,9 @@ import { createKitViewRepo } from "../../src/infrastructure/db/kitViewRepo.ts";
 import { createSettingsRepo, SETTING_KEYS } from "../../src/infrastructure/db/settingsRepo.ts";
 import { loadBotProfile } from "../../src/application/botProfile.ts";
 import { createDashboard, type DashboardDeps } from "../../src/infrastructure/dashboard/server.ts";
+import { createRoleRepo } from "../../src/infrastructure/db/roleRepo.ts";
+import { seedRoles } from "../../src/application/roles.ts";
+import { listCommandInfo } from "../../src/application/commands.ts";
 
 const OWNER = "U0OWNER0001";
 
@@ -555,5 +558,67 @@ describe("paging, stats and the Slack directory over HTTP", () => {
   test("avatars from Slack's CDN are allowed by the CSP", async () => {
     const res = await build().dash.handle(api(`/api/overview`));
     expect(res.headers.get("content-security-policy")).toContain("img-src 'self' data: https://*.slack-edge.com");
+  });
+});
+
+describe("dashboard roles over HTTP", () => {
+  const withRoles = () => {
+    const db = openDatabase(":memory:");
+    const roleRepo = createRoleRepo(db);
+    const settings = createSettingsRepo(db);
+    seedRoles({
+      repo: roleRepo,
+      settings,
+      clock: () => 1,
+      legacyPolicies: () => [],
+      input: () => ({ commands: listCommandInfo().map((c) => ({ name: c.name, minRole: c.minRole })), dbServers: [], executerDbServers: [], extraMcpServers: [] }),
+    });
+    return { ...build({ roleRepo }), roleRepo };
+  };
+  const json = async (res: Response) => (await res.json()) as Record<string, unknown>;
+
+  test("GET /api/roles lists the owner (locked), the seeded roles and the permission catalogue", async () => {
+    const d = withRoles();
+    const view = (await json(await d.dash.handle(api("/api/roles")))) as { roles: { name: string; locked: boolean }[]; catalogue: { id: string }[]; editable: boolean };
+    expect(view.roles.map((r) => r.name)).toEqual(["owner", "admin", "executer", "pal"]);
+    expect(view.roles.find((r) => r.name === "owner")?.locked).toBe(true);
+    expect(view.catalogue.some((p) => p.id === "github:pr-merge")).toBe(true);
+    expect(view.editable).toBe(true);
+  });
+
+  test("save creates a role, rename and delete work, and the owner role and bad input are refused", async () => {
+    const d = withRoles();
+    const save = (body: Record<string, unknown>) => d.dash.handle(postJson("/api/roles/save", body));
+    expect((await save({ name: "qa", from: "pal", description: "tests" })).status).toBe(200);
+    expect(d.roleRepo.book.get("qa")?.grants).toContain("command:ping");
+    expect((await save({ name: "owner", grants: [] })).status).toBe(400);
+    expect((await save({ name: "qa", grants: ["command:role"] })).status).toBe(400);
+    expect((await save({ name: "qa", grants: ["github:pr-merge", "command:ping"], rank: 1 })).status).toBe(200);
+    expect(d.roleRepo.book.get("qa")?.grants).toEqual(["command:ping", "github:pr-merge"]);
+    expect((await d.dash.handle(postJson("/api/roles/rename", { from: "qa", to: "testers" }))).status).toBe(200);
+    expect(d.roleRepo.book.get("testers")).toBeDefined();
+    d.users.upsert({ slackId: "U7", role: "testers", displayName: "", addedBy: "x", createdAt: 1 });
+    const refused = await d.dash.handle(postJson("/api/roles/delete", { name: "testers" }));
+    expect(refused.status).toBe(400);
+    expect(((await json(refused)) as { error: string }).error).toContain("U7");
+    d.users.remove("U7");
+    expect((await d.dash.handle(postJson("/api/roles/delete", { name: "testers" }))).status).toBe(200);
+    expect((await d.dash.handle(postJson("/api/roles/default", { name: "executer" }))).status).toBe(200);
+    expect((await d.dash.handle(postJson("/api/roles/mcp-server", { server: "mcp__corp-wiki" }))).status).toBe(200);
+    const view = (await json(await d.dash.handle(api("/api/roles")))) as { defaultRole: string; mcpServers: string[] };
+    expect(view.defaultRole).toBe("executer");
+    expect(view.mcpServers).toContain("corp-wiki");
+  });
+
+  test("a cross-origin POST cannot edit roles", async () => {
+    const d = withRoles();
+    const res = await d.dash.handle(postJson("/api/roles/save", { name: "qa" }, { origin: "http://evil.example" }));
+    expect(res.status).toBe(403);
+    expect(d.roleRepo.book.get("qa")).toBeUndefined();
+  });
+
+  test("without a role store nothing can be saved", async () => {
+    const res = await build().dash.handle(postJson("/api/roles/save", { name: "qa" }));
+    expect(res.status).toBe(503);
   });
 });

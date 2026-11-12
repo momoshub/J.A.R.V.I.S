@@ -56,7 +56,8 @@ export type UsageView = {
   /** Slack id -> display name, so a table is not a wall of U0ABC123. */
   names: Record<string, string>;
 };
-export type UserRole = "owner" | "admin" | "executer" | "pal";
+/** A role name: `owner` is fixed, every other role is data the owner edits (`pal`, `executer`, `admin` are only the seeded ones). */
+export type UserRole = string;
 export type AllowedUser = {
   name?: string;
   slackId: string;
@@ -68,23 +69,32 @@ export type AllowedUser = {
   githubLogins: string[];
 };
 
-/** One role as the Roles page edits it. Denials only: a policy never grants past the code's ceilings. */
+/** One thing a role can be granted: `command:<name>`, `github:<action>`, `mcp:<server>`, a tool tier or a guarded action. */
+export type PermissionInfo = { id: string; group: string; label: string };
+
+/** One role as the Roles page edits it: the permissions it GRANTS, its rank, and extra denied tool patterns. */
 export type RoleView = {
-  role: UserRole;
+  name: UserRole;
+  /** Higher outranks lower; null for the owner. */
+  rank: number | null;
+  description: string;
   enabled: boolean;
-  /** The owner role: always on, never restricted, not editable. */
-  locked: boolean;
-  deniedCommands: string[];
+  grants: string[];
   deniedTools: string[];
-  deniedMcpServers: string[];
+  /** `pal`, `executer` or `admin` when seeded as one of them; null for a custom role. */
+  seed: string | null;
+  /** The owner role: always on, holds everything, not editable. */
+  locked: boolean;
   members: { slackId: string; name: string }[];
-  /** Commands within this role's rank - the ones there is anything to deny. */
-  commands: string[];
 };
 export type RolesView = {
   roles: RoleView[];
+  /** Everything that can be granted, grouped. Managing roles is never in it: it is the owner's alone. */
+  catalogue: PermissionInfo[];
   tools: string[];
   mcpServers: string[];
+  /** The role an approved access request gets. */
+  defaultRole: UserRole | null;
   editable: boolean;
   executerTools: string;
   palTools: string[];
@@ -178,7 +188,8 @@ export type SlackMessage = {
 export type CommandInfo = {
   name: string;
   aliases: string[];
-  minRole: "owner" | "admin" | "executer" | "pal";
+  /** Where the command's grant started (`pal`, `executer`, `admin`, `owner`); the grant decides now. */
+  minRole: string;
   usage: string;
   summary: string;
 };

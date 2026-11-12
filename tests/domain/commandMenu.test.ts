@@ -51,39 +51,46 @@ describe("needsArguments", () => {
   });
 });
 
+const TIER: Record<string, number> = { pal: 0, executer: 1, admin: 2, owner: 3 };
+/** What a role may run when grants are the seeded ones: a command's minRole is where its grant started. */
+const allowedFor = (role: string, commands = registry) => (name: string): boolean => {
+  const c = commands.find((x) => x.name === name);
+  return !!c && (TIER[role] ?? 0) >= (TIER[c.minRole] ?? 3);
+};
+
 describe("buildCommandMenu", () => {
   test("it only offers what the role may run", () => {
-    const names = buildCommandMenu(registry, "pal").groups.flatMap((g) => g.options.map((o) => o.value));
+    const names = buildCommandMenu(registry, allowedFor("pal")).groups.flatMap((g) => g.options.map((o) => o.value));
     expect(names).toContain("ping");
     expect(names).not.toContain("learn");
     expect(names).not.toContain("shutdown");
   });
 
   test("an owner sees everything", () => {
-    const names = buildCommandMenu(registry, "owner").groups.flatMap((g) => g.options.map((o) => o.value));
+    const names = buildCommandMenu(registry, allowedFor("owner")).groups.flatMap((g) => g.options.map((o) => o.value));
     expect(names).toContain("shutdown");
     expect(names).toContain("ping");
   });
 
   test("help is not in its own menu", () => {
-    const names = buildCommandMenu(registry, "owner").groups.flatMap((g) => g.options.map((o) => o.value));
+    const names = buildCommandMenu(registry, allowedFor("owner")).groups.flatMap((g) => g.options.map((o) => o.value));
     expect(names).not.toContain("help");
   });
 
   test("options are grouped by the role that unlocks them", () => {
-    const menu = buildCommandMenu(registry, "owner");
+    const menu = buildCommandMenu(registry, allowedFor("owner"));
     expect(menu.groups.map((g) => g.label)).toEqual(["Anyone", "Executers", "Admins", "Owner"]);
   });
 
   test("the label carries the argument shape, the description the summary", () => {
-    const menu = buildCommandMenu(registry, "admin");
+    const menu = buildCommandMenu(registry, allowedFor("admin"));
     const learn = menu.groups.flatMap((g) => g.options).find((o) => o.value === "learn");
     expect(learn?.label).toBe("learn <fact>");
     expect(learn?.description).toBe("does a thing");
   });
 
   test("quick buttons are the ones that need no typing at all", () => {
-    const menu = buildCommandMenu(registry, "admin");
+    const menu = buildCommandMenu(registry, allowedFor("admin"));
     const names = menu.quick.map((c) => c.name);
     expect(names).toContain("ping");
     expect(names).toContain("sys");
@@ -93,7 +100,7 @@ describe("buildCommandMenu", () => {
 
   test("a destructive command is never a one-tap button", () => {
     // a button is one stray tap away from wiping a channel's memory
-    const menu = buildCommandMenu(registry, "admin");
+    const menu = buildCommandMenu(registry, allowedFor("admin"));
     expect(menu.quick.map((c) => c.name)).not.toContain("forget");
     // it is still in the picker, where it gets confirmed
     expect(menu.groups.flatMap((g) => g.options).map((o) => o.value)).toContain("forget");
@@ -101,7 +108,7 @@ describe("buildCommandMenu", () => {
 
   test("a registry past Slack's ceiling says how many it left out", () => {
     const many = Array.from({ length: MENU_OPTION_MAX + 7 }, (_, i) => cmd(`c${i}`, "pal"));
-    const menu = buildCommandMenu(many, "pal", []);
+    const menu = buildCommandMenu(many, allowedFor("pal", many), []);
     expect(menu.groups.flatMap((g) => g.options).length).toBe(MENU_OPTION_MAX);
     expect(menu.omitted).toBe(7);
     expect(menuPrompt(menu)).toContain("7 more");

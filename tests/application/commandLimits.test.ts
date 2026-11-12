@@ -281,8 +281,8 @@ describe("admins setting an allowance", () => {
     const own = await dispatchCommand(deps, actor(), "C1", "limit");
     expect(own).toContain("3/10");
 
-    expect(await dispatchCommand(deps, actor(), "C1", `limit <@${PAL}> 99`)).toContain("Only admins");
-    expect(await dispatchCommand(deps, actor(), "C1", `limit <@U0ADMIN01>`)).toContain("Only admins");
+    expect(await dispatchCommand(deps, actor(), "C1", `limit <@${PAL}> 99`)).toContain("You are not allowed");
+    expect(await dispatchCommand(deps, actor(), "C1", `limit <@U0ADMIN01>`)).toContain("You are not allowed");
     expect(limitFor(deps, PAL)).toBe(PAL_COMMAND_LIMIT);
   });
 

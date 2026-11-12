@@ -8,8 +8,8 @@ import type { ReviewGuard } from "./reviewGuard.ts";
 import { decideAccess } from "../domain/access.ts";
 import { disabledRoleReason } from "../domain/rolePolicy.ts";
 import { cleanInboundText } from "../domain/conversation.ts";
-import { commandLineOf, dispatchCommand, notifiesOwner } from "./commands.ts";
-import { runFrontTurn, runWorkflowTurn, WORKFLOW_MIN_ROLE } from "./workflow.ts";
+import { bookOf, commandLineOf, dispatchCommand, mayRun, notifiesOwner } from "./commands.ts";
+import { runFrontTurn, runWorkflowTurn } from "./workflow.ts";
 import { afterFailedStep, afterWorkflowTurn, steerWorker } from "./workflowContinue.ts";
 import { frontDigest, type FrontDeps } from "./workflowFront.ts";
 import { frontKeyOf, steeredMessage } from "../domain/workflowFront.ts";
@@ -20,7 +20,6 @@ import { nameOfRequest } from "../domain/runControl.ts";
 import { sessionThreadKey } from "../domain/agentSession.ts";
 import { isRestartCut, type RunRegistry } from "./runRegistry.ts";
 import type { ThreadQueue } from "./threadQueue.ts";
-import type { UserRole } from "../domain/types.ts";
 import type { PostedRef } from "./slackAdmin.ts";
 import type { TurnOutcome } from "../infrastructure/db/turnLogRepo.ts";
 import { handleMessage, type HandleMessageDeps, type HandleResult, type InboundMessage } from "./handleMessage.ts";
@@ -45,7 +44,6 @@ export type RespondDeps = HandleMessageDeps & Pick<FrontDeps, "workerCalls"> & {
   stepFailures?: Map<number, number>;
 };
 
-const RANK: Record<UserRole, number> = { pal: 0, executer: 1, admin: 2, owner: 3 };
 
 export const respond = async (
   deps: RespondDeps,
@@ -162,7 +160,7 @@ export const respond = async (
           const who = decideAccess(inbound.slackUserId, deps.ownerSlackId, deps.users.get);
           // Anyone below the workflow role can still chat in the thread; they just
           // do not get to steer the task.
-          if (who.allowed && RANK[who.user.role] >= RANK[WORKFLOW_MIN_ROLE]) {
+          if (who.allowed && mayRun(bookOf(deps), who.user.role, "workflow")) {
             if (inbound.autoContinue) {
               // The worker's step. What people said meanwhile rides along with
               // it, and is only cleared once the step has run.
