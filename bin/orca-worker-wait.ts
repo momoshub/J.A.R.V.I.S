@@ -10,6 +10,8 @@
 // record) - which a watch keeps polling rather than reading as a death.
 // `orca` itself missing or failing to start exits 127, which the watcher
 // counts as a broken check and reports, instead of polling it for hours.
+// A worker silent at its prompt for 15 minutes with no report counts as
+// waiting too (`WORKER_IDLE_MS`); the clock is read here, not in the domain.
 // `--past-wait` ignores a wait for input: for a worker already known to be
 // parked on a person's answer, only finished or died ends the watch.
 // The reading itself is `orcaWorkerEvent` in src/domain/watch.ts; the hand-back
@@ -54,7 +56,7 @@ try {
   process.exit(127);
 }
 
-const ev = orcaWorkerEvent(out);
+const ev = orcaWorkerEvent(out, Date.now());
 if (ev.kind === "running" || (pastWait && ev.kind === "waiting")) {
   console.log(`orca worker ${id} still running${ev.kind === "waiting" ? " (still waiting for input)" : ""}`);
   process.exit(1);

@@ -303,6 +303,20 @@ const UNREPORTED_OUTCOMES = new Set(["finished_unverified"]);
 const STOPPED = new Set(["stopped", "abandoned"]);
 /** Liveness Orca could not establish. Orca's own rule: it never proves exit. */
 const UNSURE_LIVENESS = new Set(["unverifiable", "unknown"]);
+/**
+ * How long a worker's terminal may stay silent before it counts as idle. A
+ * working Claude TUI repaints its spinner constantly, so `terminal.lastOutputAt`
+ * stays fresh; one that ended its turn at the `❯` prompt without `worker_done`
+ * stops updating, while Orca still reports it `live`, `in_progress`, no attention.
+ */
+export const WORKER_IDLE_MS = 15 * 60_000;
+/** Opens the detail of a `waiting` that is an idle worker, not a prompt; `workerLead` keys on it. */
+export const IDLE_DETAIL_PREFIX = "idle at its prompt";
+/**
+ * The footer of a Claude TUI with a background shell running (`· 1 shell ·`):
+ * idle on purpose, the shell wakes it, so silence is not a stall.
+ */
+const BACKGROUND_SHELL = /·\s*\d+\s+(?:background\s+)?(?:shells?|tasks?)\b/i;
 /** The concise view has no outcome; a terminal `state` stands in for it. */
 const SETTLED_STATES = new Set(["succeeded", "failed", "cancelled", "canceled"]);
 
@@ -315,8 +329,14 @@ const SETTLED_STATES = new Set(["succeeded", "failed", "cancelled", "canceled"])
  * change of view or an older Orca still answers. Order matters: a finished
  * worker has exited too, and that is "finished", not "died"; a worker parked
  * on a question has often ended its turn, and that is "waiting", not "died".
+ *
+ * A worker with no outcome, wait or death that has been silent for
+ * `WORKER_IDLE_MS` (or that Orca marks `stale`) is "waiting" too: it ended its
+ * turn without `worker_done` and nothing will wake it - unless its footer shows
+ * a background shell, which will. `now` (epoch ms) is passed in so this stays
+ * pure; without it only the `stale` mark is read.
  */
-export const orcaWorkerEvent = (stdout: string): WorkerEvent => {
+export const orcaWorkerEvent = (stdout: string, now?: number): WorkerEvent => {
   let parsed: unknown;
   try {
     parsed = JSON.parse(stdout);
@@ -366,6 +386,19 @@ export const orcaWorkerEvent = (stdout: string): WorkerEvent => {
   if (liveness && liveness !== "live" && !UNSURE_LIVENESS.has(liveness)) {
     return { kind: "died", detail: `liveness ${liveness}, no outcome${state ? `, state ${state}` : ""}${inRun}` };
   }
+
+  // Last: still `live` with no report, but nothing is being painted.
+  const terminal = isObj(r.terminal) ? r.terminal : {};
+  const preview = typeof terminal.preview === "string" ? terminal.preview : "";
+  if (!BACKGROUND_SHELL.test(preview)) {
+    const lastOutputAt = typeof terminal.lastOutputAt === "number" ? terminal.lastOutputAt : undefined;
+    const silent = now !== undefined && lastOutputAt !== undefined ? now - lastOutputAt : undefined;
+    const stale = attention.some((a) => /stale/i.test(a));
+    if (stale || (silent !== undefined && silent >= WORKER_IDLE_MS)) {
+      const for_ = silent !== undefined ? ` for ${humanDuration(Math.max(silent, 0))}` : "";
+      return { kind: "waiting", detail: `${IDLE_DETAIL_PREFIX}${for_} with no report${inRun}` };
+    }
+  }
   return { kind: "running" };
 };
 
@@ -389,6 +422,9 @@ const workerLead = (output: string, waited: number): { readonly lead: string; re
   }
   if (kind === "died") {
     return { waiting: false, lead: `Orca worker ${id} DIED after ${humanDuration(waited)} without reporting (${detail}). Never assume its job is done, whatever it got to: see what it left with ${show} and its messages in \`orca orchestration inbox\`, check the work itself (commits, PR, files), then carry on with this, redoing or finishing the part it did not:` };
+  }
+  if (detail?.startsWith(IDLE_DETAIL_PREFIX)) {
+    return { waiting: true, lead: `Orca worker ${id} is IDLE after ${humanDuration(waited)} (${detail}) - it has not reported, so it has not finished: it ended its turn without \`worker_done\` and nothing will wake it. Read its terminal first (its handle and last output are in ${show}) to see where it stopped. If its work is done or nearly, finish the job yourself (commit, push, open the PR - whatever it could not) or steer it through its terminal, then set a new \`watch worker ${id}\` if it is still going. If only a person can unblock it, ask them here once and set \`watch worker ${id} --past-wait\`. What you planned for when it is done:` };
   }
   return { waiting: true, lead: `Orca worker ${id} is WAITING FOR INPUT after ${humanDuration(waited)} (${detail}) - it has not finished. See what it is asking with ${show} (or its \`ask\` in \`orca orchestration inbox\`). If you can answer or unblock it yourself, do, then set a new \`watch worker ${id}\` for the rest. If only a person can answer, ask them here once, set \`watch reply\` on this thread to unblock it when they answer, and set \`watch worker ${id} --past-wait\` so this same question does not hand the thread back again - it then fires only when the worker finishes or dies. What you planned for when it is done:` };
 };
@@ -431,7 +467,7 @@ export const readyMessage = (note: string, waited: number, output?: string): str
     note,
     "",
     worker?.waiting
-      ? "Unblock it yourself, now, when you can answer it from what you know or can look up; only when the question is genuinely a person's to answer, ask them here in one line. Do not do the planned part above until the worker has finished."
+      ? "Unblock it or finish its job yourself, now, when you can answer it from what you know or can look up; only when the question is genuinely a person's to answer, ask them here in one line. Do not do the planned part above until the worker has finished."
       : "Do it yourself, now, with the commands and tools you already have. This was agreed before the wait - you are finishing a job, not proposing one, so do not ask whether to go ahead and do not hand the steps back for someone else to type. If something genuinely stops you, say in one line what you tried and what blocked it.",
     usage
       ? `\nThe worker used ${usageSummary(usage)} (Claude session ${usage.sessionId}). Say that in one line in your reply, with the worker's result.`

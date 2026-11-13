@@ -81,7 +81,7 @@ no classes.
 - **Timers.** `watcher` polls each due watch's predicate and hands the thread a
   fresh turn when it is ready (`watch worker <dispatchId>` polls an Orca worker
   through `bin/orca-worker-wait.ts` and says whether it finished, died - also
-  when it stopped without reporting - or waits for input - a finished or dead worker's hand-back also names the tokens
+  when it stopped without reporting - or waits for input, or sits idle at its prompt for 15 minutes with no report - a finished or dead worker's hand-back also names the tokens
   and list-price cost its Claude transcript used, stored in
   `orca_worker_usage`, read later with `worker-cost <ctx_...|run_...>`);
   `reminders` posts at the time with no model;
