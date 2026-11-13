@@ -125,13 +125,14 @@ describe("buildSystemPrompt", () => {
     expect(buildSystemPrompt({})).not.toContain("Reacting with emoji");
   });
 
-  test("offers to remember a durable fact, quietly and sparingly", () => {
+  test("offers to propose a durable fact, sparingly, and says it waits for the owner", () => {
     const p = buildSystemPrompt({ learnUrl: "http://127.0.0.1:2002/api/learnings" });
     expect(p).toContain("Remembering something (optional, your call)");
     expect(p).toContain("http://127.0.0.1:2002/api/learnings");
-    expect(p).toContain("Save sparingly");
-    expect(p).toContain("Never save secrets, credentials, tokens");
-    expect(p).toContain("do not announce it and do not ask permission");
+    expect(p).toContain("Propose sparingly");
+    expect(p).toContain("Never propose secrets, credentials, tokens");
+    expect(p).toContain("A proposal is NOT saved");
+    expect(p).toContain("never tell anyone you saved or remembered it");
   });
 
   test("no remembering block without an endpoint - the listener may not teach", () => {

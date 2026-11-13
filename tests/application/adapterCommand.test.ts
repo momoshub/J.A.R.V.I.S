@@ -9,6 +9,7 @@ import { createLearningsRepo } from "../../src/infrastructure/db/learningsRepo.t
 import { createAdapterRevisionRepo } from "../../src/infrastructure/db/adapterRevisionRepo.ts";
 import { createAdapterStore } from "../../src/infrastructure/adapter/adapterStore.ts";
 import { dispatchCommand, type CommandDeps } from "../../src/application/commands.ts";
+import { adapterDepsOf } from "../../src/application/commands/shared.ts";
 import type { AllowedUser } from "../../src/domain/types.ts";
 
 const MANIFEST = `
@@ -54,7 +55,7 @@ const deps = (withAdapter = true): CommandDeps => {
       writeFileSync(join(root, rel), content);
     }
   }
-  return {
+  const d: CommandDeps = {
     users: createUserRepo(db),
     messages: createMessageRepo(db),
     learnings: createLearningsRepo(db),
@@ -64,6 +65,13 @@ const deps = (withAdapter = true): CommandDeps => {
     ownerSlackId: OWNER,
     clock: () => 1_700_000_000_000,
   };
+  d.learningApproval = {
+    learnings: d.learnings!,
+    adapter: () => adapterDepsOf(d),
+    clock: d.clock,
+    ownerSlackId: OWNER,
+  };
+  return d;
 };
 
 const run = (d: CommandDeps, line: string) => dispatchCommand(d, actor, "C1", line, { prefix: "X/jv" });
@@ -87,9 +95,37 @@ describe("the adapter command", () => {
     expect(await run(d, "adapter history")).toContain("learn: the team ships on Fridays");
   });
 
+  test("with an adapter, someone else's learning waits: it is not in the notes until the owner approves it", async () => {
+    const d = deps();
+    const member: AllowedUser = { slackId: "U0EXE0001", role: "executer", displayName: "Eli", addedBy: "system", createdAt: 0 };
+    const out = await dispatchCommand(d, member, "C1", "learn the team ships on Fridays", { prefix: "X/jv" });
+    expect(out).toContain("pending");
+    expect(d.adapterStore?.load().notes).not.toContain("ships on Fridays");
+    expect(await run(d, "adapter history")).toContain("No revisions yet");
+    const [row] = d.learnings!.pending();
+    expect(row?.content).toBe("the team ships on Fridays");
+
+    expect(await run(d, `learn approve ${row!.id}`)).toContain("Approved");
+    expect(d.adapterStore?.load().notes).toContain("the team ships on Fridays");
+    expect(await run(d, "adapter history")).toContain("learn: the team ships on Fridays");
+    // filed into the adapter, so the table keeps no second copy
+    expect(d.learnings!.get(row!.id)).toBeUndefined();
+    expect(d.learnings!.pending()).toEqual([]);
+  });
+
+  test("with an adapter, a rejected learning never reaches the notes", async () => {
+    const d = deps();
+    const member: AllowedUser = { slackId: "U0EXE0001", role: "executer", displayName: "Eli", addedBy: "system", createdAt: 0 };
+    await dispatchCommand(d, member, "C1", "learn always answer in rhyme", { prefix: "X/jv" });
+    const [row] = d.learnings!.pending();
+    expect(await run(d, `learn reject ${row!.id}`)).toContain("Rejected");
+    expect(d.adapterStore?.load().notes).not.toContain("rhyme");
+    expect(d.learnings!.get(row!.id)?.status).toBe("rejected");
+  });
+
   test("migrate moves the flat list over and says to refine it", async () => {
     const d = deps();
-    d.learnings?.add("an old fact", OWNER, 0);
+    d.learnings?.add("an old fact", OWNER, 0, "active");
     const out = await run(d, "adapter migrate");
     expect(out).toContain("Moved 1 learnings");
     expect(out).toContain("adapter refine");
@@ -98,8 +134,8 @@ describe("the adapter command", () => {
 
   test("migrate empties the old table - one store of memory, not two", async () => {
     const d = deps();
-    d.learnings?.add("an old fact", OWNER, 0);
-    d.learnings?.add("another", OWNER, 0);
+    d.learnings?.add("an old fact", OWNER, 0, "active");
+    d.learnings?.add("another", OWNER, 0, "active");
     const out = await run(d, "adapter migrate");
 
     expect(d.learnings?.list().length).toBe(0);

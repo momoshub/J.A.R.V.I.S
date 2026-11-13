@@ -44,6 +44,7 @@ import type { AccessRequestRepo } from "../infrastructure/db/accessRequestRepo.t
 import type { CommandApprovalRepo } from "../infrastructure/db/commandApprovalRepo.ts";
 import type { CloudwatchDeps } from "./cloudwatch.ts";
 import type { LoopApprovalDeps } from "./loopApproval.ts";
+import type { LearningApprovalDeps } from "./learningApproval.ts";
 import type { SettingsRepo } from "../infrastructure/db/settingsRepo.ts";
 import { requestAccess } from "./accessRequests.ts";
 import type { CommandTickets } from "./commandTickets.ts";
@@ -101,6 +102,8 @@ export type HandleMessageDeps = {
   loops?: LoopRepo;
   /** Owner approval of a script loop a turn wrote, and its Approve / Reject buttons. */
   loopApproval?: LoopApprovalDeps;
+  /** Owner approval of a learning that is not the owner's own typing, and its Approve / Reject buttons. */
+  learningApproval?: LearningApprovalDeps;
   /** Dispatched Orca tasks with no live worker and quiet PRs on the bot's own repo, for `mindful`. */
   stuckWork?: () => Promise<StuckWork>;
   /** The workspace domain, so `mindful` can print clickable thread links. */

@@ -18,6 +18,8 @@ import { APPROVE_ACTION, decideCommandApproval, REJECT_ACTION } from "../../appl
 import { decideCloudwatch } from "../../application/cloudwatch.ts";
 import { decideLoop } from "../../application/loopApproval.ts";
 import { LOOP_ACTION_PREFIX } from "../../domain/loop.ts";
+import { decideLearningPress } from "../../application/learningApproval.ts";
+import { LEARNING_ACTION_PREFIX, refusalText } from "../../domain/learning.ts";
 import { CODE_ACTION_PREFIX } from "../../domain/cloudwatch.ts";
 import { forHowLong } from "../../domain/runControl.ts";
 import { frontKeyOf } from "../../domain/workflowFront.ts";
@@ -724,7 +726,11 @@ export const createKitListeners = (
     const actionId = action.action_id ?? "";
     if (!by || !actionId) return;
     // Handled in code by their own listener, never a turn for the model.
-    if (actionId.startsWith(CODE_ACTION_PREFIX) || actionId.startsWith(LOOP_ACTION_PREFIX)) return;
+    if (
+      actionId.startsWith(CODE_ACTION_PREFIX) ||
+      actionId.startsWith(LOOP_ACTION_PREFIX) ||
+      actionId.startsWith(LEARNING_ACTION_PREFIX)
+    ) return;
     const modal = body.view;
     const thread: KitThread | undefined = modal
       ? decodeKitMeta(modal.private_metadata).thread
@@ -1209,6 +1215,43 @@ export const createSlackApp = (config: SlackAppConfig, deps: Deps) => {
       }
     } catch (err) {
       log(`loop press failed: ${err instanceof Error ? err.message : String(err)}`);
+    }
+  }) as never);
+
+  // Approve / Reject on a learning that is not the owner's own typing. Decided
+  // HERE and never handed to the model (the kit listener skips
+  // `LEARNING_ACTION_PREFIX`): a press that went through a model turn could be
+  // talked into approving the very fact a prompt injection just proposed.
+  app.action(new RegExp(`^${LEARNING_ACTION_PREFIX}`), (async ({ ack, body, action, client }: Omit<ApprovalArgs, "body"> & { body: ApprovalArgs["body"] & { message?: { ts?: string; thread_ts?: string; edited?: unknown; blocks?: { text?: { text?: string } }[] } }; client: KitClient }) => {
+    await ack();
+    const by = body.user?.id;
+    const value = action?.value;
+    if (!by || !value || !deps.learningApproval) return;
+    try {
+      const outcome = await decideLearningPress(deps.learningApproval, {
+        slackUserId: by,
+        actionId: action.action_id ?? "",
+        value,
+        channel: body.channel?.id,
+        messageTs: body.message?.ts,
+        edited: body.message?.edited !== undefined,
+        shown: (body.message?.blocks ?? []).flatMap((b) => (typeof b.text?.text === "string" ? [b.text.text] : [])),
+      });
+      log(`learning press ${outcome.kind} by ${by}`);
+      const channel = body.channel?.id;
+      const notice =
+        outcome.kind === "refused"
+          ? refusalText(outcome.why, outcome.id)
+          : outcome.kind === "failed"
+            ? `I could not keep that, so it is still pending: ${outcome.violations.join("; ")}`
+            : undefined;
+      if (notice && channel) {
+        await client.chat
+          .postEphemeral?.({ channel, user: by, thread_ts: body.message?.thread_ts ?? body.message?.ts, text: notice })
+          .catch(logAndIgnore("learning press notice"));
+      }
+    } catch (err) {
+      log(`learning press failed: ${err instanceof Error ? err.message : String(err)}`);
     }
   }) as never);
 
