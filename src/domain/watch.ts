@@ -350,6 +350,10 @@ const SETTLED_STATES = new Set(["succeeded", "failed", "cancelled", "canceled"])
  * for input: that wait is no longer reported, but the worker still fires as
  * idle once its output has moved past `pastWaitAt` and then gone quiet, so a
  * worker a person unblocked that ends its turn without reporting is caught.
+ * The same rule holds on the idle path, so a watch re-armed after an idle
+ * hand-back stays quiet until the worker has produced new output. A
+ * `pastWaitAt` no output can pass (`Number.MAX_SAFE_INTEGER`, a bare
+ * `--past-wait`) never fires idle.
  */
 export const orcaWorkerEvent = (stdout: string, now?: number, pastWaitAt?: number): WorkerEvent => {
   let parsed: unknown;
@@ -386,14 +390,7 @@ export const orcaWorkerEvent = (stdout: string, now?: number, pastWaitAt?: numbe
   // Orca's own requires-action set: a worker parked on input, an approval or a
   // request for guidance is waiting on someone either way.
   if (attention.some((a) => /input|approval|guidance/i.test(a)) || (wait !== undefined && wait !== null)) {
-    if (pastWaitAt !== undefined) {
-      const terminal = isObj(r.terminal) ? r.terminal : {};
-      const at = typeof terminal.lastOutputAt === "number" ? terminal.lastOutputAt : undefined;
-      // Output after the arm time means the wait was answered; the stale mark
-      // and the old silence belong to the wait, so only fresh silence counts.
-      const moved = at !== undefined && at > pastWaitAt;
-      return (moved && idleEvent(terminal, [], now, inRun)) || { kind: "running" };
-    }
+    if (pastWaitAt !== undefined) return idleSincePastWait(isObj(r.terminal) ? r.terminal : {}, now, inRun, pastWaitAt) ?? { kind: "running" };
     const why = isObj(wait) ? (str(wait.prompt) ?? str(wait.evidence) ?? str(wait.kind)) : undefined;
     return { kind: "waiting", detail: `${why ? why.slice(0, 200) : `attention ${attention.join(", ") || "agent wait"}`}${inRun}` };
   }
@@ -412,7 +409,23 @@ export const orcaWorkerEvent = (stdout: string, now?: number, pastWaitAt?: numbe
 
   // Last: still `live` with no report, but nothing is being painted.
   const terminal = isObj(r.terminal) ? r.terminal : {};
+  if (pastWaitAt !== undefined) return idleSincePastWait(terminal, now, inRun, pastWaitAt) ?? { kind: "running" };
   return idleEvent(terminal, attention, now, inRun) ?? { kind: "running" };
+};
+
+/**
+ * The idle `waiting` under `--past-wait`: output after the arm time means the
+ * wait (or the earlier idle hand-back) was answered; the stale mark and the old
+ * silence belong to it, so only fresh silence after that output counts.
+ */
+const idleSincePastWait = (
+  terminal: Record<string, unknown>,
+  now: number | undefined,
+  inRun: string,
+  pastWaitAt: number,
+): WorkerEvent | undefined => {
+  const at = typeof terminal.lastOutputAt === "number" ? terminal.lastOutputAt : undefined;
+  return at !== undefined && at > pastWaitAt ? idleEvent(terminal, [], now, inRun) : undefined;
 };
 
 /** The idle `waiting`, or undefined while the terminal is fresh or a shell still excuses its silence. */

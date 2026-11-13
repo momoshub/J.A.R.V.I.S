@@ -463,6 +463,36 @@ describe("an idle worker that never reported", () => {
       expect(orcaWorkerEvent(resumed, NOW, ARMED).kind).toBe("waiting");
     });
 
+    test("an idle worker re-armed with --past-wait stays quiet until its output moves past the arm time", () => {
+      const live = (terminal: Record<string, unknown>, attention: string[] = []): string =>
+        JSON.stringify({
+          ok: true,
+          result: { projection: { outcome: "in_progress", liveness: { verdict: "live" }, attention: { categories: attention } }, terminal },
+        });
+      const armed = NOW;
+      const later = NOW + 3 * 60_000;
+      const silent = { lastOutputAt: NOW - 20 * 60_000 };
+      // idle at once without the arm time, which is what the hand-back re-arms from
+      expect(orcaWorkerEvent(live(silent), NOW).kind).toBe("waiting");
+      expect(orcaWorkerEvent(live(silent), later, armed).kind).toBe("running");
+      expect(orcaWorkerEvent(live({}, ["stale"]), later, armed).kind).toBe("running");
+      expect(orcaWorkerEvent(live(silent, ["stale"]), later, armed).kind).toBe("running");
+      // new output, then silence: caught again
+      const resumed = { lastOutputAt: NOW + 60_000 };
+      expect(orcaWorkerEvent(live(resumed), NOW + 20 * 60_000, armed)).toEqual({ kind: "waiting", detail: "idle at its prompt for 19m with no report" });
+      expect(orcaWorkerEvent(live(resumed), NOW + 2 * 60_000, armed).kind).toBe("running");
+    });
+
+    test("a bare --past-wait (an arm time no output can pass) never fires idle, wait open or not", () => {
+      const never = Number.MAX_SAFE_INTEGER;
+      expect(orcaWorkerEvent(parked({ lastOutputAt: NOW - 20 * 60_000 }), NOW, never).kind).toBe("running");
+      const noWait = JSON.stringify({
+        ok: true,
+        result: { projection: { outcome: "in_progress", liveness: { verdict: "live" } }, terminal: { lastOutputAt: NOW - 20 * 60_000 } },
+      });
+      expect(orcaWorkerEvent(noWait, NOW, never).kind).toBe("running");
+    });
+
     test("finished and died are untouched", () => {
       const done = JSON.stringify({ ok: true, result: { projection: { outcome: "succeeded" } } });
       expect(orcaWorkerEvent(done, NOW, ARMED).kind).toBe("finished");

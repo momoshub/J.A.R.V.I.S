@@ -99,6 +99,30 @@ describe("bin/orca-worker-wait.ts", () => {
     expect(idle.stdout).toContain("orca worker ctx_abc waiting: idle at its prompt for 30m with no report");
   });
 
+  test("a bare --past-wait keeps the old behaviour: never idle while a wait is open", async () => {
+    const parked = {
+      ok: true,
+      result: {
+        projection: { outcome: "in_progress", liveness: { verdict: "live" }, attention: { categories: ["input_required"] } },
+        observation: { agentWait: { kind: "input", prompt: "which db?" } },
+        terminal: { lastOutputAt: Date.now() - 20 * 60_000, preview: "❯ " },
+      },
+    };
+    const r = await run(fakeOrca(parked), ["ctx_abc", "--past-wait"]);
+    expect(r.code).toBe(1);
+    expect(r.stdout.trim()).toBe("orca worker ctx_abc still running");
+  });
+
+  test("a worker re-armed after an idle hand-back stays quiet until new output", async () => {
+    const live = (lastOutputAt: number) => ({
+      ok: true,
+      result: { projection: { outcome: "in_progress", liveness: { verdict: "live" } }, terminal: { lastOutputAt, preview: "❯ " } },
+    });
+    const armed = Date.now();
+    const quiet = await run(fakeOrca(live(armed - 20 * 60_000)), ["ctx_abc", `--past-wait=${armed}`]);
+    expect(quiet.code).toBe(1);
+  });
+
   test("an answer that is not a worker record keeps polling (2)", async () => {
     const r = await run(fakeOrca({ ok: false, error: { code: "runtime_unavailable" } }), ["ctx_abc"]);
     expect(r.code).toBe(2);
