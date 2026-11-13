@@ -160,6 +160,7 @@ Every command has two interfaces - use whichever you like. Both triggers are con
 | `ticket <what is wrong>` (aliases `bug`, `raise`) | anyone | raise a properly written, correctly routed ticket - see [Raising a ticket](#raising-a-ticket) |
 | `quick-review <pr-url\|help\|prompt> [--policy first\|after] [what to look at]` (alias `rv`) | pal+ | quick review of a PR, **only when a person asks** (tag the bot with `review <pr-url>` or `approve <pr-url>`, or type this; never from a thread, workflow, hand-back or GitHub request - see [Asking for a review in words](#asking-for-a-review-in-words)): read it first, post a blockers-only comment on GitHub *and* back in the thread (PRs owned by an account in `REVIEW_EXTENDED_OWNERS` also get the non-blocking findings as bullets); request changes on a blocker only, other repos drop non-blocking findings (big PRs are cloned + reviewed by child agents). CI is read first: red requests changes before the review, a running CI gets a watcher (see [CI comes first](#ci-comes-first)). Runs full-access. |
 | `bomb [categories] [count] <message-link>` (alias `br`) | admins | reaction-bomb a message. Combine categories with commas and set a count: `bomb money,face,negative 9 <link>`. Up to 23; `bomb help` lists every category |
+| `brief <thread-link\|reference> <text>` (`brief help`) | admins | leave a short note FOR another thread: what you posted there, why, what you wait for. Posts nothing, starts no turn; that thread's session reads it on its next turn, whoever speaks (it is part of that turn's message, so the session keeps it for the turns after), then it is marked read for that access tier. It is background information only, never instructions. The receiver sees only an opaque reference to your thread (never a link) and answers with `brief <reference> <text>`. `tell` is for when the other side must act now |
 | `reply <message-link>` (alias `jrp`) | admins | draft and post an AI reply to a message |
 | `rm-msg <message-link>` (aliases `rmmsg`, `unsend`) | admins | delete a message the bot posted (a bot token cannot delete anyone else's) |
 | `workflow <task>` / `workflow stop [<thread-link>]` / `workflow status` (alias `wf`) | executers+ | start a long task in this thread and keep talking to it (see [Workflows](#workflows)) |
@@ -920,7 +921,7 @@ brain's own run bridge, so a typed line, a schedule, an errand or the menu never
 mint one):
 
 ```
-worker-ticket <owner/repo> pending [pr-create|comment|pr-edit|git|push|labels-add|reviewers-request ...] [--ttl 3h]
+worker-ticket <owner/repo> pending [pr-create|comment|pr-edit|push|labels-add|reviewers-request ...] [--ttl 3h]
 worker-ticket bind <id> <ctx_...>      # after worker-start prints the dispatch id
 worker-ticket revoke <id|ctx_...>
 worker-ticket renew <id|ctx_...> [--ttl 3h]   # admin; also revives one that lapsed but was never revoked
@@ -932,7 +933,7 @@ is written once to a mode-0600 file in a 0700 folder
 path, to `export` before `bin/github-app.sh` (the helper reads the first line of
 that file; the brain never reads, prints or posts it, and the file is deleted
 when the ticket ends). The ticket works for that one repo and those actions only
-(default `pr-create`, `comment`, `pr-edit`; never review, merge or close), cannot
+(default `pr-create`, `comment`, `pr-edit` and the app's commit identity; never review, merge or close), cannot
 run any command, is checked against the minting person's role on every call,
 expires in 3 hours (max 6) and ends when the worker finishes or dies (the turn's
 `watch worker`), on `worker-ticket revoke`, or at expiry. Tickets are rows in
@@ -948,11 +949,17 @@ file until the limit instead of being deleted at its expiry. Nothing lives past
 24 hours from the bind however often it is renewed, and every renewal is
 audited like a mint.
 
-**Pushing is not part of the default grant.** A worker pushes with the
+**Commits come as the app by default; pushing does not.** Every worker ticket
+carries the app's commit identity (`git-commit`: name and email, an empty
+token), so `bin/github-app.sh git <owner/repo> <dir> -- commit ...` works as the
+app for a worker minted with no extra words (the helper runs git with that
+identity and no credential, exactly like an executer). A worker pushes with the
 org's own one-shot human credential (the `kai-at-acme` of the rule above; where
-the app has Contents read-only it cannot push anyway); only the PR, comment and
-edit actions go through the app. `git` / `push` (the `git-auth` action) stay an
-explicit opt-in for an org where the app has Contents write. Its token is minted
+the app has Contents read-only it cannot push anyway). `push` (the same as
+`git` / `git-auth`, the `git-auth` action) stays an explicit opt-in for an org
+where the app has Contents write: only then does the ticket get a token. A
+ticket row stored before this change keeps what it was minted with (one without
+`git-commit` still cannot run `git`; one with `git-auth` still gets its token). Its token is minted
 per ticket, never cached or shared, limited to that one repository and to
 `metadata: read` plus `contents` at the level the installation itself holds
 (asking for more than the installation has is a 422), so it cannot approve,
@@ -1260,11 +1267,11 @@ bun run test:e2e   # opt-in, real Slack: every e2e/*.e2e.ts (see below)
 | `slackUpload.e2e.ts` | `bin/slack-upload.sh` (`files.getUploadURLExternal` + `files.completeUploadExternal` with `thread_ts`) lands the file in the thread, not at the channel root; the file is deleted afterwards |
 | `slackWatch.e2e.ts` | a real `createWatcher` + `createShellCheck` + `watchRepo`: a watch stays quiet while its shell check exits non-zero, then fires once on exit 0 and hands back into the watched thread |
 
-A new e2e file goes in `e2e/`, imports `./support.ts` (env gate, root message, cleanup) and is added to the `test:e2e` script; `*.e2e.ts` is not picked up by `bun test`, only by `test:e2e`, which CI runs as its own step.
+A new e2e file goes in `e2e/`, imports `./support.ts` (env gate, root message, cleanup) and is added to the `test:e2e` script; `*.e2e.ts` is not picked up by `bun test`, only by `test:e2e`, which CI runs in its own workflow (`e2e.yml`) on a push to `main` only.
 
 `e2e/slackBlockKit.e2e.ts` drives a reply with Block Kit through the real stream code path (`createHandler` -> `createSlackStream` -> `chat.startStream`/`appendStream`/`stopStream`, the tidy-up rewrite and the plain-post fallbacks; only the model is scripted) and reads the thread back with `conversations.replies`. Per reply it asserts exactly one bot message, a `table` block where the reply had one, and no literal ```` ```blockkit ```` in the text or blocks. The cases: a table with an empty header cell (the bug that split a reply in two and lost the table), a plain-text reply, and a block Slack refuses (`alert`), which must degrade to its words.
 
-It is not part of `bun test`: the file is not a `*.test.ts`, and it skips itself unless `JARVIS_E2E=1`, `SLACK_BOT_TOKEN` and `JARVIS_E2E_CHANNEL` are set. CI runs it as its own step with the bot token from the `JARVIS_E2E_SLACK_BOT_TOKEN` repo secret on pushes and same-repo PRs (fork PRs skip the step), and fails that step when the secret is missing rather than letting the suite skip itself green. Run it locally with the bot's token in the environment:
+It is not part of `bun test`: the file is not a `*.test.ts`, and it skips itself unless `JARVIS_E2E=1`, `SLACK_BOT_TOKEN` and `JARVIS_E2E_CHANNEL` are set. CI runs it in its own workflow (`.github/workflows/e2e.yml`) on a push to `main` only, with the bot token from the `JARVIS_E2E_SLACK_BOT_TOKEN` secret of the `e2e` GitHub environment, and fails when the secret is missing rather than letting the suite skip itself green. The token is an environment secret, never a repository secret: a repository secret reaches any workflow run from any branch, so anyone (or any app) that can push a branch could edit `ci.yml` there and send the token out. Set the environment's deployment branches to `main` only, and GitHub refuses the token to a run from any other branch or PR. Run it locally with the bot's token in the environment:
 
 ```bash
 SLACK_BOT_TOKEN=xoxb-... JARVIS_E2E_CHANNEL=<channel id> bun run test:e2e
@@ -1279,7 +1286,7 @@ SLACK_BOT_TOKEN=xoxb-... JARVIS_E2E_CHANNEL=<channel id> bun run test:e2e
 
 A run posts ONE root message (`jarvis e2e run <time>`) and every reply under it in the thread, then `chat.delete`s all of them, so the channel is left as it was. A run that is killed mid-way can leave its root behind: delete it by hand.
 
-CI (`.github/workflows/ci.yml`) runs both, the e2e suite (secret `JARVIS_E2E_SLACK_BOT_TOKEN` plus repository variable `JARVIS_E2E_CHANNEL`), plus the dashboard's typecheck and build (`web/`), on every PR and every push to `main`. The e2e step only runs in a repo that sets the `JARVIS_E2E_CHANNEL` variable, so forks and copies without a Slack workspace skip it, and fork PRs skip it too (GitHub passes them no secrets); everything else still runs. A second job, `gitleaks`, scans the history on every push and the added commits on every PR, diffs plus commit messages, file paths and tag messages; known false positives (the RFC 6238 test vectors and a few fake tokens in tests) are allowlisted by value in `.gitleaks.toml`. To gate merges locally use `bin/merge-when-green.sh <pr>`, which waits for the checks, refuses unless they are all green, refuses at once (exit 4) when the PR conflicts with its base - GitHub runs no CI on it, so merge the base in and resolve first - and approves the PR as the merging account right before it merges (skipped when that account opened the PR, since GitHub forbids self-approval; a failed approval is no merge). With `SELF_PR_REVIEWER` set, run it as that account: `GH_TOKEN=$(gh auth token -u <reviewer>) bin/merge-when-green.sh <pr>`.
+CI (`.github/workflows/ci.yml`) runs typecheck, tests and the dashboard's typecheck and build (`web/`) on every PR and every push to `main`, and the e2e suite (secret `JARVIS_E2E_SLACK_BOT_TOKEN` on the `e2e` environment, deployment branches `main` only, plus repository variable `JARVIS_E2E_CHANNEL`) in its own workflow, `.github/workflows/e2e.yml`, on a push to `main` only. So a PR's e2e result shows after the merge, not before it, and a PR's checks have no e2e row at all (a cancelled one would read as red to `merge-when-green.sh`). The e2e workflow only runs in a repo that sets the `JARVIS_E2E_CHANNEL` variable, so forks and copies without a Slack workspace skip it; everything else still runs. A second job, `gitleaks`, scans the history on every push and the added commits on every PR, diffs plus commit messages, file paths and tag messages; known false positives (the RFC 6238 test vectors and a few fake tokens in tests) are allowlisted by value in `.gitleaks.toml`. To gate merges locally use `bin/merge-when-green.sh <pr>`, which waits for the checks, refuses unless they are all green, refuses at once (exit 4) when the PR conflicts with its base - GitHub runs no CI on it, so merge the base in and resolve first - and approves the PR as the merging account right before it merges (skipped when that account opened the PR, since GitHub forbids self-approval; a failed approval is no merge). With `SELF_PR_REVIEWER` set, run it as that account: `GH_TOKEN=$(gh auth token -u <reviewer>) bin/merge-when-green.sh <pr>`.
 
 ## Keeping private data out of the repo
 

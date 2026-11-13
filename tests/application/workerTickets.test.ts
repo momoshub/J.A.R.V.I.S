@@ -27,7 +27,7 @@ describe("workerTickets", () => {
   test("a bound ticket resolves to the minting actor and names its dispatch", () => {
     const { tickets, token, id } = setup();
     expect(tickets.bind(id, "U0ADMIN0001", "ctx_w1")).toEqual({ ok: true });
-    expect(tickets.redeem(token, call)).toEqual({ ok: true, actor: "U0ADMIN0001", channel: "C1", dispatchId: "ctx_w1", id, threadTs: "1.1" });
+    expect(tickets.redeem(token, call)).toEqual({ ok: true, actor: "U0ADMIN0001", channel: "C1", dispatchId: "ctx_w1", id, threadTs: "1.1", push: true });
   });
 
   test("the id is a short hash of the token, never the token", () => {

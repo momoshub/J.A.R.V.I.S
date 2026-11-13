@@ -19,6 +19,7 @@ import { type TotpPort } from "../totp.ts";
 import type { RunRegistry } from "../runRegistry.ts";
 import type { ThreadQueue } from "../threadQueue.ts";
 import type { ThreadSessionRepo } from "../../infrastructure/db/threadSessionRepo.ts";
+import type { ThreadBriefRepo } from "../../infrastructure/db/threadBriefRepo.ts";
 import type { AllowedUser, PromptContext, UserRole } from "../../domain/types.ts";
 import { type ToolPolicy } from "../../domain/toolPolicy.ts";
 import type { BackgroundAgentsPort, Clock, LlmPort } from "../ports.ts";
@@ -176,6 +177,8 @@ export type CommandDeps = {
   /** One CLI session per thread, for the `session` command to inspect and reset. */
   threadSessions?: ThreadSessionRepo;
   threadSessionsOn?: () => boolean;
+  /** Notes one thread leaves for another, for `brief`. */
+  briefs?: ThreadBriefRepo;
   clock: Clock;
   ownerSlackId: string;
 };

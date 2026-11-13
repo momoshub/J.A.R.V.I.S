@@ -1,5 +1,5 @@
-# Typecheck, tests, a secret scan and (where secrets exist) the real-Slack e2e suite on every PR and
-# every push to main. The secret scan also runs on a push of any branch or tag, so a push that
+# Typecheck, tests and a secret scan on every PR and every push to main. The real-Slack e2e suite
+# is its own workflow, e2e.yml, on a push to main only. The secret scan also runs on a push of any branch or tag, so a push that
 # skipped the local hook is still caught. The merge gate for self-fixes is bin/merge-when-green.sh.
 name: ci
 
@@ -33,20 +33,6 @@ jobs:
           GITLEAKS_VERSION: 8.30.1 # same as the gitleaks job; bump together
         run: curl -sSfL "https://github.com/gitleaks/gitleaks/releases/download/v${GITLEAKS_VERSION}/gitleaks_${GITLEAKS_VERSION}_linux_x64.tar.gz" | tar -xz -C /usr/local/bin gitleaks
       - run: bun test
-      # Real Slack, in a private test channel named by the JARVIS_E2E_CHANNEL repository variable (see README "Testing"). Secrets are never
-      # passed to fork PRs, so those skip this step. Where the variable is set, a missing
-      # secret fails here: the suite would otherwise skip itself and pass.
-      - name: e2e (real Slack)
-        # opt-in per repo: only where the JARVIS_E2E_CHANNEL variable is set, so a fork or
-        # a copy without a Slack workspace stays green instead of failing on a missing secret
-        if: vars.JARVIS_E2E_CHANNEL != '' && (github.event_name == 'push' || github.event.pull_request.head.repo.full_name == github.repository)
-        env:
-          SLACK_BOT_TOKEN: ${{ secrets.JARVIS_E2E_SLACK_BOT_TOKEN }}
-          JARVIS_E2E_CHANNEL: ${{ vars.JARVIS_E2E_CHANNEL }}
-        run: |
-          test -n "$SLACK_BOT_TOKEN" || { echo "JARVIS_E2E_SLACK_BOT_TOKEN secret is not set" >&2; exit 1; }
-          test -n "$JARVIS_E2E_CHANNEL" || { echo "JARVIS_E2E_CHANNEL repository variable is not set" >&2; exit 1; }
-          bun run test:e2e
       # The dashboard has its own deps and tsconfig, and only a build proves it bundles.
       - run: bun install --frozen-lockfile
         working-directory: web
