@@ -54,9 +54,20 @@ describe("github-app-comment.sh", () => {
       const port = await call({ DASHBOARD_PORT: "1" });
       expect(port.code).toBe(1);
       expect(port.stderr).toContain("http://127.0.0.1:1/api/github-app/comment");
-      writeFileSync(ticketFile, "jvwk_x\n");
-      const oneLine = await call({});
-      expect(oneLine.stderr).toContain("http://127.0.0.1:2001/api/github-app/comment");
+      // Nothing below sends a request: the endpoint is printed, so no real port is touched.
+      const printed = async (line2: string) => {
+        writeFileSync(ticketFile, line2 === "" ? "jvwk_x\n" : `jvwk_x\n${line2}\n`);
+        const r = await call({ GITHUB_APP_PRINT_ENDPOINT: "1" });
+        expect(r.code).toBe(0);
+        return r.stdout.trim();
+      };
+      const dflt = "http://127.0.0.1:2001/api/github-app/comment";
+      expect(await printed("")).toBe(dflt);
+      expect(await printed("http://evil.example:80")).toBe(dflt);
+      for (const bad of ["http://127.0.0.1:1@evil.example", "http://127.0.0.1:2002/x", "http://127.0.0.1:", "http://127.0.0.1:80a"]) {
+        expect(await printed(bad)).toBe(dflt);
+      }
+      expect(await printed("http://127.0.0.1:2002")).toBe("http://127.0.0.1:2002/api/github-app/comment");
     } finally {
       server.stop(true);
     }

@@ -66,10 +66,20 @@ describe("github-app.sh endpoint from the ticket file", () => {
 
   test("a one-line file keeps the default (2001); a non-loopback line 2 is ignored", async () => {
     for (const lines of ["jvwk_x\n", "jvwk_x\nhttp://evil.example:80\n"]) {
-      const r = await runUnrouted(lines);
-      expect(r.stderr).not.toContain("evil.example");
-      if (r.code !== 0) expect(r.stderr).toContain("http://127.0.0.1:2001/api/github-app/action");
+      const r = await runUnrouted(lines, { GITHUB_APP_PRINT_ENDPOINT: "1" });
+      expect(r.code).toBe(0);
+      expect(r.stdout.trim()).toBe("http://127.0.0.1:2001/api/github-app/action");
     }
+  }, SLOW);
+
+  test("line 2 is followed only when digits are all that follow the colon", async () => {
+    for (const bad of ["http://127.0.0.1:1@evil.example", "http://127.0.0.1:2002/x", "http://127.0.0.1:", "http://127.0.0.1:80a"]) {
+      const r = await runUnrouted(`jvwk_x\n${bad}\n`, { GITHUB_APP_PRINT_ENDPOINT: "1" });
+      expect(r.code).toBe(0);
+      expect(r.stdout.trim()).toBe("http://127.0.0.1:2001/api/github-app/action");
+    }
+    const ok = await runUnrouted("jvwk_x\nhttp://127.0.0.1:2002\n", { GITHUB_APP_PRINT_ENDPOINT: "1" });
+    expect(ok.stdout.trim()).toBe("http://127.0.0.1:2002/api/github-app/action");
   }, SLOW);
 
   test("a call the bot does not answer names the endpoint it tried", async () => {

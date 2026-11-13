@@ -945,7 +945,10 @@ because a worker's shell has no `DASHBOARD_PORT`. `bin/github-app.sh` and
 `bin/github-app-comment.sh` use, in order: `GITHUB_APP_ACTION_URL` /
 `GITHUB_APP_COMMENT_URL`, `DASHBOARD_PORT`, line 2 of `JARVIS_RUN_TICKET_FILE`,
 then 2001. A ticket file written before this has one line and keeps that default.
-A call the bot does not answer prints the endpoint it tried.
+Line 2 is followed only if it is `http://127.0.0.1:` plus digits and nothing else
+(anything like `http://127.0.0.1:1@evil.example` is ignored, since the ticket is sent
+there). A call the bot does not answer prints the endpoint it tried;
+`GITHUB_APP_PRINT_ENDPOINT=1` prints it and exits without sending anything.
 
 **Long workers renew.** A worker that outlasts its TTL extends its own live ticket
 with `bin/github-app.sh ticket-renew <owner/repo> [--ttl 3h]` (default 3h, at most

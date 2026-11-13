@@ -48,7 +48,8 @@
 # DASHBOARD_PORT; the base URL on line 2 of the JARVIS_RUN_TICKET_FILE (the bot
 # writes it there because a worker's shell has no DASHBOARD_PORT; a one-line
 # file from before that is ignored); else DASHBOARD_PORT's default, 2001. A
-# failed call names the endpoint it tried.
+# failed call names the endpoint it tried (GITHUB_APP_PRINT_ENDPOINT=1 prints it and exits,
+# sending nothing).
 set -uo pipefail
 
 if [ "$#" -lt 2 ]; then
@@ -65,8 +66,11 @@ if [ -z "$ticket" ] && [ -n "${JARVIS_RUN_TICKET_FILE:-}" ]; then
   ticket=$(sed -n 1p "$JARVIS_RUN_TICKET_FILE" 2>/dev/null | tr -d '[:space:]')
   ticket_base=$(sed -n 2p "$JARVIS_RUN_TICKET_FILE" 2>/dev/null | tr -d '[:space:]')
   # Only a loopback origin is followed: the ticket is sent there.
+  # Digits only after the colon: a glob like [0-9]* would let
+  # http://127.0.0.1:1@evil.example through (curl reads 127.0.0.1:1 as userinfo).
   case "$ticket_base" in
-    http://127.0.0.1:[0-9]*) ;;
+    http://127.0.0.1:*[!0-9]* | http://127.0.0.1:) ticket_base= ;;
+    http://127.0.0.1:*) ;;
     *) ticket_base= ;;
   esac
 fi
@@ -82,6 +86,11 @@ elif [ -z "${DASHBOARD_PORT:-}" ] && [ -n "$ticket_base" ]; then
   endpoint=$ticket_base/api/github-app/action
 else
   endpoint=http://127.0.0.1:${DASHBOARD_PORT:-2001}/api/github-app/action
+fi
+# Debug/test hook: print the endpoint this call would use and stop, sending nothing.
+if [ -n "${GITHUB_APP_PRINT_ENDPOINT:-}" ]; then
+  printf '%s\n' "$endpoint"
+  exit 0
 fi
 
 if [ "$1" = git ] || [ "$1" = push ]; then

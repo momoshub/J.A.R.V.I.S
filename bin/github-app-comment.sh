@@ -12,7 +12,8 @@
 # Endpoint, first that is set: GITHUB_APP_COMMENT_URL; the loopback dashboard on
 # DASHBOARD_PORT; the base URL on line 2 of the JARVIS_RUN_TICKET_FILE (a
 # worker's ticket file; its shell has no DASHBOARD_PORT); else 2001. A failed
-# call names the endpoint it tried.
+# call names the endpoint it tried (GITHUB_APP_PRINT_ENDPOINT=1 prints it and exits,
+# sending nothing).
 set -uo pipefail
 
 if [ "$#" -ne 3 ]; then
@@ -26,8 +27,11 @@ ticket_base=
 if [ -z "$ticket" ] && [ -n "${JARVIS_RUN_TICKET_FILE:-}" ]; then
   ticket=$(sed -n 1p "$JARVIS_RUN_TICKET_FILE" 2>/dev/null | tr -d '[:space:]')
   ticket_base=$(sed -n 2p "$JARVIS_RUN_TICKET_FILE" 2>/dev/null | tr -d '[:space:]')
+  # Digits only after the colon: a glob like [0-9]* would let
+  # http://127.0.0.1:1@evil.example through (curl reads 127.0.0.1:1 as userinfo).
   case "$ticket_base" in
-    http://127.0.0.1:[0-9]*) ;;
+    http://127.0.0.1:*[!0-9]* | http://127.0.0.1:) ticket_base= ;;
+    http://127.0.0.1:*) ;;
     *) ticket_base= ;;
   esac
 fi
@@ -51,6 +55,11 @@ elif [ -z "${DASHBOARD_PORT:-}" ] && [ -n "$ticket_base" ]; then
   endpoint=$ticket_base/api/github-app/comment
 else
   endpoint=http://127.0.0.1:${DASHBOARD_PORT:-2001}/api/github-app/comment
+fi
+# Debug/test hook: print the endpoint this call would use and stop, sending nothing.
+if [ -n "${GITHUB_APP_PRINT_ENDPOINT:-}" ]; then
+  printf '%s\n' "$endpoint"
+  exit 0
 fi
 payload=$(TICKET="$ticket" REPO="$repo" NUM="$number" FILE="$file" python3 -c '
 import json, os
