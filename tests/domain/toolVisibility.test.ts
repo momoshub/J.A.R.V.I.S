@@ -9,6 +9,10 @@ describe("isHiddenAction", () => {
       ),
     ).toBe(true);
     expect(isHiddenAction("curl -s -X POST -d '{\"content\":\"x\"}' http://127.0.0.1:2002/api/learnings")).toBe(true);
+    // the same reaction through the Slack helper
+    expect(isHiddenAction('"$BOT_SLACK_CALL" reactions.add channel=C1 timestamp=1.1 name=eyes')).toBe(true);
+    expect(isHiddenAction("/repo/bin/slack-api.sh reactions.add channel=C1 timestamp=1.1 name=eyes")).toBe(true);
+    expect(isHiddenAction('"$BOT_SLACK_CALL" chat.postMessage channel=C1 text=hi')).toBe(false);
   });
 
   test("anything aimed at the local host is hidden", () => {

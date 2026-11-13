@@ -3,9 +3,10 @@
 #
 #   slack-file.sh <url_private> [destination]
 #
-# Slack's url_private is not public: it needs the bot token, which lives in this
-# process's environment. This exists so a sandboxed session can fetch an
-# attachment without being handed a general `curl`. Prints the path it wrote.
+# Slack's url_private is not public: it needs the bot's token, which this turn
+# does not hold. The bot fetches it for us (ticketed, Slack file urls only,
+# redirects re-checked) and this script writes what comes back. Prints the path
+# it wrote.
 set -uo pipefail
 
 if [ "$#" -lt 1 ]; then
@@ -21,16 +22,25 @@ case "$url" in
   *) echo "refusing: not a Slack file url" >&2; exit 2 ;;
 esac
 
-: "${SLACK_BOT_TOKEN:?SLACK_BOT_TOKEN is not set}"
+ticket=${JARVIS_SLACK_TICKET:-}
+if [ -z "$ticket" ]; then
+  echo "no Slack ticket in this turn's environment - I cannot fetch Slack files here" >&2
+  exit 3
+fi
+base=${JARVIS_SLACK_API_URL:-http://127.0.0.1:${DASHBOARD_PORT:-2001}/api/slack}
 
 if [ -z "$dest" ]; then
   name=$(basename "${url%%\?*}")
   dest="${TMPDIR:-/tmp}/slack-${name:-download}"
 fi
 
-code=$(curl -sS -L -w "%{http_code}" -o "$dest" -H "Authorization: Bearer ${SLACK_BOT_TOKEN}" "$url")
+payload=$(TICKET="$ticket" URL="$url" python3 -c 'import json,os; print(json.dumps({"ticket": os.environ["TICKET"], "url": os.environ["URL"]}))') || exit 2
+code=$(printf '%s' "$payload" | curl -sS --max-time 300 -w "%{http_code}" -o "$dest" -X POST -H "Content-Type: application/json" -d @- "$base/file")
 if [ "$code" != "200" ]; then
-  echo "download failed (http $code)" >&2
+  # a refusal comes back as a small JSON error where the file would have been
+  reason=$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1])).get("error",""))' "$dest" 2>/dev/null)
+  rm -f "$dest"
+  echo "download failed (http $code${reason:+: $reason})" >&2
   exit 1
 fi
 echo "$dest"

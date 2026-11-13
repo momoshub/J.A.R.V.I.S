@@ -32,6 +32,14 @@ describe("loadConfig", () => {
     expect(() => loadConfig({ ...base, OFFLINE_ALARM_CHANNEL: "#jarvis_status" })).toThrow(/channel id/);
   });
 
+  test("no secret-shaped variable is passed to a turn unless it is named", () => {
+    expect(loadConfig(base).turnEnvPassthrough).toEqual([]);
+    expect(loadConfig({ ...base, TURN_ENV_PASSTHROUGH: " GRAFANA_TOKEN, ,LINEAR_API_KEY" }).turnEnvPassthrough).toEqual([
+      "GRAFANA_TOKEN",
+      "LINEAR_API_KEY",
+    ]);
+  });
+
   test("owner and database-server lists are comma lists, empty by default", () => {
     const c = loadConfig(base);
     expect(c.reviewExtendedOwners).toEqual([]);

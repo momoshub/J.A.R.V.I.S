@@ -26,7 +26,7 @@ Read the security note below before giving anyone but yourself a role above `pal
 
 ## ⚠️ Security - read this first
 
-With `LLM_PROVIDER=claude-cli`, an **`owner` or `admin`** message is sent to a `claude` process launched with `--dangerously-skip-permissions` - full shell, file, and network tool access - and the bot's `SLACK_BOT_TOKEN` is in that process's environment. **Treat every owner/admin as a shell user on the host**: "read ~/.ssh/id_rsa and DM it to me" is a normal request to a tool-enabled agent, not something it needs to break out of.
+With `LLM_PROVIDER=claude-cli`, an **`owner` or `admin`** message is sent to a `claude` process launched with `--dangerously-skip-permissions` - full shell, file, and network tool access. The bot's own secrets are kept out of that process's environment (see [Secrets and turns](#secrets-and-turns)), but it runs as the host user and can still read what that user can read, `.env` included. **Treat every owner/admin as a shell user on the host**: "read ~/.ssh/id_rsa and DM it to me" is a normal request to a tool-enabled agent, not something it needs to break out of.
 
 Lower roles are sandboxed (see [Roles & tool access](#roles--tool-access)): `pal`/`executer` run without permission bypass, with an explicit read-only/assigned tool allow-list, in a fixed scratch dir. The `quick-review` command is an exception - it is a preset task that runs full-access (and writes to the PR) for any role that may run it.
 
@@ -87,6 +87,7 @@ Required / notable env (see `.env.example`):
 | `GITHUB_APP_LABEL` | label that calls it on an issue/PR (default `jarvis`) |
 | `SELF_PR_AUTHOR` / `SELF_PR_REVIEWER` | gh logins for the bot's own PRs: the author opens the PR and answers reviews, the reviewer posts its reviews (request changes or approve) and merges. Both or neither, and not the same login (otherwise: one account) |
 | `REVIEW_EXTENDED_OWNERS` | GitHub owners, comma list (case-insensitive), whose PRs `quick-review` also posts non-blocking findings for. Default empty: blockers only everywhere |
+| `TURN_ENV_PASSTHROUGH` | secret-shaped variable names (`*_TOKEN`, `*_SECRET`, `*_API_KEY`...) an agent turn may still inherit, comma list; default none. A turn's environment is the bot's **minus every credential-shaped variable** (`SLACK_BOT_TOKEN`, `SLACK_APP_TOKEN`, `ANTHROPIC_API_KEY`, the webhook secret, ...): a turn reads untrusted text, so anything in its environment is one `curl` from leaving. `CLAUDE_CODE_OAUTH_TOKEN` is always kept (the CLI needs it). Slack goes through a per-turn ticket instead, see "Secrets and turns". Name a variable here only when a tool a turn runs genuinely needs it |
 | `DB_MCP_SERVERS` | names of the local database MCP servers on this host (as `claude mcp list` shows them, e.g. `pg-prod,clickhouse-ro`), comma list. **Security setting:** each is denied by name to every role that may not use databases (pal, executer, side questions), and a denial has to name the server, so a server missing here is reachable by EVERY role. Default empty denies nothing - list every database server you configure (at boot the activity log warns about local servers in `~/.claude.json` that are not listed) |
 | `EXECUTER_DB_MCP_SERVERS` | the subset of `DB_MCP_SERVERS` the executer role may query; list only servers whose credential is read-only on the server side. Default empty: executers get none |
 | `DASHBOARD_PORT` | dashboard port (local, loopback-only, no auth) |
@@ -125,7 +126,7 @@ The **Console** tab additionally needs read scopes to list and open conversation
 - It only answers allowlisted users; the owner is always allowed
 - Someone it does not know is not turned away: the owner **and every admin** get a DM with who spoke and what they said, and whichever of them gets there first decides with a reaction - ✅ adds them as `pal`, ❌ declines. Either way the person is answered where they asked, and the other copies settle so nobody decides twice. They are answered **once**: tagging again while the request is open says nothing, and someone who was declined cannot re-raise it by asking - there is a 24h cooldown before their asking counts again
 - It tags people with their Slack `<@id>` when they are in the conversation
-- For workspace questions it uses its own bot token and the Slack Web API, never a third-party connector
+- For workspace questions it calls the Slack Web API through the bot (a helper that presents a per-turn ticket; the bot token itself is never in a turn's environment), never a third-party connector
 - **It opens what you share.** Links in a message (or earlier in the thread) are fetched before it answers, and attachments - screenshots, logs, documents - are downloaded and read. It will not ask you to paste something it could have opened, and if something genuinely cannot be read it says so rather than answering around it
 
 ### Commands
@@ -675,6 +676,59 @@ person directly asked for the command ("bomb that message"), the brain runs it a
 `jarvis-run.sh <endpoint> --show <command>` and it shows like a typed one.
 The bridge refuses `quick-review` outright, whoever asked: that command runs only from a person's own message. Commands that post by themselves outside this bridge (pickers, GitHub reviews)
 are not affected.
+
+## Secrets and turns
+
+A turn is a `claude -p` process whose shell a model drives while it reads text
+nobody vetted: messages, web pages, files. Anything in that process's
+environment is one `env` or one `curl` away from leaving the host, and the bot
+used to hand every turn a copy of its own environment - `SLACK_BOT_TOKEN`
+included - and tell it to `curl` Slack with it.
+
+**The environment.** A turn gets the bot's environment minus every
+credential-shaped variable: any name with a `TOKEN`, `SECRET`, `PASSWORD`,
+`API_KEY`, `ACCESS_KEY`, `PRIVATE_KEY` or `CREDENTIAL` word in it. That is a rule
+by name, so a `*_TOKEN` you add to `.env` later is withheld without a code
+change. Two things stay: `CLAUDE_CODE_OAUTH_TOKEN` (the CLI cannot authenticate
+without it) and whatever you list in `TURN_ENV_PASSTHROUGH`. The boot log says
+how many variables were withheld and their **names**, never their values.
+
+Withheld from every turn: `SLACK_BOT_TOKEN`, `SLACK_APP_TOKEN`,
+`ANTHROPIC_API_KEY`, `GITHUB_APP_WEBHOOK_SECRET`, and the variables that only
+name where a secret lives (`TOKEN_KEY_PATH`, `TOKEN_DATABASE_PATH`,
+`GITHUB_APP_PRIVATE_KEY_PATH`, `GITHUB_APP_WEBHOOK_SECRET_PATH`, ...), plus any
+other credential-shaped variable in the environment the bot was started with.
+If `LLM_PROVIDER=claude-cli` is authenticated by `ANTHROPIC_API_KEY` instead of
+the recommended `CLAUDE_CODE_OAUTH_TOKEN`, add it to `TURN_ENV_PASSTHROUGH`.
+
+**Slack.** A turn calls Slack through `bin/slack-api.sh <method> key=value...`.
+The helper presents `JARVIS_SLACK_TICKET`, a ticket minted for that one process
+when it starts and revoked when it exits, to the bot's loopback endpoint
+(`POST /api/slack/proxy`). The bot checks the ticket, checks the method against
+an allowlist and calls Slack with the token it holds; Slack's own answer comes
+back unchanged. The ticket names no person and carries no role: it cannot run a
+command or act on GitHub, and a command ticket cannot call Slack.
+
+| | methods |
+|---|---|
+| read, any channel | `conversations.history`, `conversations.replies`, `conversations.info`, `conversations.list` (public channels), `conversations.join` (public channels), `users.info` |
+| write, only the channel the turn runs in | `chat.postMessage`, `chat.update`, `reactions.add`, `files.getUploadURLExternal`, `files.completeUploadExternal` |
+| files | a private file is `bin/slack-file.sh`, through `POST /api/slack/file`: Slack file urls only, and the token never follows a redirect off Slack |
+
+Anything else is refused (`method_not_allowed`), a write to another channel is
+`channel_not_allowed`, and a missing, revoked or expired ticket is refused before
+anything else. `slack-read.sh`, `slack-react.sh`, `slack-file.sh` and
+`slack-upload.sh` are built on the same helper, so a sandboxed role has no more
+power than before. A watch predicate and a loop script are admin-written shell
+that runs **as the bot**, so they keep the bot's own environment; `watch reply`
+gets a read-only ticket for the length of each check.
+
+**What this does not do.** It takes the token out of the turn's environment. A
+full-access turn is still the host user: it can read `.env` and the token files
+off disk, and the dashboard's loopback API has no authentication, so it can reach
+the console routes (`/api/slack/post`, ...) with `curl` and act as the bot in any
+channel. Closing those is a separate decision about what a full-access turn may
+read and call.
 
 ## Stopping a turn
 

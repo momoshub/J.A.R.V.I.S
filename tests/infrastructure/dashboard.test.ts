@@ -7,6 +7,8 @@ import { createKitViewRepo } from "../../src/infrastructure/db/kitViewRepo.ts";
 import { createSettingsRepo, SETTING_KEYS } from "../../src/infrastructure/db/settingsRepo.ts";
 import { loadBotProfile } from "../../src/application/botProfile.ts";
 import { createDashboard, type DashboardDeps } from "../../src/infrastructure/dashboard/server.ts";
+import { createSlackProxy } from "../../src/application/slackProxy.ts";
+import { createSlackTickets } from "../../src/application/slackTickets.ts";
 
 const OWNER = "U0OWNER0001";
 
@@ -51,6 +53,59 @@ describe("dashboard static + api", () => {
     expect(res.status).toBe(200);
     expect((await res.json()) as { restarting: boolean }).toMatchObject({ ok: true, restarting: true });
     expect(asked).toEqual(["picked up a fix"]);
+  });
+
+  describe("the Slack proxy endpoints", () => {
+    const wired = () => {
+      const tickets = createSlackTickets(() => 0);
+      const upstream: { url: string; auth: string }[] = [];
+      const proxy = createSlackProxy({
+        tickets,
+        botToken: "xoxb-held-by-the-bot",
+        fetchFn: (async (url: string | URL | Request, init?: RequestInit) => {
+          upstream.push({ url: String(url), auth: String((init?.headers as Record<string, string>).Authorization) });
+          return String(url).includes("files")
+            ? new Response("BYTES", { headers: { "content-type": "image/png" } })
+            : Response.json({ ok: true, user: { id: "U1" } });
+        }) as typeof fetch,
+      });
+      return { d: build({ slackProxy: proxy }), tickets, upstream };
+    };
+
+    test("an allowed call is proxied and answers in Slack's own shape", async () => {
+      const { d, tickets, upstream } = wired();
+      const ticket = tickets.issue({ channel: "C1" });
+      const res = await d.dash.handle(postJson("/api/slack/proxy", { ticket, method: "users.info", params: { user: "U1" } }));
+      expect(res.status).toBe(200);
+      expect(await res.json()).toEqual({ ok: true, user: { id: "U1" } });
+      expect(upstream).toEqual([{ url: "https://slack.com/api/users.info", auth: "Bearer xoxb-held-by-the-bot" }]);
+    });
+
+    test("no ticket, a bad ticket and a method off the allowlist never reach Slack", async () => {
+      const { d, tickets, upstream } = wired();
+      expect((await d.dash.handle(postJson("/api/slack/proxy", { method: "users.info", params: { user: "U1" } }))).status).toBe(401);
+      expect((await d.dash.handle(postJson("/api/slack/proxy", { ticket: "jvsl_nope", method: "users.info", params: {} }))).status).toBe(401);
+      const ticket = tickets.issue({ channel: "C1" });
+      const denied = await d.dash.handle(postJson("/api/slack/proxy", { ticket, method: "conversations.archive", params: { channel: "C1" } }));
+      expect(denied.status).toBe(403);
+      expect(((await denied.json()) as { error: string }).error).toContain("method_not_allowed");
+      expect(upstream).toEqual([]);
+    });
+
+    test("a file download is streamed back, and a non-Slack url is refused", async () => {
+      const { d, tickets } = wired();
+      const ticket = tickets.issue({ channel: "C1" });
+      const file = await d.dash.handle(postJson("/api/slack/file", { ticket, url: "https://files.slack.com/files-pri/T1-F1/a.png" }));
+      expect(file.status).toBe(200);
+      expect(file.headers.get("content-type")).toBe("image/png");
+      expect(await file.text()).toBe("BYTES");
+      expect((await d.dash.handle(postJson("/api/slack/file", { ticket, url: "https://evil.example/a.png" }))).status).toBe(403);
+    });
+
+    test("without a proxy wired the endpoints say so", async () => {
+      expect((await build().dash.handle(postJson("/api/slack/proxy", { ticket: "t", method: "users.info" }))).status).toBe(503);
+      expect((await build().dash.handle(postJson("/api/slack/file", { ticket: "t", url: "x" }))).status).toBe(503);
+    });
   });
 
   test("the github-app action endpoint needs a ticket, passes the rest on and reports refusals", async () => {

@@ -34,7 +34,7 @@ export const credentialGapRules = (prefix: string, commands: readonly HostComman
   return `
 
 When you cannot see something:
-- you run on your own credential. It carries your Slack bot token and the shell, and NO claude.ai account connectors - no Slack connector, and the claude.ai Notion and Datadog connectors are not there either. That is normal for a chat turn, not a fault, and not something to fix from inside the session. Notion and Datadog are the exceptions, see below
+- you run on your own credential. It carries the shell and the Slack helper (the bot keeps its token, you hold only a per-turn ticket), and NO claude.ai account connectors - no Slack connector, and the claude.ai Notion and Datadog connectors are not there either. That is normal for a chat turn, not a fault, and not something to fix from inside the session. Notion and Datadog are the exceptions, see below
 - so all of these mean the same single thing, and none of them means "impossible":
   - "it is private", a 403, an empty page, \`channel_not_found\`
   - a tool you expected to have (\`mcp__...\`) simply not being in your tool list
