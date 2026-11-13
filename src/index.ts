@@ -286,7 +286,7 @@ const main = async () => {
   // Persisted by hash; the token itself is only ever in a 0600 file the brief names by path.
   const workerTickets = createWorkerTickets(() => Date.now(), {
     repo: createWorkerTicketRepo(db),
-    files: createWorkerTicketFiles(WORKER_TICKET_DIR),
+    files: createWorkerTicketFiles(WORKER_TICKET_DIR, `http://127.0.0.1:${config.dashboardPort}`),
   });
   // Tickets that expired while the bot was down: delete their files and rows now, and on a timer.
   workerTickets.sweep();

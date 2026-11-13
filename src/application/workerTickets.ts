@@ -19,7 +19,7 @@
  * limit, refused meanwhile but renewable; its GitHub token is revoked at the
  * lapse. The rows live in `worker_tickets` and survive a restart;
  * only the sha-256 of the token is stored. The token itself is written once to a
- * 0600 file (`WorkerTicketFiles`) that the brief names by path, so it is never in
+ * 0600 file (`WorkerTicketFiles`, with the bot's base URL on a second line) that the brief names by path, so it is never in
  * the brain's context, a command result, a spec or a Slack message, and the file
  * is deleted when the ticket ends. `sweep` (boot, and on a timer) ends what
  * is over for good; every end (revoke, lapse, or the limit) also notifies `onEnd`
@@ -46,7 +46,7 @@ import {
 import type { WorkerTicketRepo, WorkerTicketRow } from "../infrastructure/db/workerTicketRepo.ts";
 import type { Clock } from "./ports.ts";
 
-/** Where a ticket's token is handed to the worker: a file only the bot's user can read. */
+/** Where a ticket's token is handed to the worker: a file only the bot's user can read (token on line 1, the bot's action base URL on line 2). */
 export type WorkerTicketFiles = {
   /** Write the token (mode 0600) and return the absolute path the worker is told. */
   write: (id: string, token: string) => string;

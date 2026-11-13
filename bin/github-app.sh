@@ -44,8 +44,12 @@
 # reaches the turn; the bot holds it. (For a plain answer on the issue a GitHub
 # call came from, github-app-comment.sh needs no role.)
 #
-# Endpoint: GITHUB_APP_ACTION_URL, else the loopback dashboard on
-# DASHBOARD_PORT (default 2001).
+# Endpoint, first that is set: GITHUB_APP_ACTION_URL; the loopback dashboard on
+# DASHBOARD_PORT; the base URL on line 2 of the JARVIS_RUN_TICKET_FILE (the bot
+# writes it there because a worker's shell has no DASHBOARD_PORT; a one-line
+# file from before that is ignored); else DASHBOARD_PORT's default, 2001. A
+# failed call names the endpoint it tried (GITHUB_APP_PRINT_ENDPOINT=1 prints it and exits,
+# sending nothing).
 set -uo pipefail
 
 if [ "$#" -lt 2 ]; then
@@ -54,17 +58,40 @@ if [ "$#" -lt 2 ]; then
 fi
 
 ticket=${JARVIS_RUN_TICKET:-}
+ticket_base=
 # An Orca worker is handed the PATH of a 0600 file holding its worker ticket,
-# never the token: the path is all a brief or spec ever contains.
+# never the token: the path is all a brief or spec ever contains. Line 2, if
+# present, is where the bot listens (a worker's shell has no DASHBOARD_PORT).
 if [ -z "$ticket" ] && [ -n "${JARVIS_RUN_TICKET_FILE:-}" ]; then
-  ticket=$(head -n 1 "$JARVIS_RUN_TICKET_FILE" 2>/dev/null | tr -d '[:space:]')
+  ticket=$(sed -n 1p "$JARVIS_RUN_TICKET_FILE" 2>/dev/null | tr -d '[:space:]')
+  ticket_base=$(sed -n 2p "$JARVIS_RUN_TICKET_FILE" 2>/dev/null | tr -d '[:space:]')
+  # Only a loopback origin is followed: the ticket is sent there.
+  # Digits only after the colon: a glob like [0-9]* would let
+  # http://127.0.0.1:1@evil.example through (curl reads 127.0.0.1:1 as userinfo).
+  case "$ticket_base" in
+    http://127.0.0.1:*[!0-9]* | http://127.0.0.1:) ticket_base= ;;
+    http://127.0.0.1:*) ;;
+    *) ticket_base= ;;
+  esac
 fi
 if [ -z "$ticket" ]; then
   echo "no ticket in this turn's environment - I cannot act on GitHub here" >&2
   exit 3
 fi
 
-endpoint=${GITHUB_APP_ACTION_URL:-http://127.0.0.1:${DASHBOARD_PORT:-2001}/api/github-app/action}
+# Explicit URL, then DASHBOARD_PORT, then the ticket file's base URL, then 2001.
+if [ -n "${GITHUB_APP_ACTION_URL:-}" ]; then
+  endpoint=$GITHUB_APP_ACTION_URL
+elif [ -z "${DASHBOARD_PORT:-}" ] && [ -n "$ticket_base" ]; then
+  endpoint=$ticket_base/api/github-app/action
+else
+  endpoint=http://127.0.0.1:${DASHBOARD_PORT:-2001}/api/github-app/action
+fi
+# Debug/test hook: print the endpoint this call would use and stop, sending nothing.
+if [ -n "${GITHUB_APP_PRINT_ENDPOINT:-}" ]; then
+  printf '%s\n' "$endpoint"
+  exit 0
+fi
 
 if [ "$1" = git ] || [ "$1" = push ]; then
   mode=$1
@@ -127,11 +154,11 @@ if [ "$1" = git ] || [ "$1" = push ]; then
 print(json.dumps({"ticket": os.environ["TICKET"], "action": "git-auth", "repo": os.environ["REPO"]}))') || exit 2
   auth_response=$(curl -s -X POST -H "Content-Type: application/json" -d "$auth_payload" "$endpoint")
   # Line 1 name, 2 email, 3 the Authorization header value. Never printed.
-  auth=$(printf '%s' "$auth_response" | python3 -c 'import base64,json,sys
+  auth=$(printf '%s' "$auth_response" | ENDPOINT="$endpoint" python3 -c 'import base64,json,os,sys
 try:
     r = json.load(sys.stdin)
 except Exception:
-    print("no usable answer from the bot", file=sys.stderr)
+    print("no usable answer from the bot at " + os.environ["ENDPOINT"], file=sys.stderr)
     sys.exit(1)
 g = r.get("github") if r.get("ok") else None
 if not isinstance(g, dict) or not g.get("name"):
@@ -259,6 +286,7 @@ PY
 ) || exit 2
 
 response=$(curl -s -X POST -H "Content-Type: application/json" -d "$payload" "$endpoint")
+[ -z "$response" ] && echo "no usable answer from the bot at $endpoint" >&2
 printf '%s\n' "$response"
 printf '%s' "$response" | python3 -c 'import json,sys
 try: sys.exit(0 if json.load(sys.stdin).get("ok") else 1)
