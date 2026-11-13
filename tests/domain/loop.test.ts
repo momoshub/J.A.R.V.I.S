@@ -7,6 +7,9 @@ import {
   MIN_SCRIPT_INTERVAL_MS,
   PENDING_TTL_MS,
   approvalText,
+  cleanName,
+  deriveName,
+  loopRef,
   loopTurnText,
   nextRun,
   parseLoopArgs,
@@ -151,5 +154,127 @@ describe("loopTurnText", () => {
     expect(t.startsWith("[loop 7] ")).toBe(true);
     expect(t).toContain("short");
     expect(t.endsWith("do it")).toBe(true);
+  });
+});
+
+describe("loop names", () => {
+  test("cleanName leaves plain words: no mrkdwn, links, mentions or entities, one line, clipped", () => {
+    expect(cleanName("  PR   board ")).toBe("PR board");
+    expect(cleanName("*bold* _it_ `code` ~x~")).toBe("bold it code x");
+    expect(cleanName("<!channel> <@U1|kai> & <https://x.y|link>")).not.toMatch(/[<>&|]/);
+    expect(cleanName("a\nb\tc")).toBe("a b c");
+    expect(cleanName("x".repeat(100))).toHaveLength(40);
+    expect(cleanName("***")).toBe("");
+  });
+
+  test("cleanName reads Slack's escapes and markup as the words a person sees", () => {
+    expect(cleanName("Q&amp;A board")).toBe("Q A board");
+    expect(cleanName("R&lt;D&gt;")).toBe("R D");
+    expect(cleanName("see <https://x.y/pulls|open PRs>")).toBe("see open PRs");
+    expect(cleanName("ping <@U1|kai> in <#C1|ops> <!here>")).toBe("ping kai in ops here");
+  });
+
+  test("deriveName reads a link as its label, not its url", () => {
+    expect(deriveName("check <https://github.com/o/r/pulls|open PRs> today")).toBe("check open PRs today");
+  });
+
+  test("deriveName takes the first few words of the prompt, else of the command", () => {
+    expect(deriveName("check the open pull requests and summarise them for me")).toBe("check the open pull");
+    expect(deriveName("  *urgent*   look at <https://x.y|this> ")).not.toMatch(/[*<>|]/);
+    expect(deriveName("", "./sync.sh --all")).toBe("./sync.sh --all");
+    expect(deriveName("", "***")).toBe("script");
+    expect(deriveName("***")).toBe("loop");
+  });
+
+  test("loopRef reads `<name> - loop #<id>`, or `loop #<id>` with no name", () => {
+    expect(loopRef(3, "PR board")).toBe("PR board - loop #3");
+    expect(loopRef(3, "")).toBe("loop #3");
+    expect(loopRef(3, "Sync", "script loop")).toBe("Sync - script loop #3");
+  });
+
+  test("the approval and settled texts carry the name", () => {
+    const named = approvalText(7, "every 15m", "./x", PENDING_TTL_MS, "Sync");
+    expect(named).toContain("script loop (#7)");
+    expect(named).toContain("name (chosen by the turn, not checked): Sync");
+    expect(approvalText(7, "every 15m", "./x")).not.toContain("name (");
+    expect(settledLoopText("approved", 3, "U1", "Sync")).toContain("Sync - script loop #3 approved by <@U1>");
+    expect(settledLoopText("rejected", 3, undefined, "Sync")).toContain("Sync - script loop #3 rejected");
+    expect(settledLoopText("expired", 3, undefined, "Sync")).toContain("Sync - script loop #3 expired");
+  });
+
+  test("the turn text names the loop", () => {
+    expect(loopTurnText(7, "every 1h", "do it", "PR board")).toContain('Scheduled run of "PR board" (every 1h)');
+    expect(loopTurnText(7, "every 1h", "do it").startsWith("[loop 7] Scheduled run (every 1h)")).toBe(true);
+  });
+});
+
+describe("parseLoopArgs --name", () => {
+  const ok = (r: ReturnType<typeof parseLoopArgs>) => {
+    if (!r.ok) throw new Error(r.error);
+    return r;
+  };
+
+  test("a quoted name sits between the schedule and the prompt", () => {
+    const r = ok(parseLoopArgs('every 6h --name "PR board" check open PRs'));
+    expect(r.name).toBe("PR board");
+    expect(r.prompt).toBe("check open PRs");
+    expect(r.schedule).toEqual({ kind: "interval", everyMs: 6 * 3_600_000 });
+  });
+
+  test("a single word, --name=word, single and smart quotes all work", () => {
+    expect(ok(parseLoopArgs("every 6h --name board check")).name).toBe("board");
+    expect(ok(parseLoopArgs("every 6h --name=board check")).name).toBe("board");
+    expect(ok(parseLoopArgs("every 6h --name 'PR board' check")).name).toBe("PR board");
+    const smart = ok(parseLoopArgs("every monday 9am --name “PR board” check"));
+    expect(smart.name).toBe("PR board");
+    expect(smart.prompt).toBe("check");
+  });
+
+  test("with no name it is derived from the prompt", () => {
+    const r = ok(parseLoopArgs("every 6h check the open pull requests daily"));
+    expect(r.name).toBe("check the open pull");
+    expect(r.prompt).toBe("check the open pull requests daily");
+  });
+
+  test("a blank name falls back to the derived one", () => {
+    expect(ok(parseLoopArgs('every 6h --name "" check the queue')).name).toBe("check the queue");
+  });
+
+  test("the name is made Slack-safe", () => {
+    expect(ok(parseLoopArgs('every 6h --name "<!channel> *PR*" check')).name).toBe("channel PR");
+  });
+
+  test("an apostrophe inside a single-quoted name stays in the name, not the prompt", () => {
+    const r = ok(parseLoopArgs("every 6h --name 'Kai's board' check the queue"));
+    expect(r.name).toBe("Kai's board");
+    expect(r.prompt).toBe("check the queue");
+  });
+
+  test("Slack-escaped input gives the same name as the brain's unescaped one", () => {
+    expect(ok(parseLoopArgs('every 6h --name "Q&amp;A board" check')).name).toBe("Q A board");
+    expect(ok(parseLoopArgs('every 6h --name "Q&A board" check')).name).toBe("Q A board");
+  });
+
+  test("a missing or unclosed name explains itself", () => {
+    expect(parseLoopArgs("every 6h --name")).toEqual({ ok: false, error: 'say a name after `--name`, e.g. `--name "PR board"`' });
+    expect(parseLoopArgs('every 6h --name "PR board check')).toEqual({ ok: false, error: "close the quote after `--name`" });
+  });
+
+  test("a name with no prompt still asks for the prompt", () => {
+    expect(parseLoopArgs('every 6h --name "PR board"')).toEqual({ ok: false, error: "say what to do each time" });
+  });
+
+  test("a script loop takes a name too, and its command stays whole", () => {
+    const r = ok(parseLoopArgs('every 15m --name "Sync" -- ./sync.sh --all'));
+    expect(r.name).toBe("Sync");
+    expect(r.command).toBe("./sync.sh --all");
+    expect(r.prompt).toBe("");
+    expect(ok(parseLoopArgs("every 15m -- ./sync.sh --all")).name).toBe("./sync.sh --all");
+  });
+
+  test("a prompt that merely mentions --name later is not a name", () => {
+    const r = ok(parseLoopArgs("every 6h run the thing with --name x"));
+    expect(r.prompt).toBe("run the thing with --name x");
+    expect(r.name).toBe("run the thing with");
   });
 });

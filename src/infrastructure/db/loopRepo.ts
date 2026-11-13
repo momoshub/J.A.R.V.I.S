@@ -5,13 +5,15 @@
  * a restart is a schedule that silently stopped.
  */
 import type { DbClient } from "./client.ts";
-import type { LoopState } from "../../domain/loop.ts";
+import { cleanName, deriveName, type LoopState } from "../../domain/loop.ts";
 
 export type Loop = {
   readonly id: number;
   readonly channelId: string;
   readonly threadTs: string;
   readonly createdBy: string;
+  /** What people call it; never empty (an unnamed row gets the first words of its prompt). */
+  readonly name: string;
   /** Canonical text, e.g. `every monday at 09:00`. */
   readonly schedule: string;
   readonly prompt: string;
@@ -29,6 +31,8 @@ export type Loop = {
 };
 
 export type NewLoop = Pick<Loop, "channelId" | "threadTs" | "createdBy" | "schedule" | "prompt" | "command" | "nextAt"> & {
+  /** Left out or blank: derived from the prompt (or the command). */
+  readonly name?: string;
   /** `pending` for a script loop awaiting approval; default `active`. */
   readonly state?: "pending" | "active";
 };
@@ -38,6 +42,7 @@ type Row = {
   channel_id: string;
   thread_ts: string;
   created_by: string;
+  name: string;
   schedule: string;
   prompt: string;
   command: string;
@@ -59,6 +64,7 @@ const toLoop = (r: Row): Loop => ({
   channelId: r.channel_id,
   threadTs: r.thread_ts,
   createdBy: r.created_by,
+  name: r.name || deriveName(r.prompt, r.command),
   schedule: r.schedule,
   prompt: r.prompt,
   command: r.command,
@@ -86,6 +92,8 @@ export type LoopRepo = {
   get: (id: number) => Loop | undefined;
   /** Record a fire: count it and move the next one on. */
   fired: (id: number, nextAt: number, at: number) => void;
+  /** Give a live loop a new name. False when it is gone, not live, or the name is blank once cleaned. */
+  rename: (id: number, name: string, at: number) => boolean;
   /** Move the next fire without counting a run (a failed start). */
   reschedule: (id: number, nextAt: number, at: number, error?: string) => void;
   settle: (id: number, state: LoopState, at: number, error?: string) => void;
@@ -101,8 +109,8 @@ export type LoopRepo = {
 
 export const createLoopRepo = (db: DbClient): LoopRepo => {
   const insertStmt = db.query(
-    `INSERT INTO loops (channel_id, thread_ts, created_by, schedule, prompt, command, next_at, state, created_at, updated_at)
-     VALUES ($channelId, $threadTs, $createdBy, $schedule, $prompt, $command, $nextAt, $state, $at, $at)
+    `INSERT INTO loops (channel_id, thread_ts, created_by, name, schedule, prompt, command, next_at, state, created_at, updated_at)
+     VALUES ($channelId, $threadTs, $createdBy, $name, $schedule, $prompt, $command, $nextAt, $state, $at, $at)
      RETURNING *`,
   );
   const dueStmt = db.query<Row, [number, number]>(
@@ -129,6 +137,9 @@ export const createLoopRepo = (db: DbClient): LoopRepo => {
   const rescheduleStmt = db.query(
     "UPDATE loops SET next_at = $nextAt, last_error = COALESCE($error, last_error), updated_at = $at WHERE id = $id",
   );
+  const renameStmt = db.query(
+    "UPDATE loops SET name = $name, updated_at = $at WHERE id = $id AND state IN ('active', 'pending')",
+  );
   const settleStmt = db.query(
     "UPDATE loops SET state = $state, updated_at = $at, last_error = COALESCE($error, last_error) WHERE id = $id",
   );
@@ -140,6 +151,7 @@ export const createLoopRepo = (db: DbClient): LoopRepo => {
           $channelId: l.channelId,
           $threadTs: l.threadTs,
           $createdBy: l.createdBy,
+          $name: cleanName(l.name ?? "") || deriveName(l.prompt, l.command),
           $schedule: l.schedule,
           $prompt: l.prompt.slice(0, 2000),
           $command: l.command.slice(0, 2000),
@@ -160,6 +172,10 @@ export const createLoopRepo = (db: DbClient): LoopRepo => {
     fired: (id, nextAt, at) => void firedStmt.run({ $id: id, $nextAt: nextAt, $at: at }),
     reschedule: (id, nextAt, at, error) =>
       void rescheduleStmt.run({ $id: id, $nextAt: nextAt, $at: at, $error: error?.slice(0, 300) ?? null }),
+    rename: (id, name, at) => {
+      const clean = cleanName(name);
+      return clean !== "" && Number(renameStmt.run({ $id: id, $name: clean, $at: at }).changes) > 0;
+    },
     settle: (id, state, at, error) =>
       void settleStmt.run({ $id: id, $state: state, $at: at, $error: error?.slice(0, 300) ?? null }),
     setNotice: (id, channel, ts) => void noticeStmt.run({ $id: id, $channel: channel, $ts: ts }),

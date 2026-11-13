@@ -104,6 +104,23 @@ export const migrate = (db: Database): void => {
   migrateWorkerTickets(db);
   migrateLoops(db);
   migrateWorkerTicketBoundAt(db);
+  migrateLoopNames(db);
+};
+
+/**
+ * Migration v33: a name on every loop.
+ *
+ * `loop #3` told nobody what it was. The column defaults to `''`, so every
+ * existing row survives untouched and the repo derives its name from the
+ * prompt on read; nothing is rewritten here, so a rerun is a no-op.
+ */
+const migrateLoopNames = (db: Database): void => {
+  const cols = db.query<{ name: string }, []>("PRAGMA table_info(loops)").all().map((c) => c.name);
+  if (!cols.includes("name")) db.exec("ALTER TABLE loops ADD COLUMN name TEXT NOT NULL DEFAULT ''");
+  const { user_version } = db.query<{ user_version: number }, []>("PRAGMA user_version").get() ?? {
+    user_version: 0,
+  };
+  if (user_version < 33) db.exec("PRAGMA user_version = 33;");
 };
 
 /**
