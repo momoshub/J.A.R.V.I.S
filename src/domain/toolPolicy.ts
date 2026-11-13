@@ -40,12 +40,15 @@ export type ToolPolicy = {
  */
 export const PAL_TOOLS: readonly string[] = [
   "Read", "Grep", "Glob", "LS", "TodoWrite",
-  // Read-only shell: commands with no way to write or run something. `sed` (w, e,
-  // -i), `find` (-exec, -fprint), `rg` (--pre) are NOT here: a denial is a text
-  // match on the command line and quoting or flag spelling gets past it (measured
-  // in review), so they can only be opted into through SANDBOX_TOOLS, with
-  // `SHELL_ESCAPE_DENY` as a best-effort fence. `Glob`/`Grep`/`Read` cover finding and searching.
-  "Bash(cat:*)", "Bash(grep:*)", "Bash(ls:*)", "Bash(head:*)", "Bash(tail:*)", "Bash(jq:*)",
+  // No `Bash(cat:*)`-style entries on purpose. An explicit allow matches ANY path,
+  // so `cat`/`grep -r`/`head` would read the bot's key and `.env` that `Read` is
+  // denied (measured in review), and WebFetch could send it out. The CLI already
+  // auto-allows its own read-only commands (cat, ls, head, tail, grep, wc, ...)
+  // but only inside the working directory, which for a sandboxed role is the
+  // scratch dir (measured: `cat f.txt` runs there, `cat <path outside>` is
+  // refused under dontAsk). Read/Grep/Glob cover the rest, with their denials.
+  // `sed`, `find`, `rg`, `jq` can write, run code or print the environment and a
+  // text denial does not hold against quoting: opt-in through SANDBOX_TOOLS only.
   // the web
   "WebSearch", "WebFetch",
   // github, read only
@@ -92,12 +95,11 @@ export const isFullAccess = (role: UserRole): boolean => role === "owner";
 /**
  * Ways out of the shell commands a read-only list may carry, denied to every
  * sandboxed role. The allow-list matches by prefix, so `jq:*` also allows
- * `jq -n env`, and an operator who opts `sed`/`find`/`rg` in through SANDBOX_TOOLS
+ * `jq -n env`, and an operator who opts `sed`/`find`/`rg`/`jq` in through SANDBOX_TOOLS
  * gets `sed -i` etc. The patterns are SUBSTRING matches (`*exec*`), because a
  * quote or a combined flag defeats anything narrower (`sed -Ei`, `rg --pre=x`,
  * `jq -n '$ENV.X'`), but this is still text matching, not a parser: it is a
- * fence for the default list (cat, grep, ls, head, tail, jq: none of which can
- * run or write) and best effort for opt-ins.
+ * best effort fence for whatever an operator opts in.
  * - `jq` reading the process environment (`env`, `$ENV`) prints the bot's tokens.
  * - `sed` w/e/-i/--in-place, `find` -exec/-ok/-delete/-fprint/-fls, `rg` --pre/--hostname-bin.
  * - the bot's config dir and a `.env` file hold credentials. A recursive or
@@ -106,7 +108,7 @@ export const isFullAccess = (role: UserRole): boolean => role === "owner";
  */
 export const SHELL_ESCAPE_DENY: readonly string[] = [
   "Bash(jq *env*)", "Bash(jq *ENV*)", "Bash(jq *input_filename*)",
-  "Bash(sed *-i*)", "Bash(sed *-?i*)", "Bash(sed *-??i*)", "Bash(sed *--in-place*)", "Bash(sed *w*)", "Bash(sed *e*)",
+  "Bash(sed *-*i*)", "Bash(sed *--in-place*)", "Bash(sed *w*)", "Bash(sed *e*)",
   "Bash(find *exec*)", "Bash(find *-ok*)", "Bash(find *-delete*)",
   "Bash(find *-fprint*)", "Bash(find *-fls*)",
   "Bash(rg *--pre*)", "Bash(rg *--hostname-bin*)",

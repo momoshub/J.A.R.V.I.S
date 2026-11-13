@@ -495,7 +495,7 @@ describe("the shell is gated by the caller's role", () => {
     expect(lost.skipPermissions).toBe(false);
   });
 
-  test("the default allow-list is the read-only shell, the bot's helpers and the read tools", () => {
+  test("the default allow-list has no shell reader, but the bot's helpers and the read tools", () => {
     const withHelpers = {
       ...opts,
       slackReadScript: "/bin/slack-read.sh",
@@ -505,12 +505,13 @@ describe("the shell is gated by the caller's role", () => {
     };
     for (const role of strict) {
       const tools = toolPolicyFor(role, withHelpers).allowedTools ?? [];
-      for (const cmd of ["cat", "grep", "ls", "head", "tail", "jq"]) {
-        expect(tools).toContain(`Bash(${cmd}:*)`);
+      // no shell reader is explicitly allowed: that would match any path and read the
+      // secrets `Read` is denied. The CLI's built-in cat/ls/head/grep are auto-allowed
+      // inside the scratch cwd only. sed/find/rg/jq can write, run code or print the
+      // environment: opt-in through SANDBOX_TOOLS, never the default.
+      for (const cmd of ["cat", "grep", "ls", "head", "tail", "jq", "sed", "find", "rg", "wc"]) {
+        expect(tools).not.toContain(`Bash(${cmd}:*)`);
       }
-      // sed (w/e/-i), find (-exec) and rg (--pre) can write or run code and a text
-      // denial does not hold against quoting: opt-in only, never the default
-      for (const cmd of ["sed", "find", "rg"]) expect(tools).not.toContain(`Bash(${cmd}:*)`);
       for (const t of ["Read", "Grep", "Glob", "WebFetch", "WebSearch", "Bash(git log:*)", "Bash(gh pr view:*)"]) {
         expect(tools).toContain(t);
       }
@@ -535,15 +536,15 @@ describe("the shell is gated by the caller's role", () => {
   test("the ways out of the read-only commands are denied, to every sandboxed role", () => {
     const denied = toolPolicyFor("pal", opts).disallowedTools ?? [];
     for (const d of [...SHELL_ESCAPE_DENY, ...READ_ONLY_REDIRECT_DENY]) expect(denied).toContain(d);
-    expect(toolPolicyFor("admin", opts).disallowedTools).toContain("Bash(sed *-i*)");
+    expect(toolPolicyFor("admin", opts).disallowedTools).toContain("Bash(sed *-*i*)");
     // substring patterns, so a quote or a combined flag does not get past them
-    for (const d of ["Bash(sed *-i*)", "Bash(sed *-?i*)", "Bash(find *exec*)", "Bash(rg *--pre*)", "Bash(jq *env*)", "Bash(jq *ENV*)"]) {
+    for (const d of ["Bash(sed *-*i*)", "Bash(find *exec*)", "Bash(rg *--pre*)", "Bash(jq *env*)", "Bash(jq *ENV*)"]) {
       expect(SHELL_ESCAPE_DENY).toContain(d);
     }
     expect(denied).toContain("Read(**/.env)");
     // an executer commits with messages that carry `>`, so only the read-only roles lose redirects
     const exe = toolPolicyFor("executer", opts).disallowedTools ?? [];
-    expect(exe).toContain("Bash(sed *-i*)");
+    expect(exe).toContain("Bash(sed *-*i*)");
     expect(exe).not.toContain("Bash(*>*)");
     expect(toolPolicyFor("admin", opts).disallowedTools).not.toContain("Bash(*>*)");
   });
@@ -558,15 +559,15 @@ describe("the shell is gated by the caller's role", () => {
   });
 
   test("SANDBOX_TOOLS replaces the default list, and every denial still applies", () => {
-    const custom = ["Read", "Bash(ls:*)"];
+    const custom = ["Read", "Bash(cat:*)"];
     expect(sandboxToolsOf(custom)).toEqual(custom);
     expect(sandboxToolsOf([])).toBe(PAL_TOOLS);
     expect(sandboxToolsOf(undefined)).toBe(PAL_TOOLS);
     for (const role of viaSandboxList) {
       const p = toolPolicyFor(role, { ...opts, sandboxTools: custom });
       expect(p.allowedTools).toEqual(expect.arrayContaining(custom));
-      expect(p.allowedTools).not.toContain("Bash(cat:*)");
-      expect(p.disallowedTools).toContain("Bash(sed *-i*)");
+      expect(p.allowedTools).not.toContain("WebFetch");
+      expect(p.disallowedTools).toContain("Bash(sed *-*i*)");
       expect(p.skipPermissions).toBe(false);
     }
   });
