@@ -23,8 +23,8 @@ cd web && bunx tsc --noEmit   # only if web/ changed; then bun run build:web fro
 
 - Scope while iterating: `bun test <path>` (a file, e.g. `bun test src/domain/watch.test.ts`, or a folder such as `tests/domain`) and `bun test -t "<test name>"`. Tests sit next to the code (`src/**/*.test.ts`) and under `tests/` (`application`, `bin`, `config`, `domain`, `infrastructure`, `web`).
 - Finish with the full `bun test`: a scoped run proves nothing about what else moved. `tests/web/systemModel.test.ts` and `systemDesign.test.ts` fail when the runtime shape, schema or a cited constant changed without `web/src/systemModel.ts` / `systemDesign.ts`.
-- `bun run test:e2e` is real Slack (`JARVIS_E2E=1`, needs `SLACK_BOT_TOKEN`); run it for changes to streaming, Block Kit, uploads or watch posting. CI runs it with the `JARVIS_E2E_SLACK_BOT_TOKEN` secret.
-- CI (`.github/workflows/ci.yml`, job `checks`) = install, typecheck, tests, e2e, then `web/` typecheck and build. Green CI on the head commit is required, not a substitute for the steps below.
+- `bun run test:e2e` is real Slack (`JARVIS_E2E=1`, needs `SLACK_BOT_TOKEN`); run it for changes to streaming, Block Kit, uploads or watch posting. CI never runs it on a PR: `.github/workflows/e2e.yml` runs it only after the merge, on a push to `main`, with the token from the main-only `e2e` environment. So for those changes run it yourself on the PR head, green CI says nothing about it.
+- CI (`.github/workflows/ci.yml`, job `checks`) = install, typecheck, tests, then `web/` typecheck and build, no e2e. Green CI on the head commit is required, not a substitute for the steps below.
 
 ## Behaviour, by change type
 
