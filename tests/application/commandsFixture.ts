@@ -6,6 +6,7 @@ import { createMessageRepo } from "../../src/infrastructure/db/messageRepo.ts";
 import { createLearningsRepo } from "../../src/infrastructure/db/learningsRepo.ts";
 import type { ClaudeTokenPort } from "../../src/application/claudeTokens.ts";
 import { type CommandDeps } from "../../src/application/commands.ts";
+import { adapterDepsOf } from "../../src/application/commands/shared.ts";
 import type { AllowedUser } from "../../src/domain/types.ts";
 import type { LlmPort } from "../../src/application/ports.ts";
 import type { SlackAdminPort, SlackMessage } from "../../src/application/slackAdmin.ts";
@@ -101,7 +102,7 @@ export const everyoneHasToken = (): ClaudeTokenPort => ({
 export const build = (thread: SlackMessage[] = [threadMsg("hi there")]): CommandDeps => {
   db = openDatabase(":memory:");
   slackCalls = { posts: [], reactions: [], removed: [], buttons: [], settled: [] };
-  return {
+  const deps: CommandDeps = {
     users: createUserRepo(db),
     messages: createMessageRepo(db),
     learnings: createLearningsRepo(db),
@@ -114,4 +115,13 @@ export const build = (thread: SlackMessage[] = [threadMsg("hi there")]): Command
     draft: async () => "an AI-drafted reply",
     claudeTokens: everyoneHasToken(),
   };
+  // The adapter is read per call, so a test that sets `adapterStore` after `build` is honoured.
+  deps.learningApproval = {
+    learnings: deps.learnings!,
+    adapter: () => adapterDepsOf(deps),
+    slack: deps.slack,
+    clock: deps.clock,
+    ownerSlackId: OWNER,
+  };
+  return deps;
 };

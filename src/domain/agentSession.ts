@@ -21,6 +21,15 @@
  * agent that leaves it inert has broken the platform's own affordance. So a
  * press is honoured, and the notice names whose turn it was when it was not the
  * presser's - visible rather than refused.
+ *
+ * What ends the session: `agents.sessions.setStatus` and nothing else. Slack
+ * documents that the streaming methods (`chat.startStream`/`appendStream`/
+ * `stopStream`) only deliver message content, and that "the loading UX does not
+ * disappear automatically when your app posts a message. Set `status: 'active'`
+ * when you finish, or the session stays in `processing` until it times out after
+ * one hour." So every turn that opened a stream owes a `status: "active"` when
+ * it ends, and a stop press owes one too - `stopStream` alone only closes a
+ * message, and fails with `message_not_in_streaming_state` once it is closed.
  */
 
 /** The event name to subscribe to, and to register a handler for. */
@@ -92,3 +101,27 @@ export const sessionStoppedLog = (
   const where = press.link ? `<${press.link}|thread>` : `<#${press.channel}> \`${press.threadTs}\``;
   return `⏹ <@${press.by}> pressed stop in ${where}: stopped *${run.what}*${whose} after ${forHowLong(now - run.startedAt)}`;
 };
+
+/** The method that moves an agent session between `processing` and `active`. */
+export const SET_SESSION_STATUS = "agents.sessions.setStatus";
+
+/**
+ * Arguments that put a thread's agent session back to idle, which is what makes
+ * Slack drop its stop button. `active` is "ready for the next prompt";
+ * `processing` is the only state the button is drawn in.
+ */
+export const idleSessionArgs = (channel: string, threadTs: string): Record<string, unknown> => ({
+  channel_id: channel,
+  thread_ts: threadTs,
+  status: "active",
+});
+
+/**
+ * Whether the session may be idled now: no run is still live in the thread.
+ * Count only runs that are not `stopping` when a stop press asks - the run it
+ * just stopped stays in the registry until its turn unwinds, and counting it
+ * would mean a press that stopped the only run never idles. A run that ENDS
+ * is asked of the registry instead (`onSessionIdle`), which idles for whichever
+ * run goes last, whether or not that run ever opened a stream.
+ */
+export const mayIdleSession = (stillLive: number): boolean => stillLive === 0;

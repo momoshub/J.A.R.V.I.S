@@ -73,6 +73,11 @@ export type Learning = {
   readonly content: string;
   readonly createdBy: string;
   readonly createdAt: number;
+  /** Only `active` reaches a prompt; `pending` waits for the owner (`domain/learning.ts`). */
+  readonly status: import("./learning.ts").LearningStatus;
+  /** Where the owner's Approve / Reject message lives, so a press can be checked against it. */
+  readonly noticeChannel: string;
+  readonly noticeTs: string;
 };
 
 /** Editable pieces that shape the bot's system prompt. */

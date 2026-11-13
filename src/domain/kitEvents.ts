@@ -17,6 +17,7 @@
  */
 
 import { CODE_ACTION_PREFIX } from "./cloudwatch.ts";
+import { LEARNING_ACTION_PREFIX } from "./learning.ts";
 import { LOOP_ACTION_PREFIX } from "./loop.ts";
 
 export const KIT_PREFIX = "jv:";
@@ -261,9 +262,16 @@ const idOf = (e: unknown): string | undefined =>
 
 const isKitElement = (e: unknown): boolean => {
   const id = idOf(e);
-  // `jv:cloudwatch:` and `jv:loop:` buttons are decided in code and are never an
+  // `jv:cloudwatch:`, `jv:loop:` and `jv:learning:` buttons are decided in code and are never an
   // open question for the model, so a typed reply must not retire them.
-  return !!id && KIT_PATTERN.test(id) && !isSettled(id) && !id.startsWith(CODE_ACTION_PREFIX) && !id.startsWith(LOOP_ACTION_PREFIX);
+  return (
+    !!id &&
+    KIT_PATTERN.test(id) &&
+    !isSettled(id) &&
+    !id.startsWith(CODE_ACTION_PREFIX) &&
+    !id.startsWith(LOOP_ACTION_PREFIX) &&
+    !id.startsWith(LEARNING_ACTION_PREFIX)
+  );
 };
 
 const blockHasKit = (b: KitBlock): boolean =>

@@ -76,7 +76,7 @@ export const LOOP_APPROVE_ACTION = `${LOOP_ACTION_PREFIX}approve`;
 export const LOOP_REJECT_ACTION = `${LOOP_ACTION_PREFIX}reject`;
 
 /** Slack reads `<url|label>`, `<!channel>`, `<@U…>` and `&…;` even inside a code fence, so the shell is shown escaped. */
-const escapeForSlack = (text: string): string =>
+export const escapeForSlack = (text: string): string =>
   text.replaceAll("&", "&amp;").replaceAll("<", "&lt;").replaceAll(">", "&gt;");
 
 /** The lines of the approval DM that say what runs: a press counts only while the pressed message still shows them. */

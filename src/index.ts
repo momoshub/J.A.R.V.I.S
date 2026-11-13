@@ -17,6 +17,7 @@ import { isSilenceNote } from "./domain/silence.ts";
 import { openDatabase } from "./infrastructure/db/client.ts";
 import { adoptDatabase } from "./infrastructure/db/location.ts";
 import { createThreadSessionRepo } from "./infrastructure/db/threadSessionRepo.ts";
+import { createThreadBriefRepo } from "./infrastructure/db/threadBriefRepo.ts";
 import { createThreadQueue } from "./application/threadQueue.ts";
 import { RESTART_DELAY_MS, RESTART_HOLD_NOTICE, RESTART_MAX_WAIT_MS, restartWhenIdle } from "./domain/selfUpdate.ts";
 import { isDbFileSwapped } from "./domain/dbHealth.ts";
@@ -37,7 +38,6 @@ import {
   adapterStatus,
   createAdapterReader,
   editAdapterFile,
-  rememberFact,
   revertAdapter,
 } from "./application/adapterMemory.ts";
 import { createAdapterRevisionRepo } from "./infrastructure/db/adapterRevisionRepo.ts";
@@ -72,6 +72,7 @@ import { createClaudeJsonReader, unlistedLocalMcpServers } from "./infrastructur
 import { createReminderSender } from "./application/reminders.ts";
 import { createLoopRunner } from "./application/loops.ts";
 import { expirePendingLoops, type LoopApprovalDeps } from "./application/loopApproval.ts";
+import { injectedLearnings, type LearningApprovalDeps } from "./application/learningApproval.ts";
 import { createShellCheck } from "./infrastructure/system/shellCheck.ts";
 import { createOrcaCli, createOrcaTerminal } from "./infrastructure/system/orcaTerminal.ts";
 import { createOrcaProbe } from "./infrastructure/system/orcaProbe.ts";
@@ -280,6 +281,7 @@ const main = async () => {
   // One CLI session per Slack thread, so a follow-up keeps the context the last
   // turn built instead of starting the conversation over.
   const threadSessions = createThreadSessionRepo(db);
+  const briefs = createThreadBriefRepo(db);
   const accessRequests = createAccessRequestRepo(db);
   const commandApprovals = createCommandApprovalRepo(db);
   const cloudwatchRepo = createCloudwatchRepo(db);
@@ -297,7 +299,7 @@ const main = async () => {
   // Persisted by hash; the token itself is only ever in a 0600 file the brief names by path.
   const workerTickets = createWorkerTickets(() => Date.now(), {
     repo: createWorkerTicketRepo(db),
-    files: createWorkerTicketFiles(WORKER_TICKET_DIR),
+    files: createWorkerTicketFiles(WORKER_TICKET_DIR, `http://127.0.0.1:${config.dashboardPort}`),
   });
   // Tickets that expired while the bot was down: delete their files and rows now, and on a timer.
   workerTickets.sweep();
@@ -529,7 +531,8 @@ const main = async () => {
   const promptContext = () => ({
     botName: profile().name,
     base: settings.get(SETTING_KEYS.systemPrompt),
-    learnings: learnings.list().map((l) => l.content),
+    // Active learnings only: a pending one is the owner's to approve first.
+    learnings: injectedLearnings(learnings),
     adapter: adapterReader.read(),
   });
   const draft = createDraftReply({ llm, promptContext, ownerSlackId: config.ownerSlackId });
@@ -575,6 +578,15 @@ const main = async () => {
     offsetMinutes: () => hostOffsetMin(clock()),
     log: (l) => activity.line(`loop approval: ${l}`),
   };
+  // A learning from anyone but the owner's own typing waits here for the owner's Approve; the same object backs `learn`, the learnings API and the button handler.
+  const learningApproval: LearningApprovalDeps = {
+    learnings,
+    adapter: () => (adapterStore.exists() ? adapterDeps() : undefined),
+    slack: slackAdmin,
+    clock,
+    ownerSlackId: config.ownerSlackId,
+    log: (l) => activity.line(`learning approval: ${l}`),
+  };
   const deps: RespondDeps = {
     users,
     messages,
@@ -597,6 +609,7 @@ const main = async () => {
     reminders,
     loops,
     loopApproval,
+    learningApproval,
     slackWaitScript,
     orcaWorkerWait,
     workerTickets,
@@ -678,6 +691,7 @@ const main = async () => {
     workerCalls: (channelId: string, threadTs: string, limit: number) =>
       readTraceCalls(join(config.logDir, "threads"), channelId, threadTs, WORKER_BILL_KIND, limit),
     threadSessions,
+    briefs,
     // One turn at a time per thread. Two messages a few minutes apart used to
     // run at once, doing the same work twice - two branches, two PRs - and
     // resuming the same CLI session from two processes while they did it.
@@ -846,6 +860,7 @@ const main = async () => {
       rolePolicies,
       messages,
       learnings,
+      learningApproval,
       kitViews,
       stats: createStatsRepo(db),
       adapter: adapterStore.exists()
@@ -863,12 +878,6 @@ const main = async () => {
                 revisions: adapterRevisions.list(20),
                 items: bullets(a.policy) + bullets(a.notes) + a.people.size + a.channels.size + a.skills.length,
               };
-            },
-            remember: (content, by) => {
-              const r = rememberFact(adapterDeps(), content, { kind: "global" }, by);
-              return r.ok
-                ? { ok: true, warnings: r.warnings }
-                : { ok: false, violations: r.violations };
             },
             revert: (id, by) => {
               const r = revertAdapter(adapterDeps(), id, by);
