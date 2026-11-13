@@ -77,8 +77,11 @@ describe("Slack proxy policy", () => {
   test("only Slack's own file urls are fetched", () => {
     expect(isSlackFileUrl("https://files.slack.com/files-pri/T1-F1/a.png")).toBe(true);
     expect(isSlackFileUrl("https://acme.slack.com/files-pri/T1-F1/a.png")).toBe(true);
+    expect(isSlackFileUrl("https://files.slack.com/files-tmb/T1-F1-abc/a_360.png")).toBe(true);
     for (const bad of [
       "http://files.slack.com/files-pri/T1-F1/a.png",
+      "https://files.slack.com/api/anything",
+      "https://files.slack.com/",
       "https://files.slack.com.evil.example/a.png",
       "https://evil.example/files.slack.com/a.png",
       "https://acme.slack.com/messages/C1",

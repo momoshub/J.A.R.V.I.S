@@ -15,6 +15,8 @@ import type { SlackTickets, SlackTicketRefusal } from "./slackTickets.ts";
 
 const SLACK_API = "https://slack.com/api/";
 const CALL_TIMEOUT_MS = 25_000;
+/** Time to get Slack's answer (headers) for a file; the body then streams for as long as it takes, bounded by size instead. */
+const FILE_HEADER_TIMEOUT_MS = 100_000;
 /** A private file is followed through at most this many redirects, each one re-checked. */
 const MAX_REDIRECTS = 3;
 const MAX_FILE_BYTES = 100 * 1024 * 1024;
@@ -47,6 +49,20 @@ const ticketError = (reason: SlackTicketRefusal, limit: number): string =>
   reason === "spent"
     ? `this turn has already made its ${limit} Slack calls, which is the runaway guard - finish up and say what is left`
     : "that Slack ticket is not valid (it belongs to a turn that has ended, or this turn has none)";
+
+/** Errors the stream past `max` bytes, so a body with no content-length is bounded too and the client sees a failed transfer, not a short file. */
+export const capBytes = (body: ReadableStream<Uint8Array>, max: number): ReadableStream<Uint8Array> => {
+  let seen = 0;
+  return body.pipeThrough(
+    new TransformStream<Uint8Array, Uint8Array>({
+      transform(chunk, controller) {
+        seen += chunk.byteLength;
+        if (seen > max) controller.error(new Error("file is too large"));
+        else controller.enqueue(chunk);
+      },
+    }),
+  );
+};
 
 export const createSlackProxy = (deps: SlackProxyDeps): SlackProxy => {
   const doFetch = deps.fetchFn ?? fetch;
@@ -100,11 +116,19 @@ export const createSlackProxy = (deps: SlackProxyDeps): SlackProxy => {
       try {
         // The token goes to a host only after that exact url passed the check, and every redirect is checked again.
         for (let hop = 0; hop <= MAX_REDIRECTS; hop++) {
-          const res = await doFetch(target, {
-            headers: { Authorization: `Bearer ${deps.botToken}` },
-            redirect: "manual",
-            signal: AbortSignal.timeout(CALL_TIMEOUT_MS * 4),
-          });
+          // the timer covers the wait for headers only: a signal on fetch would also cut a slow body mid-stream, after the 200 was sent
+          const controller = new AbortController();
+          const timer = setTimeout(() => controller.abort(), FILE_HEADER_TIMEOUT_MS);
+          let res: Response;
+          try {
+            res = await doFetch(target, {
+              headers: { Authorization: `Bearer ${deps.botToken}` },
+              redirect: "manual",
+              signal: controller.signal,
+            });
+          } finally {
+            clearTimeout(timer);
+          }
           if (res.status >= 300 && res.status < 400) {
             const next = res.headers.get("location");
             const absolute = next ? new URL(next, target).toString() : "";
@@ -117,7 +141,7 @@ export const createSlackProxy = (deps: SlackProxyDeps): SlackProxy => {
           if (Number.isFinite(length) && length > MAX_FILE_BYTES) return { ok: false, status: 413, error: "file is too large" };
           return {
             ok: true,
-            body: res.body,
+            body: capBytes(res.body, MAX_FILE_BYTES),
             contentType: res.headers.get("content-type") ?? "application/octet-stream",
             ...(res.headers.get("content-length") ? { contentLength: res.headers.get("content-length") as string } : {}),
           };

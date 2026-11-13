@@ -123,6 +123,7 @@ export const isSlackFileUrl = (raw: unknown): boolean => {
     return false;
   }
   if (url.protocol !== "https:" || url.username || url.password || url.port) return false;
-  if (url.hostname === "files.slack.com") return true;
+  // `url_private` is always /files-pri/ (thumbnails are /files-tmb/); nothing else on the host gets the token.
+  if (url.hostname === "files.slack.com") return url.pathname.startsWith("/files-pri/") || url.pathname.startsWith("/files-tmb/");
   return url.hostname.endsWith(".slack.com") && url.pathname.startsWith("/files-pri/");
 };

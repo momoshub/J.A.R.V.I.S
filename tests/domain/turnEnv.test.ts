@@ -16,10 +16,17 @@ describe("turn environment", () => {
       "DB_PASSWORD",
       "SOME_NEW_SERVICE_TOKEN",
       "TOKEN_KEY_PATH",
+      "PGPASSWORD",
+      "MYSQL_PWD",
+      "GITHUB_PAT",
+      "OPENAI_KEY",
+      "STRIPE_KEY",
+      "NPM_CONFIG__AUTH",
+      "DB_PASSPHRASE",
     ]) {
       expect(isSecretEnvName(name)).toBe(true);
     }
-    for (const name of ["PATH", "HOME", "DASHBOARD_PORT", "SLACK_TRANSPORT", "BOT_NAME", "JARVIS_RUN_TICKET", "JARVIS_SLACK_TICKET", "SSH_AUTH_SOCK", "TOKENIZER_MODE", "MONKEY_PATCH"]) {
+    for (const name of ["PATH", "HOME", "DASHBOARD_PORT", "SLACK_TRANSPORT", "BOT_NAME", "JARVIS_RUN_TICKET", "JARVIS_SLACK_TICKET", "SSH_AUTH_SOCK", "TOKENIZER_MODE", "TOKENIZERS_PARALLELISM", "MONKEY_PATCH", "PWD", "OLDPWD", "PATH", "KEYBOARD_LAYOUT", "XDG_CONFIG_HOME"]) {
       expect(isSecretEnvName(name)).toBe(false);
     }
   });

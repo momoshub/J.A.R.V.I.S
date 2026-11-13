@@ -158,6 +158,37 @@ describe("slack-file.sh", () => {
     expect(readdirSync(dir)).toEqual([]);
   });
 
+  test("a transfer cut off after the 200 is a failure, never a path to a short file", async () => {
+    const server = Bun.serve({
+      port: 0,
+      fetch: () =>
+        new Response(
+          new ReadableStream<Uint8Array>({
+            start(c) {
+              c.enqueue(new TextEncoder().encode("only-the-start"));
+              c.error(new Error("aborted mid-body"));
+            },
+          }),
+          { headers: { "content-length": "1000" } },
+        ),
+    });
+    try {
+      const dir = mkdtempSync(join(tmpdir(), "slack-file-test-"));
+      dirs.push(dir);
+      const dest = join(dir, "cut.bin");
+      const { stdout, stderr, code } = await run("slack-file.sh", ["https://files.slack.com/files-pri/T1-F1/pic.png", dest], {
+        JARVIS_SLACK_TICKET: TICKET,
+        JARVIS_SLACK_API_URL: `http://127.0.0.1:${server.port}/api/slack`,
+      });
+      expect(code).toBe(1);
+      expect(stdout).toBe("");
+      expect(stderr).toContain("ended early");
+      expect(readdirSync(dir)).toEqual([]);
+    } finally {
+      server.stop(true);
+    }
+  });
+
   test("without a ticket it does not even try", async () => {
     bot = fakeBot();
     const { code } = await run("slack-file.sh", ["https://files.slack.com/files-pri/T1-F1/pic.png"], { JARVIS_SLACK_API_URL: bot.url });

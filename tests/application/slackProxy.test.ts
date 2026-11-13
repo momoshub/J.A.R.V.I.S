@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { createSlackProxy } from "../../src/application/slackProxy.ts";
+import { capBytes, createSlackProxy } from "../../src/application/slackProxy.ts";
 import { createSlackTickets } from "../../src/application/slackTickets.ts";
 
 const BOT_TOKEN = "xoxb-the-bots-own-token";
@@ -120,6 +120,38 @@ describe("Slack proxy", () => {
         expect(await new Response(file.body).text()).toBe("PNGDATA");
       }
       expect((seen[0]!.init.headers as Record<string, string>).Authorization).toBe(`Bearer ${BOT_TOKEN}`);
+    });
+
+    test("a body is capped by bytes even with no content-length, so it fails the transfer instead of ending short", async () => {
+      const big = new ReadableStream<Uint8Array>({
+        start(c) {
+          c.enqueue(new Uint8Array(60));
+          c.enqueue(new Uint8Array(60));
+          c.close();
+        },
+      });
+      await expect(new Response(capBytes(big, 100)).arrayBuffer()).rejects.toThrow();
+      const small = new ReadableStream<Uint8Array>({ start(c) { c.enqueue(new Uint8Array(60)); c.close(); } });
+      expect((await new Response(capBytes(small, 100)).arrayBuffer()).byteLength).toBe(60);
+    });
+
+    test("a slow body is not cut off by the header timer", async () => {
+      const { proxy, tickets } = setup(
+        () =>
+          new Response(
+            new ReadableStream<Uint8Array>({
+              async start(c) {
+                c.enqueue(new TextEncoder().encode("part1-"));
+                await Bun.sleep(150);
+                c.enqueue(new TextEncoder().encode("part2"));
+                c.close();
+              },
+            }),
+          ),
+      );
+      const file = await proxy.download({ ticket: tickets.issue({ channel: "C1" }), url: "https://files.slack.com/files-pri/T1-F1/a.bin" });
+      expect(file.ok).toBe(true);
+      if (file.ok) expect(await new Response(file.body).text()).toBe("part1-part2");
     });
 
     test("no ticket or a url that is not Slack's never sends the token anywhere", async () => {

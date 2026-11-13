@@ -36,6 +36,13 @@ fi
 
 payload=$(TICKET="$ticket" URL="$url" python3 -c 'import json,os; print(json.dumps({"ticket": os.environ["TICKET"], "url": os.environ["URL"]}))') || exit 2
 code=$(printf '%s' "$payload" | curl -sS --max-time 300 -w "%{http_code}" -o "$dest" -X POST -H "Content-Type: application/json" -d @- "$base/file")
+status=$?
+# curl prints 200 even when the body was cut off after it (exit 18, or the bot aborting an over-size stream): a short file is a failure
+if [ "$status" -ne 0 ]; then
+  rm -f "$dest"
+  echo "download failed (transfer ended early, curl exit $status)" >&2
+  exit 1
+fi
 if [ "$code" != "200" ]; then
   # a refusal comes back as a small JSON error where the file would have been
   reason=$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1])).get("error",""))' "$dest" 2>/dev/null)

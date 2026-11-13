@@ -687,7 +687,8 @@ included - and tell it to `curl` Slack with it.
 
 **The environment.** A turn gets the bot's environment minus every
 credential-shaped variable: any name with a `TOKEN`, `SECRET`, `PASSWORD`,
-`API_KEY`, `ACCESS_KEY`, `PRIVATE_KEY` or `CREDENTIAL` word in it. That is a rule
+`API_KEY`, `ACCESS_KEY`, `PRIVATE_KEY` or `CREDENTIAL` word in it, a password glued to a
+prefix (`PGPASSWORD`), or a `_KEY`, `_PAT`, `_PWD` or `_AUTH` ending. That is a rule
 by name, so a `*_TOKEN` you add to `.env` later is withheld without a code
 change. Two things stay: `CLAUDE_CODE_OAUTH_TOKEN` (the CLI cannot authenticate
 without it) and whatever you list in `TURN_ENV_PASSTHROUGH`. The boot log says
@@ -719,12 +720,14 @@ Anything else is refused (`method_not_allowed`), a write to another channel is
 `channel_not_allowed`, and a missing, revoked or expired ticket is refused before
 anything else. `slack-read.sh`, `slack-react.sh`, `slack-file.sh` and
 `slack-upload.sh` are built on the same helper, so a sandboxed role has no more
-power than before. A watch predicate and a loop script are admin-written shell
+power than before (reacting and uploading now only work in the turn's own channel). A watch predicate and a loop script are admin-written shell
 that runs **as the bot**, so they keep the bot's own environment; `watch reply`
 gets a read-only ticket for the length of each check.
 
-**What this does not do.** It takes the token out of the turn's environment. A
-full-access turn is still the host user: it can read `.env` and the token files
+**What this does not do.** It takes the token out of the turn's environment.
+Reads are not channel-scoped, so a turn in a public channel can still read a
+private conversation the bot is in and write it into that channel (the token
+allowed the same before). A full-access turn is still the host user: it can read `.env` and the token files
 off disk, and the dashboard's loopback API has no authentication, so it can reach
 the console routes (`/api/slack/post`, ...) with `curl` and act as the bot in any
 channel. Closing those is a separate decision about what a full-access turn may
