@@ -375,6 +375,7 @@ export const handleMessage = async (
     actor: decision.user.slackId,
     channel: inbound.channelId,
     threadTs: inbound.threadTs,
+    messageTs: inbound.messageTs,
   });
   const window = deps.contextWindow ?? DEFAULT_CONTEXT_WINDOW;
   // The thread itself is the context, read from Slack: the whole of this thread

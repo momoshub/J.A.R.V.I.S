@@ -15,7 +15,7 @@
  * the whole catch-up policy: a bot that was down over three slots runs the loop
  * once on startup and carries on from there, never a burst.
  */
-import { loopRef, loopTurnText, nextRun, parseSchedule } from "../domain/loop.ts";
+import { loopRef, loopTurnText, nextRun, originLinkText, parseSchedule } from "../domain/loop.ts";
 import type { Loop, LoopRepo } from "../infrastructure/db/loopRepo.ts";
 import type { Clock } from "./ports.ts";
 import { logAndIgnore } from "./ignoredError.ts";
@@ -33,6 +33,21 @@ export type LoopTurnRequest = {
   loop?: boolean;
 };
 
+/**
+ * ` · <link|created here>` for the message that created `l`, or nothing: an
+ * old loop or a slash command has no origin, and a link is a convenience, never
+ * a reason for a run to fail. Slack builds the link, so a thread reply points
+ * into its thread.
+ */
+export const loopOriginText = async (
+  l: Loop,
+  permalink?: (channel: string, ts: string) => Promise<string | undefined>,
+): Promise<string> => {
+  const ts = l.originTs || l.threadTs;
+  if (!permalink || !l.channelId || !ts) return "";
+  return originLinkText(await permalink(l.channelId, ts).catch(logAndIgnore("loop origin permalink")));
+};
+
 export type LoopRunnerDeps = {
   loops: LoopRepo;
   clock: Clock;
@@ -45,6 +60,8 @@ export type LoopRunnerDeps = {
    * creator's id. Nothing posts without it.
    */
   dm: (slackUserId: string, text: string) => Promise<{ channel: string; ts: string } | undefined>;
+  /** A link to one Slack message, for the origin line of a run's announcement. Without it there is no link. */
+  permalink?: (channel: string, ts: string) => Promise<string | undefined>;
   /** The watcher's shell runner: same cwd, env and timeout. Without it a script loop is stopped. */
   check?: (cmd: string, timeoutMs: number) => Promise<CheckResult>;
   /**
@@ -68,8 +85,8 @@ export const createLoopRunner = (deps: LoopRunnerDeps): LoopRunner => {
   // An overrunning tick must not let a second one fire the same loop twice.
   let running = false;
 
-  const say = (l: Loop, text: string, what: string): Promise<void> =>
-    deps.dm(l.createdBy, text).then(() => undefined, logAndIgnore(what));
+  const say = async (l: Loop, text: string, what: string): Promise<void> =>
+    deps.dm(l.createdBy, text + (await loopOriginText(l, deps.permalink))).then(() => undefined, logAndIgnore(what));
 
   const runScript = async (l: Loop, next: number): Promise<void> => {
     const fail = (why: string): Promise<void> => {
@@ -124,7 +141,7 @@ export const createLoopRunner = (deps: LoopRunnerDeps): LoopRunner => {
     // One fresh top-level DM message per fire; the turn runs in its thread.
     let ref: { channel: string; ts: string } | undefined;
     try {
-      ref = await deps.dm(l.createdBy, `🔁 ${l.name} - loop #${l.id}, ${l.schedule}`);
+      ref = await deps.dm(l.createdBy, `🔁 ${l.name} - loop #${l.id}, ${l.schedule}${await loopOriginText(l, deps.permalink)}`);
     } catch (e) {
       ref = undefined;
       log(`loop ${l.id}: could not open the DM: ${e instanceof Error ? e.message : String(e)}`);

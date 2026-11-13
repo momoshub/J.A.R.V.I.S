@@ -203,6 +203,8 @@ export type Context = {
   channelId: string;
   /** Thread the command was typed in; absent when invoked by slash command. */
   threadTs?: string;
+  /** The message the command was typed in (or the turn that ran it began with); absent for a slash command. */
+  messageTs?: string;
   args: string[];
   rest: string;
   /** configured message prefix + slash, for help/hint text */

@@ -64,6 +64,9 @@ export const deriveName = (prompt: string, command: string = ""): string => {
 export const loopRef = (id: number, name: string, noun: string = "loop"): string =>
   name ? `${name} - ${noun} #${id}` : `${noun} #${id}`;
 
+/** ` · <url|created here>` when the loop's origin could be linked, else nothing. */
+export const originLinkText = (url: string | undefined): string => (url ? ` · <${url}|created here>` : "");
+
 /** `pending`: a script loop a turn wrote, waiting for the owner's Approve. It never runs. */
 export type LoopState = "pending" | "active" | "cancelled" | "failed";
 

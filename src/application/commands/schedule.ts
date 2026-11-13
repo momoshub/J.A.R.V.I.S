@@ -11,6 +11,7 @@ import {
 } from "../../domain/mindful.ts";
 import { MAX_LOOPS_PER_USER, cleanName, loopRef, nextRun, parseLoopArgs, scheduleText } from "../../domain/loop.ts";
 import { proposeScriptLoop } from "../loopApproval.ts";
+import { loopOriginText } from "../loops.ts";
 import { type CommandDef, RANK, parseWindow } from "./shared.ts";
 
 export const SCHEDULE_COMMANDS: readonly CommandDef[] = [
@@ -221,7 +222,7 @@ export const SCHEDULE_COMMANDS: readonly CommandDef[] = [
     minRole: "admin",
     usage: "every <monday 9am | day at 18:00 | 6h | week> [--name \"PR board\"] <prompt> | every <schedule> [--name <name>] -- <shell command> (my own turn only, at the owner's ask, then the owner approves) | list | rename <id> <name> | cancel <id>",
     summary: "on a schedule, run a prompt as a real turn; runs report to your DM under its name (--name, else the first words of the prompt; rename later). A script loop is never typed: ask me in plain words and I write it, the owner approves it",
-    run: async ({ deps, actor, args, rest, prefix, threadTs, channelId, fromBrainRun }) => {
+    run: async ({ deps, actor, args, rest, prefix, threadTs, messageTs, channelId, fromBrainRun }) => {
       if (!deps.loops) return "I have nowhere to keep a loop right now.";
       const now = deps.clock();
       const offset = deps.tzOffsetMinutes?.() ?? -new Date(now).getTimezoneOffset();
@@ -231,13 +232,14 @@ export const SCHEDULE_COMMANDS: readonly CommandDef[] = [
         // Yours, wherever you ask: a loop reports to its creator's DM, not to a thread.
         const rows = deps.loops.liveBy(actor.slackId, 30);
         if (rows.length === 0) return "You have no loops.";
+        const origins = await Promise.all(rows.map((l) => loopOriginText(l, deps.slack?.permalink)));
         return rows
-          .map((l) => {
+          .map((l, i) => {
             const what = l.command ? `\`${l.command.slice(0, 80)}\`` : l.prompt.slice(0, 80);
             // A pending one has no next run: it never runs until the owner approves it.
             return l.state === "pending"
-              ? `- #${l.id} *${l.name}* script ${l.schedule} - pending the owner's approval, never runs until then: ${what}`
-              : `- #${l.id} *${l.name}* ${l.command ? "script" : "prompt"} ${l.schedule} - next ${formatWhen(l.nextAt, offset)} (${humanLead(l.nextAt - now)}): ${what}`;
+              ? `- #${l.id} *${l.name}* script ${l.schedule} - pending the owner's approval, never runs until then: ${what}${origins[i]}`
+              : `- #${l.id} *${l.name}* ${l.command ? "script" : "prompt"} ${l.schedule} - next ${formatWhen(l.nextAt, offset)} (${humanLead(l.nextAt - now)}): ${what}${origins[i]}`;
           })
           .join("\n");
       }
@@ -291,6 +293,7 @@ export const SCHEDULE_COMMANDS: readonly CommandDef[] = [
         const proposed = await proposeScriptLoop(deps.loopApproval, {
           channelId,
           threadTs: threadTs ?? "",
+          originTs: messageTs,
           createdBy: actor.slackId,
           name: parsed.name,
           schedule: scheduleText(parsed.schedule),
@@ -302,7 +305,7 @@ export const SCHEDULE_COMMANDS: readonly CommandDef[] = [
         return `🔐 script ${loopRef(proposed.loop.id, proposed.loop.name)} (${proposed.loop.schedule}) is PENDING: nothing is scheduled and nothing runs until the owner presses Approve on the DM I just sent with the exact command. Reject, or no answer in 24h, deletes it. Tell the person that.`;
       }
       const l = deps.loops.add(
-        { channelId, threadTs: threadTs ?? "", createdBy: actor.slackId, name: parsed.name, schedule: scheduleText(parsed.schedule), prompt: parsed.prompt, command: parsed.command, nextAt },
+        { channelId, threadTs: threadTs ?? "", originTs: messageTs, createdBy: actor.slackId, name: parsed.name, schedule: scheduleText(parsed.schedule), prompt: parsed.prompt, command: parsed.command, nextAt },
         now,
       );
       return `🔁 ${loopRef(l.id, l.name)}: ${l.schedule}, first run ${formatWhen(nextAt, offset)} (${humanLead(nextAt - now)}). Each run starts a turn in your DM with me, as you. (\`${prefix} loop rename ${l.id} <name>\`, \`${prefix} loop cancel ${l.id}\`)`;
