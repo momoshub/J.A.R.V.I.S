@@ -587,6 +587,7 @@ const main = async () => {
       autoContinue,
       unprompted,
       workerLane,
+      loop,
     }: {
       channelId: string;
       threadTs: string;
@@ -596,6 +597,7 @@ const main = async () => {
       autoContinue?: boolean;
       unprompted?: boolean;
       workerLane?: boolean;
+      loop?: boolean;
     }) => {
       const result = await respond(deps, {
         channelId,
@@ -609,6 +611,8 @@ const main = async () => {
         autoContinue,
         unprompted,
         workerLane,
+        // A loop's fire runs on Sonnet; replies a person types in its DM thread are ordinary turns.
+        model: loop ? agentModels().loop : undefined,
       });
       // A turn nobody watched live can still answer with a note about not
       // answering; posted, it reads as the whole reply.

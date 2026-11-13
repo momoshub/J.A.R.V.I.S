@@ -104,17 +104,33 @@ export const migrate = (db: Database): void => {
   migrateWorkerTickets(db);
   migrateLoops(db);
   migrateWorkerTicketBoundAt(db);
+  migrateLoopNames(db);
   migrateThreadBriefs(db);
 };
 
 /**
- * Migration v33: briefs between threads.
+ * Migration v33: a name on every loop.
+ *
+ * `loop #3` told nobody what it was. The column defaults to `''`, so every
+ * existing row survives untouched and the repo derives its name from the
+ * prompt on read; nothing is rewritten here, so a rerun is a no-op.
+ */
+const migrateLoopNames = (db: Database): void => {
+  const cols = db.query<{ name: string }, []>("PRAGMA table_info(loops)").all().map((c) => c.name);
+  if (!cols.includes("name")) db.exec("ALTER TABLE loops ADD COLUMN name TEXT NOT NULL DEFAULT ''");
+};
+
+/**
+ * Migration v34: briefs between threads.
  *
  * A brief is a note one thread's session writes for another's (see
- * `domain/threadBrief.ts`). `read_at` is NULL until a turn in the target thread
- * has actually run with it. `thread_brief_links` records which threads have
- * written to each other, so the receiver can answer an opaque reference without
- * ever being handed the source's channel or timestamp.
+ * `domain/threadBrief.ts`). Read state is per access tier (`thread_brief_reads`):
+ * a thread has one CLI session per tier, and a session only knows a brief once a
+ * turn on THAT session carried it, so a read by one tier must not hide it from
+ * another. `thread_brief_links` records which threads have written to each
+ * other, so the receiver can answer an opaque reference without ever being
+ * handed the source's channel or timestamp, and `thread_brief_secret` is the one
+ * random key those references are an HMAC under.
  */
 const migrateThreadBriefs = (db: Database): void => {
   db.exec(`
@@ -126,10 +142,19 @@ const migrateThreadBriefs = (db: Database): void => {
       to_thread    TEXT NOT NULL,
       author       TEXT NOT NULL DEFAULT '',
       text         TEXT NOT NULL,
-      created_at   INTEGER NOT NULL,
-      read_at      INTEGER
+      created_at   INTEGER NOT NULL
     );
-    CREATE INDEX IF NOT EXISTS idx_thread_briefs_unread ON thread_briefs (to_channel, to_thread, read_at);
+    CREATE INDEX IF NOT EXISTS idx_thread_briefs_to ON thread_briefs (to_channel, to_thread, id);
+    CREATE TABLE IF NOT EXISTS thread_brief_reads (
+      brief_id INTEGER NOT NULL,
+      tier     TEXT NOT NULL,
+      read_at  INTEGER NOT NULL,
+      PRIMARY KEY (brief_id, tier)
+    );
+    CREATE TABLE IF NOT EXISTS thread_brief_secret (
+      id     INTEGER PRIMARY KEY CHECK (id = 1),
+      secret TEXT NOT NULL
+    );
     CREATE TABLE IF NOT EXISTS thread_brief_links (
       channel_id   TEXT NOT NULL,
       thread_ts    TEXT NOT NULL,
@@ -144,7 +169,7 @@ const migrateThreadBriefs = (db: Database): void => {
   const { user_version } = db.query<{ user_version: number }, []>("PRAGMA user_version").get() ?? {
     user_version: 0,
   };
-  if (user_version < 33) db.exec("PRAGMA user_version = 33;");
+  if (user_version < 34) db.exec("PRAGMA user_version = 34;");
 };
 
 /**

@@ -23,7 +23,7 @@ import type { PromptGuide } from "../domain/promptGuides.ts";
 import { adapterRules } from "../domain/adapter.ts";
 import { hasContent } from "../domain/mentions.ts";
 import type { Clock, LlmPort, LlmStreamSink, LlmUsage } from "./ports.ts";
-import type { PromptContext, StoredMessage, UserRole } from "../domain/types.ts";
+import type { PromptContext, PromptMessage, StoredMessage, UserRole } from "../domain/types.ts";
 import { mayUseOrca, type ToolPolicy } from "../domain/toolPolicy.ts";
 import type { MessageRepo } from "../infrastructure/db/messageRepo.ts";
 import type { UserRepo } from "../infrastructure/db/userRepo.ts";
@@ -53,7 +53,7 @@ import { isMissingSession, threadSessionName, tierOf, unseenTurns } from "../dom
 import { promptFingerprint } from "../domain/promptFingerprint.ts";
 import type { ThreadSessionRepo } from "../infrastructure/db/threadSessionRepo.ts";
 import type { ThreadBriefRepo } from "../infrastructure/db/threadBriefRepo.ts";
-import { pickBriefs, renderBriefs } from "../domain/threadBrief.ts";
+import { BRIEF_RECENT_LOOKBACK, pickBriefs, renderBriefs } from "../domain/threadBrief.ts";
 import type { SlackAdminPort, SlackMessage } from "./slackAdmin.ts";
 import type { GitHubPort } from "./github.ts";
 import type { CiGate } from "./ciGate.ts";
@@ -118,6 +118,8 @@ export type HandleMessageDeps = {
     unprompted?: boolean;
     /** In a workflow thread, run on the worker's lane (see `InboundMessage`). */
     workerLane?: boolean;
+    /** A loop's scheduled fire: runs on the `loop` model (see `InboundMessage.model`). */
+    loop?: boolean;
   }) => Promise<void>;
   /** Timer for a workflow's next step; injected so tests need not wait. */
   continueTimer?: (fn: () => void, ms: number) => void;
@@ -291,6 +293,8 @@ export type InboundMessage = {
    * workflow it changes nothing.
    */
   workerLane?: boolean;
+  /** Forces the turn's model, over the role and channel model (a loop's fire). */
+  model?: string;
 };
 
 /** What a turn says when the model said nothing. A placeholder, not an answer. */
@@ -381,7 +385,8 @@ export const handleMessage = async (
   const participants = collectParticipants(deps, history, inbound);
   // Needed before the prompt is built: a sandboxed turn cannot read the
   // adapter's files, so it must not be offered skills it could never open.
-  const policy = deps.toolPolicy?.(decision.user.role, inbound.channelId);
+  const rolePolicy = deps.toolPolicy?.(decision.user.role, inbound.channelId);
+  const policy = rolePolicy && inbound.model ? { ...rolePolicy, model: inbound.model } : rolePolicy;
   const promptOptions: Parameters<typeof buildSystemPromptParts>[0] = {
     botName: ctx.botName,
     base: ctx.base,
@@ -457,14 +462,6 @@ export const handleMessage = async (
     }
   }
 
-  // Notes another thread left for this one ride along as part of this turn's
-  // prompt, whoever triggered it. Only the ones shown are marked read, and only
-  // once the turn has run: a failed or cut turn must show them again.
-  const unreadBriefs = deps.briefs && inbound.threadTs ? deps.briefs.unread(inbound.channelId, inbound.threadTs) : [];
-  const briefBlock = renderBriefs(unreadBriefs, { now: deps.clock(), prefix: deps.commandPrefix ?? "//bot" });
-  if (briefBlock) system += briefBlock;
-  const handedBriefs = pickBriefs(unreadBriefs).shown.map((b) => b.id);
-
   // One CLI session per thread, per access tier: the model keeps its own context
   // between turns, so it is handed only what it has not seen rather than the
   // whole thread replayed into a memory that already holds it.
@@ -489,6 +486,35 @@ export const handleMessage = async (
   }
   const bound = found && (!stale || inbound.keepSession) ? found : undefined;
   const cold = () => buildContextWindow(history, window);
+
+  // Notes another thread left for this one ride in the MESSAGE of the turn, not
+  // the system prompt: the CLI keeps messages in the resumed session's
+  // transcript, so a brief stays in context on the turns after it, while the
+  // system prompt is rebuilt per call and would lose it. Read state is per tier,
+  // because a tier's session only knows what its own turns carried. A session
+  // with no transcript (cold start, dropped, or one that would not resume) has
+  // seen none of them, so it is handed the newest ones read or not. Only what was
+  // shown is marked read, and only once the turn has run: a failed or cut turn
+  // must show them again.
+  let handedBriefs: number[] = [];
+  const withBriefs = (messages: PromptMessage[], fresh: boolean): PromptMessage[] => {
+    handedBriefs = [];
+    if (!deps.briefs || !inbound.threadTs) return messages;
+    const notes = fresh
+      ? deps.briefs.recent(inbound.channelId, inbound.threadTs, BRIEF_RECENT_LOOKBACK)
+      : deps.briefs.unread(inbound.channelId, inbound.threadTs, tier);
+    const block = renderBriefs(notes, {
+      now: deps.clock(),
+      prefix: deps.commandPrefix ?? "//bot",
+      ref: deps.briefs.ref,
+    });
+    if (!block) return messages;
+    handedBriefs = pickBriefs(notes).shown.map((n) => n.id);
+    const last = messages[messages.length - 1];
+    return last
+      ? [...messages.slice(0, -1), { ...last, content: `${last.content}${block}` }]
+      : [{ role: "user", content: block.trim() }];
+  };
   const newestTs = history[history.length - 1]?.slackTs ?? inbound.messageTs ?? "";
 
   // The last run's figures win, as they do under a live stream.
@@ -530,7 +556,7 @@ export const handleMessage = async (
   try {
     raw = await run({
       ...base,
-      messages: bound ? buildContextWindow(unseenTurns(history, bound.lastTs), window) : cold(),
+      messages: withBriefs(bound ? buildContextWindow(unseenTurns(history, bound.lastTs), window) : cold(), !bound),
       ...(key ? { session: { id: sessionId, resume: resumed, name } } : {}),
     });
   } catch (err) {
@@ -541,7 +567,7 @@ export const handleMessage = async (
     sessionId = deps.newSessionId?.() ?? crypto.randomUUID();
     resumed = false;
     if (key) sessions?.claim(key.channelId, key.threadTs, tier, sessionId, newestTs, deps.clock(), fingerprint);
-    raw = await run({ ...base, messages: cold(), session: { id: sessionId, resume: false, name } });
+    raw = await run({ ...base, messages: withBriefs(cold(), true), session: { id: sessionId, resume: false, name } });
   }
   const reply = raw.trim();
 
@@ -554,7 +580,7 @@ export const handleMessage = async (
   // Already bound above; this only records that the turn landed and how far the
   // session has now been shown.
   if (key) sessions?.touch(key.channelId, key.threadTs, tier, newestTs, deps.clock());
-  if (handedBriefs.length > 0) deps.briefs?.markRead(handedBriefs, deps.clock());
+  if (handedBriefs.length > 0) deps.briefs?.markRead(handedBriefs, tier, deps.clock());
 
   const safeReply = reply.length > 0 ? reply : EMPTY_REPLY_FALLBACK;
 

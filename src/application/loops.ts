@@ -15,7 +15,7 @@
  * the whole catch-up policy: a bot that was down over three slots runs the loop
  * once on startup and carries on from there, never a burst.
  */
-import { loopTurnText, nextRun, parseSchedule } from "../domain/loop.ts";
+import { loopRef, loopTurnText, nextRun, parseSchedule } from "../domain/loop.ts";
 import type { Loop, LoopRepo } from "../infrastructure/db/loopRepo.ts";
 import type { Clock } from "./ports.ts";
 import { logAndIgnore } from "./ignoredError.ts";
@@ -29,6 +29,8 @@ export type LoopTurnRequest = {
   text: string;
   keepSession?: boolean;
   unprompted?: boolean;
+  /** The scheduled fire itself: the turn runs on the `loop` model, not the creator's role model. */
+  loop?: boolean;
 };
 
 export type LoopRunnerDeps = {
@@ -73,7 +75,7 @@ export const createLoopRunner = (deps: LoopRunnerDeps): LoopRunner => {
     const fail = (why: string): Promise<void> => {
       log(`loop ${l.id} script failed: ${why}`);
       deps.loops.reschedule(l.id, next, deps.clock(), why);
-      return say(l, `Loop #${l.id} script failed: ${why}`, "loop script failure notice");
+      return say(l, `${loopRef(l.id, l.name)}: script failed: ${why}`, "loop script failure notice");
     };
     if (!deps.check) return fail("no shell runner wired");
     try {
@@ -96,7 +98,7 @@ export const createLoopRunner = (deps: LoopRunnerDeps): LoopRunner => {
     if (deps.mayRun && !deps.mayRun(l.createdBy, !!l.command)) {
       deps.loops.settle(l.id, "failed", now, "creator no longer allowed");
       log(`loop ${l.id} stopped: ${l.createdBy} is no longer allowed to run it`);
-      await say(l, `Stopped loop #${l.id}: whoever set it is no longer allowed to run it.`, "loop stopped notice");
+      await say(l, `Stopped ${loopRef(l.id, l.name)}: whoever set it is no longer allowed to run it.`, "loop stopped notice");
       return;
     }
 
@@ -122,7 +124,7 @@ export const createLoopRunner = (deps: LoopRunnerDeps): LoopRunner => {
     // One fresh top-level DM message per fire; the turn runs in its thread.
     let ref: { channel: string; ts: string } | undefined;
     try {
-      ref = await deps.dm(l.createdBy, `🔁 loop #${l.id} (${l.schedule})`);
+      ref = await deps.dm(l.createdBy, `🔁 ${l.name} - loop #${l.id}, ${l.schedule}`);
     } catch (e) {
       ref = undefined;
       log(`loop ${l.id}: could not open the DM: ${e instanceof Error ? e.message : String(e)}`);
@@ -135,7 +137,7 @@ export const createLoopRunner = (deps: LoopRunnerDeps): LoopRunner => {
       const msg = e instanceof Error ? e.message : String(e);
       log(`loop ${l.id} could not start its turn: ${msg}`);
       deps.loops.reschedule(l.id, next, deps.clock(), msg);
-      void say(l, `Loop #${l.id} could not start its turn: ${msg}`, "loop start-failed notice");
+      void say(l, `${loopRef(l.id, l.name)}: could not start its turn: ${msg}`, "loop start-failed notice");
     };
     try {
       // Not awaited: a turn can run for half an hour and must not hold the
@@ -145,9 +147,10 @@ export const createLoopRunner = (deps: LoopRunnerDeps): LoopRunner => {
           channelId: ref.channel,
           threadTs: ref.ts,
           slackUserId: l.createdBy,
-          text: loopTurnText(l.id, l.schedule, l.prompt),
+          text: loopTurnText(l.id, l.schedule, l.prompt, l.name),
           // The bot's own scheduled note, not a message anyone sent.
           unprompted: true,
+          loop: true,
         })
         .catch(lost);
     } catch (e) {

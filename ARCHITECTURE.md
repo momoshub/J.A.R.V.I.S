@@ -72,8 +72,10 @@ no classes.
   turns in a thread; `threadSession` keeps one CLI session id per thread and
   resumes it, so the model keeps its context and files between turns. Sessions
   never mix: what one thread needs another to know crosses as a `brief` (a
-  short note written for the target, stored in `thread_briefs`, handed to that
-  thread's next turn and marked read only once the turn ran).
+  short note written for the target, stored in `thread_briefs` by migration
+  v34, handed to that thread's next turn inside the turn's MESSAGE so it stays
+  in the resumed session's transcript, as untrusted background and never as
+  instructions; read state is per access tier and set only once the turn ran).
   `runRegistry` holds a handle on each running turn so it can be stopped.
 - **Commands from the brain.** The brain runs real commands through
   `bin/jarvis-run.sh` -> `/api/commands/run`. `commandTickets` mints a one-turn
@@ -88,7 +90,7 @@ no classes.
   and list-price cost its Claude transcript used, stored in
   `orca_worker_usage`, read later with `worker-cost <ctx_...|run_...>`);
   `reminders` posts at the time with no model;
-  `loops` (`application/loops.ts`, `db/loopRepo.ts`, `domain/loop.ts`, `loop` command) fires a recurring schedule: a prompt loop hands a turn through the watcher's own `runTurn` (so there is one way to wake a thread), in a fresh top-level DM message to the loop's creator each time, as the creator; a script loop (`-- <shell>`) is never typed: only the owner's own turn can write one, it is stored pending and DMed to the owner with Approve / Reject `jv:loop:` buttons (`loopApproval.ts`, decided in code like `jv:cloudwatch:`), and only Approve activates it (Reject or 24h of silence deletes it); once active it runs through the watcher's shell runner with no turn, and only a failure posts, to the same DM. A loop is always moved on from now before it fires, so a run missed while down happens once on startup, never as a backlog; a creator who lost the role stops the loop;
+  `loops` (`application/loops.ts`, `db/loopRepo.ts`, `domain/loop.ts`, `loop` command) fires a recurring schedule (every loop carries a name - `--name`, else the first words of its prompt, `loop rename` later - and every message about it reads `<name> - loop #<id>`): a prompt loop hands a turn through the watcher's own `runTurn` (so there is one way to wake a thread), in a fresh top-level DM message to the loop's creator each time, as the creator, on the `loop` model (Sonnet) rather than the creator's role model (`loop: true` on the request -> `model` on the inbound message -> the policy's model); a script loop (`-- <shell>`) is never typed: only the owner's own turn can write one, it is stored pending and DMed to the owner with Approve / Reject `jv:loop:` buttons (`loopApproval.ts`, decided in code like `jv:cloudwatch:`), and only Approve activates it (Reject or 24h of silence deletes it); once active it runs through the watcher's shell runner with no turn, and only a failure posts, to the same DM. A loop is always moved on from now before it fires, so a run missed while down happens once on startup, never as a backlog; a creator who lost the role stops the loop;
   a `watches` row whose check is `ci-gate:{...}` is not shell and hands back no
   turn: `watcher` calls `application/ciGate.ts` instead, which polls the PR's
   checks once a minute and approves or requests changes itself (the CI gate of
@@ -198,12 +200,12 @@ No I/O, no frameworks. Just data shapes and functions of their inputs.
 
 - `types.ts` - core data shapes (`AllowedUser`, `StoredMessage`, roles: pal/executer/admin/owner)
 - `access.ts`, `toolPolicy.ts`, `toolVisibility.ts` - who may talk to the bot, and the per-role CLI sandbox (skip-permissions vs `--allowedTools` allow-list + fixed cwd), incl. the host `notion` MCP server gated by `note`'s floor and the host `datadog` MCP server (read tools only, every role, writes denied by name)
-- `agentModels.ts` - the models of handed-off work (`model:subagent|worker|plan`, defaults sonnet/sonnet/opus): the turn env and the Explore/Plan `--agents` overrides
+- `agentModels.ts` - the models of handed-off work (`model:subagent|worker|plan|loop`, defaults sonnet/sonnet/opus/sonnet): the turn env and the Explore/Plan `--agents` overrides
 - `rolePolicy.ts` - the dashboard-edited policy per role: on/off, and the commands, tools and MCP servers it is denied (restrict-only; the owner is never restricted)
 - `slackNames.ts` - how a person or conversation is shown: always name and id
 - `personality.ts`, `promptGuides.ts`, `conversation.ts`, `mentions.ts` - the system prompt from generic defaults + injected identity (procedure blocks as on-demand guide files for turns that can read them), context windowing, `<@ID>` annotation
 - `threadSession.ts`, `agentSession.ts` - one CLI session per thread and when it may be resumed
-- `threadBrief.ts` - briefs between threads: the opaque source reference, the delimited block a turn is handed, its caps, the prompt rule
+- `threadBrief.ts` - briefs between threads: the opaque source reference (an HMAC), the nonce-delimited, escaped block a turn's message carries, its caps, the prompt rule
 - `adapter.ts`, `adapterCheck.ts` - memory as a checked, versioned directory (facts + skills) instead of an ever-growing list
 - `ciGate.ts` (domain) - CI verdict of a PR from its check rollup, what a CI-gate poll should do, the spec of a gate's watch row
 - `threadFollow.ts`, `followGate.ts` - which untagged thread messages the bot answers, and the pure rules of the gate in front of a followed thread (settings, bypass, batch windows, verdict parsing, the gate's prompt)

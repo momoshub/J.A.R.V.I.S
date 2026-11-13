@@ -54,7 +54,7 @@ export const expirePendingLoops = async (deps: LoopApprovalDeps): Promise<number
   const gone = deps.loops.expirePending(deps.clock(), ttlOf(deps));
   for (const l of gone) {
     deps.log?.(`loop ${l.id} expired unapproved`);
-    await settle(deps, l, settledLoopText("expired", l.id));
+    await settle(deps, l, settledLoopText("expired", l.id, undefined, l.name));
   }
   return gone.length;
 };
@@ -75,7 +75,7 @@ export const proposeScriptLoop = async (
   const notice = await deps.slack
     .postDmInteractive(
       loop.createdBy,
-      approvalText(l.id, l.schedule, l.command, ttlOf(deps)),
+      approvalText(l.id, l.schedule, l.command, ttlOf(deps), l.name),
       [
         { actionId: LOOP_APPROVE_ACTION, label: "Approve", value: String(l.id), style: "primary" },
         { actionId: LOOP_REJECT_ACTION, label: "Reject", value: String(l.id), style: "danger" },
@@ -137,7 +137,7 @@ export const decideLoop = async (
   if (press.actionId === LOOP_REJECT_ACTION) {
     if (!deps.loops.discard(l.id)) return { kind: "decided" };
     deps.log?.(`loop ${l.id} rejected by ${press.slackUserId}`);
-    await settle(deps, l, settledLoopText("rejected", l.id, press.slackUserId));
+    await settle(deps, l, settledLoopText("rejected", l.id, press.slackUserId, l.name));
     return { kind: "rejected", id: l.id };
   }
 
@@ -154,6 +154,6 @@ export const decideLoop = async (
   }
   if (!deps.loops.activate(l.id, nextRun(schedule, now, deps.offsetMinutes()), now)) return { kind: "decided" };
   deps.log?.(`loop ${l.id} approved by ${press.slackUserId}`);
-  await settle(deps, l, settledLoopText("approved", l.id, press.slackUserId));
+  await settle(deps, l, settledLoopText("approved", l.id, press.slackUserId, l.name));
   return { kind: "approved", id: l.id };
 };
