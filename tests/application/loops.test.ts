@@ -94,6 +94,7 @@ describe("loop runner: prompt mode", () => {
         slackUserId: "U1",
         text: expect.stringContaining(`[loop ${l.id}]`),
         unprompted: true,
+        loop: true,
       },
     ]);
     expect(turns[0]?.text).toContain("search for slang");
