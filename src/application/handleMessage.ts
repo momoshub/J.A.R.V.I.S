@@ -52,6 +52,8 @@ import type { TotpPort } from "./totp.ts";
 import { isMissingSession, threadSessionName, tierOf, unseenTurns } from "../domain/threadSession.ts";
 import { promptFingerprint } from "../domain/promptFingerprint.ts";
 import type { ThreadSessionRepo } from "../infrastructure/db/threadSessionRepo.ts";
+import type { ThreadBriefRepo } from "../infrastructure/db/threadBriefRepo.ts";
+import { pickBriefs, renderBriefs } from "../domain/threadBrief.ts";
 import type { SlackAdminPort, SlackMessage } from "./slackAdmin.ts";
 import type { GitHubPort } from "./github.ts";
 import type { CiGate } from "./ciGate.ts";
@@ -152,6 +154,8 @@ export type HandleMessageDeps = {
   threadSessions?: ThreadSessionRepo;
   /** Whether thread sessions are switched on. Read per turn, so it needs no restart. */
   threadSessionsOn?: () => boolean;
+  /** Briefs other threads left for this one, handed to the next turn here. */
+  briefs?: ThreadBriefRepo;
   /** Absolute path of the reaction helper, granted to every role. */
   reactScript?: string;
   /**
@@ -453,6 +457,14 @@ export const handleMessage = async (
     }
   }
 
+  // Notes another thread left for this one ride along as part of this turn's
+  // prompt, whoever triggered it. Only the ones shown are marked read, and only
+  // once the turn has run: a failed or cut turn must show them again.
+  const unreadBriefs = deps.briefs && inbound.threadTs ? deps.briefs.unread(inbound.channelId, inbound.threadTs) : [];
+  const briefBlock = renderBriefs(unreadBriefs, { now: deps.clock(), prefix: deps.commandPrefix ?? "//bot" });
+  if (briefBlock) system += briefBlock;
+  const handedBriefs = pickBriefs(unreadBriefs).shown.map((b) => b.id);
+
   // One CLI session per thread, per access tier: the model keeps its own context
   // between turns, so it is handed only what it has not seen rather than the
   // whole thread replayed into a memory that already holds it.
@@ -542,6 +554,7 @@ export const handleMessage = async (
   // Already bound above; this only records that the turn landed and how far the
   // session has now been shown.
   if (key) sessions?.touch(key.channelId, key.threadTs, tier, newestTs, deps.clock());
+  if (handedBriefs.length > 0) deps.briefs?.markRead(handedBriefs, deps.clock());
 
   const safeReply = reply.length > 0 ? reply : EMPTY_REPLY_FALLBACK;
 

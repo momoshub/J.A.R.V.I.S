@@ -17,6 +17,7 @@ import { isSilenceNote } from "./domain/silence.ts";
 import { openDatabase } from "./infrastructure/db/client.ts";
 import { adoptDatabase } from "./infrastructure/db/location.ts";
 import { createThreadSessionRepo } from "./infrastructure/db/threadSessionRepo.ts";
+import { createThreadBriefRepo } from "./infrastructure/db/threadBriefRepo.ts";
 import { createThreadQueue } from "./application/threadQueue.ts";
 import { RESTART_DELAY_MS, RESTART_HOLD_NOTICE, RESTART_MAX_WAIT_MS, restartWhenIdle } from "./domain/selfUpdate.ts";
 import { isDbFileSwapped } from "./domain/dbHealth.ts";
@@ -274,6 +275,7 @@ const main = async () => {
   // One CLI session per Slack thread, so a follow-up keeps the context the last
   // turn built instead of starting the conversation over.
   const threadSessions = createThreadSessionRepo(db);
+  const briefs = createThreadBriefRepo(db);
   const accessRequests = createAccessRequestRepo(db);
   const commandApprovals = createCommandApprovalRepo(db);
   const cloudwatchRepo = createCloudwatchRepo(db);
@@ -637,6 +639,7 @@ const main = async () => {
     workerCalls: (channelId: string, threadTs: string, limit: number) =>
       readTraceCalls(join(config.logDir, "threads"), channelId, threadTs, WORKER_BILL_KIND, limit),
     threadSessions,
+    briefs,
     // One turn at a time per thread. Two messages a few minutes apart used to
     // run at once, doing the same work twice - two branches, two PRs - and
     // resuming the same CLI session from two processes while they did it.

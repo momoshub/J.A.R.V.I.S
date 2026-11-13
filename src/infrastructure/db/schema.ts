@@ -104,6 +104,47 @@ export const migrate = (db: Database): void => {
   migrateWorkerTickets(db);
   migrateLoops(db);
   migrateWorkerTicketBoundAt(db);
+  migrateThreadBriefs(db);
+};
+
+/**
+ * Migration v33: briefs between threads.
+ *
+ * A brief is a note one thread's session writes for another's (see
+ * `domain/threadBrief.ts`). `read_at` is NULL until a turn in the target thread
+ * has actually run with it. `thread_brief_links` records which threads have
+ * written to each other, so the receiver can answer an opaque reference without
+ * ever being handed the source's channel or timestamp.
+ */
+const migrateThreadBriefs = (db: Database): void => {
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS thread_briefs (
+      id           INTEGER PRIMARY KEY AUTOINCREMENT,
+      from_channel TEXT NOT NULL,
+      from_thread  TEXT NOT NULL,
+      to_channel   TEXT NOT NULL,
+      to_thread    TEXT NOT NULL,
+      author       TEXT NOT NULL DEFAULT '',
+      text         TEXT NOT NULL,
+      created_at   INTEGER NOT NULL,
+      read_at      INTEGER
+    );
+    CREATE INDEX IF NOT EXISTS idx_thread_briefs_unread ON thread_briefs (to_channel, to_thread, read_at);
+    CREATE TABLE IF NOT EXISTS thread_brief_links (
+      channel_id   TEXT NOT NULL,
+      thread_ts    TEXT NOT NULL,
+      peer_channel TEXT NOT NULL,
+      peer_thread  TEXT NOT NULL,
+      ref          TEXT NOT NULL,
+      created_at   INTEGER NOT NULL,
+      PRIMARY KEY (channel_id, thread_ts, peer_channel, peer_thread)
+    );
+    CREATE INDEX IF NOT EXISTS idx_thread_brief_links_ref ON thread_brief_links (channel_id, thread_ts, ref);
+  `);
+  const { user_version } = db.query<{ user_version: number }, []>("PRAGMA user_version").get() ?? {
+    user_version: 0,
+  };
+  if (user_version < 33) db.exec("PRAGMA user_version = 33;");
 };
 
 /**

@@ -17,6 +17,7 @@ import { BLOCK_KIT_RULES } from "./blockKit.ts";
 import { kitRules } from "./kitEvents.ts";
 import { type Adapter, type AdapterScope, renderAdapter } from "./adapter.ts";
 import { AGENT_GUIDE_SUMMARIES, asGuide, investigateSummary, type PromptGuide, renderGuideIndex } from "./promptGuides.ts";
+import { briefRule } from "./threadBrief.ts";
 import type { Participant, PromptContext, Reactable } from "./types.ts";
 
 /** Neutral fallback persona used when no custom one is configured. */
@@ -344,6 +345,7 @@ ${orca ? `  \`${prefix} watch worker <dispatchId> <what you will do next>\` - un
 
 Talking to another thread:
 - Each thread has its own session, and you cannot see or message another one directly. To steer the session in ANOTHER thread - a workflow running there, or work you started there - run \`${prefix} tell <thread-link> <message>\`. It posts nothing in Slack, there or here: it goes straight into that thread's session as an internal steer, which is told not to acknowledge it and to post only if the work produces something for the people in that thread (or to end with NO_REPLY if not). In a workflow thread it goes straight to the worker's next step. Cross-session talk stays out of Slack, so never relay it with a message of your own either.
+${briefRule(prefix)}
 - Never ask someone to copy a message from one thread to another for you.`;
 
 export type BuildSystemPromptOptions = PromptContext & {
