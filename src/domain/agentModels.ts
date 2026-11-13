@@ -3,15 +3,22 @@
  *
  * The turn's own model is per role (`model:<role>`); the owner talks on Opus.
  * Everything it hands off is cheaper by default: Agent tool subagents and Orca
- * workers run on Sonnet, and only planning stays on Opus (Kai). Each kind is a
- * `model:<kind>` setting, read per turn, so changing one needs no restart.
+ * workers run on Sonnet, and only planning stays on Opus (Kai). A scheduled
+ * `loop` fire is a turn nobody is talking in, so it runs on Sonnet whatever its
+ * creator's role model is. Each kind is a `model:<kind>` setting, read per
+ * turn, so changing one needs no restart.
  */
 
-export const AGENT_MODEL_KINDS = ["subagent", "worker", "plan"] as const;
+export const AGENT_MODEL_KINDS = ["subagent", "worker", "plan", "loop"] as const;
 export type AgentModelKind = (typeof AGENT_MODEL_KINDS)[number];
 export type AgentModels = Readonly<Record<AgentModelKind, string>>;
 
-export const DEFAULT_AGENT_MODELS: AgentModels = { subagent: "sonnet", worker: "sonnet", plan: "opus" };
+export const DEFAULT_AGENT_MODELS: AgentModels = {
+  subagent: "sonnet",
+  worker: "sonnet",
+  plan: "opus",
+  loop: "sonnet",
+};
 
 /** Env var the prompts pass to `orca ... --model`, so a worker's model follows the setting. */
 export const WORKER_MODEL_ENV = "BOT_WORKER_MODEL";
@@ -24,6 +31,7 @@ export const agentModelsOf = (stored: (kind: AgentModelKind) => string | undefin
   subagent: stored("subagent")?.trim() || DEFAULT_AGENT_MODELS.subagent,
   worker: stored("worker")?.trim() || DEFAULT_AGENT_MODELS.worker,
   plan: stored("plan")?.trim() || DEFAULT_AGENT_MODELS.plan,
+  loop: stored("loop")?.trim() || DEFAULT_AGENT_MODELS.loop,
 });
 
 /**

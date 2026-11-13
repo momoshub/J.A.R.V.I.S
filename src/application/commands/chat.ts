@@ -81,8 +81,8 @@ export const CHAT_COMMANDS: readonly CommandDef[] = [
     trivial: true,
     aliases: ["status"],
     minRole: "pal",
-    usage: "[role|subagent|worker|plan|here|#channel] [name|default]",
-    summary: "show my brain and model; admins set one per role, channel, or for subagents, Orca workers and planning",
+    usage: "[role|subagent|worker|plan|loop|here|#channel] [name|default]",
+    summary: "show my brain and model; admins set one per role, channel, or for subagents, Orca workers, planning and loop fires",
     run: (ctx) => {
       const { deps, actor, channelId, args, prefix } = ctx;
       const info = deps.botInfo?.();

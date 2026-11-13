@@ -29,6 +29,8 @@ export type LoopTurnRequest = {
   text: string;
   keepSession?: boolean;
   unprompted?: boolean;
+  /** The scheduled fire itself: the turn runs on the `loop` model, not the creator's role model. */
+  loop?: boolean;
 };
 
 export type LoopRunnerDeps = {
@@ -148,6 +150,7 @@ export const createLoopRunner = (deps: LoopRunnerDeps): LoopRunner => {
           text: loopTurnText(l.id, l.schedule, l.prompt),
           // The bot's own scheduled note, not a message anyone sent.
           unprompted: true,
+          loop: true,
         })
         .catch(lost);
     } catch (e) {
