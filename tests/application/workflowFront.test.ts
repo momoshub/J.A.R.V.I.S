@@ -141,6 +141,9 @@ describe("workflow front and worker", () => {
     expect(b.deps.threadQueue!.depth(frontKeyOf(KEY))).toBe(0);
     const front = b.frontCalls()[0]!;
     expect(front.session).toEqual({ id: FRONT, resume: false });
+    // read-only whatever the role: the owner's own policy carries no shell denials, the front adds them
+    expect(front.policy?.skipPermissions).toBe(false);
+    expect(front.policy?.disallowedTools).toEqual(expect.arrayContaining(["Bash(*>*)", "Bash(sed *-i*)", "Bash(jq *env*)"]));
     expect(lastMessage(front)).toContain("running a step right now");
     expect(lastMessage(front)).toContain("Bash: bun test");
     expect(lastMessage(front)).toContain("did a step");

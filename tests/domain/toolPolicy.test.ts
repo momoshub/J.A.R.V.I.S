@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import type { UserRole } from "../../src/domain/types.ts";
 import {
+  FRONT_DENY,
   isFullAccess,
   READ_ONLY_REDIRECT_DENY,
   SHELL_ESCAPE_DENY,
@@ -504,9 +505,12 @@ describe("the shell is gated by the caller's role", () => {
     };
     for (const role of strict) {
       const tools = toolPolicyFor(role, withHelpers).allowedTools ?? [];
-      for (const cmd of ["cat", "sed", "grep", "rg", "ls", "find", "head", "tail", "jq"]) {
+      for (const cmd of ["cat", "grep", "ls", "head", "tail", "jq"]) {
         expect(tools).toContain(`Bash(${cmd}:*)`);
       }
+      // sed (w/e/-i), find (-exec) and rg (--pre) can write or run code and a text
+      // denial does not hold against quoting: opt-in only, never the default
+      for (const cmd of ["sed", "find", "rg"]) expect(tools).not.toContain(`Bash(${cmd}:*)`);
       for (const t of ["Read", "Grep", "Glob", "WebFetch", "WebSearch", "Bash(git log:*)", "Bash(gh pr view:*)"]) {
         expect(tools).toContain(t);
       }
@@ -531,14 +535,15 @@ describe("the shell is gated by the caller's role", () => {
   test("the ways out of the read-only commands are denied, to every sandboxed role", () => {
     const denied = toolPolicyFor("pal", opts).disallowedTools ?? [];
     for (const d of [...SHELL_ESCAPE_DENY, ...READ_ONLY_REDIRECT_DENY]) expect(denied).toContain(d);
-    expect(toolPolicyFor("admin", opts).disallowedTools).toContain("Bash(sed -i*)");
-    expect(SHELL_ESCAPE_DENY).toContain("Bash(sed -i*)");
-    expect(SHELL_ESCAPE_DENY).toContain("Bash(find * -exec*)");
-    expect(SHELL_ESCAPE_DENY).toContain("Bash(rg * --pre*)");
-    expect(SHELL_ESCAPE_DENY).toContain("Bash(jq * env*)");
+    expect(toolPolicyFor("admin", opts).disallowedTools).toContain("Bash(sed *-i*)");
+    // substring patterns, so a quote or a combined flag does not get past them
+    for (const d of ["Bash(sed *-i*)", "Bash(sed *-?i*)", "Bash(find *exec*)", "Bash(rg *--pre*)", "Bash(jq *env*)", "Bash(jq *ENV*)"]) {
+      expect(SHELL_ESCAPE_DENY).toContain(d);
+    }
+    expect(denied).toContain("Read(**/.env)");
     // an executer commits with messages that carry `>`, so only the read-only roles lose redirects
     const exe = toolPolicyFor("executer", opts).disallowedTools ?? [];
-    expect(exe).toContain("Bash(sed -i*)");
+    expect(exe).toContain("Bash(sed *-i*)");
     expect(exe).not.toContain("Bash(*>*)");
     expect(toolPolicyFor("admin", opts).disallowedTools).not.toContain("Bash(*>*)");
   });
@@ -561,7 +566,7 @@ describe("the shell is gated by the caller's role", () => {
       const p = toolPolicyFor(role, { ...opts, sandboxTools: custom });
       expect(p.allowedTools).toEqual(expect.arrayContaining(custom));
       expect(p.allowedTools).not.toContain("Bash(cat:*)");
-      expect(p.disallowedTools).toContain("Bash(sed -i*)");
+      expect(p.disallowedTools).toContain("Bash(sed *-i*)");
       expect(p.skipPermissions).toBe(false);
     }
   });
@@ -570,5 +575,13 @@ describe("the shell is gated by the caller's role", () => {
     const p = toolPolicyFor("owner", { ...opts, sandboxTools: ["Read"] });
     expect(p.skipPermissions).toBe(true);
     expect(p.allowedTools).toBeUndefined();
+  });
+});
+
+describe("the workflow front", () => {
+  test("FRONT_DENY fences the shell whatever role started the workflow", () => {
+    expect(FRONT_DENY).toEqual(expect.arrayContaining([...SHELL_ESCAPE_DENY, ...READ_ONLY_REDIRECT_DENY, "Read(~/.config/jarvis/**)"]));
+    // an owner's own policy carries none of them, which is why the front adds them
+    expect(toolPolicyFor("owner", opts).disallowedTools ?? []).not.toContain("Bash(*>*)");
   });
 });

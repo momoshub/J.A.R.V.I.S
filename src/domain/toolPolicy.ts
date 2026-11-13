@@ -40,10 +40,12 @@ export type ToolPolicy = {
  */
 export const PAL_TOOLS: readonly string[] = [
   "Read", "Grep", "Glob", "LS", "TodoWrite",
-  // read-only shell. The ways out of each (`sed -i`, `find -exec`, redirects, ...)
-  // are denied in `SHELL_ESCAPE_DENY` / `READ_ONLY_REDIRECT_DENY`.
-  "Bash(cat:*)", "Bash(sed:*)", "Bash(grep:*)", "Bash(rg:*)", "Bash(ls:*)", "Bash(find:*)",
-  "Bash(head:*)", "Bash(tail:*)", "Bash(jq:*)",
+  // Read-only shell: commands with no way to write or run something. `sed` (w, e,
+  // -i), `find` (-exec, -fprint), `rg` (--pre) are NOT here: a denial is a text
+  // match on the command line and quoting or flag spelling gets past it (measured
+  // in review), so they can only be opted into through SANDBOX_TOOLS, with
+  // `SHELL_ESCAPE_DENY` as a best-effort fence. `Glob`/`Grep`/`Read` cover finding and searching.
+  "Bash(cat:*)", "Bash(grep:*)", "Bash(ls:*)", "Bash(head:*)", "Bash(tail:*)", "Bash(jq:*)",
   // the web
   "WebSearch", "WebFetch",
   // github, read only
@@ -88,26 +90,27 @@ export const sandboxToolsOf = (custom: readonly string[] | undefined): readonly 
 export const isFullAccess = (role: UserRole): boolean => role === "owner";
 
 /**
- * Ways out of the read-only shell commands, denied to every sandboxed role. The
- * allow-list matches a command by prefix, so `sed:*` would also allow `sed -i`,
- * and each of these turns a "read" into a write or an arbitrary command.
- * Compound commands (`a && b`, pipes) are checked per part by the CLI, so these
- * only need to name the single command.
- * - `sed -i` / `w`: write files. `find -exec/-delete/-fprint`: run or write.
- * - `rg --pre`: runs a command per file.
+ * Ways out of the shell commands a read-only list may carry, denied to every
+ * sandboxed role. The allow-list matches by prefix, so `jq:*` also allows
+ * `jq -n env`, and an operator who opts `sed`/`find`/`rg` in through SANDBOX_TOOLS
+ * gets `sed -i` etc. The patterns are SUBSTRING matches (`*exec*`), because a
+ * quote or a combined flag defeats anything narrower (`sed -Ei`, `rg --pre=x`,
+ * `jq -n '$ENV.X'`), but this is still text matching, not a parser: it is a
+ * fence for the default list (cat, grep, ls, head, tail, jq: none of which can
+ * run or write) and best effort for opt-ins.
  * - `jq` reading the process environment (`env`, `$ENV`) prints the bot's tokens.
- * - the bot's config dir and any `.env` file hold credentials; `Read` has its own
- *   rule in `sandboxDisallow`, this is the shell's.
+ * - `sed` w/e/-i/--in-place, `find` -exec/-ok/-delete/-fprint/-fls, `rg` --pre/--hostname-bin.
+ * - the bot's config dir and a `.env` file hold credentials. A recursive or
+ *   globbed read (`grep -r` on a parent, `jarvi?`) does not name them and is NOT
+ *   stopped: the shell can read what the host user can read. `Read` has its own rules.
  */
 export const SHELL_ESCAPE_DENY: readonly string[] = [
-  "Bash(sed -i*)", "Bash(sed * -i*)", "Bash(sed --in-place*)", "Bash(sed * --in-place*)",
-  "Bash(sed * w *)", "Bash(sed *;w*)", "Bash(sed * e*)",
-  "Bash(find * -exec*)", "Bash(find * -ok*)", "Bash(find * -delete*)",
-  "Bash(find * -fprint*)", "Bash(find * -fls*)",
-  "Bash(rg * --pre*)",
-  "Bash(jq * env*)", "Bash(jq * $ENV*)", "Bash(jq * input_filename*)",
-  "Bash(* ~/.config/jarvis*)", "Bash(* */.config/jarvis*)",
-  "Bash(* .env)", "Bash(* .env *)", "Bash(* */.env)", "Bash(* */.env *)",
+  "Bash(jq *env*)", "Bash(jq *ENV*)", "Bash(jq *input_filename*)",
+  "Bash(sed *-i*)", "Bash(sed *-?i*)", "Bash(sed *-??i*)", "Bash(sed *--in-place*)", "Bash(sed *w*)", "Bash(sed *e*)",
+  "Bash(find *exec*)", "Bash(find *-ok*)", "Bash(find *-delete*)",
+  "Bash(find *-fprint*)", "Bash(find *-fls*)",
+  "Bash(rg *--pre*)", "Bash(rg *--hostname-bin*)",
+  "Bash(*.config/jarvis*)", "Bash(*/.env)", "Bash(*/.env *)", "Bash(* .env)", "Bash(* .env *)",
 ];
 
 /**
@@ -117,6 +120,16 @@ export const SHELL_ESCAPE_DENY: readonly string[] = [
  * body has one far more often than a model needs a redirect.
  */
 export const READ_ONLY_REDIRECT_DENY: readonly string[] = ["Bash(*>*)"];
+
+/**
+ * Denials for the workflow front, which runs `PAL_TOOLS` whatever the role: the
+ * ones its own role's policy may not carry (an owner's has none).
+ */
+export const FRONT_DENY: readonly string[] = [
+  ...SHELL_ESCAPE_DENY,
+  ...READ_ONLY_REDIRECT_DENY,
+  "Read(~/.config/jarvis/**)", "Read(**/.env)",
+];
 
 /**
  * Denied to EVERY role, full access included.
@@ -299,7 +312,7 @@ export const sandboxDisallow = (dbServers: readonly string[]): readonly string[]
   "Write", "Edit", "MultiEdit", "NotebookEdit",
   "Bash(aws secretsmanager:*)", "Bash(aws ssm get-parameter:*)", "Bash(aws kms:*)",
   // The bot's own config dir: the GitHub App's key and the worker ticket files (the bearer token of an Orca worker).
-  "Read(~/.config/jarvis/**)",
+  "Read(~/.config/jarvis/**)", "Read(**/.env)",
   ...SHELL_ESCAPE_DENY,
   ...dbServerTools(dbServers),
 ];
