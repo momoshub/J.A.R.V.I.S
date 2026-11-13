@@ -412,6 +412,7 @@ const main = async () => {
       protectedPaths: [repoPath],
       dbServers: config.dbMcpServers,
       executerDbServers: config.executerDbMcpServers,
+      sandboxTools: config.sandboxTools,
       executerTools: (settings.get(SETTING_KEYS.executerTools) ?? "")
         .split(/[,\n]/)
         .map((s) => s.trim())

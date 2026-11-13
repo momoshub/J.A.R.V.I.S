@@ -17,6 +17,16 @@ describe("loadConfig", () => {
     expect(loadConfig({ ...base, ORCA_TERMINAL_WORKTREE: " " }).orcaTerminalWorktree).toMatch(/^path:.*\/Workspaces$/);
   });
 
+  test("SANDBOX_TOOLS is a comma list; unset or blank keeps the built-in default", () => {
+    expect(loadConfig(base).sandboxTools).toEqual([]);
+    expect(loadConfig({ ...base, SANDBOX_TOOLS: " " }).sandboxTools).toEqual([]);
+    expect(loadConfig({ ...base, SANDBOX_TOOLS: "Read, Bash(cat:*),,Bash(ls:*)" }).sandboxTools).toEqual([
+      "Read",
+      "Bash(cat:*)",
+      "Bash(ls:*)",
+    ]);
+  });
+
   test("a turn started while a restart waits gets a 2 minute budget by default", () => {
     expect(loadConfig(base).restartTurnBudgetMs).toBe(120_000);
     expect(loadConfig({ ...base, RESTART_TURN_BUDGET_MS: "90000" }).restartTurnBudgetMs).toBe(90_000);

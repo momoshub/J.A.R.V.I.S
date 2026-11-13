@@ -1,9 +1,12 @@
 /**
  * Per-role tool policy for the Claude CLI brain.
  *
- * - owner / admin: full access (skip permissions, any tool, the normal cwd)
- * - pal: sandboxed read-only tools in a fixed scratch dir (may still use `quick-review`)
- * - executer: sandboxed, tools assigned from the control deck, plus the read-only databases
+ * - owner: full access (skip permissions, any tool, the normal cwd). The ONLY role
+ *   that gets it: `isFullAccess` is an exact match, so a role the bot does not
+ *   know (a mistyped or custom name) lands on the strict side below
+ * - pal / anything unknown: sandboxed read-only tools in a fixed scratch dir (may
+ *   still use `quick-review`); the allow-list is data, see `SANDBOX_TOOLS`
+ * - executer and admin: sandboxed, tools assigned from the control deck, plus the read-only databases
  *   and the code tools - edit files, commit, push a branch and open a PR - the
  *   Agent/Task tool for parallel or long work in its own process, and the
  *   browser tools to test a UI change on the host Mac
@@ -12,7 +15,8 @@
  * so a role that can start one escapes its own sandbox (`ORCA_DENY`).
  *
  * When `skipPermissions` is false the CLI runs with an `--allowedTools` allow-list
- * and no permission bypass, so anything off the list is denied.
+ * and `--permission-mode dontAsk` (see `claudeCli.ts`), so anything off the list
+ * is denied at once - the turn is non-interactive, a prompt would hang it.
  */
 import type { UserRole } from "./types.ts";
 
@@ -36,6 +40,10 @@ export type ToolPolicy = {
  */
 export const PAL_TOOLS: readonly string[] = [
   "Read", "Grep", "Glob", "LS", "TodoWrite",
+  // read-only shell. The ways out of each (`sed -i`, `find -exec`, redirects, ...)
+  // are denied in `SHELL_ESCAPE_DENY` / `READ_ONLY_REDIRECT_DENY`.
+  "Bash(cat:*)", "Bash(sed:*)", "Bash(grep:*)", "Bash(rg:*)", "Bash(ls:*)", "Bash(find:*)",
+  "Bash(head:*)", "Bash(tail:*)", "Bash(jq:*)",
   // the web
   "WebSearch", "WebFetch",
   // github, read only
@@ -61,6 +69,54 @@ export const PAL_TOOLS: readonly string[] = [
   "Bash(gcx logs metrics:*)", "Bash(gcx metrics query:*)", "Bash(gcx traces query:*)",
   "Bash(gcx datasources list:*)", "Bash(gcx dashboards list:*)", "Bash(gcx agent skills:*)",
 ];
+
+/**
+ * `SANDBOX_TOOLS` (env, comma list) replaces `PAL_TOOLS` as the allow-list of the
+ * sandboxed roles that have no list of their own: pal and anything unknown (an executer or admin without a control-deck list falls back to it too).
+ * Empty or absent keeps the default. The bot's helper scripts, the Notion/Datadog
+ * grants and every denial below are added on top either way, so a custom list can
+ * widen or narrow the shell but never lift a denial.
+ */
+export const sandboxToolsOf = (custom: readonly string[] | undefined): readonly string[] =>
+  custom && custom.length > 0 ? custom : PAL_TOOLS;
+
+/**
+ * Only the owner runs without a sandbox. An exact match on purpose: a role this
+ * code does not recognise (a custom name, a bad row, `undefined` from a failed
+ * lookup) must not fall through to full access.
+ */
+export const isFullAccess = (role: UserRole): boolean => role === "owner";
+
+/**
+ * Ways out of the read-only shell commands, denied to every sandboxed role. The
+ * allow-list matches a command by prefix, so `sed:*` would also allow `sed -i`,
+ * and each of these turns a "read" into a write or an arbitrary command.
+ * Compound commands (`a && b`, pipes) are checked per part by the CLI, so these
+ * only need to name the single command.
+ * - `sed -i` / `w`: write files. `find -exec/-delete/-fprint`: run or write.
+ * - `rg --pre`: runs a command per file.
+ * - `jq` reading the process environment (`env`, `$ENV`) prints the bot's tokens.
+ * - the bot's config dir and any `.env` file hold credentials; `Read` has its own
+ *   rule in `sandboxDisallow`, this is the shell's.
+ */
+export const SHELL_ESCAPE_DENY: readonly string[] = [
+  "Bash(sed -i*)", "Bash(sed * -i*)", "Bash(sed --in-place*)", "Bash(sed * --in-place*)",
+  "Bash(sed * w *)", "Bash(sed *;w*)", "Bash(sed * e*)",
+  "Bash(find * -exec*)", "Bash(find * -ok*)", "Bash(find * -delete*)",
+  "Bash(find * -fprint*)", "Bash(find * -fls*)",
+  "Bash(rg * --pre*)",
+  "Bash(jq * env*)", "Bash(jq * $ENV*)", "Bash(jq * input_filename*)",
+  "Bash(* ~/.config/jarvis*)", "Bash(* */.config/jarvis*)",
+  "Bash(* .env)", "Bash(* .env *)", "Bash(* */.env)", "Bash(* */.env *)",
+];
+
+/**
+ * Only for the read-only roles: any redirect writes a file with a command the
+ * allow-list approved as a read (`cat x > ~/.zshrc`). Costs `2>&1` and a literal
+ * `>` in an argument; the executer is left out because a commit message or PR
+ * body has one far more often than a model needs a redirect.
+ */
+export const READ_ONLY_REDIRECT_DENY: readonly string[] = ["Bash(*>*)"];
 
 /**
  * Denied to EVERY role, full access included.
@@ -244,6 +300,7 @@ export const sandboxDisallow = (dbServers: readonly string[]): readonly string[]
   "Bash(aws secretsmanager:*)", "Bash(aws ssm get-parameter:*)", "Bash(aws kms:*)",
   // The bot's own config dir: the GitHub App's key and the worker ticket files (the bearer token of an Orca worker).
   "Read(~/.config/jarvis/**)",
+  ...SHELL_ESCAPE_DENY,
   ...dbServerTools(dbServers),
 ];
 
@@ -322,10 +379,12 @@ export const executerDisallow = (
 
 
 export type ToolPolicyOptions = {
-  /** cwd for full-access roles (owner/admin). */
+  /** cwd for the full-access role (owner). */
   readonly fullCwd?: string;
-  /** fixed scratch dir for sandboxed roles (pal/executer). */
+  /** fixed scratch dir for sandboxed roles (every role but owner). */
   readonly sandboxCwd?: string;
+  /** `SANDBOX_TOOLS`: allow-list for pal, admin and unknown roles; absent or empty means `PAL_TOOLS`. */
+  readonly sandboxTools?: readonly string[];
   /** tool allow-list for the executer role, assigned from the control deck. */
   readonly executerTools?: readonly string[];
   /** Absolute paths an executer may not write: the bot's own source. */
@@ -453,43 +512,47 @@ const notionAllow = (role: UserRole, opts: ToolPolicyOptions): readonly string[]
   mayUseNotion(role, opts.notionFloor) ? [NOTION_MCP_SERVER] : [];
 
 const basePolicyFor = (role: UserRole, opts: ToolPolicyOptions): ToolPolicy => {
-  switch (role) {
-    case "owner":
-    case "admin":
-      return {
-        skipPermissions: true,
-        cwd: opts.fullCwd,
-        model: modelOf(role, opts),
-        // Full access still does not mean "post as a human" or "bill us per query",
-        // and only the owner may start Orca workers.
-        disallowedTools: mayUseOrca(role) ? ALWAYS_DISALLOW : [...ALWAYS_DISALLOW, ...ORCA_DENY],
-      };
-    case "executer":
-      return {
-        skipPermissions: false,
-        cwd: opts.sandboxCwd,
-        allowedTools: withHelpers(
-          [
-            ...(opts.executerTools && opts.executerTools.length > 0 ? opts.executerTools : PAL_TOOLS),
-            ...dbServerTools(opts.executerDbServers ?? []),
-            ...EXECUTER_CODE_TOOLS,
-            ...executerBrowserTools(opts),
-            ...notionAllow(role, opts),
-            ...DATADOG_READ_TOOLS,
-          ],
-          opts,
-        ),
-        disallowedTools: executerDisallow(opts.protectedPaths, opts.dbServers, opts.executerDbServers),
-        model: modelOf("executer", opts),
-      };
-    case "pal":
-    default:
-      return {
-        skipPermissions: false,
-        cwd: opts.sandboxCwd,
-        allowedTools: withHelpers([...PAL_TOOLS, ...notionAllow(role, opts), ...DATADOG_READ_TOOLS], opts),
-        disallowedTools: sandboxDisallow(opts.dbServers ?? []),
-        model: modelOf("pal", opts),
-      };
+  if (isFullAccess(role)) {
+    return {
+      skipPermissions: true,
+      cwd: opts.fullCwd,
+      model: modelOf(role, opts),
+      // Full access still does not mean "post as a human" or "bill us per query".
+      disallowedTools: ALWAYS_DISALLOW,
+    };
   }
+  if (role === "executer" || role === "admin") {
+    // Admin outranks executer, so it never has fewer tools than one: the same
+    // sandboxed code tools, with no shell beyond the allow-list. Its model stays its own.
+    return {
+      skipPermissions: false,
+      cwd: opts.sandboxCwd,
+      allowedTools: withHelpers(
+        [
+          ...(opts.executerTools && opts.executerTools.length > 0 ? opts.executerTools : sandboxToolsOf(opts.sandboxTools)),
+          ...dbServerTools(opts.executerDbServers ?? []),
+          ...EXECUTER_CODE_TOOLS,
+          ...executerBrowserTools(opts),
+          ...notionAllow(role, opts),
+          ...DATADOG_READ_TOOLS,
+        ],
+        opts,
+      ),
+      disallowedTools: executerDisallow(opts.protectedPaths, opts.dbServers, opts.executerDbServers),
+      model: modelOf(role, opts),
+    };
+  }
+  // pal, and any role not named above (a custom or mistyped one): the strict,
+  // read-only side. A turn reads pages, attachments and PRs that anyone can
+  // write, so what it may run has to be a short list, never everything.
+  return {
+    skipPermissions: false,
+    cwd: opts.sandboxCwd,
+    allowedTools: withHelpers(
+      [...sandboxToolsOf(opts.sandboxTools), ...notionAllow(role, opts), ...DATADOG_READ_TOOLS],
+      opts,
+    ),
+    disallowedTools: [...sandboxDisallow(opts.dbServers ?? []), ...READ_ONLY_REDIRECT_DENY],
+    model: modelOf("pal", opts),
+  };
 };

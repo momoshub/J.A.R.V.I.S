@@ -294,8 +294,11 @@ Concrete implementations of the seams and the transports.
   bot process, outside every turn: no model, no session, no queue slot.
 - **Owner can never be locked out.** `decideAccess` grants the owner access even
   if the database is empty or broken.
-- **Role-based tool policy.** owner/admin run the CLI full-access; pal/executer
-  are sandboxed (allow-list + fixed cwd, no permission bypass). Orca is
+- **Role-based tool policy.** Only the owner runs the CLI full-access; every
+  other role (admin, executer, pal, anything unrecognised) is sandboxed:
+  allow-list + fixed cwd, no permission bypass, `--permission-mode dontAsk` so
+  an off-list command is refused at once (`SANDBOX_TOOLS` sets the default
+  list, `isFullAccess` is an exact match on `owner`). Orca is
   owner-only (`ORCA_DENY` in `--disallowedTools` for the other three, since an
   Orca worker runs with full host permissions); an executer gets code jobs
   done in its own process with the Agent tool, and the prompt is role-aware

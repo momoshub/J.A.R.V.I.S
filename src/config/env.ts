@@ -64,6 +64,8 @@ const schema = z
     // Ordinary chat for the lowest role does not need the expensive model.
     CLAUDE_MODEL_PAL: z.string().default("haiku"),
     CLAUDE_SKIP_PERMISSIONS: boolFromString(true),
+    // Allow-list of every role but the owner (comma list). Empty: the built-in read-only default.
+    SANDBOX_TOOLS: z.string().optional(),
     CLAUDE_CWD: z.string().optional(),
     CLAUDE_TIMEOUT_MS: z.coerce.number().int().positive().default(120_000),
     // Orca worktree (selector) the bot opens its own terminal in, the sender its
@@ -211,6 +213,8 @@ export type AppConfig = {
   claudeModel: string;
   claudeModelPal: string;
   claudeSkipPermissions: boolean;
+  /** `SANDBOX_TOOLS`: replaces the default read-only allow-list of non-owner roles. */
+  sandboxTools: string[];
   claudeCwd?: string;
   claudeTimeoutMs: number;
   /** Where the bot's own Orca terminal is created; undefined is off. */
@@ -294,6 +298,7 @@ export const loadConfig = (source: Record<string, string | undefined> = process.
     claudeModel: env.CLAUDE_MODEL,
     claudeModelPal: env.CLAUDE_MODEL_PAL,
     claudeSkipPermissions: env.CLAUDE_SKIP_PERMISSIONS,
+    sandboxTools: parseList(env.SANDBOX_TOOLS),
     claudeCwd: env.CLAUDE_CWD,
     claudeTimeoutMs: env.CLAUDE_TIMEOUT_MS,
     ...(env.ORCA_TERMINAL_WORKTREE?.trim() === "off"

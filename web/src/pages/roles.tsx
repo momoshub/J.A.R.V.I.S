@@ -48,7 +48,7 @@ export const action = guard(async ({ request }) => {
 
 const ROLE_HELP: Record<string, string> = {
   owner: "full control - always on, never restricted",
-  admin: "full tool access, manages users",
+  admin: "manages users; sandboxed like an executer (code tools, no arbitrary shell)",
   executer: "sandboxed: assigned tools, read-only databases, can open PRs",
   pal: "sandboxed read-only tools + review",
 };

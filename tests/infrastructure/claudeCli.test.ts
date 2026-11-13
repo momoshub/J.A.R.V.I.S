@@ -164,6 +164,23 @@ describe("createClaudeCliLlm", () => {
     expect(out).toBe("both");
   });
 
+  test("a sandboxed policy is non-interactive: dontAsk + its allow-list, no bypass", async () => {
+    // an off-list tool must be refused at once, never prompted for (nobody can answer)
+    const bin = fakeBin(
+      `#!/usr/bin/env bash\ncat > /dev/null\nR=$(printf %s "$*" | base64 | tr -d '\\n')\necho "{\\"type\\":\\"result\\",\\"subtype\\":\\"success\\",\\"is_error\\":false,\\"result\\":\\"$R\\"}"`,
+    );
+    const llm = createClaudeCliLlm({ binPath: bin, skipPermissions: true });
+    const argv = async (policy: { skipPermissions: boolean; allowedTools?: string[] }) =>
+      Buffer.from(await llm.complete({ system: "s", messages: [{ role: "user", content: "hi" }], policy }), "base64").toString();
+    const sandboxed = await argv({ skipPermissions: false, allowedTools: ["Read", "Bash(cat:*)"] });
+    expect(sandboxed).toContain("--permission-mode dontAsk");
+    expect(sandboxed).toContain("--allowedTools Read Bash(cat:*)");
+    expect(sandboxed).not.toContain("--dangerously-skip-permissions");
+    const full = await argv({ skipPermissions: true });
+    expect(full).toContain("--dangerously-skip-permissions");
+    expect(full).not.toContain("--permission-mode");
+  });
+
   test("a caller's own token replaces the bot's in the spawned CLI", async () => {
     // the whole point of per-user tokens: the CLI honours CLAUDE_CODE_OAUTH_TOKEN
     // over whatever login the host holds, so the turn is billed to the caller
