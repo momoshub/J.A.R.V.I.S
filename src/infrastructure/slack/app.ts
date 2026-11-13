@@ -30,7 +30,6 @@ import {
   type AgentSessionStoppedEvent,
   planSessionStop,
   sessionStoppedLog,
-  sessionThreadKey,
 } from "../../domain/agentSession.ts";
 import {
   decodeRequest,
@@ -427,6 +426,9 @@ export const createHandler =
     // say nothing, and a stream opened up front is in the channel before
     // anyone can check it is not a note about staying quiet.
     let streamOpened = false;
+    // True when the stream opened after this turn's run was already untracked,
+    // so the registry never saw it and the finally below has to say so.
+    let openedUntracked = false;
     const stream = config.streamUpdates
       ? createSlackStream(
           () =>
@@ -448,7 +450,7 @@ export const createHandler =
             onOpen: (ts) => {
               streamOpened = true;
               if (msg.inbox && config.inbox) config.inbox.recordStream(msg.inbox.rowId, msg.channelId, ts);
-              deps.runs?.streamOpened(msg.channelId, msg.messageTs, ts);
+              if (deps.runs && !deps.runs.streamOpened(msg.channelId, msg.messageTs, ts)) openedUntracked = true;
             },
           },
         )
@@ -654,10 +656,12 @@ export const createHandler =
     } finally {
       // However the turn ended (reply, failure, abort, ignored after its stream
       // opened): a streamed reply leaves the agent session in `processing`
-      // unless told otherwise, and Slack keeps drawing a stop button on it.
-      const key = sessionThreadKey(msg.channelId, msg.threadTs);
-      const tracked = (deps.runs?.inThread(key).length ?? 0) + (deps.runs?.inThread(frontKeyOf(key)).length ?? 0);
-      if (streamOpened && mayIdleSession(tracked)) await idleSession(msg.client, msg.channelId, msg.threadTs, log);
+      // unless told otherwise, and Slack keeps drawing a stop button on it. The
+      // registry idles it when the last run of the thread ends (see
+      // `onSessionIdle`), which this turn's own `done()` already did unless its
+      // stream opened after that.
+      if (streamOpened && !deps.runs) await idleSession(msg.client, msg.channelId, msg.threadTs, log);
+      else if (openedUntracked) deps.runs?.sessionMayIdle(msg.channelId, msg.threadTs ?? msg.messageTs);
     }
   };
 };
@@ -666,7 +670,7 @@ export const createHandler =
  * Put a thread's agent session back to idle. Best effort: a session Slack no
  * longer knows, or an old workspace without the method, must not fail a turn.
  */
-const idleSession = async (
+export const idleSession = async (
   client: Pick<SlackClient, "apiCall">,
   channel: string,
   threadTs: string,
@@ -951,11 +955,79 @@ export const retireOpenKit = async (
   }
 };
 
+/**
+ * What a press on Slack's own stop button does: stop the work, close the
+ * streams no live run owns, and put the session idle unless a run that was not
+ * stopped is still going in the thread. Exported so it can be tested without Bolt.
+ */
+export const createSessionStopHandler =
+  (deps: Pick<Deps, "runs" | "slack" | "stopLogChannel">, log: (m: string) => void) =>
+  async ({ event, client }: { event: unknown; client: unknown }): Promise<void> => {
+    const plan = planSessionStop(event as AgentSessionStoppedEvent);
+    if (plan.kind === "ignored") {
+      log(`agent session stop ignored: ${plan.why}`);
+      return;
+    }
+
+    // In a workflow thread the button is drawn on the front's streamed reply,
+    // but the work is the worker's step on the thread's own key: stop both.
+    const worker = deps.runs?.stopThread(plan.key, plan.by);
+    const front = deps.runs?.stopThread(frontKeyOf(plan.key), plan.by);
+    const stopped = worker ?? front;
+
+    const api = client as { apiCall: (method: string, args: Record<string, unknown>) => Promise<unknown> };
+    // Only the streams of what was stopped (or of nothing): a queued
+    // message's reply is in the same session, and Slack names it too.
+    const streams = deps.runs ? streamsToClose(deps.runs, plan.streams) : plan.streams;
+    let closed = 0;
+    for (const ts of streams) {
+      try {
+        await api.apiCall("chat.stopStream", { channel: plan.channel, ts });
+        closed += 1;
+      } catch (err) {
+        log(`stopStream failed for ${ts}: ${err instanceof Error ? err.message : String(err)}`);
+      }
+    }
+
+    // Closing streams does not end the session: only setStatus does, and a
+    // press with nothing running (the turn already finished) still has to
+    // leave `processing` or the button stays. Not while a run that was NOT
+    // stopped is still going in the thread (a queued turn): the run this press
+    // just stopped stays in the registry as `stopping` until its turn unwinds,
+    // so it must not hold the session open.
+    const live = [...(deps.runs?.inThread(plan.key) ?? []), ...(deps.runs?.inThread(frontKeyOf(plan.key)) ?? [])].filter(
+      (r) => r.state !== "stopping",
+    );
+    if (mayIdleSession(live.length)) await idleSession(api, plan.channel, plan.threadTs, log);
+
+    // Nothing goes into the thread: Slack's UI already showed the presser it
+    // stopped. The context goes to the log channel, and only when something
+    // was actually stopped (a press with nothing running has nothing to say).
+    const logChannel = deps.stopLogChannel?.() ?? "";
+    if (stopped && logChannel) {
+      const link = await deps.slack?.permalink?.(plan.channel, plan.threadTs).catch(logAndIgnore("stop log permalink"));
+      await deps.slack
+        ?.post(
+          logChannel,
+          sessionStoppedLog(stopped, { by: plan.by, channel: plan.channel, threadTs: plan.threadTs, ...(link ? { link } : {}) }, Date.now(), forHowLong),
+        )
+        .catch(logAndIgnore("stop log post"));
+    }
+    log(
+      `agent session stop by ${plan.by}: ${stopped ? `stopped ${stopped.id}` : "nothing running"}, ${closed}/${streams.length} streams closed (${plan.streams.length - streams.length} kept)`,
+    );
+  };
+
 export const createSlackApp = (config: SlackAppConfig, deps: Deps) => {
   const log = deps.log ?? ((m: string) => console.log(`[slack] ${m}`));
   const app = config.inbox
     ? new App({ token: config.botToken, receiver: config.inbox as never })
     : new App({ token: config.botToken, appToken: config.appToken, socketMode: true });
+  // Whichever run of a thread ends last idles its agent session, whatever kind
+  // of run it was (chat turn, queued turn, workflow worker step).
+  deps.runs?.onSessionIdle((channel, threadTs) => {
+    void idleSession(app.client as unknown as Pick<SlackClient, "apiCall">, channel, threadTs, log);
+  });
 
   // Socket Mode goes deaf silently: the process lives, the supervisor sees it
   // running, and nothing distinguishes "nobody is talking to me" from "I cannot
@@ -1521,57 +1593,7 @@ export const createSlackApp = (config: SlackAppConfig, deps: Deps) => {
    * out. The streams are closed either way, because a press with nothing left
    * running still has to leave that state.
    */
-  app.event(AGENT_SESSION_STOPPED as never, (async ({ event, client }: { event: unknown; client: unknown }) => {
-    const plan = planSessionStop(event as AgentSessionStoppedEvent);
-    if (plan.kind === "ignored") {
-      log(`agent session stop ignored: ${plan.why}`);
-      return;
-    }
-
-    // In a workflow thread the button is drawn on the front's streamed reply,
-    // but the work is the worker's step on the thread's own key: stop both.
-    const worker = deps.runs?.stopThread(plan.key, plan.by);
-    const front = deps.runs?.stopThread(frontKeyOf(plan.key), plan.by);
-    const stopped = worker ?? front;
-
-    const api = client as { apiCall: (method: string, args: Record<string, unknown>) => Promise<unknown> };
-    // Only the streams of what was stopped (or of nothing): a queued
-    // message's reply is in the same session, and Slack names it too.
-    const streams = deps.runs ? streamsToClose(deps.runs, plan.streams) : plan.streams;
-    let closed = 0;
-    for (const ts of streams) {
-      try {
-        await api.apiCall("chat.stopStream", { channel: plan.channel, ts });
-        closed += 1;
-      } catch (err) {
-        log(`stopStream failed for ${ts}: ${err instanceof Error ? err.message : String(err)}`);
-      }
-    }
-
-    // Closing streams does not end the session: only setStatus does, and a
-    // press with nothing running (the turn already finished) still has to
-    // leave `processing` or the button stays. Not while a run in the thread
-    // is still going (a queued turn that was not the one stopped).
-    const tracked = (deps.runs?.inThread(plan.key).length ?? 0) + (deps.runs?.inThread(frontKeyOf(plan.key)).length ?? 0);
-    if (mayIdleSession(tracked)) await idleSession(api, plan.channel, plan.threadTs, log);
-
-    // Nothing goes into the thread: Slack's UI already showed the presser it
-    // stopped. The context goes to the log channel, and only when something
-    // was actually stopped (a press with nothing running has nothing to say).
-    const logChannel = deps.stopLogChannel?.() ?? "";
-    if (stopped && logChannel) {
-      const link = await deps.slack?.permalink?.(plan.channel, plan.threadTs).catch(logAndIgnore("stop log permalink"));
-      await deps.slack
-        ?.post(
-          logChannel,
-          sessionStoppedLog(stopped, { by: plan.by, channel: plan.channel, threadTs: plan.threadTs, ...(link ? { link } : {}) }, Date.now(), forHowLong),
-        )
-        .catch(logAndIgnore("stop log post"));
-    }
-    log(
-      `agent session stop by ${plan.by}: ${stopped ? `stopped ${stopped.id}` : "nothing running"}, ${closed}/${streams.length} streams closed (${plan.streams.length - streams.length} kept)`,
-    );
-  }) as never);
+  app.event(AGENT_SESSION_STOPPED as never, createSessionStopHandler(deps, log) as never);
 
   // TODO(split): move reaction handlers to src/infrastructure/slack/reactionHandlers.ts
   // The owner reacting on an access-request notice decides it; the owner

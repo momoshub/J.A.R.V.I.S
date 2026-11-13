@@ -117,9 +117,11 @@ export const idleSessionArgs = (channel: string, threadTs: string): Record<strin
 });
 
 /**
- * Whether a turn that just ended may idle the session. Not while another run
- * is still tracked in the thread (a message queued behind the running turn
- * reaches its own end first, and idling then would hide the stop button of the
- * turn that is still working) - the run that ends last does it.
+ * Whether the session may be idled now: no run is still live in the thread.
+ * Count only runs that are not `stopping` when a stop press asks - the run it
+ * just stopped stays in the registry until its turn unwinds, and counting it
+ * would mean a press that stopped the only run never idles. A run that ENDS
+ * is asked of the registry instead (`onSessionIdle`), which idles for whichever
+ * run goes last, whether or not that run ever opened a stream.
  */
-export const mayIdleSession = (stillTracked: number): boolean => stillTracked === 0;
+export const mayIdleSession = (stillLive: number): boolean => stillLive === 0;
