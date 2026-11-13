@@ -1,6 +1,8 @@
 import { describe, expect, test } from "bun:test";
 import {
   AGENT_SESSION_STOPPED,
+  idleSessionArgs,
+  mayIdleSession,
   planSessionStop,
   sessionStoppedLog,
   sessionThreadKey,
@@ -107,5 +109,18 @@ describe("sessionStoppedLog", () => {
 
   test("stopping your own does not name you twice", () => {
     expect(sessionStoppedLog(run, where, 61_000, forHowLong)).not.toContain("(<@U9>'s)");
+  });
+});
+
+describe("idleSessionArgs", () => {
+  test("sets the thread's session to active, which is what removes the stop button", () => {
+    expect(idleSessionArgs("C123", "100.1")).toEqual({ channel_id: "C123", thread_ts: "100.1", status: "active" });
+  });
+});
+
+describe("mayIdleSession", () => {
+  test("only when no run is still tracked in the thread", () => {
+    expect(mayIdleSession(0)).toBe(true);
+    expect(mayIdleSession(1)).toBe(false);
   });
 });

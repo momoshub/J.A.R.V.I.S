@@ -24,9 +24,13 @@ import { frontKeyOf } from "../../domain/workflowFront.ts";
 import { streamsToClose } from "../../application/runRegistry.ts";
 import {
   AGENT_SESSION_STOPPED,
+  SET_SESSION_STATUS,
+  idleSessionArgs,
+  mayIdleSession,
   type AgentSessionStoppedEvent,
   planSessionStop,
   sessionStoppedLog,
+  sessionThreadKey,
 } from "../../domain/agentSession.ts";
 import {
   decodeRequest,
@@ -184,6 +188,8 @@ type Deps = RespondDeps & {
 export type SlackClient = {
   users: { info: (a: { user: string }) => Promise<unknown> };
   chatStream: (args: Record<string, unknown>) => Streamer;
+  /** Optional so a test fake need not have it; the real client always does. */
+  apiCall?: (method: string, args: Record<string, unknown>) => Promise<unknown>;
   chat: {
     update: (a: Record<string, unknown>) => Promise<unknown>;
     /** Optional so a test fake need not have it; the real client always does. */
@@ -420,6 +426,7 @@ export const createHandler =
     // When following, held until the turn is plainly working: most of those
     // say nothing, and a stream opened up front is in the channel before
     // anyone can check it is not a note about staying quiet.
+    let streamOpened = false;
     const stream = config.streamUpdates
       ? createSlackStream(
           () =>
@@ -439,6 +446,7 @@ export const createHandler =
             // And which turn it belongs to, so a stop press closes only the
             // stream of the turn it stopped.
             onOpen: (ts) => {
+              streamOpened = true;
               if (msg.inbox && config.inbox) config.inbox.recordStream(msg.inbox.rowId, msg.channelId, ts);
               deps.runs?.streamOpened(msg.channelId, msg.messageTs, ts);
             },
@@ -643,8 +651,32 @@ export const createHandler =
         .say({ ...signedText(text, footerLine(SIGNATURES.jarvis, deps.clock())), thread_ts: msg.threadTs })
         .catch(() => msg.say({ text, thread_ts: msg.threadTs }))
         .catch(logAndIgnore("error reply to thread"));
+    } finally {
+      // However the turn ended (reply, failure, abort, ignored after its stream
+      // opened): a streamed reply leaves the agent session in `processing`
+      // unless told otherwise, and Slack keeps drawing a stop button on it.
+      const key = sessionThreadKey(msg.channelId, msg.threadTs);
+      const tracked = (deps.runs?.inThread(key).length ?? 0) + (deps.runs?.inThread(frontKeyOf(key)).length ?? 0);
+      if (streamOpened && mayIdleSession(tracked)) await idleSession(msg.client, msg.channelId, msg.threadTs, log);
     }
   };
+};
+
+/**
+ * Put a thread's agent session back to idle. Best effort: a session Slack no
+ * longer knows, or an old workspace without the method, must not fail a turn.
+ */
+const idleSession = async (
+  client: Pick<SlackClient, "apiCall">,
+  channel: string,
+  threadTs: string,
+  log: (m: string) => void,
+): Promise<void> => {
+  try {
+    await client.apiCall?.(SET_SESSION_STATUS, idleSessionArgs(channel, threadTs));
+  } catch (err) {
+    log(`${SET_SESSION_STATUS} failed for ${channel}:${threadTs}: ${err instanceof Error ? err.message : String(err)}`);
+  }
 };
 
 /** Nothing a reader would count as a reply: no words, or a note about not replying. */
@@ -1515,6 +1547,13 @@ export const createSlackApp = (config: SlackAppConfig, deps: Deps) => {
         log(`stopStream failed for ${ts}: ${err instanceof Error ? err.message : String(err)}`);
       }
     }
+
+    // Closing streams does not end the session: only setStatus does, and a
+    // press with nothing running (the turn already finished) still has to
+    // leave `processing` or the button stays. Not while a run in the thread
+    // is still going (a queued turn that was not the one stopped).
+    const tracked = (deps.runs?.inThread(plan.key).length ?? 0) + (deps.runs?.inThread(frontKeyOf(plan.key)).length ?? 0);
+    if (mayIdleSession(tracked)) await idleSession(api, plan.channel, plan.threadTs, log);
 
     // Nothing goes into the thread: Slack's UI already showed the presser it
     // stopped. The context goes to the log channel, and only when something

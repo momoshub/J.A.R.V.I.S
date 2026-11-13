@@ -74,6 +74,8 @@ const build = (opts: {
   /** `chat.update` throws on any message carrying blocks other than markdown/context, as Slack does on `invalid_blocks`. */
   refuseUpdateBlocks?: boolean;
   threadQueue?: ThreadQueue;
+  /** `agents.sessions.setStatus` fails, as it does for a session Slack no longer has. */
+  statusThrows?: boolean;
 }) => {
   const db = openDatabase(":memory:");
   const users = createUserRepo(db);
@@ -102,12 +104,18 @@ const build = (opts: {
   const said: { text: string; reply_broadcast?: boolean }[] = [];
   const updates: Record<string, unknown>[] = [];
   const deletes: string[] = [];
+  const apiCalls: { method: string; args: Record<string, unknown> }[] = [];
   const rec = opts.rec ?? { appends: [], stops: 0, stopThrows: false, appendThrows: false };
   // The first message keeps the old fixed ts; a rollover gets its own.
   let streams = 0;
   const client: SlackClient = {
     users: { info: async () => ({ user: { profile: { display_name: "Kai" } } }) },
     chatStream: () => fakeStreamer(rec, streams++ === 0 ? "222.2" : `222.${streams + 1}`),
+    apiCall: async (method, args) => {
+      apiCalls.push({ method, args });
+      if (opts.statusThrows) throw new Error("session_not_found");
+      return {};
+    },
     chat: {
       update: async (a) => {
         if (opts.refuseUpdateBlocks && (a.blocks as { type: string }[] | undefined)?.some((b) => b.type !== "markdown" && b.type !== "context"))
@@ -134,7 +142,7 @@ const build = (opts: {
       said.push({ text: m.text, ...(m.reply_broadcast ? { reply_broadcast: true } : {}) });
     },
   });
-  return { handle, msg, said, updates, deletes, rec, messages, opened: () => streams };
+  return { handle, msg, said, updates, deletes, apiCalls, rec, messages, opened: () => streams };
 };
 
 const streamingLlm = (final: string, events: LlmStreamEvent[] = []): LlmPort => ({
@@ -143,6 +151,53 @@ const streamingLlm = (final: string, events: LlmStreamEvent[] = []): LlmPort => 
     for (const e of events) sink(e);
     return final;
   },
+});
+
+describe("createHandler agent session status", () => {
+  const idled = (calls: { method: string; args: Record<string, unknown> }[]) =>
+    calls.filter((c) => c.method === "agents.sessions.setStatus");
+
+  test("a streamed reply puts the session back to active when the turn ends", async () => {
+    const { handle, msg, apiCalls } = build({
+      llm: streamingLlm("hello there", [{ type: "text", delta: "hello there" }]),
+      streamUpdates: true,
+    });
+    await handle(msg("hi", "100.5"));
+    expect(idled(apiCalls)).toEqual([
+      { method: "agents.sessions.setStatus", args: { channel_id: "C1", thread_ts: "100.5", status: "active" } },
+    ]);
+  });
+
+  test("a failed turn that had opened a stream still goes idle", async () => {
+    const { handle, msg, apiCalls } = build({
+      llm: {
+        complete: async () => "x",
+        stream: async (_p, sink) => {
+          sink({ type: "text", delta: "half" });
+          throw new Error("boom");
+        },
+      },
+      streamUpdates: true,
+    });
+    await handle(msg("hi", "100.6"));
+    expect(idled(apiCalls)).toHaveLength(1);
+  });
+
+  test("no stream opened: no session exists, so nothing is set", async () => {
+    const { handle, msg, apiCalls } = build({ llm: streamingLlm("plain"), streamUpdates: false });
+    await handle(msg("hi", "100.7"));
+    expect(idled(apiCalls)).toHaveLength(0);
+  });
+
+  test("a setStatus failure does not fail the turn", async () => {
+    const { handle, msg, said } = build({
+      llm: streamingLlm("hello there", [{ type: "text", delta: "hello there" }]),
+      streamUpdates: true,
+      statusThrows: true,
+    });
+    await handle(msg("hi", "100.8"));
+    expect(said).toHaveLength(0);
+  });
 });
 
 describe("createHandler streaming truth table", () => {
