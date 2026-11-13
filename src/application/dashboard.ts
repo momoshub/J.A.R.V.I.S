@@ -463,13 +463,17 @@ export const createDashboardService = (p: DashboardPorts) => {
   updateLearning: async (
     idIn: unknown,
     contentIn: unknown,
-  ): Promise<Outcome<{ status: "pending"; message: string }>> => {
+  ): Promise<Outcome<{ status: string; message: string }>> => {
     const id = Number(idIn);
     if (!Number.isInteger(id)) return refuse("A learning id is required");
     if (!p.learningApproval) return refuse("Learnings are not wired up", 503);
     const r = await rewordLearning(p.learningApproval, id, text(contentIn), { slackId: "", owner: false });
     if (!r.ok) return refuse(r.error);
-    return done({ status: "pending", message: pendingApiMessage(id) });
+    return done(
+      r.pending
+        ? { status: "pending", message: pendingApiMessage(id) }
+        : { status: r.learning.status, message: `Unchanged: learning #${id} already says that.` },
+    );
   },
 
   removeLearning: (idIn: unknown): Outcome<null> => {

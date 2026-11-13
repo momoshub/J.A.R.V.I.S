@@ -347,6 +347,47 @@ describe("rewording is a write too", () => {
     expect(d.learnings!.list()).toEqual([]);
   });
 
+  test("rewording cannot flood the owner: a row waiting is not reworded again, and the cap applies", async () => {
+    const d = build();
+    await run(d, actor(), `learn ${FACT}`);
+    const id = d.learnings!.list()[0]!.id;
+    const who = { slackId: "", owner: false };
+    expect(await rewordLearning(d.learningApproval!, id, "variant one", who)).toMatchObject({ ok: true, pending: true });
+    const dms = slackCalls.posts.length;
+    // now pending: more variants are refused and send nothing
+    for (const v of ["variant two", "variant three"]) {
+      expect(await rewordLearning(d.learningApproval!, id, v, who)).toMatchObject({ ok: false });
+    }
+    expect(slackCalls.posts).toHaveLength(dms);
+    expect(d.learnings!.get(id)?.content).toBe("variant one");
+
+    // with the queue full, an active row cannot be pushed into it either
+    const other = d.learnings!.add("another active fact", OWNER, 1, "active");
+    for (let i = 0; i < MAX_PENDING; i++) d.learnings!.add(`waiting ${i}`, "agent", 1, "pending");
+    expect(await rewordLearning(d.learningApproval!, other.id, "changed", who)).toMatchObject({ ok: false });
+    expect(d.learnings!.get(other.id)).toMatchObject({ status: "active", content: "another active fact" });
+  });
+
+  test("a rejected learning stays rejected: nobody but the owner's typing rewords it back", async () => {
+    const d = build();
+    await run(d, MEMBER, `learn ${FACT}`);
+    const id = d.learnings!.pending()[0]!.id;
+    await run(d, actor(), `learn reject ${id}`);
+    const dms = slackCalls.posts.length;
+    expect(await rewordLearning(d.learningApproval!, id, "the same idea in new words", { slackId: "", owner: false })).toMatchObject({ ok: false });
+    expect(d.learnings!.get(id)?.status).toBe("rejected");
+    expect(slackCalls.posts).toHaveLength(dms);
+  });
+
+  test("the owner can reword one that waits for them before approving it", async () => {
+    const d = build();
+    await run(d, MEMBER, `learn ${FACT}`);
+    const id = d.learnings!.pending()[0]!.id;
+    expect(await run(d, actor(), `relearn ${id} the staging deploy needs the VPN and a token`)).toContain(`Updated #${id}`);
+    expect(d.learnings!.get(id)).toMatchObject({ status: "pending", content: "the staging deploy needs the VPN and a token" });
+    expect(d.learnings!.list()).toEqual([]);
+  });
+
   test("rewording to the same text, to nothing or an unknown id changes nothing", async () => {
     const d = build();
     await run(d, actor(), `learn ${FACT}`);

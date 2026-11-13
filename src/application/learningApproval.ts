@@ -219,7 +219,8 @@ export const decideLearningPress = async (
  * New wording for an existing learning. Rewording is a write like any other:
  * unless the owner typed it, the learning goes back to pending (and out of the
  * prompt) until the owner approves the new text, or the agent could rewrite an
- * approved fact instead of adding one.
+ * approved fact instead of adding one. It counts toward `MAX_PENDING`, a
+ * rejected learning stays rejected and one already waiting is not reworded.
  */
 export const rewordLearning = async (
   deps: LearningApprovalDeps,
@@ -239,6 +240,13 @@ export const rewordLearning = async (
     return { ok: false, error: `Too long (${text.length} characters, at most ${MAX_LEARNING_CHARS}). One sentence.` };
   }
   if (text === before.content) return { ok: true, learning: before, pending: before.status === "pending" };
+  // Same limits as a new proposal, or this door floods the owner's DMs and brings back what they rejected.
+  if (before.status === "rejected") return { ok: false, error: `Learning #${id} was rejected by the owner.` };
+  if (before.status === "pending") return { ok: false, error: `Learning #${id} is already waiting for the owner. It cannot be reworded until they decide.` };
+  const waiting = deps.learnings.pending().length;
+  if (waiting >= MAX_PENDING) {
+    return { ok: false, error: `${waiting} learnings are already waiting for the owner. Try again once they have decided.` };
+  }
   deps.learnings.update(id, text, "pending");
   deps.log?.(`learning #${id} reworded by ${by.slackId || AGENT_SOURCE}, pending the owner`);
   const after = deps.learnings.get(id) ?? { ...before, content: text, status: "pending" as const };

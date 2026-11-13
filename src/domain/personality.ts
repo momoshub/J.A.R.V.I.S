@@ -187,7 +187,9 @@ ${lines}`;
  * Lets the bot propose something it just learned. What it posts is stored
  * PENDING (never injected) until the owner approves it - `learn` by anyone but
  * the owner typing is the same - so a prompt injection that makes it post one
- * cannot change a single reply. Only offered when the person it is talking to
+ * cannot change a reply through this door (the adapter editor and `adapter
+ * import` are separate doors, see the learnings-approval entry in AGENTS.md).
+ * Only offered when the person it is talking to
  * could have run `learn` themselves.
  */
 export const learningRules = (learnUrl: string): string => {

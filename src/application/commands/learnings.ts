@@ -115,8 +115,9 @@ export const LEARNINGS_COMMANDS: readonly CommandDef[] = [
       if (!Number.isInteger(id)) return `Which one? \`${prefix} relearn <id> <new wording>\` (see \`${prefix} learnings\`)`;
       const content = rest.slice(String(args[0]).length).trim();
       if (!content) return `What should it say? \`${prefix} relearn ${id} <new wording>\``;
-      const before = deps.learnings.list().find((l) => l.id === id);
-      if (!before) return `I have no learning #${id}. Check \`${prefix} learnings\`.`;
+      // Any status: the owner may reword one that waits for them before approving it.
+      const before = deps.learnings.get(id);
+      if (!before) return `I have no learning #${id}. Check \`${prefix} learnings\` or \`${prefix} learn pending\`.`;
       // Rewording is a write like any other: only the owner's own typing keeps it live.
       const r = await rewordLearning(deps.learningApproval, id, content, {
         slackId: fromBrainRun ? "" : actor.slackId,

@@ -322,6 +322,17 @@ describe("editing a learning", () => {
     expect(learnings.get(id)).toMatchObject({ status: "pending", content: "staging is at new.example.com" });
   });
 
+  test("the API reports the real status: the same text leaves it active and says so", async () => {
+    const { dash, learnings } = build();
+    learnings.add("a fact", "dashboard", 1, "active");
+    const id = learnings.list()[0]!.id;
+    const res = await dash.handle(postJson("/api/learnings/update", { id, content: "a fact" }));
+    const body = (await res.json()) as { status: string; message: string };
+    expect(body.status).toBe("active");
+    expect(body.message).toContain("Unchanged");
+    expect(learnings.list()).toHaveLength(1);
+  });
+
   test("refuses to blank one out or to guess at the id", async () => {
     const { dash, learnings } = build();
     learnings.add("a fact", "dashboard", 1, "active");
