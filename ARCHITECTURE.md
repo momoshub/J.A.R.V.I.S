@@ -143,8 +143,9 @@ no classes.
   An Orca worker outlives the turn's 20-minute ticket, so a turn mints it a
   **worker ticket** (`worker-ticket`, `workerTickets.ts`, rows in
   `worker_tickets` holding only the token's sha-256): one repo, a short action
-  list (no `git`/`push` by default: a worker pushes with the one-shot human
-  credential), bound to its dispatch id, 3h (max 6h), ended when the
+  list (the app's commit identity by default, so commits go out as the app with
+  no token; `push` is the opt-in that adds a push-capable `git-auth` token,
+  otherwise a worker pushes with the one-shot human credential), bound to its dispatch id, 3h (max 6h), ended when the
   `watch worker` sees it finish or die, on `revoke`, or by the expiry sweep. A
   long worker extends it (`ticket-renew` through `bin/github-app.sh`, or an
   admin's `worker-ticket renew`, which also revives one that lapsed unrevoked):

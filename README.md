@@ -920,7 +920,7 @@ brain's own run bridge, so a typed line, a schedule, an errand or the menu never
 mint one):
 
 ```
-worker-ticket <owner/repo> pending [pr-create|comment|pr-edit|git|push|labels-add|reviewers-request ...] [--ttl 3h]
+worker-ticket <owner/repo> pending [pr-create|comment|pr-edit|push|labels-add|reviewers-request ...] [--ttl 3h]
 worker-ticket bind <id> <ctx_...>      # after worker-start prints the dispatch id
 worker-ticket revoke <id|ctx_...>
 worker-ticket renew <id|ctx_...> [--ttl 3h]   # admin; also revives one that lapsed but was never revoked
@@ -932,7 +932,7 @@ is written once to a mode-0600 file in a 0700 folder
 path, to `export` before `bin/github-app.sh` (the helper reads the first line of
 that file; the brain never reads, prints or posts it, and the file is deleted
 when the ticket ends). The ticket works for that one repo and those actions only
-(default `pr-create`, `comment`, `pr-edit`; never review, merge or close), cannot
+(default `pr-create`, `comment`, `pr-edit` and the app's commit identity; never review, merge or close), cannot
 run any command, is checked against the minting person's role on every call,
 expires in 3 hours (max 6) and ends when the worker finishes or dies (the turn's
 `watch worker`), on `worker-ticket revoke`, or at expiry. Tickets are rows in
@@ -948,11 +948,17 @@ file until the limit instead of being deleted at its expiry. Nothing lives past
 24 hours from the bind however often it is renewed, and every renewal is
 audited like a mint.
 
-**Pushing is not part of the default grant.** A worker pushes with the
+**Commits come as the app by default; pushing does not.** Every worker ticket
+carries the app's commit identity (`git-commit`: name and email, an empty
+token), so `bin/github-app.sh git <owner/repo> <dir> -- commit ...` works as the
+app for a worker minted with no extra words (the helper runs git with that
+identity and no credential, exactly like an executer). A worker pushes with the
 org's own one-shot human credential (the `kai-at-acme` of the rule above; where
-the app has Contents read-only it cannot push anyway); only the PR, comment and
-edit actions go through the app. `git` / `push` (the `git-auth` action) stay an
-explicit opt-in for an org where the app has Contents write. Its token is minted
+the app has Contents read-only it cannot push anyway). `push` (the same as
+`git` / `git-auth`, the `git-auth` action) stays an explicit opt-in for an org
+where the app has Contents write: only then does the ticket get a token. A
+ticket row stored before this change keeps what it was minted with (one without
+`git-commit` still cannot run `git`; one with `git-auth` still gets its token). Its token is minted
 per ticket, never cached or shared, limited to that one repository and to
 `metadata: read` plus `contents` at the level the installation itself holds
 (asking for more than the installation has is a 422), so it cannot approve,

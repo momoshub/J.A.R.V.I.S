@@ -94,6 +94,30 @@ describe("github app actions with a worker ticket", () => {
     expect(JSON.stringify(audit)).not.toContain("ghs_secret");
   });
 
+  test("a default mint commits as the app: git-auth returns the identity and no token, and nothing is minted at GitHub", async () => {
+    const { actions, audit, mint, minted, wideTokens } = setup();
+    const { token } = mint({ actions: ["pr-create", "comment", "pr-edit", "git-commit"] });
+    const out = await actions.run({ ticket: token, action: "git-auth", repo: "o/r" });
+    expect(out.github).toEqual({ token: "", name: "jarvis[bot]", email: expect.stringContaining("+jarvis[bot]@users.noreply.github.com") });
+    expect(minted).toEqual([]);
+    expect(wideTokens).toEqual([]);
+    expect(audit.at(-1)).toMatchObject({ ok: true });
+  });
+
+  test("push opted in on top of the identity returns a minted token", async () => {
+    const { actions, mint, minted } = setup();
+    const { token } = mint({ actions: ["pr-create", "git-auth", "git-commit"] });
+    const out = await actions.run({ ticket: token, action: "git-auth", repo: "o/r" });
+    expect(out.github).toMatchObject({ token: "ghs_secret_worker_1", name: "jarvis[bot]" });
+    expect(minted).toHaveLength(1);
+  });
+
+  test("an old row minted with no git grant at all still refuses git-auth", async () => {
+    const { actions, mint } = setup();
+    const { token } = mint({ actions: ["pr-create", "comment", "pr-edit"] });
+    await expect(actions.run({ ticket: token, action: "git-auth", repo: "o/r" })).rejects.toThrow("does not allow `git-auth`");
+  });
+
   test("a ticket reuses its own token until near expiry, then rotates and revokes the old one", async () => {
     const { actions, mint, minted, revoked, t } = setup();
     const { token } = mint();
