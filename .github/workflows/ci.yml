@@ -1,5 +1,5 @@
-# Typecheck, tests and a secret scan on every PR and every push to main, plus the real-Slack e2e
-# suite on a push to main only. The secret scan also runs on a push of any branch or tag, so a push that
+# Typecheck, tests and a secret scan on every PR and every push to main. The real-Slack e2e suite
+# is its own workflow, e2e.yml, on a push to main only. The secret scan also runs on a push of any branch or tag, so a push that
 # skipped the local hook is still caught. The merge gate for self-fixes is bin/merge-when-green.sh.
 name: ci
 
@@ -40,35 +40,6 @@ jobs:
         working-directory: web
       - run: bun run build
         working-directory: web
-
-  # Real Slack, in a private test channel named by the JARVIS_E2E_CHANNEL repository variable (see
-  # README "Testing"). The bot token is a secret of the `e2e` environment, never a repository
-  # secret: the environment only deploys from main, so a workflow edited on any other branch or PR
-  # (by anyone with write access, or an app that can push) is refused the token. That is also why
-  # this runs on a push to main only, after a reviewed merge, and never on a PR.
-  # Opt-in per repo: only where the JARVIS_E2E_CHANNEL variable is set, so a fork or a copy without
-  # a Slack workspace stays green. Where it is set, a missing secret fails here: the suite would
-  # otherwise skip itself and pass.
-  e2e:
-    if: github.event_name == 'push' && github.ref == 'refs/heads/main' && vars.JARVIS_E2E_CHANNEL != ''
-    needs: checks
-    runs-on: ubuntu-latest
-    timeout-minutes: 15
-    environment: e2e
-    steps:
-      - uses: actions/checkout@v4
-      - uses: oven-sh/setup-bun@v2
-        with:
-          bun-version: 1.4.3 # same as the host; bump together
-      - run: bun install --frozen-lockfile
-      - name: e2e (real Slack)
-        env:
-          SLACK_BOT_TOKEN: ${{ secrets.JARVIS_E2E_SLACK_BOT_TOKEN }}
-          JARVIS_E2E_CHANNEL: ${{ vars.JARVIS_E2E_CHANNEL }}
-        run: |
-          test -n "$SLACK_BOT_TOKEN" || { echo "JARVIS_E2E_SLACK_BOT_TOKEN secret is not set on the e2e environment" >&2; exit 1; }
-          test -n "$JARVIS_E2E_CHANNEL" || { echo "JARVIS_E2E_CHANNEL repository variable is not set" >&2; exit 1; }
-          bun run test:e2e
 
   # Secret scan with the gitleaks CLI (the action needs a licence for organisations).
   # Push (any branch or tag): every public ref (--all), their names and every tag. Pull request: only the commits it adds. Both scan the diffs and,
