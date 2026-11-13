@@ -8,13 +8,14 @@
 #   slack-read.sh find     <#channel-name>
 #
 # Sandboxed roles have no `curl`, and for good reason: a general outbound
-# request with SLACK_BOT_TOKEN in the environment is an exfiltration channel.
-# But the bot can genuinely read these, so refusing is a worse answer than a
-# narrow door. This script is that door - read methods only, GET only, and it
-# cannot post, edit, delete, invite or set anything.
+# request is an exfiltration channel. But the bot can genuinely read these, so
+# refusing is a worse answer than a narrow door. This script is that door - read
+# methods only, and it cannot post, edit, delete, invite or set anything. It
+# calls Slack through slack-api.sh: the turn holds a ticket for this run, never
+# the bot's token, and the bot applies its own allowlist as well.
 #
 # A PUBLIC channel the bot has not joined returns `not_in_channel`. Rather than
-# fail, it joins (the token has channels:join) and retries, and says so on
+# fail, it joins (the bot has channels:join) and retries, and says so on
 # stderr - a join is visible to everyone in the channel, so it is never silent.
 # A PRIVATE channel it was not invited to stays refused, which is correct.
 #
@@ -35,9 +36,11 @@
 # cannot be resolved stays as it is, never guessed.
 set -uo pipefail
 
+here=$(cd "$(dirname "$0")" && pwd)
+
+# api <method> key=value...
 api() {
-  curl -s --max-time 25 -H "Authorization: Bearer ${SLACK_BOT_TOKEN:?SLACK_BOT_TOKEN is not set}" \
-    --get "https://slack.com/api/$1" "${@:2}"
+  "$here/slack-api.sh" "$@"
 }
 
 ok() { printf '%s' "$1" | python3 -c 'import json,sys; sys.exit(0 if json.load(sys.stdin).get("ok") else 1)' 2>/dev/null; }
@@ -46,13 +49,13 @@ err() { printf '%s' "$1" | python3 -c 'import json,sys; print(json.load(sys.stdi
 # Join a public channel so its history can be read, then hand back the retry.
 join_if_public() {
   local channel=$1
-  local info; info=$(api conversations.info -d "channel=$channel")
+  local info; info=$(api conversations.info "channel=$channel")
   if [ "$(printf '%s' "$info" | python3 -c 'import json,sys; c=json.load(sys.stdin).get("channel",{}); print(c.get("is_private"))' 2>/dev/null)" != "False" ]; then
     echo "refusing: $channel is private and the bot was not invited to it" >&2
     return 1
   fi
   echo "note: joining public channel $channel to read it" >&2
-  api conversations.join -d "channel=$channel" >/dev/null
+  api conversations.join "channel=$channel" >/dev/null
 }
 
 read_with_join() {
@@ -138,7 +141,7 @@ name_users() {
   local lookups; lookups=$(mktemp "${TMPDIR:-/tmp}/slack-read.XXXXXX") || { printf '%s' "$raw"; return; }
   local id
   for id in $(printf '%s' "$raw" | user_ids); do
-    printf '%s\t%s\n' "$id" "$(api users.info -d "user=$id" | tr -d '\n')" >> "$lookups"
+    printf '%s\t%s\n' "$id" "$(api users.info "user=$id" | tr -d '\n')" >> "$lookups"
   done
   printf '%s' "$raw" | LOOKUPS="$lookups" python3 -c '
 import json, os, re, sys
@@ -172,11 +175,11 @@ except Exception:
 }
 
 case "${1:-}" in
-  history) read_with_join conversations.history -d "channel=${2:?channel}" -d "limit=${3:-20}" ${4:+-d "latest=$4"} ${4:+-d "inclusive=true"} | clean | name_users ;;
-  replies) read_with_join conversations.replies -d "channel=${2:?channel}" -d "ts=${3:?thread ts}" -d "limit=${4:-50}" | clean | name_users ;;
-  info)    api conversations.info -d "channel=${2:?channel}" ;;
-  user)    api users.info -d "user=${2:?user id}" ;;
-  find)    api conversations.list -d "types=public_channel" -d "limit=1000" -d "exclude_archived=true" ;;
+  history) read_with_join conversations.history "channel=${2:?channel}" "limit=${3:-20}" ${4:+"latest=$4"} ${4:+"inclusive=true"} | clean | name_users ;;
+  replies) read_with_join conversations.replies "channel=${2:?channel}" "ts=${3:?thread ts}" "limit=${4:-50}" | clean | name_users ;;
+  info)    api conversations.info "channel=${2:?channel}" ;;
+  user)    api users.info "user=${2:?user id}" ;;
+  find)    api conversations.list "types=public_channel" "limit=1000" "exclude_archived=true" ;;
   *)
     echo "usage: slack-read.sh history|replies|info|user|find ..." >&2
     exit 2

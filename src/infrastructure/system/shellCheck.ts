@@ -16,11 +16,16 @@ import { stopProcess } from "../llm/killTree.ts";
 
 const MAX_OUTPUT = 4_000;
 
+/** Extra environment for one run of a check, and what to do when it is over. */
+export type CheckEnv = { readonly env: Record<string, string>; readonly done: () => void };
+
 export const createShellCheck = (
   cwd?: string,
+  extraEnv?: () => CheckEnv,
 ): ((cmd: string, timeoutMs: number) => Promise<CheckResult>) => {
   return async (cmd, timeoutMs) => {
     let proc: Bun.Subprocess<"ignore", "pipe", "pipe"> | undefined;
+    const extra = extraEnv?.();
     try {
       proc = Bun.spawn({
         cmd: ["/bin/sh", "-c", cmd],
@@ -28,6 +33,7 @@ export const createShellCheck = (
         stdout: "pipe",
         stderr: "pipe",
         ...(cwd ? { cwd } : {}),
+        ...(extra ? { env: { ...process.env, ...extra.env } } : {}),
       });
       const timer = setTimeout(() => {
         // The whole tree: a predicate that pipes is several processes, and
@@ -47,6 +53,8 @@ export const createShellCheck = (
     } catch (e) {
       if (proc) stopProcess(proc);
       return { code: -1, output: "", error: e instanceof Error ? e.message : String(e) };
+    } finally {
+      extra?.done();
     }
   };
 };

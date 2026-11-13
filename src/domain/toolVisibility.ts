@@ -18,6 +18,7 @@ const HIDDEN = [
   // Self-actions the bot performs silently.
   /slack\.com\/api\/reactions\.(add|remove)/i,
   /slack-react\.sh\b/i,
+  /(BOT_SLACK_CALL|slack-api\.sh)["']?\s+reactions\.(add|remove)\b/i,
   /jarvis-run\.sh\b/i,
   /\/api\/learnings\b/i,
   // Anything aimed at the host the bot runs on.
@@ -63,7 +64,7 @@ export const redactPaths = (text: string, home: string = process.env.HOME ?? "")
 
 /**
  * Credential shapes worth scrubbing from anything user-visible. A shell variable
- * (`$SLACK_BOT_TOKEN`) is not a secret and is left alone - it is the expanded
+ * (`$JARVIS_SLACK_TICKET`) is not a secret and is left alone - it is the expanded
  * value that must never be rendered.
  */
 const SECRETS: readonly RegExp[] = [
@@ -73,6 +74,7 @@ const SECRETS: readonly RegExp[] = [
   /gh[pousr]_[A-Za-z0-9]{16,}/g,
   /AKIA[0-9A-Z]{12,}/g,
   /jvwk_[A-Za-z0-9]{16,}/g,
+  /jvsl_[A-Za-z0-9]{16,}/g,
   /\bBearer\s+[A-Za-z0-9._~+/-]{16,}=*/gi,
 ];
 

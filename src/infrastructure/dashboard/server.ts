@@ -26,6 +26,7 @@ import type { RolePolicyRepo } from "../db/rolePolicyRepo.ts";
 import type { StatsRepo } from "../db/statsRepo.ts";
 import { createSlackDirectory } from "../../application/slackDirectory.ts";
 import { createNameResolver } from "../../application/nameResolver.ts";
+import type { SlackProxy } from "../../application/slackProxy.ts";
 import { ignoreQuietly } from "../../application/ignoredError.ts";
 
 export type DashboardConfig = {
@@ -104,6 +105,12 @@ export type DashboardDeps = {
    * the ticket resolves to. Returns GitHub's JSON.
    */
   githubAction?: (req: { ticket: string } & Record<string, unknown>) => Promise<Record<string, unknown>>;
+  /**
+   * The bot's side of the turn's Slack helpers: a ticketed, allowlisted call to
+   * the Slack Web API, and a ticketed download of a private file. The turn never
+   * holds the bot token; it only ever holds the ticket.
+   */
+  slackProxy?: SlackProxy;
   /** Modals the brain stores for a `jv:modal:<id>` button to open on click. */
   kitViews?: KitViewRepo;
   /**
@@ -393,6 +400,22 @@ export const createDashboard = (config: DashboardConfig, deps: DashboardDeps) =>
           } catch (e) {
             return jsonError(e instanceof Error ? e.message : String(e), 500);
           }
+        }
+        case "/api/slack/proxy": {
+          if (!deps.slackProxy) return jsonError("The Slack proxy is not configured", 503);
+          const answer = await deps.slackProxy.call({ ticket: body.ticket, method: body.method, params: body.params });
+          return new Response(answer.body, { status: answer.status, headers: { "content-type": "application/json" } });
+        }
+        case "/api/slack/file": {
+          if (!deps.slackProxy) return jsonError("The Slack proxy is not configured", 503);
+          const file = await deps.slackProxy.download({ ticket: body.ticket, url: body.url });
+          if (!file.ok) return jsonError(file.error, file.status);
+          return new Response(file.body, {
+            headers: {
+              "content-type": file.contentType,
+              ...(file.contentLength ? { "content-length": file.contentLength } : {}),
+            },
+          });
         }
         case "/api/github-app/comment": {
           if (!deps.githubComment) return jsonError("The GitHub App is not configured", 503);

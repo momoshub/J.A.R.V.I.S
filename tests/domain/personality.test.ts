@@ -54,7 +54,9 @@ describe("buildSystemPrompt", () => {
 
   test("always appends the Slack operating rule, even with a custom base", () => {
     const out = buildSystemPrompt({ base: "You are terse.", learnings: [] });
-    expect(out).toContain("SLACK_BOT_TOKEN");
+    // Slack goes through the helper; the turn is told it has no token to look for
+    expect(out).toContain('"$BOT_SLACK_CALL"');
+    expect(out).not.toContain("SLACK_BOT_TOKEN");
     expect(out).toContain("Never use a Slack MCP connector");
   });
 
