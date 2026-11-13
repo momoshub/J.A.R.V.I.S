@@ -11,7 +11,7 @@ Jarvis is a configurable Slack agent bot (Bun + TypeScript). Its "brain" is the 
 ```bash
 bun test              # full test suite (bun:test)
 bun run typecheck     # tsc --noEmit  (root)
-bun run test:e2e      # opt-in, real Slack (block kit, stream, upload, watch): needs SLACK_BOT_TOKEN, see README "Testing"; not in bun test, CI runs it with the JARVIS_E2E_SLACK_BOT_TOKEN secret
+bun run test:e2e      # opt-in, real Slack (block kit, stream, upload, watch): needs SLACK_BOT_TOKEN, see README "Testing"; not in bun test, CI runs it only on a push to main (e2e.yml, token from the main-only e2e environment), never on a PR
 bun run build:web     # build the React dashboard (web/ -> web/dist)
 bun start             # run the bot + dashboard
 bun run setup         # install + build:web
