@@ -234,3 +234,52 @@ describe("streamsToClose", () => {
     expect(runs.all()).toEqual([]);
   });
 });
+
+describe("session idle", () => {
+  const setup = () => {
+    const runs = createRunRegistry();
+    const idled: string[] = [];
+    runs.onSessionIdle((channel, threadTs) => idled.push(`${channel}:${threadTs}`));
+    return { runs, idled };
+  };
+
+  test("the run that ends last idles the thread, even if it never opened a stream", () => {
+    const { runs, idled } = setup();
+    const a = runs.track(run({ id: "a", messageTs: "100.1" }));
+    const b = runs.track(run({ id: "b", messageTs: "100.2" }));
+    runs.streamOpened("C1", "100.1", "200.1");
+    a.done();
+    expect(idled).toEqual([]);
+    b.done();
+    expect(idled).toEqual(["C1:100.1"]);
+  });
+
+  test("a workflow thread's two lanes share one session", () => {
+    const { runs, idled } = setup();
+    const worker = runs.track(run({ id: "w", background: true }));
+    const front = runs.track(run({ id: "f", key: "C1:100.1:front", messageTs: "100.3" }));
+    runs.streamOpened("C1", "100.3", "200.3");
+    front.done();
+    expect(idled).toEqual([]);
+    worker.done();
+    expect(idled).toEqual(["C1:100.1"]);
+  });
+
+  test("a thread that never opened a stream is never idled, and only once per mark", () => {
+    const { runs, idled } = setup();
+    runs.track(run({ id: "a" })).done();
+    expect(idled).toEqual([]);
+    const b = runs.track(run({ id: "b", messageTs: "100.2" }));
+    runs.streamOpened("C1", "100.2", "200.2");
+    b.done();
+    runs.track(run({ id: "c" })).done();
+    expect(idled).toEqual(["C1:100.1"]);
+  });
+
+  test("a stream opened after its run ended is handed to sessionMayIdle", () => {
+    const { runs, idled } = setup();
+    expect(runs.streamOpened("C1", "100.9", "200.9")).toBe(false);
+    runs.sessionMayIdle("C1", "100.1");
+    expect(idled).toEqual(["C1:100.1"]);
+  });
+});
