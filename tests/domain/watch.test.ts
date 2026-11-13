@@ -13,6 +13,8 @@ import {
   shellQuote,
   orcaWorkerEvent,
   WORKER_IDLE_MS,
+  IDLE_DETAIL_PREFIX,
+  SHELL_IDLE_MS,
   workerEventLine,
   WORKER_EVERY_MS,
   WORKER_DEADLINE_MS,
@@ -245,6 +247,8 @@ describe("watch worker", () => {
     expect(a.ok && a.note).toBe("merge it");
     const r = builtinCheck("worker", "ctx_1", { orcaWorkerWait: WAIT, pastWait: true });
     expect("check" in r && r.check).toEndWith("'ctx_1' '--past-wait'");
+    const armed = builtinCheck("worker", "ctx_1", { orcaWorkerWait: WAIT, pastWait: true, armedAt: 1_800_000_000_000 });
+    expect("check" in armed && armed.check).toEndWith("'ctx_1' '--past-wait=1800000000000'");
     // only a worker knows the flag
     const p = parseWatchArgs("pr https://github.com/o/r/pull/1 --past-wait go");
     expect(p.ok && p.pastWait).toBeUndefined();
@@ -391,10 +395,22 @@ describe("an idle worker that never reported", () => {
     expect(orcaWorkerEvent(idle({ lastOutputAt: NOW - WORKER_IDLE_MS }), NOW).kind).toBe("waiting");
   });
 
-  test("idle with a background shell running is left alone", () => {
+  test("idle with a background shell running is deferred, but only for SHELL_IDLE_MS", () => {
     const preview = "❯ \n  ⏵⏵ bypass permissions on · 1 shell · esc to interrupt";
-    expect(orcaWorkerEvent(idle({ lastOutputAt: NOW - 3_600_000, preview }), NOW).kind).toBe("running");
-    expect(orcaWorkerEvent(idle({ lastOutputAt: NOW - 3_600_000, preview }, ["stale"]), NOW).kind).toBe("running");
+    expect(orcaWorkerEvent(idle({ lastOutputAt: NOW - WORKER_IDLE_MS * 2, preview }), NOW).kind).toBe("running");
+    expect(orcaWorkerEvent(idle({ lastOutputAt: NOW - SHELL_IDLE_MS + 1, preview }), NOW).kind).toBe("running");
+    const long = orcaWorkerEvent(idle({ lastOutputAt: NOW - SHELL_IDLE_MS - 60_000, preview }), NOW);
+    expect(long).toEqual({ kind: "waiting", detail: "idle at its prompt for 1h01m with no report, run run_1" });
+  });
+
+  test("a shell does not cancel Orca's stale mark", () => {
+    const preview = "❯ \n  ⏵⏵ bypass permissions on · 1 shell · esc to interrupt";
+    const ev = orcaWorkerEvent(
+      idle({ lastOutputAt: NOW - 33 * 60_000, preview }, ["stale"], { liveness: { verdict: "unverifiable" } }),
+      NOW,
+    );
+    expect(ev.kind).toBe("waiting");
+    expect("detail" in ev && ev.detail).toStartWith(IDLE_DETAIL_PREFIX);
   });
 
   test("the stale attention category is waiting on its own", () => {
@@ -413,6 +429,44 @@ describe("an idle worker that never reported", () => {
     expect(orcaWorkerEvent(idle(old, [], { outcome: "succeeded", liveness: { verdict: "exited" } }), NOW).kind).toBe("finished");
     expect(orcaWorkerEvent(idle(old, ["stale", "input_required"]), NOW)).toEqual({ kind: "waiting", detail: "attention stale, input_required, run run_1" });
     expect(orcaWorkerEvent(idle(old, [], { liveness: { verdict: "exited" } }), NOW).kind).toBe("died");
+  });
+
+  describe("--past-wait", () => {
+    const ARMED = NOW - 2 * 3_600_000;
+    const parked = (terminal: Record<string, unknown>, attention: string[] = ["input_required"]): string =>
+      JSON.stringify({
+        ok: true,
+        result: {
+          projection: { outcome: "in_progress", liveness: { verdict: "live" }, attention: { categories: attention } },
+          observation: { agentWait: { kind: "input", prompt: "which db?" } },
+          terminal,
+        },
+      });
+
+    test("the wait it was set for stays quiet, however long the worker has been silent", () => {
+      expect(orcaWorkerEvent(parked({ lastOutputAt: ARMED - 60_000 }), NOW, ARMED).kind).toBe("running");
+      expect(orcaWorkerEvent(parked({ lastOutputAt: ARMED }), NOW, ARMED).kind).toBe("running");
+      expect(orcaWorkerEvent(parked({}, ["input_required", "stale"]), NOW, ARMED).kind).toBe("running");
+    });
+
+    test("output after the arm time that then goes silent fires idle, never as a wait for input", () => {
+      const ev = orcaWorkerEvent(parked({ lastOutputAt: NOW - 20 * 60_000 }), NOW, ARMED);
+      expect(ev).toEqual({ kind: "waiting", detail: "idle at its prompt for 20m with no report" });
+      expect(orcaWorkerEvent(parked({ lastOutputAt: NOW - 60_000 }), NOW, ARMED).kind).toBe("running");
+    });
+
+    test("an unblocked worker that stopped without waiting is idle by the normal rule", () => {
+      const resumed = JSON.stringify({
+        ok: true,
+        result: { projection: { outcome: "in_progress", liveness: { verdict: "live" } }, terminal: { lastOutputAt: NOW - 30 * 60_000 } },
+      });
+      expect(orcaWorkerEvent(resumed, NOW, ARMED).kind).toBe("waiting");
+    });
+
+    test("finished and died are untouched", () => {
+      const done = JSON.stringify({ ok: true, result: { projection: { outcome: "succeeded" } } });
+      expect(orcaWorkerEvent(done, NOW, ARMED).kind).toBe("finished");
+    });
   });
 
   test("the hand-back tells the turn to read the terminal and finish or steer, not just wait", () => {

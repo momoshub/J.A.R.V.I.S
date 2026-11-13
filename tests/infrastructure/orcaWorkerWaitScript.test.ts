@@ -78,7 +78,25 @@ describe("bin/orca-worker-wait.ts", () => {
     expect(a.stdout).toContain("orca worker ctx_abc waiting:");
     const b = await run(orca, ["ctx_abc", "--past-wait"]);
     expect(b.code).toBe(1);
-    expect(b.stdout).toContain("still waiting for input");
+    expect(b.stdout.trim()).toBe("orca worker ctx_abc still running");
+  });
+
+  test("--past-wait=<ms> still fires idle once output moved past it and went silent", async () => {
+    const parked = (lastOutputAt: number) => ({
+      ok: true,
+      result: {
+        projection: { outcome: "in_progress", liveness: { verdict: "live" }, attention: { categories: ["input_required"] } },
+        observation: { agentWait: { kind: "input", prompt: "which db?" } },
+        terminal: { lastOutputAt, preview: "❯ " },
+      },
+    });
+    const armed = Date.now() - 3 * 3_600_000;
+    const quiet = await run(fakeOrca(parked(armed - 1000)), ["ctx_abc", `--past-wait=${armed}`]);
+    expect(quiet.code).toBe(1);
+    expect(quiet.stdout).not.toContain("still waiting for input");
+    const idle = await run(fakeOrca(parked(Date.now() - 30 * 60_000)), ["ctx_abc", `--past-wait=${armed}`]);
+    expect(idle.code).toBe(0);
+    expect(idle.stdout).toContain("orca worker ctx_abc waiting: idle at its prompt for 30m with no report");
   });
 
   test("an answer that is not a worker record keeps polling (2)", async () => {
