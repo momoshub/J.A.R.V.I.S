@@ -72,7 +72,7 @@ describe("github app actions: PR -> thread record", () => {
 
   test("a worker's PR is recorded with the thread its ticket was minted in", async () => {
     const seen: unknown[] = [];
-    const resolveWorker: GithubActionDeps["resolveWorker"] = () => ({ ok: true, actor: "U1", channel: "C7", dispatchId: "ctx_w1", id: "wk1", threadTs: "700.7" });
+    const resolveWorker: GithubActionDeps["resolveWorker"] = () => ({ ok: true, actor: "U1", channel: "C7", dispatchId: "ctx_w1", id: "wk1", threadTs: "700.7", push: false });
     const { actions } = setup("admin", { resolveWorker, onPrCreated: (pr) => seen.push(pr) });
     await actions.run({ ticket: "jvwk_test", ...create });
     expect(seen).toEqual([{ url: "https://github.com/o/r/pull/9", channelId: "C7", threadTs: "700.7" }]);

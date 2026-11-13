@@ -221,9 +221,11 @@ export const createGithubActions = (deps: GithubActionDeps): GithubActions => {
         if (plan.action === "git-auth") {
           // The token goes back to the helper only; the audit row never has it.
           // A worker's token is its own: one repo, git's permissions only, revoked with the ticket.
-          // An executer gets the bot identity only: commits as the app, but no token to push with.
+          // An executer, and a worker ticket without `git-auth`/`push`, get the bot identity only: commits as the app, but no token to push with.
           const auth = worker?.ok
-            ? await workerGitAuth(installation, plan.repo, worker.id)
+            ? worker.push
+              ? await workerGitAuth(installation, plan.repo, worker.id)
+              : { token: "", ...(await botIdentity(installation)) }
             : user && !isAppAdmin(user.role)
               ? { token: "", ...(await botIdentity(installation)) }
               : await gitAuth(installation);

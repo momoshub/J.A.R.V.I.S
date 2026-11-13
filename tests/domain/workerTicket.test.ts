@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import {
   DEFAULT_WORKER_ACTIONS,
+  mayPush,
   endedWorkerOf,
   HOUR_MS,
   isWorkerToken,
@@ -19,14 +20,22 @@ describe("parseWorkerTicketArgs", () => {
     expect(r).toMatchObject({ ok: true, clamped: false, req: { repo: "acme/repo", dispatchId: "pending", actions: DEFAULT_WORKER_ACTIONS, ttlMs: WORKER_TTL_DEFAULT_MS } });
   });
 
-  test("the default grant leaves out git-auth: workers push with the one-shot human credential", () => {
-    expect(DEFAULT_WORKER_ACTIONS).toEqual(["pr-create", "comment", "pr-edit"]);
+  test("the default grant has the commit identity but not git-auth: workers push with the one-shot human credential", () => {
+    expect(DEFAULT_WORKER_ACTIONS).toEqual(["pr-create", "comment", "pr-edit", "git-commit"]);
     expect(DEFAULT_WORKER_ACTIONS).not.toContain("git-auth");
+    expect(mayPush(DEFAULT_WORKER_ACTIONS)).toBe(false);
   });
 
-  test("git and push are the git-auth action, opt-in only; duplicates collapse", () => {
+  test("git and push are the git-auth action (a push-capable token), opt-in only; duplicates collapse", () => {
     const r = parseWorkerTicketArgs(["o/r", "ctx_abc", "git", "push", "pr-create"]);
-    expect(r.ok && r.req.actions).toEqual(["git-auth", "pr-create"]);
+    expect(r.ok && r.req.actions).toEqual(["git-auth", "pr-create", "git-commit"]);
+    expect(r.ok && mayPush(r.req.actions)).toBe(true);
+  });
+
+  test("the commit identity rides on every mint, even one that names other actions", () => {
+    const r = parseWorkerTicketArgs(["o/r", "pending", "comment"]);
+    expect(r.ok && r.req.actions).toEqual(["comment", "git-commit"]);
+    expect(r.ok && mayPush(r.req.actions)).toBe(false);
   });
 
   test("an action beyond the ceiling is refused, never dropped", () => {
