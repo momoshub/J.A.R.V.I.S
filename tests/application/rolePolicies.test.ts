@@ -52,7 +52,7 @@ describe("role policies, persisted and enforced", () => {
     const policy = (role: UserRole) => toolPolicyFor(role, { roleDisallow: policyDisallow(policies.get(role)) });
     expect(policy("admin").disallowedTools).toContain("WebFetch");
     expect(policy("admin").disallowedTools).toContain("mcp__acme-pg-prod");
-    expect(policy("admin").skipPermissions).toBe(true);
+    expect(policy("admin").skipPermissions).toBe(false); // only the owner runs unsandboxed
     expect(policy("pal").disallowedTools).not.toContain("WebFetch");
     // Unedited roles are exactly what they were.
     expect(policy("pal")).toEqual(toolPolicyFor("pal", {}));

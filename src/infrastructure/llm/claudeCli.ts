@@ -322,8 +322,13 @@ const buildArgs = (
   const skip = policy ? policy.skipPermissions : config.skipPermissions !== false;
   if (skip) {
     args.push("--dangerously-skip-permissions");
-  } else if (policy?.allowedTools && policy.allowedTools.length > 0) {
-    args.push("--allowedTools", ...policy.allowedTools);
+  } else {
+    // `dontAsk` refuses whatever is not on the allow-list straight away. A turn
+    // has no one to answer a prompt, so the alternative to a refusal is a hang.
+    args.push("--permission-mode", "dontAsk");
+    if (policy?.allowedTools && policy.allowedTools.length > 0) {
+      args.push("--allowedTools", ...policy.allowedTools);
+    }
   }
   // Denials apply either way. `--disallowedTools` is honoured alongside
   // `--dangerously-skip-permissions` (verified), so a full-access role can still

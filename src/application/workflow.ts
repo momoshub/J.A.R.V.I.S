@@ -11,7 +11,7 @@
 import { frontPrompt, workflowPrompt } from "../domain/workflowPrompt.ts";
 import { createMarkerFilter, parseContinue } from "../domain/workflowContinue.ts";
 import { createSteerFilter, FRONT_TIMEOUT_MS, frontMessage, parseSteers } from "../domain/workflowFront.ts";
-import { mayUseOrca, PAL_TOOLS } from "../domain/toolPolicy.ts";
+import { FRONT_DENY, mayUseOrca, PAL_TOOLS } from "../domain/toolPolicy.ts";
 import { tokenFor, type ClaudeTokenPort } from "./claudeTokens.ts";
 import type { AllowedUser, UserRole, Workflow } from "../domain/types.ts";
 import type { ToolPolicy } from "../domain/toolPolicy.ts";
@@ -154,7 +154,14 @@ export const runFrontTurn = async (
     messages: [{ role: "user" as const, content: frontMessage(digest, message), speakerId: actor.slackId }],
     assistantName: name,
     // Read-only, whatever the role: the worker is the one with its hands on things.
-    policy: { ...base, skipPermissions: false, allowedTools: PAL_TOOLS, timeoutMs: FRONT_TIMEOUT_MS },
+    policy: {
+      ...base,
+      skipPermissions: false,
+      allowedTools: PAL_TOOLS,
+      // its own role's denials may be none (an owner's): fence the shell reads here
+      disallowedTools: [...new Set([...(base.disallowedTools ?? []), ...FRONT_DENY])],
+      timeoutMs: FRONT_TIMEOUT_MS,
+    },
     session: { id: sessionId, resume: workflow.frontSessionId !== undefined },
     oauthToken: tokenFor(deps, actor),
     signal,

@@ -7,10 +7,10 @@
 
 /**
  * Role of a person the bot answers to, in increasing privilege:
- * - pal: sandboxed, read-only tools in a fixed scratch dir, may use `quick-review`
+ * - pal: sandboxed, read-only tools (read-only shell included) in a fixed scratch dir, may use `quick-review`
  * - executer: sandboxed, tools assigned from the control deck, plus code edits and PRs
- * - admin: full tool access, can manage users
- * - owner: full control, cannot be removed
+ * - admin: sandboxed like an executer, can manage users
+ * - owner: full control (the only role without a tool sandbox), cannot be removed
  */
 export type UserRole = "pal" | "executer" | "admin" | "owner";
 
