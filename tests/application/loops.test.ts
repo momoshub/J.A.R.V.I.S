@@ -3,6 +3,8 @@ import { openDatabase, type DbClient } from "../../src/infrastructure/db/client.
 import { createLoopRepo, type LoopRepo } from "../../src/infrastructure/db/loopRepo.ts";
 import { createLoopRunner, type LoopTurnRequest } from "../../src/application/loops.ts";
 import { dispatchCommand } from "../../src/application/commands.ts";
+import { respond, type RespondDeps } from "../../src/application/respond.ts";
+import type { CommandDeps } from "../../src/application/commands/shared.ts";
 import type { CheckResult } from "../../src/application/watcher.ts";
 import { createCommandLogRepo } from "../../src/infrastructure/db/commandLogRepo.ts";
 import { decideLoop, expirePendingLoops, type LoopApprovalDeps } from "../../src/application/loopApproval.ts";
@@ -447,6 +449,17 @@ describe("loop command", () => {
     expect([inThread?.channelId, inThread?.threadTs, inThread?.originTs]).toEqual(["C1", "7.100", "7.250"]);
     expect([topLevel?.threadTs, topLevel?.originTs]).toEqual(["", "8.300"]);
     expect(slash?.originTs).toBe("");
+  });
+
+  test("through respond, a typed loop stores its message's ts and a slash command stores none", async () => {
+    const m = mk();
+    const deps = { ...m.deps, commandPrefix: "X/jv", slashCommand: "/jv" } as CommandDeps & RespondDeps;
+    deps.users.upsert({ slackId: ADMIN.slackId, role: "admin", displayName: "Adm", addedBy: "x", createdAt: 1 });
+    await respond(deps, { channelId: "C1", slackUserId: ADMIN.slackId, text: "X/jv loop every 6h typed one", threadTs: "7.100", messageTs: "7.250", viaSlash: false });
+    await respond(deps, { channelId: "C1", slackUserId: ADMIN.slackId, text: "X/jv loop every 6h slash one", threadTs: "7.100", messageTs: "7.300", viaSlash: true });
+    const [typed, slash] = m.l.active().sort((a, b) => a.id - b.id);
+    expect([typed?.threadTs, typed?.originTs]).toEqual(["7.100", "7.250"]);
+    expect([slash?.threadTs, slash?.originTs]).toEqual(["", ""]);
   });
 
   test("a script loop from a turn is stored with its origin too", async () => {
