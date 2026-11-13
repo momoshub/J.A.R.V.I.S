@@ -2,7 +2,7 @@
 //
 // Has this Orca worker finished, died, or stopped to wait for input?
 //
-//   orca-worker-wait.ts <dispatch-id> [--past-wait]
+//   orca-worker-wait.ts <dispatch-id> [--past-wait[=<armed-at-ms>]]
 //
 // Exits 0 and prints `orca worker <id> finished|died|waiting: <detail>` the
 // moment one of the three is true, 1 while it is still running, and 2 when
@@ -10,8 +10,15 @@
 // record) - which a watch keeps polling rather than reading as a death.
 // `orca` itself missing or failing to start exits 127, which the watcher
 // counts as a broken check and reports, instead of polling it for hours.
-// `--past-wait` ignores a wait for input: for a worker already known to be
-// parked on a person's answer, only finished or died ends the watch.
+// A worker silent at its prompt for 15 minutes with no report counts as
+// waiting too (`WORKER_IDLE_MS`); the clock is read here, not in the domain.
+// `--past-wait=<ms>` ignores the wait for input it was set for (a worker already
+// known to be parked on a person's answer), but not idle: once the worker's
+// output has moved past <ms> and then gone silent for `WORKER_IDLE_MS`, it
+// still fires. A bare `--past-wait` (watch rows stored before the arm time
+// existed) keeps the old behaviour: no output can pass it, so it never fires
+// idle. The same rule covers a watch re-armed after an idle hand-back: it stays
+// quiet until the worker has produced new output.
 // The reading itself is `orcaWorkerEvent` in src/domain/watch.ts; the hand-back
 // turn reads the printed line back to say which of the three happened.
 // A worker that finished or died also gets `orca worker <id> usage <json>`:
@@ -29,9 +36,11 @@ const TIMEOUT_MS = 15_000;
 const USAGE_BUDGET_MS = 10_000;
 
 const id = process.argv[2] ?? "";
-const pastWait = process.argv.slice(3).includes("--past-wait");
+const pastWaitArg = process.argv.slice(3).find((a) => a === "--past-wait" || a.startsWith("--past-wait="));
+const armedAt = pastWaitArg?.split("=")[1];
+const pastWaitAt = pastWaitArg === undefined ? undefined : armedAt !== undefined && /^\d+$/.test(armedAt) ? Number(armedAt) : Number.MAX_SAFE_INTEGER;
 if (!/^ctx_[A-Za-z0-9_-]+$/.test(id)) {
-  console.error("usage: orca-worker-wait.ts <dispatch-id> [--past-wait]");
+  console.error("usage: orca-worker-wait.ts <dispatch-id> [--past-wait[=<armed-at-ms>]]");
   process.exit(2);
 }
 
@@ -54,9 +63,9 @@ try {
   process.exit(127);
 }
 
-const ev = orcaWorkerEvent(out);
-if (ev.kind === "running" || (pastWait && ev.kind === "waiting")) {
-  console.log(`orca worker ${id} still running${ev.kind === "waiting" ? " (still waiting for input)" : ""}`);
+const ev = orcaWorkerEvent(out, Date.now(), pastWaitAt);
+if (ev.kind === "running") {
+  console.log(`orca worker ${id} still running`);
   process.exit(1);
 }
 if (ev.kind === "unknown") {

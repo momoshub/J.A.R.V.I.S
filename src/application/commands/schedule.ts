@@ -118,6 +118,7 @@ export const SCHEDULE_COMMANDS: readonly CommandDef[] = [
           from: parsed.from,
           orcaWorkerWait: deps.orcaWorkerWait,
           pastWait: parsed.pastWait,
+          armedAt: now,
         });
         if ("error" in built) return built.error;
         check = built.check;
@@ -149,7 +150,7 @@ export const SCHEDULE_COMMANDS: readonly CommandDef[] = [
               : parsed.kind === "url"
                 ? parsed.target
                 : parsed.kind === "worker"
-                  ? `Orca worker \`${parsed.target}\` to finish, die${parsed.pastWait ? "" : " or stop for input"}`
+                  ? `Orca worker \`${parsed.target}\` to finish, die${parsed.pastWait ? " or sit idle" : ", stop for input or sit idle"}`
                   : "";
       if (what) {
         return `⏳ waiting for ${what}, checking every ${humanDuration(parsed.everyMs)} and giving up after ${humanDuration(parsed.deadlineMs)}. I will carry on here by myself - you can still talk to me meanwhile. (\`${prefix} watch cancel\`, #${w.id})`;

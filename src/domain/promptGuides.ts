@@ -48,7 +48,7 @@ export const GUIDE_SUMMARIES: Readonly<Record<GuideSlug, string>> = {
   "block-kit":
     "a question with a fixed set of answers is asked with `jv:` buttons, never lettered options in text. Read before posting buttons, selects or a modal, or when a turn starts with [block kit event]",
   waiting:
-    "you cannot wait - never say you will do something once X finishes, set a `watch` instead (`watch worker <dispatchId>` after every Orca worker you start); `tell` steers another thread without posting anything in Slack; whenever you post into another thread for someone, leave a `brief` there in the same turn (posts nothing, starts no turn). Read for the watch, tell and brief syntax",
+    "you cannot wait - never say you will do something once X finishes, set a `watch` instead (`watch worker <dispatchId>` after every Orca worker you start; it also fires for a worker idle 15 minutes at its prompt without reporting); `tell` steers another thread without posting anything in Slack; whenever you post into another thread for someone, leave a `brief` there in the same turn (posts nothing, starts no turn). Read for the watch, tell and brief syntax",
 };
 
 /**
