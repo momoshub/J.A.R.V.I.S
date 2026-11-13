@@ -157,7 +157,7 @@ no classes.
   when the ticket ends. It is a separate store from `commandTickets`, so it can
   never run a command, and only the brain's run bridge can mint one.
 - **Self-update.** A fix lands through a PR that CI (`.github/workflows/ci.yml`)
-  passes (typecheck, tests, the real-Slack e2e on non-fork runs, and a `gitleaks` secret scan whose known false positives are allowlisted by value in `.gitleaks.toml`), merged only by `bin/merge-when-green.sh` (exit 4 at once on a PR that
+  passes (typecheck, tests, the real-Slack e2e on a push to main only, its token held by the main-only `e2e` environment, and a `gitleaks` secret scan whose known false positives are allowlisted by value in `.gitleaks.toml`), merged only by `bin/merge-when-green.sh` (exit 4 at once on a PR that
   conflicts with its base, which GitHub never runs CI on). When it touches runtime code
   (logic, commands, adapters, `bin/` scripts, or a mixed PR) a reviewer Orca worker
   reads it first, up to 5 rounds (each round is a real GitHub review, request changes or approve; fixes are pushes answered by a `[fix round N]` comment); docs,
