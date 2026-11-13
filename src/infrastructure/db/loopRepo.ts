@@ -28,11 +28,15 @@ export type Loop = {
   /** Where the owner's Approve / Reject message sits, for a pending script loop. */
   readonly noticeChannel: string;
   readonly noticeTs: string;
+  /** Ts of the message that created it (`threadTs` is the thread it sat in); empty when unknown, as for loops made before this was kept. */
+  readonly originTs: string;
 };
 
 export type NewLoop = Pick<Loop, "channelId" | "threadTs" | "createdBy" | "schedule" | "prompt" | "command" | "nextAt"> & {
   /** Left out or blank: derived from the prompt (or the command). */
   readonly name?: string;
+  /** The creating message's ts; left out when there was none (a slash command). */
+  readonly originTs?: string;
   /** `pending` for a script loop awaiting approval; default `active`. */
   readonly state?: "pending" | "active";
 };
@@ -54,6 +58,7 @@ type Row = {
   created_at: number;
   notice_channel: string;
   notice_ts: string;
+  origin_ts: string;
 };
 
 const STATES: readonly string[] = ["pending", "active", "cancelled", "failed"];
@@ -76,6 +81,7 @@ const toLoop = (r: Row): Loop => ({
   createdAt: r.created_at,
   noticeChannel: r.notice_channel,
   noticeTs: r.notice_ts,
+  originTs: r.origin_ts,
 });
 
 export type LoopRepo = {
@@ -109,8 +115,8 @@ export type LoopRepo = {
 
 export const createLoopRepo = (db: DbClient): LoopRepo => {
   const insertStmt = db.query(
-    `INSERT INTO loops (channel_id, thread_ts, created_by, name, schedule, prompt, command, next_at, state, created_at, updated_at)
-     VALUES ($channelId, $threadTs, $createdBy, $name, $schedule, $prompt, $command, $nextAt, $state, $at, $at)
+    `INSERT INTO loops (channel_id, thread_ts, created_by, name, schedule, prompt, command, next_at, state, origin_ts, created_at, updated_at)
+     VALUES ($channelId, $threadTs, $createdBy, $name, $schedule, $prompt, $command, $nextAt, $state, $originTs, $at, $at)
      RETURNING *`,
   );
   const dueStmt = db.query<Row, [number, number]>(
@@ -157,6 +163,7 @@ export const createLoopRepo = (db: DbClient): LoopRepo => {
           $command: l.command.slice(0, 2000),
           $nextAt: l.nextAt,
           $state: l.state ?? "active",
+          $originTs: l.originTs ?? "",
           $at: at,
         }) as Row,
       ),

@@ -35,6 +35,8 @@ export type TicketContext = {
   actor: string;
   channel: string;
   threadTs?: string;
+  /** The message that started the turn, so a command it runs can point back at it. */
+  messageTs?: string;
 };
 
 /**
@@ -90,7 +92,7 @@ export const createCommandTickets = (
       entry.used += 1;
       return {
         ok: true,
-        ctx: { actor: entry.actor, channel: entry.channel, threadTs: entry.threadTs },
+        ctx: { actor: entry.actor, channel: entry.channel, threadTs: entry.threadTs, messageTs: entry.messageTs },
         left: uses - entry.used,
       };
     },

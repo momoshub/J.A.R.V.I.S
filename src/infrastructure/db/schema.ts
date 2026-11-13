@@ -107,6 +107,24 @@ export const migrate = (db: Database): void => {
   migrateLoopNames(db);
   migrateThreadBriefs(db);
   migrateLearningStatus(db);
+  migrateLoopOrigin(db);
+};
+
+/**
+ * Migration v36: a loop remembers the message that created it.
+ *
+ * `channel_id` and `thread_ts` were always stored; what a thread link needs
+ * besides them is the ts of the creating message itself. The column defaults to
+ * `''` (no origin), so every existing row survives untouched and renders with
+ * no link; nothing is rewritten here, so a rerun is a no-op.
+ */
+const migrateLoopOrigin = (db: Database): void => {
+  const cols = db.query<{ name: string }, []>("PRAGMA table_info(loops)").all().map((c) => c.name);
+  if (!cols.includes("origin_ts")) db.exec("ALTER TABLE loops ADD COLUMN origin_ts TEXT NOT NULL DEFAULT ''");
+  const { user_version } = db.query<{ user_version: number }, []>("PRAGMA user_version").get() ?? {
+    user_version: 0,
+  };
+  if (user_version < 36) db.exec("PRAGMA user_version = 36;");
 };
 
 /**

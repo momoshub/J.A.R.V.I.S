@@ -910,7 +910,7 @@ const main = async () => {
         if (!user) throw new Error("whoever asked is not on the access list");
 
         // `fromBrainRun` is what lets `worker-ticket` mint: it exists only on this path, after a turn ticket redeemed.
-        const opts = { prefix: config.commandPrefix, slash: config.slashCommand, threadTs: ctx.threadTs, fromBrainRun: true };
+        const opts = { prefix: config.commandPrefix, slash: config.slashCommand, threadTs: ctx.threadTs, messageTs: ctx.messageTs, fromBrainRun: true };
         return runForBrain({
           quiet: isQuietCommand(line),
           show: show === true,
@@ -1106,6 +1106,7 @@ const main = async () => {
     runTurn: deps.runTurn!,
     offsetMinutes: () => hostOffsetMin(clock()),
     dm: async (userId, text) => slackAdmin.postDm(userId, text, SIGNATURES.loop),
+    permalink: (channel, ts) => slackAdmin.permalink?.(channel, ts) ?? Promise.resolve(undefined),
     // Unattended spend needs a role that can still start a loop: a demoted or removed creator's loops stop.
     check: createShellCheck(fullCwd, readOnlySlackEnv),
     // Pending script loops nobody answered in 24h are deleted, restart or not.

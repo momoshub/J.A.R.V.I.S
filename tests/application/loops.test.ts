@@ -3,11 +3,13 @@ import { openDatabase, type DbClient } from "../../src/infrastructure/db/client.
 import { createLoopRepo, type LoopRepo } from "../../src/infrastructure/db/loopRepo.ts";
 import { createLoopRunner, type LoopTurnRequest } from "../../src/application/loops.ts";
 import { dispatchCommand } from "../../src/application/commands.ts";
+import { respond, type RespondDeps } from "../../src/application/respond.ts";
+import type { CommandDeps } from "../../src/application/commands/shared.ts";
 import type { CheckResult } from "../../src/application/watcher.ts";
 import { createCommandLogRepo } from "../../src/infrastructure/db/commandLogRepo.ts";
 import { decideLoop, expirePendingLoops, type LoopApprovalDeps } from "../../src/application/loopApproval.ts";
 import { migrate } from "../../src/infrastructure/db/schema.ts";
-import { approvalText, LOOP_APPROVE_ACTION, LOOP_REJECT_ACTION, PENDING_TTL_MS } from "../../src/domain/loop.ts";
+import { approvalText, loopRef, LOOP_APPROVE_ACTION, LOOP_REJECT_ACTION, PENDING_TTL_MS } from "../../src/domain/loop.ts";
 import { actor, build, db as fixtureDb, OWNER, slackCalls } from "./commandsFixture.ts";
 
 let db: DbClient;
@@ -21,7 +23,13 @@ let check: CheckResult = { code: 0, output: "" };
 
 const HOUR = 3_600_000;
 
-const runner = (over: { repo?: LoopRepo; mayRun?: (id: string, script: boolean) => boolean; noCheck?: boolean; turnFails?: boolean } = {}) =>
+/** Stands in for `chat.getPermalink`, which also adds `thread_ts` for a thread reply. */
+const link = async (channel: string, ts: string): Promise<string | undefined> =>
+  `https://team.slack.com/archives/${channel}/p${ts.replace(".", "")}`;
+
+const runner = (
+  over: { repo?: LoopRepo; mayRun?: (id: string, script: boolean) => boolean; noCheck?: boolean; turnFails?: boolean; permalink?: typeof link } = {},
+) =>
   createLoopRunner({
     loops: over.repo ?? loops,
     clock: () => now,
@@ -42,6 +50,7 @@ const runner = (over: { repo?: LoopRepo; mayRun?: (id: string, script: boolean) 
           return check;
         },
     mayRun: over.mayRun,
+    permalink: over.permalink,
   });
 
 const add = (over: Partial<Parameters<LoopRepo["add"]>[0]> = {}) =>
@@ -204,6 +213,54 @@ describe("loop runner: prompt mode", () => {
     await flush();
     expect(dms.some((d) => d.text.includes("could not start its turn"))).toBe(true);
     expect(loops.get(l.id)?.state).toBe("active");
+  });
+});
+
+describe("loop runner: origin link", () => {
+  test("the announcement links back to the message that created the loop", async () => {
+    const l = add({ threadTs: "", originTs: "5.250" });
+    now += HOUR;
+    await runner({ permalink: link }).tick();
+    expect(dms[0]?.text).toBe(`🔁 search for slang - loop #${l.id}, every 1h · <https://team.slack.com/archives/C1/p5250|created here>`);
+  });
+
+  test("a loop made in a thread links to its own message there, not the thread root", async () => {
+    const seen: string[] = [];
+    add({ threadTs: "4.100", originTs: "5.250" });
+    now += HOUR;
+    await runner({ permalink: async (c, ts) => (seen.push(`${c} ${ts}`), link(c, ts)) }).tick();
+    expect(seen).toEqual(["C1 5.250"]);
+  });
+
+  test("a loop with no origin message falls back to its thread, and with neither says nothing extra", async () => {
+    add({ threadTs: "4.100" });
+    add({ threadTs: "" });
+    now += HOUR;
+    await runner({ permalink: link }).tick();
+    expect(dms[0]?.text).toContain("<https://team.slack.com/archives/C1/p4100|created here>");
+    expect(dms[1]?.text).not.toContain("created here");
+  });
+
+  test("no link is no reason to skip a run: a failing or missing permalink leaves the plain header", async () => {
+    const l = add({ originTs: "5.250" });
+    add({ originTs: "5.251" });
+    now += HOUR;
+    await runner({ permalink: async () => { throw new Error("ratelimited"); } }).tick();
+    expect(dms[0]?.text).toBe(`🔁 search for slang - loop #${l.id}, every 1h`);
+    expect(turns).toHaveLength(2);
+    now += HOUR;
+    dms = [];
+    await runner().tick();
+    expect(dms[0]?.text).not.toContain("created here");
+  });
+
+  test("a script loop's failure line carries the same link", async () => {
+    const l = add({ prompt: "", command: "./sync.sh", originTs: "5.250" });
+    check = { code: 2, output: "boom" };
+    now += HOUR;
+    await runner({ permalink: link }).tick();
+    await flush();
+    expect(dms[0]?.text).toBe(`${loopRef(l.id, l.name)}: script failed: exit 2 - boom · <https://team.slack.com/archives/C1/p5250|created here>`);
   });
 });
 
@@ -381,6 +438,55 @@ describe("loop command", () => {
     expect(await dispatchCommand(deps, ADMIN, "C1", `loop cancel ${row?.id}`)).toContain("cancelled");
     expect(l.active()).toHaveLength(0);
     expect(await dispatchCommand(deps, ADMIN, "C1", `loop cancel ${row?.id}`)).toContain("no active loop");
+  });
+
+  test("a loop remembers the message that created it, and the thread it sat in", async () => {
+    const { deps, l } = mk();
+    await dispatchCommand(deps, ADMIN, "C1", "loop every 6h check the queue", { threadTs: "7.100", messageTs: "7.250" });
+    await dispatchCommand(deps, ADMIN, "C1", "loop every 6h top level one", { messageTs: "8.300" });
+    await dispatchCommand(deps, ADMIN, "C1", "loop every 6h from a slash command");
+    const [inThread, topLevel, slash] = l.active().sort((a, b) => a.id - b.id);
+    expect([inThread?.channelId, inThread?.threadTs, inThread?.originTs]).toEqual(["C1", "7.100", "7.250"]);
+    expect([topLevel?.threadTs, topLevel?.originTs]).toEqual(["", "8.300"]);
+    expect(slash?.originTs).toBe("");
+  });
+
+  test("through respond, a typed loop stores its message's ts and a slash command stores none", async () => {
+    const m = mk();
+    const deps = { ...m.deps, commandPrefix: "X/jv", slashCommand: "/jv" } as CommandDeps & RespondDeps;
+    deps.users.upsert({ slackId: ADMIN.slackId, role: "admin", displayName: "Adm", addedBy: "x", createdAt: 1 });
+    await respond(deps, { channelId: "C1", slackUserId: ADMIN.slackId, text: "X/jv loop every 6h typed one", threadTs: "7.100", messageTs: "7.250", viaSlash: false });
+    await respond(deps, { channelId: "C1", slackUserId: ADMIN.slackId, text: "X/jv loop every 6h slash one", threadTs: "7.100", messageTs: "7.300", viaSlash: true });
+    const [typed, slash] = m.l.active().sort((a, b) => a.id - b.id);
+    expect([typed?.threadTs, typed?.originTs]).toEqual(["7.100", "7.250"]);
+    expect([slash?.threadTs, slash?.originTs]).toEqual(["", ""]);
+  });
+
+  test("a script loop from a turn is stored with its origin too", async () => {
+    const m = mk();
+    await dispatchCommand(m.deps, OWNER_ACTOR, "C1", "loop every 15m -- ./sync.sh", { fromBrainRun: true, messageTs: "7.250" });
+    expect(m.l.pending()[0]?.originTs).toBe("7.250");
+  });
+
+  test("list shows the origin link per loop, and nothing for one without an origin", async () => {
+    const { deps, l } = mk();
+    const withLink = { ...deps, slack: { ...deps.slack!, permalink: link } };
+    await dispatchCommand(withLink, ADMIN, "C1", "loop every 6h linked one", { threadTs: "7.100", messageTs: "7.250" });
+    await dispatchCommand(withLink, ADMIN, "C1", "loop every 6h bare one");
+    const lines = (await dispatchCommand(withLink, ADMIN, "C1", "loop list")).split("\n");
+    expect(lines[0]).toEndWith(" · <https://team.slack.com/archives/C1/p7250|created here>");
+    expect(lines[1]).not.toContain("created here");
+    expect(l.active()).toHaveLength(2);
+    // Without a way to build a link the list is just as before.
+    expect(await dispatchCommand(deps, ADMIN, "C1", "loop list")).not.toContain("created here");
+  });
+
+  test("a pending script loop in the list shows its origin too", async () => {
+    const m = mk();
+    await dispatchCommand(m.deps, OWNER_ACTOR, "C1", "loop every 15m -- ./sync.sh", { fromBrainRun: true, messageTs: "7.250" });
+    const out = await dispatchCommand({ ...m.deps, slack: { ...m.deps.slack!, permalink: link } }, OWNER_ACTOR, "C1", "loop list");
+    expect(out).toContain("pending");
+    expect(out).toEndWith("<https://team.slack.com/archives/C1/p7250|created here>");
   });
 
   test("list shows a pending script loop as pending, then as a script once approved", async () => {
@@ -703,5 +809,33 @@ describe("loop names in storage", () => {
     repo.settle(l.id, "cancelled", 3);
     expect(repo.rename(l.id, "late", 4)).toBe(false);
     expect(repo.rename(404, "x", 4)).toBe(false);
+  });
+});
+
+describe("loop origin in storage", () => {
+  test("an old database gets the column with no origin, its loops read the same, and new ones store theirs", () => {
+    const old = openDatabase(":memory:");
+    old.exec("ALTER TABLE loops DROP COLUMN origin_ts");
+    old.exec(
+      `INSERT INTO loops (channel_id, thread_ts, created_by, name, schedule, prompt, command, next_at, created_at, updated_at)
+       VALUES ('C1', '1.1', 'U1', 'PR board', 'every 1h', 'summarise', '', 5, 1, 1)`,
+    );
+    old.exec("PRAGMA user_version = 35");
+    migrate(old);
+    migrate(old); // a rerun is a no-op
+    expect(old.query<{ user_version: number }, []>("PRAGMA user_version").get()?.user_version).toBeGreaterThanOrEqual(36);
+    const repo = createLoopRepo(old);
+    expect(repo.get(1)?.originTs).toBe("");
+    expect(repo.get(1)?.threadTs).toBe("1.1");
+    const l = repo.add({ channelId: "C1", threadTs: "", createdBy: "U1", schedule: "every 1h", prompt: "x", command: "", nextAt: 9, originTs: "2.5" }, 1);
+    expect(repo.get(l.id)?.originTs).toBe("2.5");
+  });
+
+  test("an old loop with no origin and no thread still fires, with the plain header", async () => {
+    const l = add({ threadTs: "" });
+    expect(l.originTs).toBe("");
+    now += HOUR;
+    await runner({ permalink: link }).tick();
+    expect(dms[0]?.text).toBe(`🔁 search for slang - loop #${l.id}, every 1h`);
   });
 });

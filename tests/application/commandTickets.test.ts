@@ -21,6 +21,13 @@ describe("commandTickets", () => {
     expect(result.ok && result.ctx).toEqual({ actor: "Upal", channel: "C1", threadTs: "9.9" });
   });
 
+  test("carries the message that started the turn, for a command that remembers its origin", () => {
+    const tickets = createCommandTickets(at({ now: 1000 }), () => "tk");
+    const token = tickets.issue({ actor: "Upal", channel: "C1", threadTs: "9.9", messageTs: "9.95" });
+    const result = tickets.redeem(token);
+    expect(result.ok && result.ctx.messageTs).toBe("9.95");
+  });
+
   test("an unknown or made-up token gets nothing", () => {
     const tickets = createCommandTickets(at({ now: 0 }));
     expect(tickets.redeem("guessed")).toEqual({ ok: false, reason: "unknown", limit: TICKET_USES });
