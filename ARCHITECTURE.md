@@ -42,13 +42,14 @@ no classes.
   |    stuckSweeper (dead Orca workers, quiet own PRs -> owner DM, 15 min)  |
   |                                                                         |
   |  dashboard + JSON API (Bun.serve, loopback), /api/commands/run,         |
-  |    /api/github-app/comment                                              |
+  |    /api/github-app/comment, /api/slack/proxy + /api/slack/file          |
+  |    (the only door from a turn to the bot's Slack token, ticketed)       |
   |  GitHub App webhook listener (loopback, own port) -> githubApp          |
   +-------------------------------------------------------------------------+
             |                                   |
             v                                   v
    DATABASE_PATH, TOKEN_DATABASE_PATH    bin/ helpers the brain calls
-   (outside the checkout, ~/.jarvis),   (slack-read, slack-react, run, ...)
+   (outside the checkout, ~/.jarvis),   (slack-api, slack-read, run, ...)
    data/adapter-mirror/ (from DB),      bin/db-backup.ts -> DATABASE_BACKUP_DIR
    data/prompt-guides/ (from code)
 ```
@@ -77,6 +78,19 @@ no classes.
   in the resumed session's transcript, as untrusted background and never as
   instructions; read state is per access tier and set only once the turn ran).
   `runRegistry` holds a handle on each running turn so it can be stopped.
+- **A turn holds no secret.** The CLI is spawned with the bot's environment
+  minus every credential-shaped variable (`domain/turnEnv.ts`: by name -
+  `*_TOKEN`, `*_SECRET`, `*_API_KEY`... - except the CLI's own
+  `CLAUDE_CODE_OAUTH_TOKEN` and what `TURN_ENV_PASSTHROUGH` names), because a
+  turn's Bash is driven by a model that reads untrusted text. What a turn needs
+  from Slack goes through `bin/slack-api.sh`: it presents the turn's
+  `JARVIS_SLACK_TICKET` (`slackTickets`, minted when the process starts and
+  revoked when it exits, no actor and no role) to `POST /api/slack/proxy`, where
+  `slackProxy` checks the ticket, applies the method allowlist
+  (`domain/slackProxy.ts`: a fixed set of reads, and writes only into the
+  turn's own channel) and calls Slack with the token it holds. Files go through
+  `/api/slack/file`. `slack-read`, `slack-react`, `slack-file` and `slack-upload`
+  are built on it.
 - **Commands from the brain.** The brain runs real commands through
   `bin/jarvis-run.sh` -> `/api/commands/run`. `commandTickets` mints a one-turn
   ticket bound to the person being answered, so the brain never names the actor
@@ -146,7 +160,7 @@ no classes.
   token + `<slug>[bot]` identity) and gives that one git process the token in its
   environment (`GIT_CONFIG_*` `http.extraheader`), never in a url or a file.
   An Orca worker outlives the turn's 20-minute ticket, so a turn mints it a
-  **worker ticket** (`worker-ticket`, `workerTickets.ts`, rows in
+  **worker ticket** (`worker-ticket`, `workerTickets.ts`; its token file also carries the bot's base URL on line 2 for the helper scripts, rows in
   `worker_tickets` holding only the token's sha-256): one repo, a short action
   list (the app's commit identity by default, so commits go out as the app with
   no token; `push` is the opt-in that adds a push-capable `git-auth` token,
@@ -230,7 +244,9 @@ Orchestrates the domain and depends on **ports**, not concrete adapters.
 - `respond.ts` - routes an inbound message to command or chat
 - `handleMessage.ts` - the chat flow (access -> remember -> ask model -> remember), applying the role's tool policy
 - `cloudwatch.ts` (application) + `domain/cloudwatch.ts` + `infrastructure/aws/cloudwatchCli.ts` + `db/cloudwatchRepo.ts` - the `cloudwatch` command: Logs Insights run by the bot's own `aws` CLI (a turn's `aws logs` stays denied), a scan estimate from the log group's stored size, owner runs after a warning, executer/admin park a `cloudwatch_requests` row behind `jv:cloudwatch:confirm|cancel` buttons decided in code (never a model turn), every request audited
+- `slackTickets.ts`, `slackProxy.ts` (application) + `domain/slackProxy.ts` + `domain/turnEnv.ts` - a turn's Slack access: the per-turn ticket, the allowlisted call made with the bot's token, and the environment scrub
 - `commands.ts`, `commandTickets.ts`, `workerTickets.ts`, `commandLimits.ts`, `brainRun.ts` - the command registry (configurable prefix + slash, role gates, help), the brain's tickets, allowances and result delivery. The command definitions live in `commands/`, one file per group (`chat`, `schedule`, `people`, `adapter`, `learnings`, `errands`, `review`, `runtime`, `slack`, `cloudwatch`), with `commands/shared.ts` for the deps, the `CommandDef` type and the helpers more than one group uses
+- `learningApproval.ts` (+ `domain/learning.ts`) - learnings need the owner's approval: only the owner's own typed `learn` is saved active; a member's `learn`, the agent's `learn` and every `POST /api/learnings` are stored pending (`learnings.status`, migration v35), kept out of every prompt (`injectedLearnings` is the one place the injection reads, active only) and put to the owner as a DM with `jv:learning:approve|reject` buttons, decided in code in `slack/app.ts` like `jv:loop:` and never handed to the model
 - `threadQueue.ts`, `runRegistry.ts` - one turn per thread, and stopping one
 - `followGate.ts` (application), `followGateModel.ts` - the per-thread buffer for a followed thread (a quiet window, a hard cap, injectable timers) and the cheap pal-model call that says reply, skip or wait
 - `ciGate.ts` (application) - the CI gate of `quick-review`: idempotent request-changes and approve against GitHub's own state, the watcher row for a running CI, and its poll

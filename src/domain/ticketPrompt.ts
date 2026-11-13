@@ -153,15 +153,14 @@ Fetch the tracker's schema too, so every field you set is a real option with a r
 
 7. Create it in the tracker with every field the SOP requires, at the status the SOP says a new ticket starts at.
    The moment it exists, post its link into the thread on its own - do not save it for the summary at the end. Whoever asked is waiting to know it landed, and a link two minutes later is two minutes of wondering whether anything happened. One line: the ticket name and its url.
-   You post it with your OWN bot token and the Slack API, never a connector - the connector's send tools are denied to you on purpose, because a message sent that way arrives under the authorising human's name:${
+   You post it with the bot's own Slack helper, never a connector - the connector's send tools are denied to you on purpose, because a message sent that way arrives under the authorising human's name:${
      context?.channelId
        ? `
-     curl -s -X POST -H "Authorization: Bearer $SLACK_BOT_TOKEN" -H "Content-type: application/json" \\
-       -d '{"channel":"${context.channelId}"${context?.threadTs ? `,"thread_ts":"${context.threadTs}"` : ""},"text":"<the line>"}' https://slack.com/api/chat.postMessage`
+     "$BOT_SLACK_CALL" chat.postMessage channel=${context.channelId}${context?.threadTs ? ` thread_ts=${context.threadTs}` : ""} text='<the line>'`
        : `
-     curl -s -X POST -H "Authorization: Bearer $SLACK_BOT_TOKEN" -H "Content-type: application/json" -d '{"channel":"<channel>","text":"<the line>"}' https://slack.com/api/chat.postMessage`
+     "$BOT_SLACK_CALL" chat.postMessage channel=<channel> text='<the line>'`
    }
-   Having no \`mcp__\` Slack tool is NOT the same as having no way to post. You have the token and a shell.
+   Having no \`mcp__\` Slack tool is NOT the same as having no way to post. You have the helper and a shell.
 
 8. A small fix, and only a small fix, also gets a PR.${
     !canOpenPrs(scope)

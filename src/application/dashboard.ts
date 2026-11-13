@@ -33,6 +33,8 @@ import type { SlackDirectory } from "./slackDirectory.ts";
 import type { StatsRepo } from "../infrastructure/db/statsRepo.ts";
 import { fillDays, offsetMsOf, statsDays, windowStart } from "../domain/dashboardStats.ts";
 import { logAndIgnore } from "./ignoredError.ts";
+import { rewordLearning, proposeLearning, type LearningApprovalDeps } from "./learningApproval.ts";
+import { AGENT_SOURCE, pendingApiMessage } from "../domain/learning.ts";
 
 /** A refused use case: what to tell the caller, and the HTTP-ish status it maps to. */
 export type Refusal = { readonly ok: false; readonly error: string; readonly status: number };
@@ -66,8 +68,6 @@ export type MemoryAdapterPort = {
     }[];
     readonly items: number;
   };
-  /** What the brain's own save endpoint writes through. */
-  readonly remember: (content: string, by: string) => GateResult;
   readonly revert: (id: number, by: string) => { readonly ok: boolean; readonly violations?: readonly string[] };
   /** Every file the adapter holds, for the hand editor. */
   readonly files: () => readonly { readonly path: string; readonly content: string }[];
@@ -112,10 +112,15 @@ export type DashboardPorts = {
   };
   readonly learnings: {
     readonly list: () => readonly unknown[];
-    readonly add: (content: string, createdBy: string, createdAt: number) => unknown;
-    readonly update: (id: number, content: string) => void;
     readonly remove: (id: number) => void;
   };
+  /**
+   * Owner approval of a learning. The loopback API cannot tell the owner's
+   * browser from the agent's `curl` (no credential, and an Origin header is
+   * whatever the caller sends), so every learning written here waits for the
+   * owner. Absent: the learnings endpoints refuse.
+   */
+  readonly learningApproval?: LearningApprovalDeps;
   readonly settings: {
     readonly get: (key: string) => string | undefined;
     readonly set: (key: string, value: string) => void;
@@ -439,28 +444,36 @@ export const createDashboardService = (p: DashboardPorts) => {
   learnings: () => p.learnings.list(),
 
   /**
-   * Teach one fact. This is also what the brain curls when it decides to keep
-   * something, so it has to reach whichever memory is live.
+   * Propose one fact. This is what the brain curls when it decides to keep
+   * something, and there is no telling that apart from the owner's browser, so
+   * it is never saved here: it is stored pending, kept out of every prompt, and
+   * put to the owner. The answer says so, because the agent relays it.
    */
-  teach: (contentIn: unknown): Outcome<{ warnings?: readonly string[] }> => {
-    const content = text(contentIn);
-    if (!content) return refuse("Empty learning");
-    if (p.adapter) {
-      const result = p.adapter.remember(content, BY);
-      if (!result.ok) return gateError(result, "Could not save that");
-      return done({ warnings: result.warnings ?? [] });
-    }
-    p.learnings.add(content, BY, p.clock());
-    return done({});
+  teach: async (
+    contentIn: unknown,
+  ): Promise<Outcome<{ status: "pending"; id: number; message: string }>> => {
+    if (!p.learningApproval) return refuse("Learnings are not wired up", 503);
+    const proposed = await proposeLearning(p.learningApproval, text(contentIn), AGENT_SOURCE);
+    if (!proposed.ok) return refuse(proposed.error);
+    const { id } = proposed.learning;
+    return done({ status: "pending", id, message: pendingApiMessage(id) });
   },
 
-  updateLearning: (idIn: unknown, contentIn: unknown): Outcome<null> => {
+  /** New wording is a write like any other: it goes back to pending until the owner approves it. */
+  updateLearning: async (
+    idIn: unknown,
+    contentIn: unknown,
+  ): Promise<Outcome<{ status: string; message: string }>> => {
     const id = Number(idIn);
-    const content = text(contentIn);
     if (!Number.isInteger(id)) return refuse("A learning id is required");
-    if (!content) return refuse("Empty learning");
-    p.learnings.update(id, content);
-    return done(null);
+    if (!p.learningApproval) return refuse("Learnings are not wired up", 503);
+    const r = await rewordLearning(p.learningApproval, id, text(contentIn), { slackId: "", owner: false });
+    if (!r.ok) return refuse(r.error);
+    return done(
+      r.pending
+        ? { status: "pending", message: pendingApiMessage(id) }
+        : { status: r.learning.status, message: `Unchanged: learning #${id} already says that.` },
+    );
   },
 
   removeLearning: (idIn: unknown): Outcome<null> => {

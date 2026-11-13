@@ -2,6 +2,8 @@ import { describe, expect, test } from "bun:test";
 import {
   createHandler,
   createKitListeners,
+  createSessionStopHandler,
+  idleSession,
   retireOpenKit,
   shouldHandleDm,
   slashReply,
@@ -18,6 +20,7 @@ import type { LlmPort, LlmStreamEvent } from "../../src/application/ports.ts";
 import type { RespondDeps } from "../../src/application/respond.ts";
 import { createThreadQueue, type ThreadQueue } from "../../src/application/threadQueue.ts";
 import { FOOTER_BLOCK_ID } from "../../src/domain/messageFooter.ts";
+import { createRunRegistry, type RunRegistry } from "../../src/application/runRegistry.ts";
 import { blockKitReply } from "../../src/domain/blockKit.ts";
 
 const OWNER = "U0OWNER0001";
@@ -74,6 +77,10 @@ const build = (opts: {
   /** `chat.update` throws on any message carrying blocks other than markdown/context, as Slack does on `invalid_blocks`. */
   refuseUpdateBlocks?: boolean;
   threadQueue?: ThreadQueue;
+  /** `agents.sessions.setStatus` fails, as it does for a session Slack no longer has. */
+  statusThrows?: boolean;
+  /** The run registry, wired to idle the session the way `createSlackApp` does. */
+  runs?: RunRegistry;
 }) => {
   const db = openDatabase(":memory:");
   const users = createUserRepo(db);
@@ -87,6 +94,7 @@ const build = (opts: {
     clock: () => t++,
     ownerSlackId: OWNER,
     ...(opts.threadQueue ? { threadQueue: opts.threadQueue } : {}),
+    ...(opts.runs ? { runs: opts.runs } : {}),
   };
   const config: SlackAppConfig = {
     botToken: "x",
@@ -102,12 +110,18 @@ const build = (opts: {
   const said: { text: string; reply_broadcast?: boolean }[] = [];
   const updates: Record<string, unknown>[] = [];
   const deletes: string[] = [];
+  const apiCalls: { method: string; args: Record<string, unknown> }[] = [];
   const rec = opts.rec ?? { appends: [], stops: 0, stopThrows: false, appendThrows: false };
   // The first message keeps the old fixed ts; a rollover gets its own.
   let streams = 0;
   const client: SlackClient = {
     users: { info: async () => ({ user: { profile: { display_name: "Kai" } } }) },
     chatStream: () => fakeStreamer(rec, streams++ === 0 ? "222.2" : `222.${streams + 1}`),
+    apiCall: async (method, args) => {
+      apiCalls.push({ method, args });
+      if (opts.statusThrows) throw new Error("session_not_found");
+      return {};
+    },
     chat: {
       update: async (a) => {
         if (opts.refuseUpdateBlocks && (a.blocks as { type: string }[] | undefined)?.some((b) => b.type !== "markdown" && b.type !== "context"))
@@ -121,20 +135,21 @@ const build = (opts: {
       },
     },
   };
+  opts.runs?.onSessionIdle((channel, threadTs) => void idleSession(client, channel, threadTs, () => {}));
   const handle = createHandler(config, deps, () => {});
-  const msg = (text: string, threadTs = "111.1"): Incoming => ({
+  const msg = (text: string, threadTs = "111.1", messageTs = "111.1"): Incoming => ({
     channelId: "C1",
     userId: OWNER,
     text,
     threadTs,
-    messageTs: "111.1",
+    messageTs,
     client,
     say: async (m) => {
       if (opts.refuseBlocks && m.blocks?.some((b) => b.type !== "markdown" && b.type !== "context")) throw new Error("invalid_blocks");
       said.push({ text: m.text, ...(m.reply_broadcast ? { reply_broadcast: true } : {}) });
     },
   });
-  return { handle, msg, said, updates, deletes, rec, messages, opened: () => streams };
+  return { handle, msg, said, updates, deletes, apiCalls, rec, messages, opened: () => streams };
 };
 
 const streamingLlm = (final: string, events: LlmStreamEvent[] = []): LlmPort => ({
@@ -143,6 +158,128 @@ const streamingLlm = (final: string, events: LlmStreamEvent[] = []): LlmPort => 
     for (const e of events) sink(e);
     return final;
   },
+});
+
+describe("createHandler agent session status", () => {
+  const idled = (calls: { method: string; args: Record<string, unknown> }[]) =>
+    calls.filter((c) => c.method === "agents.sessions.setStatus");
+
+  test("a streamed reply puts the session back to active when the turn ends", async () => {
+    const { handle, msg, apiCalls } = build({
+      llm: streamingLlm("hello there", [{ type: "text", delta: "hello there" }]),
+      streamUpdates: true,
+    });
+    await handle(msg("hi", "100.5"));
+    expect(idled(apiCalls)).toEqual([
+      { method: "agents.sessions.setStatus", args: { channel_id: "C1", thread_ts: "100.5", status: "active" } },
+    ]);
+  });
+
+  test("a failed turn that had opened a stream still goes idle", async () => {
+    const { handle, msg, apiCalls } = build({
+      llm: {
+        complete: async () => "x",
+        stream: async (_p, sink) => {
+          sink({ type: "text", delta: "half" });
+          throw new Error("boom");
+        },
+      },
+      streamUpdates: true,
+    });
+    await handle(msg("hi", "100.6"));
+    expect(idled(apiCalls)).toHaveLength(1);
+  });
+
+  test("no stream opened: no session exists, so nothing is set", async () => {
+    const { handle, msg, apiCalls } = build({ llm: streamingLlm("plain"), streamUpdates: false });
+    await handle(msg("hi", "100.7"));
+    expect(idled(apiCalls)).toHaveLength(0);
+  });
+
+  test("A streams, B is queued and opens no stream: the session is idled when B ends, not before", async () => {
+    let releaseA = () => {};
+    let releaseB = () => {};
+    const gateA = new Promise<void>((r) => (releaseA = r));
+    const gateB = new Promise<void>((r) => (releaseB = r));
+    let calls = 0;
+    const llm: LlmPort = {
+      complete: async () => "",
+      stream: async (_p, sink) => {
+        if (calls++ === 0) {
+          await gateA;
+          sink({ type: "text", delta: "hello there" });
+          return "hello there";
+        }
+        await gateB; // B says nothing, so it never opens a stream
+        return "";
+      },
+    };
+    const b = build({ llm, streamUpdates: true, thinkingAfterMs: 60_000, threadQueue: createThreadQueue(), runs: createRunRegistry() });
+    const first = b.handle(b.msg("one", "100.5", "100.5"));
+    await new Promise((r) => setTimeout(r, 10));
+    const second = b.handle(b.msg("two", "100.5", "100.6"));
+    await new Promise((r) => setTimeout(r, 10));
+    releaseA();
+    await first;
+    await new Promise((r) => setTimeout(r, 10));
+    expect(b.opened()).toBe(1); // only A's stream
+    expect(idled(b.apiCalls)).toHaveLength(0); // B is still queued: the button is still B's
+    releaseB();
+    await second;
+    expect(idled(b.apiCalls)).toEqual([
+      { method: "agents.sessions.setStatus", args: { channel_id: "C1", thread_ts: "100.5", status: "active" } },
+    ]);
+  });
+
+  test("a front turn streams while a worker step is live: the session is idled when the worker step ends", async () => {
+    const runs = createRunRegistry();
+    const b = build({
+      llm: streamingLlm("on it", [{ type: "text", delta: "on it" }]),
+      streamUpdates: true,
+      runs,
+    });
+    // The worker step: tracked on the thread's own key, never through createHandler.
+    const worker = runs.track({
+      id: "w1",
+      key: "C1:100.5",
+      channelId: "C1",
+      threadTs: "100.5",
+      actor: OWNER,
+      what: "step 1",
+      startedAt: 1,
+      background: true,
+    });
+    worker.running();
+    // The front's reply, on the front lane (a workflow thread's person message).
+    const front = runs.track({
+      id: "f1",
+      key: "C1:100.5:front",
+      channelId: "C1",
+      threadTs: "100.5",
+      actor: OWNER,
+      messageTs: "100.7",
+      what: "status?",
+      startedAt: 2,
+    });
+    front.running();
+    runs.streamOpened("C1", "100.7", "222.2");
+    front.done();
+    expect(idled(b.apiCalls)).toHaveLength(0); // the worker is still going
+    worker.done();
+    expect(idled(b.apiCalls)).toEqual([
+      { method: "agents.sessions.setStatus", args: { channel_id: "C1", thread_ts: "100.5", status: "active" } },
+    ]);
+  });
+
+  test("a setStatus failure does not fail the turn", async () => {
+    const { handle, msg, said } = build({
+      llm: streamingLlm("hello there", [{ type: "text", delta: "hello there" }]),
+      streamUpdates: true,
+      statusThrows: true,
+    });
+    await handle(msg("hi", "100.8"));
+    expect(said).toHaveLength(0);
+  });
 });
 
 describe("createHandler streaming truth table", () => {
@@ -1069,5 +1206,65 @@ describe("a Block Kit reply that carries its own words", () => {
     expect(out.blocks?.[0]?.type).toBe("header");
     expect(JSON.stringify(out)).not.toContain("blockkit");
     expect(slashReply("plain words")).toEqual({ response_type: "ephemeral", text: "plain words" });
+  });
+});
+
+describe("agent_session_stopped press", () => {
+  const press = { channel: "C1", thread_ts: "100.5", user: "U9", streaming_message_ts: [] as string[] };
+  const setup = () => {
+    const runs = createRunRegistry();
+    const calls: { method: string; args: Record<string, unknown> }[] = [];
+    const client = {
+      apiCall: async (method: string, args: Record<string, unknown>) => {
+        calls.push({ method, args });
+        return {};
+      },
+    };
+    const handle = createSessionStopHandler({ runs }, () => {});
+    const idles = () => calls.filter((c) => c.method === "agents.sessions.setStatus");
+    const track = (id: string, messageTs: string, state: "running" | "queued") => {
+      const t = runs.track({ id, key: "C1:100.5", channelId: "C1", threadTs: "100.5", actor: "U1", what: id, messageTs, startedAt: 1 });
+      if (state === "running") t.running();
+      return t;
+    };
+    return { runs, handle, client, idles, track };
+  };
+
+  test("nothing running: the session is idled", async () => {
+    const { handle, client, idles } = setup();
+    await handle({ event: press, client });
+    expect(idles()).toEqual([
+      { method: "agents.sessions.setStatus", args: { channel_id: "C1", thread_ts: "100.5", status: "active" } },
+    ]);
+  });
+
+  test("it stopped the only run: the session is idled", async () => {
+    const { runs, handle, client, idles, track } = setup();
+    track("a", "100.5", "running");
+    await handle({ event: press, client });
+    expect(runs.byId("a")?.state).toBe("stopping"); // still registered until its turn unwinds
+    expect(idles()).toHaveLength(1);
+  });
+
+  test("it stopped one run while another is queued: the session is not idled", async () => {
+    const { runs, handle, client, idles, track } = setup();
+    track("a", "100.5", "running");
+    track("b", "100.6", "queued");
+    await handle({ event: press, client });
+    expect(runs.byId("a")?.state).toBe("stopping");
+    expect(idles()).toHaveLength(0);
+  });
+
+  test("the queued run idles it when it ends", async () => {
+    const { runs, handle, client, idles, track } = setup();
+    runs.onSessionIdle((channel, threadTs) => void idleSession(client, channel, threadTs, () => {}));
+    const a = track("a", "100.5", "running");
+    const bRun = track("b", "100.6", "queued");
+    runs.streamOpened("C1", "100.5", "200.2");
+    await handle({ event: press, client });
+    a.done(); // the stopped turn unwinds first
+    expect(idles()).toHaveLength(0);
+    bRun.done();
+    expect(idles()).toHaveLength(1);
   });
 });

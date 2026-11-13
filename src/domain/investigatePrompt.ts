@@ -31,7 +31,7 @@ export const investigatePrompt = (
   ctx: InvestigationContext,
 ): string => {
   const thread = ctx.threadTs
-    ? `The question came from Slack thread \`${ctx.threadTs}\` in channel \`${ctx.channelId}\`. READ THAT THREAD FIRST with the Slack Web API and your own \`SLACK_BOT_TOKEN\` (conversations.replies) - the report, the ids, the timestamps and anything already ruled out are in it, and an investigation that ignores what has already been established wastes everyone's time.`
+    ? `The question came from Slack thread \`${ctx.threadTs}\` in channel \`${ctx.channelId}\`. READ THAT THREAD FIRST with the Slack helper (\`"$BOT_SLACK_CALL" conversations.replies channel=${ctx.channelId} ts=${ctx.threadTs}\`) - the report, the ids, the timestamps and anything already ruled out are in it, and an investigation that ignores what has already been established wastes everyone's time.`
     : `The question came from channel \`${ctx.channelId}\`.`;
 
   return `You are ${botName}, investigating what went wrong. Someone has asked:

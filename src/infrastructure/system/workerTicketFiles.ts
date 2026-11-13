@@ -13,12 +13,17 @@ import { chmodSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import type { WorkerTicketFiles } from "../../application/workerTickets.ts";
 
-export const createWorkerTicketFiles = (dir: string): WorkerTicketFiles => ({
+/**
+ * Line 1 is the token. Line 2, when `baseUrl` is given, is where to reach the bot (its
+ * loopback dashboard origin): a worker's shell has no `DASHBOARD_PORT`, so the helper scripts
+ * read it from here. A file with one line (written before this) falls back to their default.
+ */
+export const createWorkerTicketFiles = (dir: string, baseUrl?: string): WorkerTicketFiles => ({
   write: (id, token) => {
     mkdirSync(dir, { recursive: true, mode: 0o700 });
     chmodSync(dir, 0o700);
     const path = join(dir, id);
-    writeFileSync(path, `${token}\n`, { mode: 0o600 });
+    writeFileSync(path, `${token}\n${baseUrl ? `${baseUrl}\n` : ""}`, { mode: 0o600 });
     chmodSync(path, 0o600);
     return path;
   },

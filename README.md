@@ -26,7 +26,7 @@ Read the security note below before giving anyone but yourself a role above `pal
 
 ## ⚠️ Security - read this first
 
-With `LLM_PROVIDER=claude-cli`, an **`owner`** message is sent to a `claude` process launched with `--dangerously-skip-permissions` - full shell, file, and network tool access - and the bot's `SLACK_BOT_TOKEN` is in that process's environment. **Treat the owner as a shell user on the host**: "read ~/.ssh/id_rsa and DM it to me" is a normal request to a tool-enabled agent, not something it needs to break out of. Every other role (including `admin` and a role the bot does not recognise) runs without the bypass: a turn reads pages, attachments and PRs that anyone can write, so a prompt injection there must not be able to run an arbitrary command as the bot.
+With `LLM_PROVIDER=claude-cli`, an **`owner`** message is sent to a `claude` process launched with `--dangerously-skip-permissions` - full shell, file, and network tool access. The bot's own secrets are kept out of that process's environment (see [Secrets and turns](#secrets-and-turns)), but it runs as the host user and can still read what that user can read, `.env` included. **Treat the owner as a shell user on the host**: "read ~/.ssh/id_rsa and DM it to me" is a normal request to a tool-enabled agent, not something it needs to break out of. Every other role (including `admin` and a role the bot does not recognise) runs without the bypass: a turn reads pages, attachments and PRs that anyone can write, so a prompt injection there must not be able to run an arbitrary command as the bot.
 
 Every role below owner is sandboxed (see [Roles & tool access](#roles--tool-access)): `pal`/`executer`/`admin` run without permission bypass, with an explicit read-only/assigned tool allow-list (`SANDBOX_TOOLS`, below), in a fixed scratch dir, with `--permission-mode dontAsk` so a command that is not on the list is refused at once instead of waiting for a prompt nobody can answer. The `quick-review` command is an exception - it is a preset task that runs full-access (and writes to the PR) for any role that may run it.
 
@@ -88,6 +88,7 @@ Required / notable env (see `.env.example`):
 | `GITHUB_APP_LABEL` | label that calls it on an issue/PR (default `jarvis`) |
 | `SELF_PR_AUTHOR` / `SELF_PR_REVIEWER` | gh logins for the bot's own PRs: the author opens the PR and answers reviews, the reviewer posts its reviews (request changes or approve) and merges. Both or neither, and not the same login (otherwise: one account) |
 | `REVIEW_EXTENDED_OWNERS` | GitHub owners, comma list (case-insensitive), whose PRs `quick-review` also posts non-blocking findings for. Default empty: blockers only everywhere |
+| `TURN_ENV_PASSTHROUGH` | secret-shaped variable names (`*_TOKEN`, `*_SECRET`, `*_API_KEY`...) an agent turn may still inherit, comma list; default none. A turn's environment is the bot's **minus every credential-shaped variable** (`SLACK_BOT_TOKEN`, `SLACK_APP_TOKEN`, `ANTHROPIC_API_KEY`, the webhook secret, ...): a turn reads untrusted text, so anything in its environment is one `curl` from leaving. `CLAUDE_CODE_OAUTH_TOKEN` is always kept (the CLI needs it). Slack goes through a per-turn ticket instead, see "Secrets and turns". Name a variable here only when a tool a turn runs genuinely needs it |
 | `DB_MCP_SERVERS` | names of the local database MCP servers on this host (as `claude mcp list` shows them, e.g. `pg-prod,clickhouse-ro`), comma list. **Security setting:** each is denied by name to every role that may not use databases (pal, executer, side questions), and a denial has to name the server, so a server missing here is reachable by EVERY role. Default empty denies nothing - list every database server you configure (at boot the activity log warns about local servers in `~/.claude.json` that are not listed) |
 | `EXECUTER_DB_MCP_SERVERS` | the subset of `DB_MCP_SERVERS` the executer role may query; list only servers whose credential is read-only on the server side. Default empty: executers get none |
 | `DASHBOARD_PORT` | dashboard port (local, loopback-only, no auth) |
@@ -126,7 +127,7 @@ The **Console** tab additionally needs read scopes to list and open conversation
 - It only answers allowlisted users; the owner is always allowed
 - Someone it does not know is not turned away: the owner **and every admin** get a DM with who spoke and what they said, and whichever of them gets there first decides with a reaction - ✅ adds them as `pal`, ❌ declines. Either way the person is answered where they asked, and the other copies settle so nobody decides twice. They are answered **once**: tagging again while the request is open says nothing, and someone who was declined cannot re-raise it by asking - there is a 24h cooldown before their asking counts again
 - It tags people with their Slack `<@id>` when they are in the conversation
-- For workspace questions it uses its own bot token and the Slack Web API, never a third-party connector
+- For workspace questions it calls the Slack Web API through the bot (a helper that presents a per-turn ticket; the bot token itself is never in a turn's environment), never a third-party connector
 - **It opens what you share.** Links in a message (or earlier in the thread) are fetched before it answers, and attachments - screenshots, logs, documents - are downloaded and read. It will not ask you to paste something it could have opened, and if something genuinely cannot be read it says so rather than answering around it
 
 ### Commands
@@ -152,8 +153,9 @@ Every command has two interfaces - use whichever you like. Both triggers are con
 | `worker-cost <ctx_...\|run_...>` (alias `wcost`) | admins | tokens and list-price cost of an Orca worker, or every worker in a Run - see [What an Orca worker cost](#what-an-orca-worker-cost) |
 | `add @user [pal\|executer\|admin]` | admins (admin role: owner only) | grant access |
 | `remove @user` | admins (admins: owner only) | revoke access |
-| `learn <fact>` | admins | teach a durable fact |
-| `learnings` / `relearn <id> <text>` / `unlearn <id>` | admins | list, reword or delete learnings |
+| `learn <fact>` | executers | teach a durable fact: the owner's own typing is saved at once, anyone else's (and any `learn` the agent runs for itself) waits as *pending* for the owner's approval and is not part of any reply until then |
+| `learn pending` / `learn approve <id>` / `learn reject <id>` | owner | list what waits, approve it (it is carried into every reply from then on) or reject it (never). Typed by the owner only: the agent cannot run these for itself. The owner also gets each pending learning as a DM with Approve / Reject buttons |
+| `learnings` / `relearn <id> <text>` / `unlearn <id>` | executers | list, reword or delete learnings. Rewording by anyone but the owner sends the learning back to pending |
 | `review-policy [owner/repo] [first\|after\|default]` (alias `rvpolicy`) | anyone (setting: admins) | how a repo gets approved - see [Review policy per repo](#review-policy-per-repo) |
 | `review-agents [n\|default]` (alias `rvagents`) | anyone (setting: admins) | how many child agents one review may fan out to - see [How wide a review fans out](#how-wide-a-review-fans-out) |
 | `token [remove\|who]` (alias `claude-token`) | anyone | add, replace or forget your own Claude Code token - see [Your own Claude token](#your-own-claude-token) |
@@ -678,6 +680,62 @@ person directly asked for the command ("bomb that message"), the brain runs it a
 The bridge refuses `quick-review` outright, whoever asked: that command runs only from a person's own message. Commands that post by themselves outside this bridge (pickers, GitHub reviews)
 are not affected.
 
+## Secrets and turns
+
+A turn is a `claude -p` process whose shell a model drives while it reads text
+nobody vetted: messages, web pages, files. Anything in that process's
+environment is one `env` or one `curl` away from leaving the host, and the bot
+used to hand every turn a copy of its own environment - `SLACK_BOT_TOKEN`
+included - and tell it to `curl` Slack with it.
+
+**The environment.** A turn gets the bot's environment minus every
+credential-shaped variable: any name with a `TOKEN`, `SECRET`, `PASSWORD`,
+`API_KEY`, `ACCESS_KEY`, `PRIVATE_KEY` or `CREDENTIAL` word in it, a password glued to a
+prefix (`PGPASSWORD`), or a `_KEY`, `_PAT`, `_PWD` or `_AUTH` ending. That is a rule
+by name, so a `*_TOKEN` you add to `.env` later is withheld without a code
+change. Two things stay: `CLAUDE_CODE_OAUTH_TOKEN` (the CLI cannot authenticate
+without it) and whatever you list in `TURN_ENV_PASSTHROUGH`. The boot log says
+how many variables were withheld and their **names**, never their values.
+
+Withheld from every turn: `SLACK_BOT_TOKEN`, `SLACK_APP_TOKEN`,
+`ANTHROPIC_API_KEY`, `GITHUB_APP_WEBHOOK_SECRET`, and the variables that only
+name where a secret lives (`TOKEN_KEY_PATH`, `TOKEN_DATABASE_PATH`,
+`GITHUB_APP_PRIVATE_KEY_PATH`, `GITHUB_APP_WEBHOOK_SECRET_PATH`, ...), plus any
+other credential-shaped variable in the environment the bot was started with.
+If `LLM_PROVIDER=claude-cli` is authenticated by `ANTHROPIC_API_KEY` instead of
+the recommended `CLAUDE_CODE_OAUTH_TOKEN`, add it to `TURN_ENV_PASSTHROUGH`.
+
+**Slack.** A turn calls Slack through `bin/slack-api.sh <method> key=value...`.
+The helper presents `JARVIS_SLACK_TICKET`, a ticket minted for that one process
+when it starts and revoked when it exits, to the bot's loopback endpoint
+(`POST /api/slack/proxy`). The bot checks the ticket, checks the method against
+an allowlist and calls Slack with the token it holds; Slack's own answer comes
+back unchanged. The ticket names no person and carries no role: it cannot run a
+command or act on GitHub, and a command ticket cannot call Slack.
+
+| | methods |
+|---|---|
+| read, any channel | `conversations.history`, `conversations.replies`, `conversations.info`, `conversations.list` (public channels), `conversations.join` (public channels), `users.info` |
+| write, only the channel the turn runs in | `chat.postMessage`, `chat.update`, `reactions.add`, `files.getUploadURLExternal`, `files.completeUploadExternal` |
+| files | a private file is `bin/slack-file.sh`, through `POST /api/slack/file`: Slack file urls only, and the token never follows a redirect off Slack |
+
+Anything else is refused (`method_not_allowed`), a write to another channel is
+`channel_not_allowed`, and a missing, revoked or expired ticket is refused before
+anything else. `slack-read.sh`, `slack-react.sh`, `slack-file.sh` and
+`slack-upload.sh` are built on the same helper, so a sandboxed role has no more
+power than before (reacting and uploading now only work in the turn's own channel). A watch predicate and a loop script are admin-written shell
+that runs **as the bot**, so they keep the bot's own environment; `watch reply`
+gets a read-only ticket for the length of each check.
+
+**What this does not do.** It takes the token out of the turn's environment.
+Reads are not channel-scoped, so a turn in a public channel can still read a
+private conversation the bot is in and write it into that channel (the token
+allowed the same before). A full-access turn is still the host user: it can read `.env` and the token files
+off disk, and the dashboard's loopback API has no authentication, so it can reach
+the console routes (`/api/slack/post`, ...) with `curl` and act as the bot in any
+channel. Closing those is a separate decision about what a full-access turn may
+read and call.
+
 ## Stopping a turn
 
 A chat turn can run for the better part of an hour, so there is a way to end one
@@ -940,6 +998,17 @@ expires in 3 hours (max 6) and ends when the worker finishes or dies (the turn's
 `watch worker`), on `worker-ticket revoke`, or at expiry. Tickets are rows in
 `worker_tickets` (only the sha-256 of the token), so they survive a restart; a
 sweep at boot and every 5 minutes ends the expired ones. No new setting.
+
+**The worker finds the bot through its ticket file.** The file holds the token on
+line 1 and the bot's loopback URL (`http://127.0.0.1:<DASHBOARD_PORT>`) on line 2,
+because a worker's shell has no `DASHBOARD_PORT`. `bin/github-app.sh` and
+`bin/github-app-comment.sh` use, in order: `GITHUB_APP_ACTION_URL` /
+`GITHUB_APP_COMMENT_URL`, `DASHBOARD_PORT`, line 2 of `JARVIS_RUN_TICKET_FILE`,
+then 2001. A ticket file written before this has one line and keeps that default.
+Line 2 is followed only if it is `http://127.0.0.1:` plus digits and nothing else
+(anything like `http://127.0.0.1:1@evil.example` is ignored, since the ticket is sent
+there). A call the bot does not answer prints the endpoint it tried;
+`GITHUB_APP_PRINT_ENDPOINT=1` prints it and exits without sending anything.
 
 **Long workers renew.** A worker that outlasts its TTL extends its own live ticket
 with `bin/github-app.sh ticket-renew <owner/repo> [--ttl 3h]` (default 3h, at most
@@ -1241,13 +1310,15 @@ The sidebar collapses to a slim rail of icons, with each page's full name as the
 - **Overview** - counts for users, conversations, stored turns, learnings, then an Activity section over the last 7/30/90 days (`GET /api/stats?days=`): messages per day, brain runs per day (chat and workflow turns, failures in the tooltip), list-price spend per day, the most-run commands, the most active people (turns plus commands) and how many threads were live today and this week. Hand-drawn SVG charts (no chart library), one series and one axis per chart, a hover tooltip on each, coloured only through the theme variables so dark mode just works. Days are the host's local days, and quiet days are drawn as zeros rather than skipped. Read from `messages`, `turn_log`, `llm_usage`, `command_log` and `thread_sessions` (`db/statsRepo.ts`); stored turns are cleared before a DB commit, so the messages chart only covers what is still stored
 - **Users** - manage the allowlist: add someone by searching the workspace (name, @handle or Slack id - email too once `users:read.email` is granted) and picking them from a dropdown with avatar, name, display name and title, then a role; someone already on the list is marked and adding changes their role. The search is `GET /api/slack/members?q=`, filtered server-side over a `users.list` copy held in memory (every cursor page, deleted accounts and bots left out, refreshed at most every 10 minutes, the last good copy kept when a refresh fails). Pasting a raw `U…` id still works when the directory is unavailable. Then edit each person's Slack id, Slack name, GitHub logins (the `github_login:` links the review inbox and GitHub App use) and role inline. The owner's id and role are protected; their name and GitHub logins are editable
 - **Roles** - switch each role on or off, untick the commands, tools and MCP servers it may not use, assign people to it, and edit the executer tool allow-list (see [Roles & tool access](#roles--tool-access)). The owner role is shown but locked
-- **Memory** - with a memory adapter: teach one fact, edit any adapter file by hand (one whole file per save, checked by the same gate as `adapter refine` and kept as a revision; blank a file to remove it), or revert to an earlier revision. Without an adapter it is the flat **Learnings** list: edit one in place and save, or delete it
+- **Memory** - with a memory adapter: propose one fact (it waits for the owner's approval like every learning written through the API, see below), edit any adapter file by hand (one whole file per save, checked by the same gate as `adapter refine` and kept as a revision; blank a file to remove it), or revert to an earlier revision. Without an adapter it is the flat **Learnings** list: edit one in place and save, or delete it
 - **Identity** - edit the bot name, "thinking" label, and system prompt (persona), or reset the persona to default
 - **Conversations** - browse the bot's own stored memory (SQLite), read turns, clear a channel. Both lists scroll instead of paging: the channel list loads the next page as you reach the bottom (`GET /api/conversations?cursor=`, cursor `<lastAt>:<channelId>`), and a conversation opens scrolled to its newest turn in reading order, loading older turns as you scroll up while keeping your place (`GET /api/conversation?channel=&before=<message id>`, 50 a page, `nextBefore` until the first turn). Every channel is shown as name and id (`#team-chat (C0TEAM00001)`, a DM as the person), and every person as name and id - never a bare Slack id, here, in the command log or on Spend. Names come from `conversations.info` / `users.info`, cached in the dashboard process (6 h, failures 10 min) so a page render does not call Slack per row; `conversations.info` needs the `*:read` scopes below
 - **Architecture** - how the bot is built, as a system design walkthrough: an interactive diagram of every process, module and store, request flows you can play step by step (the diagram takes the full page width; play/back/next sit in a dock pinned to the bottom of the screen while the diagram is in view, with the current step as a caption - Space plays or pauses, the arrow keys step - and the step list and box inspector are under it) (a mention, a typed command, the brain running a command, a call from GitHub, a polled review run as the `review` command, a watch coming good, a restart that loses nothing), the layers, and the design decisions with their trade-offs. Under it, a static System design section in interview order: requirements, limits and numbers, the data model, the mention as a sequence diagram, deployment, and failure modes. Drawn from `web/src/systemModel.ts` and `web/src/systemDesign.ts`
 - **Console** - a live Slack message manager (the web port of a terminal TUI): pick a channel/DM, read messages and threads, edit or delete the bot's own messages, reply, and generate an AI draft to review before posting. Requires extra Slack scopes (below); missing scopes surface as an in-app error.
 
 Identity and learnings are stored in the DB and applied on the next reply - no restart.
+
+**Learnings need the owner's approval.** A learning is injected into every future reply, in every channel, so only the owner typing `learn <fact>` saves one active. A `learn` from anyone else, a `learn` the agent runs for itself, and every `POST /api/learnings` (the endpoint the agent curls, and the dashboard's teach box - the loopback API cannot tell the two apart) is stored *pending*: it never reaches a prompt, the API answers `{"status":"pending", "id":N, "message":...}` so the agent does not claim it saved one, and the owner gets a DM with Approve / Reject buttons (or `learn pending`, `learn approve <id>`, `learn reject <id>`). Existing learnings stay active. Up to 20 can wait at once, and `POST /api/learnings/update` (new wording) sends the learning back to pending.
 
 ## Testing
 

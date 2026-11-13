@@ -189,6 +189,11 @@ const schema = z
     // The subset of DB_MCP_SERVERS the executer role may query. Only list
     // servers whose credential is read only on the server side. Empty: none.
     EXECUTER_DB_MCP_SERVERS: z.string().optional(),
+    // Secret-shaped variable names (`*_TOKEN`, `*_SECRET`, `*_API_KEY`...) an agent turn may still
+    // inherit. Every other credential-shaped variable is withheld from the spawned CLI, so a
+    // prompt-injected turn has nothing to read out of its environment; Slack goes through a
+    // ticketed local proxy instead. Empty (the default) passes none.
+    TURN_ENV_PASSTHROUGH: z.string().optional(),
   })
   .refine((env) => env.LLM_PROVIDER !== "anthropic" || !!env.ANTHROPIC_API_KEY, {
     message: "ANTHROPIC_API_KEY is required when LLM_PROVIDER=anthropic",
@@ -264,6 +269,8 @@ export type AppConfig = {
   reviewExtendedOwners: string[];
   /** Local database MCP servers denied by name to roles that may not use databases; empty denies none. */
   dbMcpServers: string[];
+  /** Secret-shaped variable names a turn may still inherit; empty is none. */
+  turnEnvPassthrough: string[];
   /** The subset of `dbMcpServers` the executer role may query; empty is none. */
   executerDbMcpServers: string[];
 };
@@ -344,6 +351,7 @@ export const loadConfig = (source: Record<string, string | undefined> = process.
     ),
     reviewExtendedOwners: parseList(env.REVIEW_EXTENDED_OWNERS),
     dbMcpServers: parseList(env.DB_MCP_SERVERS),
+    turnEnvPassthrough: parseList(env.TURN_ENV_PASSTHROUGH),
     executerDbMcpServers: parseList(env.EXECUTER_DB_MCP_SERVERS),
   };
 };

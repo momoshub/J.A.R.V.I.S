@@ -17,4 +17,12 @@ describe("worker ticket files", () => {
     expect(existsSync(path)).toBe(false);
     files.remove("abcd1234");
   });
+
+  test("with a base URL the file's second line says where the bot listens; without one it has the token only", () => {
+    const dir = join(mkdtempSync(join(tmpdir(), "wt-")), "worker-tickets");
+    const withUrl = createWorkerTicketFiles(dir, "http://127.0.0.1:2002").write("aaaa1111", "jvwk_a");
+    expect(readFileSync(withUrl, "utf8")).toBe("jvwk_a\nhttp://127.0.0.1:2002\n");
+    const plain = createWorkerTicketFiles(dir).write("bbbb2222", "jvwk_b");
+    expect(readFileSync(plain, "utf8")).toBe("jvwk_b\n");
+  });
 });
