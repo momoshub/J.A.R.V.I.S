@@ -19,6 +19,7 @@ import type { UsageRepo } from "../db/usageRepo.ts";
 import type { MessageRepo } from "../db/messageRepo.ts";
 import type { UserRepo } from "../db/userRepo.ts";
 import type { LearningsRepo } from "../db/learningsRepo.ts";
+import type { LearningApprovalDeps } from "../../application/learningApproval.ts";
 import type { KitViewRepo } from "../db/kitViewRepo.ts";
 import type { SettingsRepo } from "../db/settingsRepo.ts";
 import type { RolePolicyRepo } from "../db/rolePolicyRepo.ts";
@@ -51,12 +52,13 @@ export type DashboardDeps = {
   /**
    * The memory adapter, when one is configured.
    *
-   * `remember` is what the brain's own save endpoint writes through, so a fact
-   * it decides to keep mid-conversation lands in the adapter rather than the
-   * old table. `status`, `view` and `files` back the memory page, and `edit`
-   * is its hand editor.
+   * `status`, `view` and `files` back the memory page, and `edit` is its hand
+   * editor. A fact the brain POSTs does not land here: it waits for the owner
+   * (`learningApproval`), which files it into the adapter once approved.
    */
   adapter?: MemoryAdapterPort;
+  /** Owner approval of every learning written through the API; without it the learnings endpoints refuse. */
+  learningApproval?: LearningApprovalDeps;
   settings: SettingsRepo;
   clock: Clock;
   /** Current bot identity, for the header and identity editor. */
@@ -218,6 +220,7 @@ export const createDashboard = (config: DashboardConfig, deps: DashboardDeps) =>
     users: deps.users,
     messages: deps.messages,
     learnings: deps.learnings,
+    learningApproval: deps.learningApproval,
     settings: deps.settings,
     adapter: deps.adapter,
     commandLog: deps.commandLog,
@@ -350,9 +353,9 @@ export const createDashboard = (config: DashboardConfig, deps: DashboardDeps) =>
         case "/api/kit/views":
           return reply(app.saveKitView(body.view));
         case "/api/learnings":
-          return reply(app.teach(body.content));
+          return reply(await app.teach(body.content));
         case "/api/learnings/update":
-          return reply(app.updateLearning(body.id, body.content));
+          return reply(await app.updateLearning(body.id, body.content));
         case "/api/learnings/remove":
           return reply(app.removeLearning(body.id));
         case "/api/adapter/revert":

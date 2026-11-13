@@ -38,7 +38,6 @@ import {
   adapterStatus,
   createAdapterReader,
   editAdapterFile,
-  rememberFact,
   revertAdapter,
 } from "./application/adapterMemory.ts";
 import { createAdapterRevisionRepo } from "./infrastructure/db/adapterRevisionRepo.ts";
@@ -73,6 +72,7 @@ import { createClaudeJsonReader, unlistedLocalMcpServers } from "./infrastructur
 import { createReminderSender } from "./application/reminders.ts";
 import { createLoopRunner } from "./application/loops.ts";
 import { expirePendingLoops, type LoopApprovalDeps } from "./application/loopApproval.ts";
+import { injectedLearnings, type LearningApprovalDeps } from "./application/learningApproval.ts";
 import { createShellCheck } from "./infrastructure/system/shellCheck.ts";
 import { createOrcaCli, createOrcaTerminal } from "./infrastructure/system/orcaTerminal.ts";
 import { createOrcaProbe } from "./infrastructure/system/orcaProbe.ts";
@@ -494,7 +494,8 @@ const main = async () => {
   const promptContext = () => ({
     botName: profile().name,
     base: settings.get(SETTING_KEYS.systemPrompt),
-    learnings: learnings.list().map((l) => l.content),
+    // Active learnings only: a pending one is the owner's to approve first.
+    learnings: injectedLearnings(learnings),
     adapter: adapterReader.read(),
   });
   const draft = createDraftReply({ llm, promptContext, ownerSlackId: config.ownerSlackId });
@@ -540,6 +541,15 @@ const main = async () => {
     offsetMinutes: () => hostOffsetMin(clock()),
     log: (l) => activity.line(`loop approval: ${l}`),
   };
+  // A learning from anyone but the owner's own typing waits here for the owner's Approve; the same object backs `learn`, the learnings API and the button handler.
+  const learningApproval: LearningApprovalDeps = {
+    learnings,
+    adapter: () => (adapterStore.exists() ? adapterDeps() : undefined),
+    slack: slackAdmin,
+    clock,
+    ownerSlackId: config.ownerSlackId,
+    log: (l) => activity.line(`learning approval: ${l}`),
+  };
   const deps: RespondDeps = {
     users,
     messages,
@@ -562,6 +572,7 @@ const main = async () => {
     reminders,
     loops,
     loopApproval,
+    learningApproval,
     slackWaitScript,
     orcaWorkerWait,
     workerTickets,
@@ -812,6 +823,7 @@ const main = async () => {
       rolePolicies,
       messages,
       learnings,
+      learningApproval,
       kitViews,
       stats: createStatsRepo(db),
       adapter: adapterStore.exists()
@@ -829,12 +841,6 @@ const main = async () => {
                 revisions: adapterRevisions.list(20),
                 items: bullets(a.policy) + bullets(a.notes) + a.people.size + a.channels.size + a.skills.length,
               };
-            },
-            remember: (content, by) => {
-              const r = rememberFact(adapterDeps(), content, { kind: "global" }, by);
-              return r.ok
-                ? { ok: true, warnings: r.warnings }
-                : { ok: false, violations: r.violations };
             },
             revert: (id, by) => {
               const r = revertAdapter(adapterDeps(), id, by);

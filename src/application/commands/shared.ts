@@ -37,6 +37,7 @@ import type { WatchRepo } from "../../infrastructure/db/watchRepo.ts";
 import type { ReminderRepo } from "../../infrastructure/db/reminderRepo.ts";
 import type { LoopRepo } from "../../infrastructure/db/loopRepo.ts";
 import type { LoopApprovalDeps } from "../loopApproval.ts";
+import type { LearningApprovalDeps } from "../learningApproval.ts";
 import type { StuckWork } from "../../domain/stuckWork.ts";
 import type { FollowRepo } from "../../infrastructure/db/followRepo.ts";
 import type { WorkflowRepo } from "../../infrastructure/db/workflowRepo.ts";
@@ -53,6 +54,8 @@ export type CommandDeps = {
   users: UserRepo;
   messages: MessageRepo;
   learnings?: LearningsRepo;
+  /** Who may save a learning active and the owner's approval of the rest: `learn`, `relearn`. */
+  learningApproval?: LearningApprovalDeps;
   /** The memory adapter directory; when set, it replaces the learnings list. */
   adapterStore?: AdapterStore;
   adapterRevisions?: AdapterRevisionRepo;

@@ -21,7 +21,16 @@ const build = (extra: Partial<DashboardDeps> = {}) => {
     loadBotProfile(settings, { name: "TestBot", thinkingLabel: "thinking...", thinkingDoneLabel: "✅" });
   const dash = createDashboard(
     { port: 0, ownerSlackId: OWNER, model: "claude-opus-4-8", distDir: "/nonexistent", commandPrefix: "//bot", slashCommand: "/bot" },
-    { users, messages, learnings, settings, clock: () => 99, profile, ...extra },
+    {
+      users,
+      messages,
+      learnings,
+      learningApproval: { learnings, clock: () => 99, ownerSlackId: OWNER },
+      settings,
+      clock: () => 99,
+      profile,
+      ...extra,
+    },
   );
   return { dash, users, messages, learnings, settings };
 };
@@ -169,7 +178,7 @@ describe("dashboard read API", () => {
   test("overview returns counts", async () => {
     const { dash, messages, learnings } = build();
     messages.append({ channelId: "C1", slackUserId: "U1", role: "user", content: "x" }, 1);
-    learnings.add("l", "kai", 1);
+    learnings.add("l", "kai", 1, "active");
     const res = await dash.handle(api(`/api/overview`));
     expect(await res.json()).toMatchObject({ users: 1, conversations: 1, messages: 1, learnings: 1 });
   });
@@ -242,12 +251,26 @@ describe("dashboard mutations", () => {
     expect(users.get("U444")?.role).toBe("pal");
   });
 
-  test("learnings add/remove", async () => {
+  test("learnings: a POST is pending and says so, remove deletes", async () => {
     const { dash, learnings } = build();
-    await dash.handle(postJson(`/api/learnings`, { content: "staging is X" }));
-    const [l] = learnings.list();
+    const res = await dash.handle(postJson(`/api/learnings`, { content: "staging is X" }));
+    const body = (await res.json()) as { ok: boolean; status: string; id: number; message: string };
+    expect(body).toMatchObject({ ok: true, status: "pending" });
+    expect(body.message).toContain("Pending owner approval");
+    expect(body.message).toContain("NOT saved");
+    // never active: nothing the prompt reads
+    expect(learnings.list()).toHaveLength(0);
+    const [l] = learnings.pending();
     expect(l?.content).toBe("staging is X");
     await dash.handle(postJson(`/api/learnings/remove`, { id: l!.id }));
+    expect(learnings.pending()).toHaveLength(0);
+  });
+
+  test("learnings are refused when approval is not wired, never saved unchecked", async () => {
+    const { dash, learnings } = build({ learningApproval: undefined });
+    const res = await dash.handle(postJson(`/api/learnings`, { content: "staging is X" }));
+    expect(res.status).toBe(503);
+    expect(learnings.pending()).toHaveLength(0);
     expect(learnings.list()).toHaveLength(0);
   });
 
@@ -287,20 +310,32 @@ describe("dashboard mutations", () => {
 });
 
 describe("editing a learning", () => {
-  test("rewords it in place", async () => {
+  test("rewording through the API takes it out of the prompt until the owner approves the new text", async () => {
     const { dash, learnings } = build();
-    learnings.add("staging is at old.example.com", "dashboard", 1);
+    learnings.add("staging is at old.example.com", "dashboard", 1, "active");
     const id = learnings.list()[0]!.id;
 
     const res = await dash.handle(postJson("/api/learnings/update", { id, content: "staging is at new.example.com" }));
     expect(res.status).toBe(200);
-    expect(learnings.list()[0]?.content).toBe("staging is at new.example.com");
+    expect(((await res.json()) as { status: string }).status).toBe("pending");
+    expect(learnings.list()).toHaveLength(0);
+    expect(learnings.get(id)).toMatchObject({ status: "pending", content: "staging is at new.example.com" });
+  });
+
+  test("the API reports the real status: the same text leaves it active and says so", async () => {
+    const { dash, learnings } = build();
+    learnings.add("a fact", "dashboard", 1, "active");
+    const id = learnings.list()[0]!.id;
+    const res = await dash.handle(postJson("/api/learnings/update", { id, content: "a fact" }));
+    const body = (await res.json()) as { status: string; message: string };
+    expect(body.status).toBe("active");
+    expect(body.message).toContain("Unchanged");
     expect(learnings.list()).toHaveLength(1);
   });
 
   test("refuses to blank one out or to guess at the id", async () => {
     const { dash, learnings } = build();
-    learnings.add("a fact", "dashboard", 1);
+    learnings.add("a fact", "dashboard", 1, "active");
     const id = learnings.list()[0]!.id;
 
     expect((await dash.handle(postJson("/api/learnings/update", { id, content: "   " }))).status).toBe(400);
@@ -431,7 +466,6 @@ describe("editing memory files by hand", () => {
     const adapter: NonNullable<DashboardDeps["adapter"]> = {
       status: () => "",
       view: () => ({ policy: "", notes: "", skills: [], people: [], channels: [], revisions: [], items: 0 }),
-      remember: () => ({ ok: true }),
       revert: () => ({ ok: true }),
       files: () => [...files].map(([path, content]) => ({ path, content })),
       edit: (path, content, by, base) => {

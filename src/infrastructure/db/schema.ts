@@ -106,6 +106,30 @@ export const migrate = (db: Database): void => {
   migrateWorkerTicketBoundAt(db);
   migrateLoopNames(db);
   migrateThreadBriefs(db);
+  migrateLearningStatus(db);
+};
+
+/**
+ * Migration v35: a learning has a status, and only `active` ones are injected.
+ *
+ * Every row that exists was taught before approval existed and is carried
+ * into every reply today, so the column defaults to `active`: the migration
+ * keeps them all. New rows from a member or from the agent arrive `pending`
+ * and stay out of every prompt until the owner approves them
+ * (`domain/learning.ts`). The notice columns hold the owner's Approve / Reject
+ * message, so a press is only honoured on the message that was posted for it.
+ */
+const migrateLearningStatus = (db: Database): void => {
+  const cols = db.query<{ name: string }, []>("PRAGMA table_info(learnings)").all().map((c) => c.name);
+  if (!cols.includes("status")) db.exec("ALTER TABLE learnings ADD COLUMN status TEXT NOT NULL DEFAULT 'active'");
+  if (!cols.includes("notice_channel")) db.exec("ALTER TABLE learnings ADD COLUMN notice_channel TEXT NOT NULL DEFAULT ''");
+  if (!cols.includes("notice_ts")) db.exec("ALTER TABLE learnings ADD COLUMN notice_ts TEXT NOT NULL DEFAULT ''");
+  if (!cols.includes("decided_by")) db.exec("ALTER TABLE learnings ADD COLUMN decided_by TEXT NOT NULL DEFAULT ''");
+  if (!cols.includes("decided_at")) db.exec("ALTER TABLE learnings ADD COLUMN decided_at INTEGER NOT NULL DEFAULT 0");
+  const { user_version } = db.query<{ user_version: number }, []>("PRAGMA user_version").get() ?? {
+    user_version: 0,
+  };
+  if (user_version < 35) db.exec("PRAGMA user_version = 35;");
 };
 
 /**
