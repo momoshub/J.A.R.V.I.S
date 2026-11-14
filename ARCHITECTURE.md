@@ -88,7 +88,9 @@ no classes.
   revoked when it exits, no actor and no role) to `POST /api/slack/proxy`, where
   `slackProxy` checks the ticket, applies the method allowlist
   (`domain/slackProxy.ts`: a fixed set of reads, and writes only into the
-  turn's own channel) and calls Slack with the token it holds. Files go through
+  turn's own channel; a new post from a turn in a thread defaults to that
+  thread, `thread_ts=none` posts at the top level) and calls Slack with the
+  token it holds. Files go through
   `/api/slack/file`. `slack-read`, `slack-react`, `slack-file` and `slack-upload`
   are built on it.
 - **Commands from the brain.** The brain runs real commands through
