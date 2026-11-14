@@ -9,6 +9,12 @@ import { join } from "node:path";
 import { z } from "zod";
 import { expandHome } from "../domain/dbPath.ts";
 import { parseAllowedOwners } from "../domain/githubApp.ts";
+import {
+  DEFAULT_MAX_NUDGES,
+  DEFAULT_MIN_AGE_MS,
+  DEFAULT_SWEEP_INTERVAL_MS,
+  DEFAULT_WINDOW_MS,
+} from "../domain/stalePromise.ts";
 import { DEFAULT_REAP_IDLE_MS, DEFAULT_REAP_INTERVAL_MS } from "../domain/idleWorkers.ts";
 import { parseSelfPrAccounts, RESTART_TURN_BUDGET_MS, type SelfPrAccounts } from "../domain/selfUpdate.ts";
 import { parseDenyList } from "../domain/workerMcp.ts";
@@ -142,6 +148,16 @@ const schema = z
     ORCA_REAP_IDLE_MS: z.coerce.number().int().min(60_000).default(DEFAULT_REAP_IDLE_MS),
     // `true`: only log what the reaper would close, close nothing.
     ORCA_REAP_DRY_RUN: boolFromString(false),
+    // Stale-promise sweep: how often (ms) the bot looks for threads whose last
+    // message is its own promise of further work with nothing pending, and
+    // steers that session once. 0 turns it off. Default 15 min.
+    STALE_PROMISE_INTERVAL_MS: z.coerce.number().int().min(0).default(DEFAULT_SWEEP_INTERVAL_MS),
+    // How old (ms) the promise must be before it counts as stale. Default 30 min.
+    STALE_PROMISE_MIN_AGE_MS: z.coerce.number().int().min(60_000).default(DEFAULT_MIN_AGE_MS),
+    // Threads the bot was active in within this long (ms) are looked at. Default 24 h.
+    STALE_PROMISE_WINDOW_MS: z.coerce.number().int().min(60_000).default(DEFAULT_WINDOW_MS),
+    // Most threads nudged in one sweep. Default 3.
+    STALE_PROMISE_MAX_NUDGES: z.coerce.number().int().min(1).default(DEFAULT_MAX_NUDGES),
     // Channel the offline alarm reports to: a notice armed on Slack's side
     // that posts by itself if the host loses its connection, and is edited to
     // "back online" when it returns. Unset: no alarm. An id, not a name: the
@@ -279,6 +295,8 @@ export type AppConfig = {
   restartTurnBudgetMs: number;
   /** Idle-worker reaper: sweep interval (0 = off), idle threshold, log-only mode. */
   orcaReap: { intervalMs: number; idleMs: number; dryRun: boolean };
+  /** Stale-promise sweep: interval (0 = off), minimum age of the promise, look-back window, nudges per sweep. */
+  stalePromise: { intervalMs: number; minAgeMs: number; windowMs: number; maxNudges: number };
   /** Channel the offline alarm posts to when the host drops off; unset is off. */
   offlineAlarmChannel?: string;
   /** Channel for the owner's copy of other people's slash commands; unset is the owner's DM. */
@@ -369,6 +387,12 @@ export const loadConfig = (source: Record<string, string | undefined> = process.
     ...(env.DRAIN_NOTICE_CHANNEL ? { drainNoticeChannel: env.DRAIN_NOTICE_CHANNEL } : {}),
     restartTurnBudgetMs: env.RESTART_TURN_BUDGET_MS,
     orcaReap: { intervalMs: env.ORCA_REAP_INTERVAL_MS, idleMs: env.ORCA_REAP_IDLE_MS, dryRun: env.ORCA_REAP_DRY_RUN },
+    stalePromise: {
+      intervalMs: env.STALE_PROMISE_INTERVAL_MS,
+      minAgeMs: env.STALE_PROMISE_MIN_AGE_MS,
+      windowMs: env.STALE_PROMISE_WINDOW_MS,
+      maxNudges: env.STALE_PROMISE_MAX_NUDGES,
+    },
     ...(env.OFFLINE_ALARM_CHANNEL ? { offlineAlarmChannel: env.OFFLINE_ALARM_CHANNEL } : {}),
     ...(env.SLASH_MIRROR_CHANNEL ? { slashMirrorChannel: env.SLASH_MIRROR_CHANNEL } : {}),
     githubApp: {

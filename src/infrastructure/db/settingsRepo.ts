@@ -71,6 +71,8 @@ export const SETTING_KEYS = {
   orcaTerminalHandle: "orca_terminal_handle",
   /** JSON of stuck-work items already DMed to the owner, with when, so none repeats within hours. */
   stuckSweepSeen: "stuck_sweep_seen",
+  /** JSON of the bot messages the stale-promise sweep already nudged (thread -> message ts), so a restart does not nudge twice. */
+  stalePromiseNudged: "stale_promise_nudged",
   /** PR -> thread records written when the bot opens a PR, for the stuck-work report. */
   stuckPrThreads: "stuck_pr_threads",
   /** AWS region `cloudwatch` queries when none is given. Empty = us-west-2. */

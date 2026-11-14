@@ -70,6 +70,7 @@ Required / notable env (see `.env.example`):
 | `CLAUDE_CWD` | working dir for the CLI; blank = neutral temp dir outside this repo |
 | `ORCA_TERMINAL_WORKTREE` | Orca worktree selector the bot opens its own terminal in, handed to every turn as `ORCA_TERMINAL_HANDLE` so it can run `orca orchestration` (default `path:~/Workspaces`; `off` disables). Orca not running = no handle, turns fall back to the Agent tool. A question one of those workers asks (`orca orchestration ask`) is put to the Slack thread that started it as a turn, which answers it with `orca orchestration reply` - see [Orca workers' questions](#orca-workers-questions) |
 | `ORCA_REAP_INTERVAL_MS` / `ORCA_REAP_IDLE_MS` / `ORCA_REAP_DRY_RUN` | Idle-worker reaper (default every 30 min, idle for 3 h; interval `0` turns it off, dry run only logs). An Orca worker's interactive agent stays open (hundreds of MB plus MCP children) after its work ends, so the bot closes, through Orca (`worker-release` for a settled worker, `worker-stop` otherwise), sessions whose task is finished/failed, or blocked with no pending gate once the worker itself has ended (or tied to no task, once the worker ended) and whose terminal has been silent that long. Never touched: a worker with a live watch (on its dispatch, Run or task) or an unanswered question, one waiting on an `ask`, one whose terminal was reused, one kept open, one Orca needs a human for, or any session Orca did not start (your own `claude` sessions, the bot's `claude -p` turns). Each close is logged as `[orca-reaper] ...` |
+| `STALE_PROMISE_INTERVAL_MS` / `STALE_PROMISE_MIN_AGE_MS` / `STALE_PROMISE_WINDOW_MS` / `STALE_PROMISE_MAX_NUDGES` | Stale-promise sweep (default every 15 min, a promise must be 30 min old, threads active in the last 24 h, at most 3 nudges per sweep; interval `0` turns it off). See "Stale promises" below. Each nudge is logged as `[stale-promise] ...` |
 | `ANTHROPIC_API_KEY` / `ANTHROPIC_MODEL` | required only when `LLM_PROVIDER=anthropic` |
 | `BOT_NAME` | bootstrap bot name for a fresh DB (default `Assistant`) |
 | `BOT_THINKING_LABEL` / `BOT_THINKING_DONE_LABEL` | bootstrap "thinking" step labels |
@@ -704,6 +705,24 @@ with the Slack thread that started it (recorded when the bot opens the PR), and 
 hours - a restart does not reset that. When Orca or `gh` cannot be asked it
 says nothing rather than claim all is well; `mindful` shows the same lists on
 demand, with a "could not check" line when that happens.
+
+## Stale promises
+
+A turn sometimes ends with "next I will update the post" (or "việc tiếp theo là
+...", "xong em gửi ...") without setting a watch, a reminder or a worker, so
+nothing is left to do it and the thread goes quiet until someone prods it. Every
+15 minutes, outside any turn, the bot looks at the threads it spoke in during the
+last 24 hours. A thread counts as a stale promise when the newest message is the
+bot's own and is over 30 minutes old, no turn, workflow, watch, reminder or live
+Orca worker is attached to the thread, and that message really promises more work
+(a cheap English + Vietnamese check, then one yes/no question to the small model;
+a question to the person, an offer or a finished answer is not a promise). The
+bot then steers that thread's own session once, the same internal turn `tell`
+uses: do the work now, set a watch, or end with `NO_REPLY` if nothing is pending.
+The sweep itself posts nothing to Slack and nobody is DMed. A message is nudged at
+most once, even across restarts, a thread is nudged again only after a person has
+spoken in it, and at most 3 threads are nudged per sweep.
+`STALE_PROMISE_INTERVAL_MS=0` turns it off.
 
 ## How the brain runs a command
 

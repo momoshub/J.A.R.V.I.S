@@ -41,6 +41,8 @@ no classes.
   |    offlineAlarm (keeps an "I'm offline" Slack scheduled msg armed)     |
   |    stuckSweeper (dead Orca workers, quiet own PRs -> owner DM, 15 min)  |
   |    idleReaper (closes finished, idle Orca worker sessions, 30 min)      |
+  |    stalePromiseSweep (steers a thread whose last bot message promised   |
+  |      work nothing is doing, 15 min)                                     |
   |                                                                         |
   |  dashboard + JSON API (Bun.serve, loopback), /api/commands/run,         |
   |    /api/github-app/comment, /api/slack/proxy + /api/slack/file          |
@@ -140,6 +142,17 @@ no classes.
   a kept-open terminal, an attention flag, unproven liveness, a terminal another dispatch now owns, or a task blocked while its worker is still going (an `ask`) is skipped (a watch on the dispatch, its Run or its task counts), and
   only supervised workers are candidates, so a user's own session and the bot's
   `claude -p` turns are out of reach. It never kills a pid.
+  `stalePromiseSweep` (`STALE_PROMISE_INTERVAL_MS`, default 15 min, 0 = off) looks
+  at threads the bot spoke in during the last 24 h whose newest message is its own,
+  older than 30 minutes, promises further work ("next I will ...", "việc tiếp theo
+  là ...") and has nothing waiting on it (no running turn, workflow, watch,
+  reminder or live Orca worker). It steers each such session once, as the same
+  internal turn `tell` starts (do it now, set a watch, or end with `NO_REPLY`), and
+  posts nothing itself; a bot message is nudged at most once and a thread only
+  again after a person spoke in it (`stale_promise_nudged` setting, which also
+  remembers NO verdicts so they are not re-asked), thread state is re-read right
+  before firing, at most 3 per sweep, each nudge logged as `[stale-promise]` and an
+  activity `stale_promise_nudge` event.
   None of them hold a session or a queue slot while they wait.
 - **Followed threads: debounce and gate.** An untagged message in a thread the bot
   follows (the `asked` and `own-thread` routes; tagged messages, DMs, one-on-one
@@ -238,6 +251,7 @@ No I/O, no frameworks. Just data shapes and functions of their inputs.
 - `threadFollow.ts`, `followGate.ts` - which untagged thread messages the bot answers, and the pure rules of the gate in front of a followed thread (settings, bypass, batch windows, verdict parsing, the gate's prompt)
 - `journey.ts` - the bot's own work log: statuses, flag parsing for the internal `journey` command (run only by the brain's own turn, never typed), the one-line and help text
 - `watch.ts`, `reminder.ts`, `loop.ts`, `selfUpdate.ts`, `runControl.ts`, `threadBackground.ts` - waits, reminders, draining restart, stopping a turn and the background agents its thread started
+- `stalePromise.ts`, `tellPrompt.ts` - the stale-promise rules (bilingual promise heuristic, the model's yes/no question, which threads may be nudged, the per-thread record) and the internal steer text shared by `tell` and the sweep
 - `workerUsage.ts` - an Orca worker's tokens summed from its Claude Code transcript (deduped per message) and priced per model (the one price table)
 - `offlineAlarm.ts` - the dead man's switch notice and its back-online edit
 - `systemStatus.ts`, `orcaStatus.ts`, `systemBlocks.ts` - `sys`: the host verdict and numbers, Orca's runtime/runs/tasks parsed from its CLI JSON and counted, and the Block Kit message (header, fields, trend, Orca table) with the plain report as its fallback
@@ -263,7 +277,7 @@ Orchestrates the domain and depends on **ports**, not concrete adapters.
 - `threadQueue.ts`, `runRegistry.ts` - one turn per thread, and stopping one
 - `followGate.ts` (application), `followGateModel.ts` - the per-thread buffer for a followed thread (a quiet window, a hard cap, injectable timers) and the cheap pal-model call that says reply, skip or wait
 - `ciGate.ts` (application) - the CI gate of `quick-review`: idempotent request-changes and approve against GitHub's own state, the watcher row for a running CI, and its poll
-- `watcher.ts`, `reminders.ts`, `loops.ts`, `reviewInbox.ts`, `reviewGuard.ts`, `innerChild.ts`, `offlineAlarm.ts`, `orcaQuestions.ts`, `idleReaper.ts`, `stuckSweeper.ts` - the timers (`orcaQuestions` also sits on the tool-trace sink, linking each Orca worker to the thread that started it)
+- `watcher.ts`, `reminders.ts`, `loops.ts`, `reviewInbox.ts`, `reviewGuard.ts`, `innerChild.ts`, `offlineAlarm.ts`, `orcaQuestions.ts`, `idleReaper.ts`, `stuckSweeper.ts`, `stalePromiseSweep.ts` - the timers (`orcaQuestions` also sits on the tool-trace sink, linking each Orca worker to the thread that started it)
 - `githubApp.ts` - calls from the GitHub App: dedupe/queue, identity mapping, the turn, the answer back
 - `workflow.ts`, `workflowFront.ts`, `workflowContinue.ts` - long tasks driven from one thread on a durable session
 - `accessRequests.ts` - unknown people ask the owner and admins, who decide with a reaction; on ✅ the person's original message (stored whole, with its Slack ts) is answered as a normal turn through the Slack intake, falling back to a short "you are in" line if the replay fails

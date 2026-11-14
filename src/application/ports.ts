@@ -106,6 +106,11 @@ export type BackgroundAgentsPort = {
     /** An admin may stop anyone's. */
     mayStopOthers: boolean;
   }) => Promise<BackgroundStopResult>;
+  /**
+   * Whether anything the thread started is still running, or could not be
+   * checked (counted as running: the answer is used to leave a thread alone).
+   */
+  liveForThread?: (q: { channelId: string; threadTs: string }) => Promise<boolean>;
 };
 
 /** Whose credential paid: the bot's own, the caller's token, or the host login. */
