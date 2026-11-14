@@ -58,6 +58,18 @@ export const unlistedLocalMcpServers = (claudeJson: unknown, dbServers: readonly
     .map(([name]) => name);
 };
 
+/**
+ * Names that match no user-scope server in `~/.claude.json`. A name in a denylist
+ * that matches nothing denies nothing, and the usual cause (a typo, a server
+ * renamed on the host) is silent, so the host logs these at boot. Nothing when the
+ * file holds no server list, since then nothing can be said.
+ */
+export const unknownMcpServers = (claudeJson: unknown, names: readonly string[]): string[] => {
+  const user = asRecord(asRecord(claudeJson)?.mcpServers);
+  if (!user) return [];
+  return names.filter((n) => !Object.hasOwn(user, n));
+};
+
 /** `~/.claude.json`, re-read only when it changes. Never written. */
 export const createClaudeJsonReader = (path: string = join(homedir(), ".claude.json")): (() => unknown) => {
   let cached: { stamp: string; value: unknown } | undefined;

@@ -29,6 +29,18 @@ describe("fanoutPrompt", () => {
     expect(p).toContain("claude --model $BOT_WORKER_MODEL --dangerously-skip-permissions");
   });
 
+  test("each checkout is made without an agent, trimmed, and only then launched", () => {
+    const p = fanoutPrompt("q", "Bot", ctx);
+    const create = p.indexOf("orca worktree create --repo id:<repoId> --name <short-slug> --setup run --no-parent --json");
+    const trim = p.indexOf('"$BOT_WORKER_MCP_TRIM" <folder>');
+    const launch = p.indexOf("orca agent launch --worktree path:<worktree path> --agent claude");
+    expect(create).toBeGreaterThan(-1);
+    expect(trim).toBeGreaterThan(create);
+    expect(launch).toBeGreaterThan(trim);
+    // the old one-step launch would start the agent before the file exists
+    expect(p).not.toContain("worktree create --repo id:<repoId> --name <short-slug> --agent claude");
+  });
+
   test("terminal commands take a handle, not a worktree", () => {
     // `orca terminal wait --worktree` is refused with invalid_argument
     expect(fanoutPrompt("q", "Bot", ctx)).toContain("take `--terminal <handle>`, not `--worktree`");

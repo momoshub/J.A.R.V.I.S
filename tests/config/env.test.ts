@@ -66,6 +66,11 @@ describe("loadConfig", () => {
     expect(d.executerDbMcpServers).toEqual(["ch-ro"]);
   });
 
+  test("the servers kept out of Orca workers are a comma list, empty (every server stays) by default", () => {
+    expect(loadConfig(base).workerMcpDeny).toEqual([]);
+    expect(loadConfig({ ...base, WORKER_MCP_DENY: " pg-prod, ch-ro ,,pg-prod" }).workerMcpDeny).toEqual(["pg-prod", "ch-ro"]);
+  });
+
   test("applies defaults", () => {
     const c = loadConfig(base);
     expect(c.dashboardPort).toBe(2001);

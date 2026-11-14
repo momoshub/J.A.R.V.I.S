@@ -10,6 +10,7 @@ import { z } from "zod";
 import { expandHome } from "../domain/dbPath.ts";
 import { parseAllowedOwners } from "../domain/githubApp.ts";
 import { parseSelfPrAccounts, RESTART_TURN_BUDGET_MS, type SelfPrAccounts } from "../domain/selfUpdate.ts";
+import { parseDenyList } from "../domain/workerMcp.ts";
 
 /** Where the GitHub App's credentials live by default: outside the repo, never in `.env`. */
 export const GITHUB_APP_DIR = join(homedir(), ".config", "jarvis", "github-app");
@@ -189,6 +190,14 @@ const schema = z
     // The subset of DB_MCP_SERVERS the executer role may query. Only list
     // servers whose credential is read only on the server side. Empty: none.
     EXECUTER_DB_MCP_SERVERS: z.string().optional(),
+    // User-scope MCP servers (names as in `claude mcp list`) kept out of the Orca
+    // workers the bot starts. Every claude session loads every server in
+    // ~/.claude.json and a stdio one is a process per session, so a batch of
+    // workers multiplied them (17 sessions held ~1.3GB). The prompts run
+    // bin/worker-mcp-trim.ts before each worker starts, which writes these into
+    // the worker folder's .claude/settings.local.json (deniedMcpServers). Empty
+    // keeps every server, as before. The bot's own turns are not affected.
+    WORKER_MCP_DENY: z.string().optional(),
     // Secret-shaped variable names (`*_TOKEN`, `*_SECRET`, `*_API_KEY`...) an agent turn may still
     // inherit. Every other credential-shaped variable is withheld from the spawned CLI, so a
     // prompt-injected turn has nothing to read out of its environment; Slack goes through a
@@ -273,6 +282,8 @@ export type AppConfig = {
   turnEnvPassthrough: string[];
   /** The subset of `dbMcpServers` the executer role may query; empty is none. */
   executerDbMcpServers: string[];
+  /** User-scope MCP servers kept out of Orca workers; empty keeps every server. */
+  workerMcpDeny: string[];
 };
 
 /** A short human label for the active model, shown on the dashboard. */
@@ -353,5 +364,6 @@ export const loadConfig = (source: Record<string, string | undefined> = process.
     dbMcpServers: parseList(env.DB_MCP_SERVERS),
     turnEnvPassthrough: parseList(env.TURN_ENV_PASSTHROUGH),
     executerDbMcpServers: parseList(env.EXECUTER_DB_MCP_SERVERS),
+    workerMcpDeny: parseDenyList(env.WORKER_MCP_DENY),
   };
 };

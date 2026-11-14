@@ -68,7 +68,7 @@ import { createDriftRepo } from "./infrastructure/db/driftRepo.ts";
 import { createSelfIssueRepo } from "./infrastructure/db/selfIssueRepo.ts";
 import { noTools } from "./domain/toolPolicy.ts";
 import { GATE_TIMEOUT_MS } from "./application/followGate.ts";
-import { createClaudeJsonReader, unlistedLocalMcpServers } from "./infrastructure/llm/mcpConfig.ts";
+import { createClaudeJsonReader, unknownMcpServers, unlistedLocalMcpServers } from "./infrastructure/llm/mcpConfig.ts";
 import { createReminderSender } from "./application/reminders.ts";
 import { createLoopRunner } from "./application/loops.ts";
 import { expirePendingLoops, type LoopApprovalDeps } from "./application/loopApproval.ts";
@@ -93,6 +93,7 @@ import { createCloudwatchRepo } from "./infrastructure/db/cloudwatchRepo.ts";
 import { createCloudwatchCli } from "./infrastructure/aws/cloudwatchCli.ts";
 import { createSettingsRepo, modelKey, SETTING_KEYS } from "./infrastructure/db/settingsRepo.ts";
 import { agentModelEnv, agentModelsOf, builtinAgentOverrides } from "./domain/agentModels.ts";
+import { workerMcpEnv } from "./domain/workerMcp.ts";
 import { loadBotProfile } from "./application/botProfile.ts";
 import { seedOwner } from "./infrastructure/db/seed.ts";
 import { createAnthropicLlm } from "./infrastructure/llm/anthropic.ts";
@@ -276,6 +277,11 @@ const main = async () => {
         `WARNING: local MCP servers not in DB_MCP_SERVERS (reachable by every role if they reach a database): ${unlisted.join(", ")}`,
       );
     }
+    // A name that matches no server excludes nothing from the workers, and a typo is silent.
+    const unknown = unknownMcpServers(createClaudeJsonReader()(), config.workerMcpDeny);
+    if (unknown.length > 0) {
+      activity.line(`WARNING: WORKER_MCP_DENY names no user-scope MCP server in ~/.claude.json (it excludes nothing): ${unknown.join(", ")}`);
+    }
   }
   const workflows = createWorkflowRepo(db);
   // One CLI session per Slack thread, so a follow-up keeps the context the last
@@ -361,6 +367,8 @@ const main = async () => {
   const slackReadScript = join(import.meta.dir, "..", "bin", "slack-read.sh");
   // The generic door for every other Slack call; reads and writes through the bot's allowlist.
   const slackCallScript = join(import.meta.dir, "..", "bin", "slack-api.sh");
+  // Writes WORKER_MCP_DENY into a folder's project settings before an Orca worker starts in it.
+  const workerMcpTrimScript = join(import.meta.dir, "..", "bin", "worker-mcp-trim.ts");
   // How `watch reply` asks whether anybody has answered yet.
   const slackWaitScript = join(import.meta.dir, "..", "bin", "slack-wait.sh");
   // How `watch worker` asks whether an Orca worker finished, died or waits for
@@ -492,6 +500,8 @@ const main = async () => {
     // loopback URL, no secret: the credential is the per-turn ticket.
     BOT_SLACK_CALL: slackCallScript,
     JARVIS_SLACK_API_URL: `http://127.0.0.1:${config.dashboardPort}/api/slack`,
+    // The servers kept out of Orca workers and the helper the worker-start prompts run first.
+    ...workerMcpEnv(config.workerMcpDeny, workerMcpTrimScript),
   });
   // A turn's environment is the bot's without its secrets. Names only, never values.
   const withheld = scrubSecretEnv(process.env, new Set(config.turnEnvPassthrough)).removed;

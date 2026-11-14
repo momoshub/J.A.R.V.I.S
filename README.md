@@ -91,6 +91,7 @@ Required / notable env (see `.env.example`):
 | `TURN_ENV_PASSTHROUGH` | secret-shaped variable names (`*_TOKEN`, `*_SECRET`, `*_API_KEY`...) an agent turn may still inherit, comma list; default none. A turn's environment is the bot's **minus every credential-shaped variable** (`SLACK_BOT_TOKEN`, `SLACK_APP_TOKEN`, `ANTHROPIC_API_KEY`, the webhook secret, ...): a turn reads untrusted text, so anything in its environment is one `curl` from leaving. `CLAUDE_CODE_OAUTH_TOKEN` is always kept (the CLI needs it). Slack goes through a per-turn ticket instead, see "Secrets and turns". Name a variable here only when a tool a turn runs genuinely needs it |
 | `DB_MCP_SERVERS` | names of the local database MCP servers on this host (as `claude mcp list` shows them, e.g. `pg-prod,clickhouse-ro`), comma list. **Security setting:** each is denied by name to every role that may not use databases (pal, executer, side questions), and a denial has to name the server, so a server missing here is reachable by EVERY role. Default empty denies nothing - list every database server you configure (at boot the activity log warns about local servers in `~/.claude.json` that are not listed) |
 | `EXECUTER_DB_MCP_SERVERS` | the subset of `DB_MCP_SERVERS` the executer role may query; list only servers whose credential is read-only on the server side. Default empty: executers get none |
+| `WORKER_MCP_DENY` | user-scope MCP servers (names as `claude mcp list` shows them) kept out of the Orca workers the bot starts, comma list. Default empty: every worker loads every server, as before. See "Keeping MCP servers out of workers" |
 | `DASHBOARD_PORT` | dashboard port (local, loopback-only, no auth) |
 | `DASHBOARD_ALLOWED_ORIGINS` | extra browser origins allowed to POST (proxy/tunnel access) |
 | `DATABASE_PATH` | the live sqlite file (default `data/bot.db`). Put it **outside the git checkout**, `~/` works, e.g. `~/.jarvis/data/bot.db` - see [Where the database lives](#where-the-database-lives) |
@@ -339,6 +340,45 @@ built-in Explore and Plan agents are replaced through `--agents` with the same
 job and a pinned model, because both inherit the turn's model and ignore that
 variable. Workers get it through `BOT_WORKER_MODEL`, which the prompts pass to
 `orca ... --model`.
+
+### Keeping MCP servers out of workers
+
+Every `claude` session loads every user-scope server in `~/.claude.json`, and a
+stdio server is a process (often three: the launcher, the server, a child) per
+session. An Orca worker almost never needs a database server, but each one got
+the whole set: on one host 17 workers held about 1.3GB and pushed the machine
+into swap. `WORKER_MCP_DENY` (comma list of server names, default empty = every
+server loads, as before) names the ones to leave out.
+
+Orca offers no per-launch hook for this: `worker-start` and `worktree create`
+take no extra agent arguments, settings file or environment (only `orca
+automations` do), and its host-wide agent arguments would also change the
+tabs you open yourself. What a session does read, once, when it starts, is the
+project settings of its working directory, and `deniedMcpServers` in
+`.claude/settings.local.json` there keeps the named servers from starting
+(checked on Claude Code 2.1.285: the file written before the launch removes
+the stdio servers, the same file written after the session started changes
+nothing). So the bot's prompts for starting a worker (the owner's Orca rules,
+the reviewer worker, `fanout`) say to run `bin/worker-mcp-trim.ts <folder>`
+first, which merges the names into that file (other settings in it stay, a file
+it cannot parse is left alone, running it twice is the same as once) and keeps
+it out of git. It does nothing when the list is empty. The helper and the names
+reach a turn as `BOT_WORKER_MCP_TRIM` and `BOT_WORKER_MCP_DENY`.
+
+- A worker started on a folder Orca already knows (`--worktree path:<folder>`)
+  is trimmed in that folder. That folder keeps the file: a session you open
+  there yourself loses the same servers, so delete the file (or its
+  `deniedMcpServers` entries) to get them back.
+- A new checkout is created first without an agent (`orca worktree create`, no
+  `--agent`), trimmed, then launched with `orca agent launch --worktree
+  path:<path>`; `fanout` works this way now. The one-step launches (`worktree
+  create --agent`, `worker-start --worktree new-child`) would start the agent
+  before the file exists, so the prompts forbid them.
+- Only user-scope servers by name are excluded. The `claude.ai` connectors are
+  remote and start no process, and the bot's own turns have their own list
+  (`UNAUTHENTICATED_MCP_SERVERS`).
+- A name that matches no server in `~/.claude.json` excludes nothing, so boot
+  logs it as a warning.
 
 ## Investigating
 
