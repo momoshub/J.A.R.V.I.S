@@ -509,6 +509,13 @@ describe("a message with several questions", () => {
     expect(out).toContain("worker-start --run <runId>");
     // workers run on the worker model, even when the turn itself is on Opus
     expect(out).toContain('--agent claude --model "$BOT_WORKER_MODEL" --json');
+    // and are started only after the host's MCP exclusions are written into their folder
+    expect(out).toContain('"$BOT_WORKER_MCP_TRIM"` with no argument');
+    // in the worker home, never in a folder the owner works in
+    expect(out).toContain("--worktree path:$BOT_WORKER_HOME --agent claude");
+    expect(out).toContain("never in `~/Workspaces`");
+    expect(out).not.toContain("<a folder or repo Orca knows>");
+    expect(out.indexOf("BOT_WORKER_MCP_TRIM")).toBeLessThan(out.indexOf("worker-start --run <runId>"));
     expect(out).toContain(ORCA_BATCH_CHECK);
     // a worker that stops without reporting leaves its task blocked: that settles the batch, never as a success
     expect(out).toContain("A `blocked` task is NOT success: its worker either stopped without reporting or is parked on an `ask`");
@@ -553,6 +560,7 @@ describe("a message with several questions", () => {
       expect(out).not.toContain("watch worker <dispatchId>");
       expect(out).not.toContain("worker-cost");
       expect(out).not.toContain("BOT_WORKER_MODEL");
+      expect(out).not.toContain("BOT_WORKER_MCP_TRIM");
       // a normal watch still applies where it does
       expect(out).toContain("`//bot watch pr <pr-url> <what you will do next>`");
     }

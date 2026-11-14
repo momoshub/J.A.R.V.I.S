@@ -5,7 +5,7 @@ import { join } from "node:path";
 import {
   UNAUTHENTICATED_MCP_SERVERS,
   createClaudeJsonReader,
-  mcpConfigFor, unlistedLocalMcpServers } from "../../src/infrastructure/llm/mcpConfig.ts";
+  mcpConfigFor, unknownMcpServers, unlistedLocalMcpServers } from "../../src/infrastructure/llm/mcpConfig.ts";
 
 const servers = (json: string | undefined): string[] =>
   Object.keys((JSON.parse(json ?? "{}") as { mcpServers: object }).mcpServers);
@@ -72,5 +72,21 @@ describe("unlistedLocalMcpServers", () => {
   test("an unreadable or empty config names nothing", () => {
     expect(unlistedLocalMcpServers(undefined, [])).toEqual([]);
     expect(unlistedLocalMcpServers({}, [])).toEqual([]);
+  });
+});
+
+describe("unknownMcpServers", () => {
+  const json = { mcpServers: { "pg-prod": { command: "dbhub" }, notion: { type: "http", url: "https://example.com/mcp" } } };
+
+  test("names the entries that match no user-scope server, so a typo is not silent", () => {
+    expect(unknownMcpServers(json, ["pg-prod", "pg-prd", "notion"])).toEqual(["pg-prd"]);
+    expect(unknownMcpServers(json, [])).toEqual([]);
+    // a prototype name is not a server
+    expect(unknownMcpServers(json, ["toString"])).toEqual(["toString"]);
+  });
+
+  test("an unreadable or empty config says nothing, since nothing can be told", () => {
+    expect(unknownMcpServers(undefined, ["pg-prod"])).toEqual([]);
+    expect(unknownMcpServers({}, ["pg-prod"])).toEqual([]);
   });
 });

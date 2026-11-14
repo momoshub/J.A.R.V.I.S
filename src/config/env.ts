@@ -11,6 +11,7 @@ import { expandHome } from "../domain/dbPath.ts";
 import { parseAllowedOwners } from "../domain/githubApp.ts";
 import { DEFAULT_REAP_IDLE_MS, DEFAULT_REAP_INTERVAL_MS } from "../domain/idleWorkers.ts";
 import { parseSelfPrAccounts, RESTART_TURN_BUDGET_MS, type SelfPrAccounts } from "../domain/selfUpdate.ts";
+import { parseDenyList } from "../domain/workerMcp.ts";
 
 /** Where the GitHub App's credentials live by default: outside the repo, never in `.env`. */
 export const GITHUB_APP_DIR = join(homedir(), ".config", "jarvis", "github-app");
@@ -203,6 +204,19 @@ const schema = z
     // The subset of DB_MCP_SERVERS the executer role may query. Only list
     // servers whose credential is read only on the server side. Empty: none.
     EXECUTER_DB_MCP_SERVERS: z.string().optional(),
+    // User-scope MCP servers (names as in `claude mcp list`) kept out of the Orca
+    // workers the bot starts. Every claude session loads every server in
+    // ~/.claude.json and a stdio one is a process per session, so a batch of
+    // workers multiplied them (17 sessions held ~1.3GB). The prompts run
+    // bin/worker-mcp-trim.ts before each worker starts, which writes these into
+    // the worker folder's .claude/settings.local.json (deniedMcpServers). Empty
+    // keeps every server, as before. The bot's own turns are not affected.
+    WORKER_MCP_DENY: z.string().optional(),
+    // The one folder every Orca worker starts in (`--worktree path:<it>`), so the
+    // exclusion above is written into a folder only workers use and never into one
+    // a person works in (~/Workspaces). bin/worker-mcp-trim.ts creates it, registers
+    // it with Orca as a plain folder and trims it. Blank = ~/.jarvis/worker-home.
+    WORKER_HOME_DIR: z.string().optional(),
     // Secret-shaped variable names (`*_TOKEN`, `*_SECRET`, `*_API_KEY`...) an agent turn may still
     // inherit. Every other credential-shaped variable is withheld from the spawned CLI, so a
     // prompt-injected turn has nothing to read out of its environment; Slack goes through a
@@ -289,6 +303,10 @@ export type AppConfig = {
   turnEnvPassthrough: string[];
   /** The subset of `dbMcpServers` the executer role may query; empty is none. */
   executerDbMcpServers: string[];
+  /** User-scope MCP servers kept out of Orca workers; empty keeps every server. */
+  workerMcpDeny: string[];
+  /** Absolute folder every Orca worker starts in. */
+  workerHomeDir: string;
 };
 
 /** A short human label for the active model, shown on the dashboard. */
@@ -370,5 +388,7 @@ export const loadConfig = (source: Record<string, string | undefined> = process.
     dbMcpServers: parseList(env.DB_MCP_SERVERS),
     turnEnvPassthrough: parseList(env.TURN_ENV_PASSTHROUGH),
     executerDbMcpServers: parseList(env.EXECUTER_DB_MCP_SERVERS),
+    workerMcpDeny: parseDenyList(env.WORKER_MCP_DENY),
+    workerHomeDir: expandHome(env.WORKER_HOME_DIR?.trim() || join(homedir(), ".jarvis", "worker-home")),
   };
 };

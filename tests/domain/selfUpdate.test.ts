@@ -51,6 +51,11 @@ describe("selfUpdateRules with a memory skill", () => {
     // the full rule still exists for the prompts that carry it whole
     expect(STANDALONE_REVIEW_RULE).toContain("orca orchestration worker-start");
     expect(STANDALONE_REVIEW_RULE).toContain('--agent claude --model "$BOT_WORKER_MODEL" --json');
+    // the reviewer worker is trimmed before it starts, like every other worker
+    expect(STANDALONE_REVIEW_RULE).toContain('"$BOT_WORKER_MCP_TRIM"` with no argument');
+    expect(STANDALONE_REVIEW_RULE).toContain("--worktree path:$BOT_WORKER_HOME --agent claude");
+    expect(STANDALONE_REVIEW_RULE).not.toContain("a folder or repo Orca knows");
+    expect(STANDALONE_REVIEW_RULE.indexOf("BOT_WORKER_MCP_TRIM")).toBeLessThan(STANDALONE_REVIEW_RULE.indexOf("worker-start --run"));
     expect(STANDALONE_REVIEW_RULE).toContain("Up to 5 review rounds");
   });
 
