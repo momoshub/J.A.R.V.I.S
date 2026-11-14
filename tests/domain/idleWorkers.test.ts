@@ -2,8 +2,8 @@ import { describe, expect, test } from "bun:test";
 import {
   type Candidate,
   countGates,
-  dispatchIdsIn,
   judge,
+  orcaIdsIn,
   parseTerminalList,
   parseWorkerList,
   type ReapContext,
@@ -64,10 +64,32 @@ describe("judge", () => {
     expect(judge(cand({ taskStatus: undefined }), ctx())).toEqual({ reap: false, why: "task status unreadable" });
   });
 
-  test("a blocked task needs zero pending gates", () => {
-    expect(judge(cand({ taskStatus: "blocked", pendingGates: 0 }), ctx())).toMatchObject({ reap: true, why: "task blocked with nothing pending" });
-    expect(judge(cand({ taskStatus: "blocked", pendingGates: 1 }), ctx())).toMatchObject({ reap: false });
-    expect(judge(cand({ taskStatus: "blocked" }), ctx())).toMatchObject({ reap: false, why: "pending gates unreadable" });
+  test("a blocked task is closable only once its worker ended, and needs zero pending gates", () => {
+    const ended = { state: "stopped" };
+    expect(judge(cand({ taskStatus: "blocked", pendingGates: 0 }, ended), ctx())).toMatchObject({ reap: true, why: "task blocked with nothing pending", settled: false });
+    expect(judge(cand({ taskStatus: "blocked", pendingGates: 0 }, { state: "succeeded" }), ctx())).toMatchObject({ reap: true, settled: true });
+    expect(judge(cand({ taskStatus: "blocked", pendingGates: 1 }, ended), ctx())).toMatchObject({ reap: false });
+    expect(judge(cand({ taskStatus: "blocked" }, ended), ctx())).toMatchObject({ reap: false, why: "pending gates unreadable" });
+  });
+
+  test("a worker parked on an ask (task blocked, no gate, worker still going) is never closed", () => {
+    // Orca leaves such a task blocked with zero gates, and the question may come from a coordinator the bot does not know.
+    expect(judge(cand({ taskStatus: "blocked", pendingGates: 0 }, { state: "ready" }, 72), ctx())).toEqual({
+      reap: false,
+      why: "task blocked while its worker is still going",
+    });
+  });
+
+  test("a watch on the worker's Run or task protects it, not only one naming its dispatch", () => {
+    expect(judge(cand(), ctx({ watched: new Set(["run_a"]) }))).toEqual({ reap: false, why: "a watch is on it" });
+    expect(judge(cand(), ctx({ watched: new Set(["task_a"]) }))).toEqual({ reap: false, why: "a watch is on it" });
+    expect(judge(cand(), ctx({ watched: new Set(["run_other", "task_other"]) }))).toMatchObject({ reap: true });
+  });
+
+  test("a terminal reused by another dispatch is not closed through the old one", () => {
+    expect(judge(cand({}, { ownerDispatchId: "ctx_new" }), ctx())).toEqual({ reap: false, why: "its terminal was reused by another dispatch" });
+    expect(judge(cand({}, { ownerDispatchId: "ctx_a" }), ctx())).toMatchObject({ reap: true });
+    expect(judge(cand({ sharedHandle: true }), ctx())).toEqual({ reap: false, why: "another worker uses the same terminal" });
   });
 
   test("a live watch or an unanswered question protects the worker", () => {
@@ -118,7 +140,7 @@ describe("parsers", () => {
           workerState: "succeeded",
           agentTerminalHandle: "term_x",
           terminalState: "reclaimable",
-          resource: { retainedReason: null, autoReleaseAt: "2026-11-14T05:59:31Z" },
+          resource: { retainedReason: null, ownerDispatchId: "ctx_x", autoReleaseAt: "2026-11-14T05:59:31Z" },
           projection: { attention: { categories: [], requiresAction: false }, liveness: { verdict: "live" } },
         },
         { dispatchId: "ctx_nohandle" },
@@ -134,7 +156,7 @@ describe("parsers", () => {
     expect(parsed?.workers).toHaveLength(2);
     expect(parsed?.workers[0]).toMatchObject({
       dispatchId: "ctx_x", taskId: "task_x", runId: "run_x", state: "succeeded", handle: "term_x",
-      keptOpen: false, needsAttention: false, liveness: "live", autoReleaseAt: Date.parse("2026-11-14T05:59:31Z"),
+      keptOpen: false, needsAttention: false, liveness: "live", ownerDispatchId: "ctx_x", autoReleaseAt: Date.parse("2026-11-14T05:59:31Z"),
     });
     expect(parsed?.workers[1]).toMatchObject({ keptOpen: true, needsAttention: true, liveness: "unknown" });
   });
@@ -152,8 +174,9 @@ describe("parsers", () => {
     expect(countGates('{"ok":true,"result":{"gates":[{},{}]}}')).toBe(2);
   });
 
-  test("dispatchIdsIn finds ids in a watch's shell check", () => {
-    expect(dispatchIdsIn("bun bin/orca-worker-wait.ts ctx_ab12 --past-wait")).toEqual(["ctx_ab12"]);
-    expect(dispatchIdsIn("gh pr checks 12")).toEqual([]);
+  test("orcaIdsIn finds dispatch, Run and task ids in a watch's shell check", () => {
+    expect(orcaIdsIn("bun bin/orca-worker-wait.ts ctx_ab12 --past-wait")).toEqual(["ctx_ab12"]);
+    expect(orcaIdsIn("orca orchestration task-list --run run_9f3c --json | jq task_77")).toEqual(["run_9f3c", "task_77"]);
+    expect(orcaIdsIn("gh pr checks 12; bin_run_x")).toEqual([]);
   });
 });

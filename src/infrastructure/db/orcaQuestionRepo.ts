@@ -46,7 +46,7 @@ export type OrcaQuestionRepo = {
   /** One more try at a delivery that was cut; returns the new attempt count. */
   retry: (messageId: string, at: number) => number;
   settle: (messageId: string, state: OrcaQuestionState, at: number) => void;
-  /** Dispatches with a question still waiting on an answer (being delivered, or delivered and unanswered). */
+  /** Dispatches with a question still unanswered: anything not answered or closed, so gave_up, refused and an unknown state count. */
   askingDispatches: () => string[];
 };
 
@@ -80,7 +80,7 @@ export const createOrcaQuestionRepo = (db: DbClient): OrcaQuestionRepo => {
     "UPDATE orca_questions SET attempts = attempts + 1, updated_at = ? WHERE message_id = ? RETURNING attempts",
   );
   const askingStmt = db.query<{ dispatch_id: string }, []>(
-    "SELECT DISTINCT dispatch_id FROM orca_questions WHERE state IN ('delivering', 'delivered')",
+    "SELECT DISTINCT dispatch_id FROM orca_questions WHERE state NOT IN ('answered', 'closed')",
   );
   const settleStmt = db.query("UPDATE orca_questions SET state = $state, updated_at = $at WHERE message_id = $id");
 

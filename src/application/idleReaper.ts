@@ -21,7 +21,7 @@
 import {
   type Candidate,
   countGates,
-  dispatchIdsIn,
+  orcaIdsIn,
   needsTaskLookup,
   parseTerminalList,
   parseWorkerList,
@@ -78,7 +78,9 @@ export const createIdleReaper = (deps: IdleReaperDeps): IdleReaper => {
   const once = async (): Promise<string[]> => {
     const rows = await workers();
     if (!rows) return [];
-    const open = rows.filter((w) => w.terminalState !== "released" && w.liveness === "live");
+    // Every row not released, whatever its liveness: a row that shares a
+    // terminal with another one makes both unsafe to close.
+    const open = rows.filter((w) => w.terminalState !== "released");
     if (open.length === 0) return [];
     const terminals = parseTerminalList((await deps.orca(["terminal", "list", "--json", "--limit", String(TERMINAL_LIMIT)])).stdout);
     // Unreadable terminal list: nothing can be proven idle.
@@ -86,7 +88,7 @@ export const createIdleReaper = (deps: IdleReaperDeps): IdleReaper => {
     const byHandle = new Map<string, TerminalRow>(terminals.map((t) => [t.handle, t]));
     const now = deps.clock();
     // Only sessions already idle past the threshold are worth a task lookup.
-    const idle = open.filter((w) => {
+    const idle = open.filter((w) => w.liveness === "live").filter((w) => {
       const t = byHandle.get(w.handle);
       return t?.lastOutputAt !== undefined && now - t.lastOutputAt >= deps.idleMs;
     });
@@ -103,8 +105,11 @@ export const createIdleReaper = (deps: IdleReaperDeps): IdleReaper => {
       const out = await deps.orca(["orchestration", "gate-list", "--run", w.runId, "--task", w.taskId, "--status", "pending", "--json"]);
       gates.set(w.dispatchId, countGates(out.stdout));
     }
+    const handleUse = new Map<string, number>();
+    for (const w of open) handleUse.set(w.handle, (handleUse.get(w.handle) ?? 0) + 1);
     const candidates: Candidate[] = idle.map((worker) => ({
       worker,
+      ...((handleUse.get(worker.handle) ?? 0) > 1 ? { sharedHandle: true } : {}),
       ...(byHandle.has(worker.handle) ? { terminal: byHandle.get(worker.handle) } : {}),
       ...(worker.taskId && statuses.has(worker.taskId) ? { taskStatus: statuses.get(worker.taskId) } : {}),
       ...(gates.has(worker.dispatchId) ? { pendingGates: gates.get(worker.dispatchId) } : {}),
@@ -113,7 +118,7 @@ export const createIdleReaper = (deps: IdleReaperDeps): IdleReaper => {
     const picked = selectIdle(candidates, {
       now,
       idleMs: deps.idleMs,
-      watched: new Set(deps.watchChecks().flatMap(dispatchIdsIn)),
+      watched: new Set(deps.watchChecks().flatMap(orcaIdsIn)),
       asking: new Set(deps.askingDispatches()),
     });
     const closed: string[] = [];

@@ -29,6 +29,8 @@ export type WorkerRow = {
   readonly terminalState: string;
   /** A person asked Orca to keep this terminal open. */
   readonly keptOpen: boolean;
+  /** The dispatch Orca says owns the terminal now; a reused terminal belongs to the newer one. */
+  readonly ownerDispatchId?: string;
   /** Orca schedules its own release; it will close the session without us. */
   readonly autoReleaseAt?: number;
   /** Orca flagged the worker as needing a human (a prompt, a decision). */
@@ -50,12 +52,14 @@ export type Candidate = {
   readonly taskStatus?: string;
   /** Pending decision gates on the task; undefined when they could not be read. */
   readonly pendingGates?: number;
+  /** Another open worker row names the same terminal (it was reused). */
+  readonly sharedHandle?: boolean;
 };
 
 export type ReapContext = {
   readonly now: number;
   readonly idleMs: number;
-  /** Dispatch ids a waiting watch is on. */
+  /** Dispatch, Run and task ids named by a waiting watch's check (a batch watch names the Run). */
   readonly watched: ReadonlySet<string>;
   /** Dispatch ids with a question put to a thread and not yet answered. */
   readonly asking: ReadonlySet<string>;
@@ -80,8 +84,10 @@ const resultOf = (stdout: string): Record<string, unknown> | undefined => {
 
 /** Task statuses that mean the work is over. */
 const FINISHED_TASK = new Set(["completed", "failed", "cancelled", "canceled"]);
-/** Worker states that mean the agent reported or was stopped. */
+/** Worker states `worker-release` is for: the agent reported. */
 const SETTLED_WORKER = new Set(["succeeded", "failed"]);
+/** Worker states where the agent will do nothing more: reported, stopped or abandoned. */
+const ENDED_WORKER = new Set(["succeeded", "failed", "stopped", "abandoned"]);
 
 /** `orca orchestration worker-list --json --full`: the rows plus the cursor of the next page. */
 export const parseWorkerList = (stdout: string): { workers: WorkerRow[]; next?: string } | undefined => {
@@ -97,6 +103,7 @@ export const parseWorkerList = (stdout: string): { workers: WorkerRow[]; next?: 
     const attention = record(projection?.attention);
     const auto = str(resource?.autoReleaseAt) ? Date.parse(String(resource?.autoReleaseAt)) : undefined;
     const taskId = str(w.taskId);
+    const owner = str(resource?.ownerDispatchId);
     const runId = str(w.runId) ?? str(projection?.runId);
     return [
       {
@@ -107,6 +114,7 @@ export const parseWorkerList = (stdout: string): { workers: WorkerRow[]; next?: 
         handle,
         terminalState: str(w.terminalState) ?? "unknown",
         keptOpen: str(resource?.retainedReason) !== undefined || str(w.terminalState) === "retained",
+        ...(owner ? { ownerDispatchId: owner } : {}),
         ...(auto !== undefined && Number.isFinite(auto) ? { autoReleaseAt: auto } : {}),
         // Unknown attention is treated as "needs it": the safe side.
         needsAttention: attention === undefined || attention.requiresAction !== false,
@@ -132,8 +140,12 @@ export const parseTerminalList = (stdout: string): TerminalRow[] | undefined => 
   });
 };
 
-/** The `ctx_...` dispatch ids inside text, e.g. a watch's shell check. */
-export const dispatchIdsIn = (text: string): string[] => text.match(/ctx_[A-Za-z0-9_-]+/g) ?? [];
+/**
+ * The Orca ids (`ctx_` dispatch, `run_`, `task_`) inside text, e.g. a watch's
+ * shell check. A batch watch is `task-list --run <run_...>` and names no
+ * dispatch, so Run and task ids count: matching more only protects more.
+ */
+export const orcaIdsIn = (text: string): string[] => text.match(/(?<![A-Za-z0-9_])(?:ctx|run|task)_[A-Za-z0-9_-]+/g) ?? [];
 
 /** Pending gates in `orca orchestration gate-list --json`; undefined when unreadable. */
 export const countGates = (stdout: string): number | undefined => {
@@ -152,7 +164,9 @@ export const judge = (c: Candidate, ctx: ReapContext): Verdict => {
   if (w.liveness !== "live") return skip(`liveness ${w.liveness} not proven`);
   if (w.keptOpen) return skip("kept open on purpose");
   if (w.autoReleaseAt !== undefined && w.autoReleaseAt > ctx.now) return skip("Orca is about to release it");
-  if (ctx.watched.has(w.dispatchId)) return skip("a watch is on it");
+  if (w.ownerDispatchId !== undefined && w.ownerDispatchId !== w.dispatchId) return skip("its terminal was reused by another dispatch");
+  if (c.sharedHandle) return skip("another worker uses the same terminal");
+  if ([w.dispatchId, w.runId, w.taskId].some((id) => id !== undefined && ctx.watched.has(id))) return skip("a watch is on it");
   if (ctx.asking.has(w.dispatchId)) return skip("a question is waiting for an answer");
   if (w.needsAttention) return skip("Orca says it needs attention");
   if (!c.terminal || c.terminal.handle !== w.handle || c.terminal.orphaned) return skip("terminal not live in Orca");
@@ -165,6 +179,9 @@ export const judge = (c: Candidate, ctx: ReapContext): Verdict => {
   const status = c.taskStatus;
   if (status !== undefined && FINISHED_TASK.has(status)) return { reap: true, why: `task ${status}`, settled, idleMs };
   if (status === "blocked") {
+    // A worker parked on `ask` leaves its task blocked with no gate, and only a
+    // person can answer: blocked is closable only once the agent has ended.
+    if (!ENDED_WORKER.has(w.state)) return skip("task blocked while its worker is still going");
     if (c.pendingGates === undefined) return skip("pending gates unreadable");
     return c.pendingGates === 0
       ? { reap: true, why: "task blocked with nothing pending", settled, idleMs }

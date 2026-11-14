@@ -5,14 +5,14 @@ const NOW = 1_000_000_000_000;
 const HOUR = 3_600_000;
 const ok = (result: unknown) => ({ code: 0, stdout: JSON.stringify({ ok: true, result }) });
 
-type W = { id: string; task?: string; run?: string; state?: string; term: string; attention?: boolean; retained?: boolean };
+type W = { id: string; task?: string; run?: string; state?: string; term: string; attention?: boolean; retained?: boolean; owner?: string };
 const workerRow = (w: W) => ({
   dispatchId: w.id,
   ...(w.task ? { taskId: w.task, runId: w.run ?? "run_1" } : {}),
   workerState: w.state ?? "ready",
   agentTerminalHandle: w.term,
   terminalState: w.retained ? "retained" : "active",
-  resource: { retainedReason: w.retained ? "kept" : null },
+  resource: { retainedReason: w.retained ? "kept" : null, ownerDispatchId: w.owner ?? w.id },
   projection: { attention: { categories: [], requiresAction: w.attention ?? false }, liveness: { verdict: "live" } },
 });
 
@@ -86,14 +86,52 @@ describe("idle reaper", () => {
   test("a blocked task is closed only when no gate is pending", async () => {
     const h = harness({
       workers: [
-        { id: "ctx_free", task: "t_free", term: "term_1" },
-        { id: "ctx_gated", task: "t_gated", term: "term_2" },
+        { id: "ctx_free", task: "t_free", state: "stopped", term: "term_1" },
+        { id: "ctx_gated", task: "t_gated", state: "stopped", term: "term_2" },
       ],
       idleHours: { ctx_free: 5, ctx_gated: 5 },
       tasks: { t_free: "blocked", t_gated: "blocked" },
       gates: { t_gated: 1 },
     });
     expect(await h.reaper.tick()).toEqual(["ctx_free"]);
+  });
+
+  test("a blocked task whose worker is still going (an ask) is left alone, a stopped one is closed", async () => {
+    const h = harness({
+      workers: [
+        { id: "ctx_asking", task: "t_ask", state: "ready", term: "term_1" },
+        { id: "ctx_stopped", task: "t_stop", state: "stopped", term: "term_2" },
+      ],
+      idleHours: { ctx_asking: 40, ctx_stopped: 40 },
+      tasks: { t_ask: "blocked", t_stop: "blocked" },
+    });
+    expect(await h.reaper.tick()).toEqual(["ctx_stopped"]);
+    expect(h.closers().map((c) => [c[1], c[3]])).toEqual([["worker-stop", "ctx_stopped"]]);
+  });
+
+  test("a watch on the Run protects every worker in it", async () => {
+    const h = harness({
+      workers: [{ id: "ctx_a", task: "t", term: "term_1" }],
+      idleHours: { ctx_a: 9 },
+      tasks: { t: "completed" },
+      watches: ["orca orchestration task-list --run run_1 --json | jq -re '...'"],
+    });
+    expect(await h.reaper.tick()).toEqual([]);
+    expect(h.closers()).toEqual([]);
+  });
+
+  test("a terminal reused by a newer dispatch is not closed through the old one", async () => {
+    const h = harness({
+      workers: [
+        { id: "ctx_old", task: "t_old", state: "succeeded", term: "term_1", owner: "ctx_new" },
+        { id: "ctx_new", task: "t_new", state: "ready", term: "term_1" },
+        { id: "ctx_twin_a", task: "t_a", term: "term_2" },
+        { id: "ctx_twin_b", task: "t_b", term: "term_2" },
+      ],
+      idleHours: { ctx_old: 30, ctx_new: 30, ctx_twin_a: 30, ctx_twin_b: 30 },
+      tasks: { t_old: "completed", t_new: "completed", t_a: "completed", t_b: "completed" },
+    });
+    expect(await h.reaper.tick()).toEqual([]);
   });
 
   test("dry run closes nothing and says what it would", async () => {
