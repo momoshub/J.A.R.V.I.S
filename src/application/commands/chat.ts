@@ -6,14 +6,16 @@ import { systemReport } from "../../domain/systemBlocks.ts";
 import { summarizeOrca } from "../../domain/orcaStatus.ts";
 import { blockKitReply } from "../../domain/blockKit.ts";
 import { tokenFor } from "../claudeTokens.ts";
-import type { UserRole } from "../../domain/types.ts";
 import { noTools, type ToolPolicy } from "../../domain/toolPolicy.ts";
 import { btwRules } from "../../domain/btwPrompt.ts";
 import { buildContextWindow } from "../../domain/conversation.ts";
 import { DEFAULT_SNUB_REPLY, formatSnubbed, parseSnubbed } from "../../domain/snub.ts";
 import { modelKey, SETTING_KEYS } from "../../infrastructure/db/settingsRepo.ts";
 import { AGENT_MODEL_KINDS, DEFAULT_AGENT_MODELS, agentModelKindOf, agentModelsOf } from "../../domain/agentModels.ts";
-import { type CommandDef, RANK, roleOf, botNameOf, recordsOf } from "./shared.ts";
+import { type CommandDef, roleOf, botNameOf, recordsOf } from "./shared.ts";
+import { PERM } from "../../domain/permissions.ts";
+import { roleNames } from "../../domain/rolePolicy.ts";
+import { OWNER_RANK, OWNER_ROLE } from "../../domain/roles.ts";
 
 /**
  * A side question has no tools and is told to answer in two sentences, so it
@@ -24,8 +26,6 @@ const BTW_TIMEOUT_MS = 90_000;
 
 /** How much of the thread a side question is shown. Context, not a transcript. */
 const BTW_WINDOW = 12;
-
-const ROLES: readonly UserRole[] = ["pal", "executer", "admin", "owner"];
 
 /** `<#C123|name>` or a bare channel id, as a channel argument can arrive either way. */
 const channelRefOf = (token?: string): string | undefined => {
@@ -74,7 +74,13 @@ export const CHAT_COMMANDS: readonly CommandDef[] = [
     minRole: "pal",
     usage: "",
     summary: "show your access level",
-    run: ({ actor }) => `You are <@${actor.slackId}>, role: *${actor.role}*.`,
+    run: ({ actor, roles, prefix }) => {
+      const role = roles.get(actor.role);
+      const detail = role
+        ? `${role.description ? ` ${role.description}` : ""} (rank ${role.rank === OWNER_RANK ? "highest" : role.rank}, ${actor.role === OWNER_ROLE ? "every permission" : `${role.grants.length} permissions - \`${prefix} role show ${role.name}\` lists them`})`
+        : " (that role no longer exists, so you hold nothing)";
+      return `You are <@${actor.slackId}>, role: *${actor.role}*.${detail}`;
+    },
   },
   {
     name: "model",
@@ -84,14 +90,15 @@ export const CHAT_COMMANDS: readonly CommandDef[] = [
     usage: "[role|subagent|worker|plan|loop|here|#channel] [name|default]",
     summary: "show my brain and model; admins set one per role, channel, or for subagents, Orca workers, planning and loop fires",
     run: (ctx) => {
-      const { deps, actor, channelId, args, prefix } = ctx;
+      const { deps, channelId, args, prefix } = ctx;
+      const roles = roleNames(ctx.roles);
       const info = deps.botInfo?.();
       if (!info) return "Model info is unavailable.";
       const get = (key: string) => deps.settings?.get(key)?.trim() || undefined;
 
       // What is being set: a role, this channel, or a named one.
       const first = (args[0] ?? "").toLowerCase();
-      const role = roleOf(first);
+      const role = roleOf(ctx.roles, first);
       const kind = role ? undefined : agentModelKindOf(first);
       const channel =
         role || kind || !first
@@ -100,7 +107,7 @@ export const CHAT_COMMANDS: readonly CommandDef[] = [
             ? channelId
             : channelRefOf(args[0]);
       if (!role && !kind && !channel && first) {
-        return `A role, an agent kind or a channel, please: \`${prefix} model <${[...ROLES, ...AGENT_MODEL_KINDS].join("|")}|here|#channel> [name|default]\``;
+        return `A role, an agent kind or a channel, please: \`${prefix} model <${[...roles, ...AGENT_MODEL_KINDS].join("|")}|here|#channel> [name|default]\``;
       }
 
       const key = role ? modelKey(role) : kind ? modelKey(kind) : modelKey(`channel:${channel}`);
@@ -108,7 +115,7 @@ export const CHAT_COMMANDS: readonly CommandDef[] = [
 
       if (!role && !kind && !channel) {
         const overrides = [
-          ...ROLES.map((r) => [`*${r}*`, get(modelKey(r))] as const),
+          ...roles.map((r) => [`*${r}*`, get(modelKey(r))] as const),
           [`this channel`, get(modelKey(`channel:${channelId}`))] as const,
         ].filter(([, m]) => m);
         const extra = overrides.length ? `\n${overrides.map(([l, m]) => `- ${l}: \`${m}\``).join("\n")}` : "";
@@ -122,7 +129,7 @@ export const CHAT_COMMANDS: readonly CommandDef[] = [
         const fallback = kind ? DEFAULT_AGENT_MODELS[kind] : info.model;
         return own ? `${label} runs on \`${own}\`.` : `${label} uses the default, \`${fallback}\`.`;
       }
-      if (RANK[actor.role] < RANK.admin) return "Only admins can change a model.";
+      if (!ctx.can(PERM.manageSettings)) return "You are not allowed to change a model.";
 
       const name = (args[1] ?? "").trim();
       if (name === "default" || name === "reset") {
@@ -182,12 +189,12 @@ export const CHAT_COMMANDS: readonly CommandDef[] = [
       // No tools, by DENIAL. An allow-list pre-approves what is on it and does
       // not refuse what is off it (measured), so an empty allow-list would be
       // no restriction at all - and the running turn shares this machine.
-      const sandbox = deps.toolPolicy?.("pal", channelId);
+      const sandboxCwd = deps.sandboxCwd;
       const policy: ToolPolicy = {
         skipPermissions: false,
         disallowedTools: deps.noTools ?? noTools([]),
         timeoutMs: BTW_TIMEOUT_MS,
-        ...(sandbox?.cwd ? { cwd: sandbox.cwd } : {}),
+        ...(sandboxCwd ? { cwd: sandboxCwd } : {}),
       };
       const reply = await deps.llm.complete({
         system,

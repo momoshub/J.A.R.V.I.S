@@ -3,7 +3,7 @@ import { openDatabase } from "../../src/infrastructure/db/client.ts";
 import { createUserRepo } from "../../src/infrastructure/db/userRepo.ts";
 import { createMessageRepo } from "../../src/infrastructure/db/messageRepo.ts";
 import { createAccessRequestRepo } from "../../src/infrastructure/db/accessRequestRepo.ts";
-import { decideAccessRequest, GRANTED_ROLE, REJECTED_COOLDOWN_MS, requestAccess } from "../../src/application/accessRequests.ts";
+import { decideAccessRequest, REJECTED_COOLDOWN_MS, requestAccess } from "../../src/application/accessRequests.ts";
 import { DEFAULT_SNUB_REPLY } from "../../src/domain/snub.ts";
 import { createSettingsRepo } from "../../src/infrastructure/db/settingsRepo.ts";
 import { handleMessage } from "../../src/application/handleMessage.ts";
@@ -148,7 +148,7 @@ describe("decideAccessRequest", () => {
     });
 
     expect(out.kind).toBe("approved");
-    expect(deps.users.get(STRANGER)?.role).toBe(GRANTED_ROLE);
+    expect(deps.users.get(STRANGER)?.role).toBe("pal");
     const toThem = posts.find((p) => p.channel === "C1");
     expect(toThem?.text).toContain("you are in");
     expect(toThem?.threadTs).toBe("100.1"); // in the thread they spoke in
@@ -193,7 +193,7 @@ describe("decideAccessRequest", () => {
     // already decided - a later ❌ must not undo it
     const again = await decideAccessRequest(deps, { slackUserId: OWNER, reaction: "x", ...notice });
     expect(again.kind).toBe("ignored");
-    expect(deps.users.get(STRANGER)?.role).toBe(GRANTED_ROLE);
+    expect(deps.users.get(STRANGER)?.role).toBe("pal");
   });
 });
 
@@ -218,7 +218,7 @@ describe("decideAccessRequest replay", () => {
     expect(replayed).toHaveLength(1);
     expect(replayed[0]).toMatchObject({ text: asking.text, messageTs: "100.2", threadTs: "100.1", channelId: "C1" });
     expect(replayed[0]!.text.length).toBeGreaterThan(200); // not the clipped excerpt
-    expect(deps.users.get(STRANGER)?.role).toBe(GRANTED_ROLE); // allowed before the replay runs
+    expect(deps.users.get(STRANGER)?.role).toBe("pal"); // allowed before the replay runs
     expect(posts.some((p) => p.channel === "C1")).toBe(false);
   });
 
@@ -243,7 +243,7 @@ describe("decideAccessRequest replay", () => {
     });
 
     expect(out).toMatchObject({ kind: "approved", replayed: false });
-    expect(deps.users.get(STRANGER)?.role).toBe(GRANTED_ROLE);
+    expect(deps.users.get(STRANGER)?.role).toBe("pal");
     expect(posts.find((p) => p.channel === "C1")?.text).toContain("you are in");
   });
 
@@ -340,7 +340,7 @@ describe("admins decide too", () => {
     });
 
     expect(out.kind).toBe("approved");
-    expect(deps.users.get(STRANGER)?.role).toBe(GRANTED_ROLE);
+    expect(deps.users.get(STRANGER)?.role).toBe("pal");
   });
 
   test("deciding settles every copy, so the other decider does not act on a stale one", async () => {

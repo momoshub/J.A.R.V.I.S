@@ -105,7 +105,7 @@ beforeEach(() => {
 describe("who may run it", () => {
   test("a pal is turned away at the role gate, and nothing touches AWS", async () => {
     const out = await run(r, user(PAL, "pal"), LINE);
-    expect(out).toContain("needs *executer* access");
+    expect(out).toContain("needs *executer or admin* access");
     expect(r.described).toEqual([]);
     expect(r.ran).toEqual([]);
     expect(r.interactive).toEqual([]);
@@ -339,7 +339,7 @@ describe("help and the default group", () => {
   });
 
   test("an admin sets and clears the default group; an executer cannot", async () => {
-    expect(await run(r, user(EXEC, "executer"), `default ${GROUP}`)).toContain("Only admins");
+    expect(await run(r, user(EXEC, "executer"), `default ${GROUP}`)).toContain("You are not allowed");
     expect(await run(r, user(ADMIN, "admin"), `default ${GROUP}`)).toContain(GROUP);
     expect(r.deps.settings?.get(SETTING_KEYS.cloudwatchGroup)).toBe(GROUP);
     expect(await run(r, user(EXEC, "executer"), "default")).toContain(GROUP);

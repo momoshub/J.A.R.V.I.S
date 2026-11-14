@@ -1,7 +1,6 @@
 import { describe, expect, test } from "bun:test";
+import { seededBook } from "../../src/domain/roleSeed.ts";
 import {
-  canManageAdmins,
-  canManageUsers,
   decideAccess,
   validateRemoval,
   validateRoleChange,
@@ -10,6 +9,8 @@ import type { AllowedUser } from "../../src/domain/types.ts";
 
 const OWNER = "U0OWNER0001";
 
+const book = seededBook();
+
 const makeUser = (over: Partial<AllowedUser> = {}): AllowedUser => ({
   slackId: "U1",
   role: "pal",
@@ -17,20 +18,6 @@ const makeUser = (over: Partial<AllowedUser> = {}): AllowedUser => ({
   addedBy: "system",
   createdAt: 0,
   ...over,
-});
-
-describe("role capabilities", () => {
-  test("owner and admin can manage users, member cannot", () => {
-    expect(canManageUsers("owner")).toBe(true);
-    expect(canManageUsers("admin")).toBe(true);
-    expect(canManageUsers("pal")).toBe(false);
-  });
-
-  test("only owner can manage admins", () => {
-    expect(canManageAdmins("owner")).toBe(true);
-    expect(canManageAdmins("admin")).toBe(false);
-    expect(canManageAdmins("pal")).toBe(false);
-  });
 });
 
 describe("decideAccess", () => {
@@ -55,49 +42,49 @@ describe("decideAccess", () => {
 
 describe("validateRoleChange", () => {
   test("owner's role can never change", () => {
-    expect(validateRoleChange("owner", "owner", "admin", true)).toBeDefined();
+    expect(validateRoleChange(book, "owner", "owner", "admin", true)).toBeDefined();
   });
 
   test("member cannot manage users", () => {
-    expect(validateRoleChange("pal", "pal", "admin", false)).toBeDefined();
+    expect(validateRoleChange(book, "pal", "pal", "admin", false)).toBeDefined();
   });
 
   test("admin cannot touch admin roles", () => {
-    expect(validateRoleChange("admin", "pal", "admin", false)).toBeDefined();
-    expect(validateRoleChange("admin", "admin", "pal", false)).toBeDefined();
+    expect(validateRoleChange(book, "admin", "pal", "admin", false)).toBeDefined();
+    expect(validateRoleChange(book, "admin", "admin", "pal", false)).toBeDefined();
   });
 
   test("owner can promote a member to admin", () => {
-    expect(validateRoleChange("owner", "pal", "admin", false)).toBeUndefined();
+    expect(validateRoleChange(book, "owner", "pal", "admin", false)).toBeUndefined();
   });
 
   test("nobody can mint a second owner", () => {
-    expect(validateRoleChange("owner", "pal", "owner", false)).toBeDefined();
+    expect(validateRoleChange(book, "owner", "pal", "owner", false)).toBeDefined();
   });
 
   test("admin can add a plain member", () => {
-    expect(validateRoleChange("admin", "pal", "pal", false)).toBeUndefined();
+    expect(validateRoleChange(book, "admin", "pal", "pal", false)).toBeUndefined();
   });
 });
 
 describe("validateRemoval", () => {
   test("owner cannot be removed", () => {
-    expect(validateRemoval("owner", "owner", true)).toBeDefined();
+    expect(validateRemoval(book, "owner", "owner", true)).toBeDefined();
   });
 
   test("member cannot remove anyone", () => {
-    expect(validateRemoval("pal", "pal", false)).toBeDefined();
+    expect(validateRemoval(book, "pal", "pal", false)).toBeDefined();
   });
 
   test("admin cannot remove another admin", () => {
-    expect(validateRemoval("admin", "admin", false)).toBeDefined();
+    expect(validateRemoval(book, "admin", "admin", false)).toBeDefined();
   });
 
   test("owner can remove an admin", () => {
-    expect(validateRemoval("owner", "admin", false)).toBeUndefined();
+    expect(validateRemoval(book, "owner", "admin", false)).toBeUndefined();
   });
 
   test("admin can remove a member", () => {
-    expect(validateRemoval("admin", "pal", false)).toBeUndefined();
+    expect(validateRemoval(book, "admin", "pal", false)).toBeUndefined();
   });
 });

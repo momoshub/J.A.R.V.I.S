@@ -1,5 +1,8 @@
 import { describe, expect, test } from "bun:test";
-import { mayActAsApp, planAction } from "../../src/domain/githubAppAction.ts";
+import { ACTIONS, deniedMessage, mayActAsApp, permissionFor, planAction, purposeOf } from "../../src/domain/githubAppAction.ts";
+import { seededBook } from "../../src/domain/roleSeed.ts";
+import { can } from "../../src/domain/roles.ts";
+import { GITHUB_PERMISSION_ACTIONS, githubPerm } from "../../src/domain/permissions.ts";
 
 const ok = (req: Parameters<typeof planAction>[0]) => {
   const p = planAction(req);
@@ -11,20 +14,40 @@ const err = (req: Parameters<typeof planAction>[0]) => {
   return p.ok ? "" : p.error;
 };
 
-describe("mayActAsApp", () => {
-  test("admin and owner run every action, a pal none", () => {
-    for (const a of ["pr-merge", "review", "pr-close", "git-auth"] as const) {
-      expect(mayActAsApp("owner", a)).toBe(true);
-      expect(mayActAsApp("admin", a)).toBe(true);
-      expect(mayActAsApp("pal", a)).toBe(false);
+const book = seededBook();
+
+describe("who may act as the app", () => {
+  test("as seeded: admin and owner every action, executer six of them (never push), pal none", () => {
+    for (const role of ["owner", "admin"]) {
+      expect(mayActAsApp(book, role)).toBe(true);
+      for (const a of GITHUB_PERMISSION_ACTIONS) expect(can(book, role, githubPerm(a))).toBe(true);
     }
-    expect(mayActAsApp("pal")).toBe(false);
+    expect(mayActAsApp(book, "executer")).toBe(true);
+    expect(can(book, "executer", githubPerm("pr-create"))).toBe(true);
+    expect(can(book, "executer", githubPerm("pr-merge"))).toBe(false);
+    expect(can(book, "executer", githubPerm("push"))).toBe(false);
+    expect(mayActAsApp(book, "pal")).toBe(false);
+    for (const a of GITHUB_PERMISSION_ACTIONS) expect(can(book, "pal", githubPerm(a))).toBe(false);
   });
 
-  test("an executer gets commit, PR create/edit, comment, labels-add and reviewer requests only", () => {
-    expect(mayActAsApp("executer")).toBe(true);
-    for (const a of ["git-auth", "pr-create", "pr-edit", "comment", "labels-add", "reviewers-request"] as const) expect(mayActAsApp("executer", a)).toBe(true);
-    for (const a of ["review", "pr-merge", "pr-close", "pr-reopen", "labels-remove", "ticket-renew"] as const) expect(mayActAsApp("executer", a)).toBe(false);
+  test("every REST action and both git purposes map to one grant; ticket-renew to none", () => {
+    for (const a of ACTIONS) {
+      if (a === "ticket-renew") expect(permissionFor(a)).toBeUndefined();
+      else if (a === "git-auth") {
+        expect(permissionFor(a, "git")).toBe("github:git");
+        expect(permissionFor(a, "push")).toBe("github:push");
+      } else expect(permissionFor(a)).toBe(`github:${a}`);
+    }
+    expect(purposeOf({ purpose: "push" })).toBe("push");
+    expect(purposeOf({})).toBe("git");
+    expect(purposeOf({ purpose: "x" })).toBe("git");
+  });
+
+  test("the refusal names the grant and who holds it", () => {
+    const msg = deniedMessage(book, "pal", "pr-merge");
+    expect(msg).toContain("pal");
+    expect(msg).toContain("github:pr-merge");
+    expect(msg).toContain("admin");
   });
 });
 

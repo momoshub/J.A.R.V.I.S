@@ -9,6 +9,9 @@
  * counting their commands would be theatre.
  */
 import type { AllowedUser, UserRole } from "../domain/types.ts";
+import { PERM } from "../domain/permissions.ts";
+import { can, type RoleBook } from "../domain/roles.ts";
+import { seededBook } from "../domain/roleSeed.ts";
 import type { Clock } from "./ports.ts";
 import type { SlackAdminPort } from "./slackAdmin.ts";
 import type { CommandLogRepo } from "../infrastructure/db/commandLogRepo.ts";
@@ -24,15 +27,14 @@ export const PAL_COMMAND_LIMIT = 10;
 export const limitKey = (slackUserId: string): string => `command_limit:${slackUserId}`;
 /** The rolling window the allowance is measured over. */
 export const PAL_WINDOW_MS = 4 * 60 * 60_000;
-/** Roles the allowance applies to. */
-export const LIMITED_ROLES: readonly UserRole[] = ["pal"];
+/** The allowance applies to a role that does not hold `commands:unlimited` (pal, as seeded). */
+export const isLimitedRole = (book: RoleBook, role: UserRole): boolean => !can(book, role, PERM.unlimited);
 
 /** Slack action ids on the approval buttons. */
 export const APPROVE_ACTION = "command_approve";
 export const REJECT_ACTION = "command_reject";
 
-/** Roles allowed to press those buttons. */
-const DECIDERS: readonly UserRole[] = ["owner", "admin"];
+/** Who may press those buttons: whoever holds `commands:approve`. */
 
 export type CommandLimitDeps = {
   users: UserRepo;
@@ -43,6 +45,8 @@ export type CommandLimitDeps = {
   slack?: SlackAdminPort;
   clock: Clock;
   ownerSlackId: string;
+  /** The stored roles; absent means the seeded defaults. */
+  roles?: RoleBook;
 };
 
 export type Allowance = {
@@ -77,7 +81,7 @@ export const allowanceFor = (
   uncounted: readonly string[],
 ): Allowance => {
   const limit = limitFor(deps, actor.slackId);
-  if (!LIMITED_ROLES.includes(actor.role) || !deps.commandLog) {
+  if (!isLimitedRole(deps.roles ?? seededBook(), actor.role) || !deps.commandLog) {
     return { limited: false, used: 0, limit };
   }
   const now = deps.clock();
@@ -161,7 +165,7 @@ export const decideCommandApproval = async (
 
   const clicker = deps.users.get(press.slackUserId);
   const isOwner = press.slackUserId === deps.ownerSlackId;
-  if (!isOwner && !(clicker && DECIDERS.includes(clicker.role))) {
+  if (!isOwner && !(clicker && can(deps.roles ?? seededBook(), clicker.role, PERM.approveCommands))) {
     return { kind: "ignored", reason: "not-allowed" };
   }
 

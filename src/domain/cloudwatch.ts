@@ -17,6 +17,9 @@
  */
 import { redactSecrets } from "./toolVisibility.ts";
 import type { UserRole } from "./types.ts";
+import { PERM, commandPerm } from "./permissions.ts";
+import { can, roleNamesWith, type RoleBook } from "./roles.ts";
+import { seededBook } from "./roleSeed.ts";
 
 /** Region used when none is given: where the US prod backend logs live. */
 export const DEFAULT_REGION = "us-west-2";
@@ -48,12 +51,19 @@ const DAY_MS = 86_400_000;
 /** What a role gets when it asks for a query. */
 export type CloudwatchMode = "run" | "confirm" | "refuse";
 
-export const cloudwatchMode = (role: UserRole): CloudwatchMode =>
-  role === "owner" ? "run" : role === "admin" || role === "executer" ? "confirm" : "refuse";
+/** The seeded roles, for a caller with none wired: `cloudwatch` is open to executer and up as before. */
+const DEFAULT_BOOK: RoleBook = seededBook({ commands: [{ name: "cloudwatch", minRole: "executer" }] });
+
+/** A role with `cloudwatch:direct` runs straight away; one that only holds the command waits for Confirm; the rest are refused. */
+export const cloudwatchMode = (role: UserRole, book: RoleBook = DEFAULT_BOOK): CloudwatchMode =>
+  can(book, role, PERM.cloudwatchDirect) ? "run" : can(book, role, commandPerm("cloudwatch")) ? "confirm" : "refuse";
 
 /** Said to a role that may not use the command at all. */
-export const refusal = (role: UserRole): string =>
-  `*${role}* cannot run CloudWatch queries. *executer* and *admin* can, after pressing Confirm on the cost warning, and the *owner* can run one directly.`;
+export const refusal = (role: UserRole, book: RoleBook = DEFAULT_BOOK): string => {
+  const confirm = roleNamesWith(book, commandPerm("cloudwatch"));
+  const direct = roleNamesWith(book, PERM.cloudwatchDirect);
+  return `*${role}* cannot run CloudWatch queries. *${confirm}* can, after pressing Confirm on the cost warning, and *${direct}* can run one directly.`;
+};
 
 export type CloudwatchRequest = {
   groups: string[];
@@ -324,8 +334,8 @@ export const helpText = (prefix: string): string =>
     "- `--region` default `us-west-2`; `--limit` rows asked of Insights, default 50, at most 1000",
     `- example: \`${prefix} cloudwatch --group /ecs/prod-api --last 15m fields @timestamp, @message | filter @message like /ERROR/ | sort @timestamp desc\``,
     "*Who and how*",
-    "- *owner*: gets the cost warning, then it runs straight away",
-    "- *executer* and *admin*: the request is posted with its query, log group, range and cost warning plus Confirm / Cancel buttons. Only the requester or the owner can confirm, and an unanswered request expires after 15 min. Nothing runs before a confirm",
+    "- a role holding `cloudwatch:direct` (the owner, unless granted): gets the cost warning, then it runs straight away",
+    "- any other role holding `command:cloudwatch`: the request is posted with its query, log group, range and cost warning plus Confirm / Cancel buttons. Only the requester or the owner can confirm, and an unanswered request expires after 15 min. Nothing runs before a confirm",
     "- anyone else: refused",
     "*Cost guard*: the scan is estimated from the log group's stored size and the range before anything runs, and a range over 3 weeks is flagged as costly. Every run is audited (who, query, range, who confirmed). Output is clipped to fit Slack.",
   ].join("\n");

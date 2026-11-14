@@ -5,14 +5,8 @@
  * locked out. Everything here is a pure function of its inputs so it is trivial
  * to test and reason about.
  */
+import { OWNER_ROLE, mayAssign, type RoleBook } from "./roles.ts";
 import type { AccessDecision, AllowedUser, UserRole } from "./types.ts";
-
-/** Can this user manage the allowlist (add/remove/change roles)? */
-export const canManageUsers = (role: UserRole): boolean =>
-  role === "owner" || role === "admin";
-
-/** Only the owner may promote/demote admins or remove other admins. */
-export const canManageAdmins = (role: UserRole): boolean => role === "owner";
 
 /**
  * Decide whether a Slack user may talk to the bot
@@ -33,7 +27,7 @@ export const decideAccess = (
       allowed: true,
       user: {
         slackId: ownerSlackId,
-        role: "owner",
+        role: OWNER_ROLE,
         displayName: "",
         addedBy: "system",
         createdAt: 0,
@@ -50,37 +44,30 @@ export const decideAccess = (
 
 /**
  * Guard a role change. Returns an error string when the actor may not perform
- * it, otherwise undefined.
+ * it, otherwise undefined. Whether the actor may run `add` / `promote` at all is
+ * the command's own permission; this is the rank rule - an actor only touches
+ * roles that rank below their own, so an admin cannot hand out or take away admin.
  */
 export const validateRoleChange = (
+  book: RoleBook,
   actorRole: UserRole,
-  targetCurrentRole: UserRole,
+  /** Absent when the target is not on the list yet. */
+  targetCurrentRole: UserRole | undefined,
   targetNextRole: UserRole,
   targetIsOwner: boolean,
 ): string | undefined => {
   if (targetIsOwner) return "The owner's role cannot be changed.";
-  if (!canManageUsers(actorRole)) return "You cannot manage users.";
-  const touchesAdmin =
-    targetCurrentRole === "admin" ||
-    targetNextRole === "admin" ||
-    targetNextRole === "owner";
-  if (touchesAdmin && !canManageAdmins(actorRole)) {
-    return "Only the owner can manage admins.";
-  }
-  if (targetNextRole === "owner") return "There can only be one owner.";
-  return undefined;
+  if (!book.get(targetNextRole)) return `There is no role called *${targetNextRole}*.`;
+  return mayAssign(book, actorRole, targetCurrentRole, targetNextRole);
 };
 
 /** Guard removing a user from the allowlist. */
 export const validateRemoval = (
+  book: RoleBook,
   actorRole: UserRole,
   targetRole: UserRole,
   targetIsOwner: boolean,
 ): string | undefined => {
   if (targetIsOwner) return "The owner cannot be removed.";
-  if (!canManageUsers(actorRole)) return "You cannot manage users.";
-  if (targetRole === "admin" && !canManageAdmins(actorRole)) {
-    return "Only the owner can remove an admin.";
-  }
-  return undefined;
+  return mayAssign(book, actorRole, targetRole, undefined);
 };

@@ -55,7 +55,7 @@ describe("stop command", () => {
     const pal = actor({ slackId: "U0PAL0007", role: "pal" });
     deps.users.upsert(pal);
     const refused = await dispatchCommand(deps, pal, "C1", "stop", { threadTs: "900.1" });
-    expect(refused).toContain("Only they or an admin");
+    expect(refused).toContain("Only they or someone allowed");
     expect(t.signal.aborted).toBe(false);
 
     await dispatchCommand(deps, actor(), "C1", "stop", { threadTs: "900.1" });
@@ -130,7 +130,7 @@ describe("stop command", () => {
 
       const t = tracked(runs, { actor: "U-other" });
       t.running();
-      expect(await dispatchCommand(deps, pal, "C1", "stop", { threadTs: "900.1" })).toContain("Only they or an admin");
+      expect(await dispatchCommand(deps, pal, "C1", "stop", { threadTs: "900.1" })).toContain("Only they or someone allowed");
       expect(asked).toEqual([]);
 
       t.done();
@@ -176,7 +176,7 @@ describe("session command", () => {
     expect(await dispatchCommand(deps, pal, "C1", "session reset", inThread)).toContain("Dropped it");
     expect(deps.threadSessions.find("C1", "900.1", "sandbox")).toBeUndefined();
 
-    expect(await dispatchCommand(deps, pal, "C1", "session off", inThread)).toContain("Only admins");
+    expect(await dispatchCommand(deps, pal, "C1", "session off", inThread)).toContain("You are not allowed");
     expect(await dispatchCommand(deps, actor(), "C1", "session off", inThread)).toContain("off");
     expect(deps.settings.get("thread_sessions")).toBe("off");
     expect(await dispatchCommand(deps, actor(), "C1", "session", inThread)).toContain("off");
@@ -256,7 +256,7 @@ describe("2fa", () => {
   test("only an admin may add a key", async () => {
     const deps = withTotp(0);
     const out = await dispatchCommand(deps, actor({ slackId: "U3", role: "executer" }), "C1", "2fa add demo");
-    expect(out).toContain("Only admins");
+    expect(out).toContain("You are not allowed");
     expect(deps.totp.list()).toHaveLength(0);
   });
 
@@ -324,7 +324,7 @@ describe("2fa", () => {
     const deps = withTotp(0);
     deps.totp.set("demo", SEED, OWNER);
     expect(await dispatchCommand(deps, actor({ slackId: "U3", role: "executer" }), "C1", "2fa remove demo")).toContain(
-      "Only admins",
+      "You are not allowed",
     );
     expect(deps.totp.has("demo")).toBe(true);
     expect(await dispatchCommand(deps, actor(), "C1", "2fa remove demo")).toContain("Forgotten");

@@ -46,6 +46,8 @@ export type OrcaQuestionRepo = {
   /** One more try at a delivery that was cut; returns the new attempt count. */
   retry: (messageId: string, at: number) => number;
   settle: (messageId: string, state: OrcaQuestionState, at: number) => void;
+  /** Dispatches with a question still unanswered: anything not answered or closed, so gave_up, refused and an unknown state count. */
+  askingDispatches: () => string[];
 };
 
 type ThreadRow = { channel_id: string; thread_ts: string; slack_user_id: string };
@@ -76,6 +78,9 @@ export const createOrcaQuestionRepo = (db: DbClient): OrcaQuestionRepo => {
   );
   const retryStmt = db.query<{ attempts: number }, [number, string]>(
     "UPDATE orca_questions SET attempts = attempts + 1, updated_at = ? WHERE message_id = ? RETURNING attempts",
+  );
+  const askingStmt = db.query<{ dispatch_id: string }, []>(
+    "SELECT DISTINCT dispatch_id FROM orca_questions WHERE state NOT IN ('answered', 'closed')",
   );
   const settleStmt = db.query("UPDATE orca_questions SET state = $state, updated_at = $at WHERE message_id = $id");
 
@@ -108,5 +113,6 @@ export const createOrcaQuestionRepo = (db: DbClient): OrcaQuestionRepo => {
       ) > 0,
     retry: (messageId, at) => retryStmt.get(at, messageId)?.attempts ?? 0,
     settle: (messageId, state, at) => void settleStmt.run({ $id: messageId, $state: state, $at: at }),
+    askingDispatches: () => askingStmt.all().map((r) => r.dispatch_id),
   };
 };

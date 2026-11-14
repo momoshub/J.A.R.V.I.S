@@ -6,13 +6,11 @@
  */
 
 /**
- * Role of a person the bot answers to, in increasing privilege:
- * - pal: sandboxed, read-only tools (read-only shell included) in a fixed scratch dir, may use `quick-review`
- * - executer: sandboxed, tools assigned from the control deck, plus code edits and PRs
- * - admin: sandboxed like an executer, can manage users
- * - owner: full control (the only role without a tool sandbox), cannot be removed
+ * Name of the role a person holds. Roles are data (`domain/roles.ts`): `owner`
+ * is the one hard-coded name, every other role is a stored row of permissions.
+ * `pal`, `executer` and `admin` are only the names the built-in roles are seeded as.
  */
-export type UserRole = "pal" | "executer" | "admin" | "owner";
+export type UserRole = string;
 
 /** A Slack user that is permitted to interact with the bot */
 export type AllowedUser = {

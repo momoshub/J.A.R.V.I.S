@@ -14,10 +14,11 @@ import { investigatePrompt } from "../../domain/investigatePrompt.ts";
 import { fanoutPrompt } from "../../domain/fanoutPrompt.ts";
 import { readPrompt } from "../../domain/readPrompt.ts";
 import { isAuthFailure } from "../../domain/threadSession.ts";
-import type { UserRole } from "../../domain/types.ts";
 import { parseNoteArgs } from "../../domain/noteTarget.ts";
 import { SETTING_KEYS } from "../../infrastructure/db/settingsRepo.ts";
-import { type CommandDeps, type CommandDef, RANK, roleOf, botNameOf } from "./shared.ts";
+import { type Context, type CommandDef, botNameOf } from "./shared.ts";
+import { roleNamesWith } from "../../domain/roles.ts";
+import { PERM } from "../../domain/permissions.ts";
 
 /** a ticket reads the SOP, the thread and the code, and may open a PR. */
 const TICKET_TIMEOUT_MS = 900_000;
@@ -38,11 +39,12 @@ const FANOUT_TIMEOUT_MS = 2_700_000;
 const READ_TIMEOUT_MS = 600_000;
 
 /**
- * Lowest role that may run `read`. Defaults to admin: it borrows the host
- * human's Slack and Notion access, so this is a trust decision, not a detail.
+ * `note` and `read` borrow the host human's Notion and Slack access, so who may run them is a trust
+ * decision, not a detail. It used to be a floor setting (`note_min_role`, `read_min_role`); it is the
+ * `command:note` / `command:read` grant now, edited like any other (`role grant`, the dashboard).
  */
-const readFloorOf = (deps: CommandDeps): UserRole =>
-  roleOf(deps.settings?.get(SETTING_KEYS.readMinRole)?.trim().toLowerCase()) ?? "admin";
+const accessAnswer = (ctx: Context, command: "note" | "read"): string =>
+  `Who may run \`${command}\` is a grant now, not a setting: \`command:${command}\` is held by ${roleNamesWith(ctx.roles, `command:${command}`)}. The owner changes it with \`${ctx.prefix} role grant|revoke <role> command:${command}\` or on the dashboard's Roles page. \`${command}\` runs as my host's identity, so anyone holding it does too.`;
 
 export const ERRANDS_COMMANDS: readonly CommandDef[] = [
   {
@@ -104,34 +106,25 @@ export const ERRANDS_COMMANDS: readonly CommandDef[] = [
     // url. The counterpart to reading, and the reason this exists at all - the
     // bot used to finish a twenty minute job and tell someone to paste it in.
     quiet: true,
-    minRole: "pal",
-    usage: "<file> [title | <notion url> | --append <notion url>] | --comment <notion url> <text> | --edit-comment <notion url> <text> | parent <notion url> | access <role>",
+    // The seed default, which is where the old `note_min_role` floor started (admin). The grant is what decides now.
+    minRole: "admin",
+    usage: "<file> [title | <notion url> | --append <notion url>] | --comment <notion url> <text> | --edit-comment <notion url> <text> | parent <notion url> | access",
     summary: "publish a document into Notion, update a page that is already there, or comment on one and edit that comment",
     run: async (ctx) => {
       const { deps, actor, args, prefix, reply, channelId } = ctx;
       const first = (args[0] ?? "").trim();
       const parent = deps.settings?.get(SETTING_KEYS.notionParent)?.trim() || "";
-      const floor = roleOf(deps.settings?.get(SETTING_KEYS.noteMinRole)?.trim().toLowerCase() ?? "") ?? "admin";
 
       if (first.toLowerCase() === "parent") {
         const url = (args[1] ?? "").trim();
         if (!url) return `Where should pages go? \`${prefix} note parent <notion url>\` (now: ${parent || "*not set*"})`;
-        if (RANK[actor.role] < RANK.admin) return "Only admins can set where my pages go.";
+        if (!ctx.can(PERM.manageSettings)) return "You are not allowed to set where my pages go.";
         deps.settings?.set(SETTING_KEYS.notionParent, url);
         return `New pages will go under ${url}.`;
       }
 
-      if (first.toLowerCase() === "access") {
-        const want = roleOf((args[1] ?? "").toLowerCase());
-        if (!want) return `Which role? \`${prefix} note access <pal|executer|admin|owner>\` (now: *${floor}*)`;
-        if (RANK[actor.role] < RANK.admin) return "Only admins can change who may publish.";
-        deps.settings?.set(SETTING_KEYS.noteMinRole, want);
-        return `\`note\` is now open to *${want}* and above. It writes under my host's Notion identity, so anyone at that level publishes as them.`;
-      }
+      if (first.toLowerCase() === "access") return accessAnswer(ctx, "note");
 
-      if (RANK[actor.role] < RANK[floor]) {
-        return `I cannot publish that myself - \`note\` writes with my host's Notion identity and is limited to *${floor}* and above. Ask someone at that level to run \`${prefix} note <file>\`.`;
-      }
       if (!first) return `Publish what? \`${prefix} note <file> [title]\``;
       // Creating needs somewhere to put it; updating already knows where it is
       // going, so a missing parent must not stand in the way of an edit.
@@ -199,32 +192,17 @@ export const ERRANDS_COMMANDS: readonly CommandDef[] = [
     // for it mid-task the content comes back to it; posting the document into
     // the thread as well is the noise that made this feel like a dump.
     quiet: true,
-    // The entry gate is `pal` so the command is reachable; the real threshold is
-    // configurable and checked below. It reads with the authorising human's
-    // access, so whoever may run it can read anything that person can - which
-    // is a decision for whoever owns this instance, not a constant.
-    minRole: "pal",
-    usage: "<link> [what you want from it] | access <role>",
+    // The seed default, where the old `read_min_role` floor started. It reads with the authorising human's
+    // access, so whoever holds the grant can read anything that person can: a decision for whoever owns
+    // this instance, which is why it is a grant the owner edits and not a constant.
+    minRole: "admin",
+    usage: "<link> [what you want from it] | access",
     summary: "read something my own token cannot - a Notion page, a channel I am not in - through the account's connectors",
     run: async (ctx) => {
       const { deps, actor, channelId, threadTs, args, rest, prefix, reply } = ctx;
       const target = (args[0] ?? "").trim();
 
-      // Who may borrow the host's access, as configuration rather than a
-      // constant: owner-only made the command useless for the case it exists
-      // for - a colleague asking it to follow a document the team shares.
-      const floor = readFloorOf(deps);
-      if (target.toLowerCase() === "access") {
-        const want = roleOf((args[1] ?? "").toLowerCase());
-        if (!want) return `Which role? \`${prefix} read access <pal|executer|admin|owner>\` (now: *${floor}*)`;
-        if (RANK[actor.role] < RANK.admin) return "Only admins can change who may use `read`.";
-        deps.settings?.set(SETTING_KEYS.readMinRole, want);
-        return `\`read\` is now open to *${want}* and above. It borrows my host's Slack and Notion access, so anyone at that level can have me read anything that account can see.`;
-      }
-
-      if (RANK[actor.role] < RANK[floor]) {
-        return `I cannot open that one myself - \`read\` borrows my host's access and is limited to *${floor}* and above. Ask someone at that level to run \`${prefix} read <link>\`, or paste the content here and I will work from that.`;
-      }
+      if (target.toLowerCase() === "access") return accessAnswer(ctx, "read");
 
       if (!target) return `Read what? \`${prefix} read <link>\``;
       if (!deps.llm) return "My brain is not wired up right now.";
@@ -416,7 +394,7 @@ export const ERRANDS_COMMANDS: readonly CommandDef[] = [
             `repos:   ${describeRepoScope(sources.repoScope ?? { orgs: [], repos: [] })}`,
           ].join("\n");
         if (args.length === 1) return show();
-        if (RANK[actor.role] < RANK.admin) return "Only admins can change the ticket configuration.";
+        if (!ctx.can(PERM.manageSettings)) return "You are not allowed to change the ticket configuration.";
         const key = (args[1] ?? "").toLowerCase();
         const value = rest.slice(rest.indexOf(args[1] ?? "") + (args[1] ?? "").length).trim();
         const target = { tracker: SETTING_KEYS.ticketTracker, sop: SETTING_KEYS.ticketSop, pods: SETTING_KEYS.ticketPods, repos: SETTING_KEYS.ticketRepos }[key];

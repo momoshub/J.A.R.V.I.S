@@ -198,11 +198,20 @@ describe("github-app.sh git and push", () => {
     }
   };
 
+  test("a plain git run cannot smuggle a push in: push is its own subcommand and grant", async () => {
+    const { dir } = clone();
+    const r = await gh(["git", "o/r", dir, "--", "push", "origin", "main"]);
+    expect(r.code).toBe(2);
+    expect(r.stderr).toContain("push grant");
+    expect(r.seen).toEqual([]);
+  });
+
   test("commit is authored and committed as the bot, unsigned, and asks the bot for git-auth with the ticket", async () => {
     const { dir } = clone();
     const r = await gh(["git", "o/r", dir, "--", "commit", "-q", "-m", "fix: x"]);
     expect(r.code).toBe(0);
-    expect(r.seen).toEqual([{ ticket: TICKET, action: "git-auth", repo: "o/r" }]);
+    // the helper says why it wants the token: `git` and `push` are separate grants
+    expect(r.seen).toEqual([{ ticket: TICKET, action: "git-auth", repo: "o/r", purpose: "git" }]);
     expect(sh(["git", "log", "-1", "--format=%an <%ae> | %cn <%ce>"], dir)).toBe(
       `${bot.name} <${bot.email}> | ${bot.name} <${bot.email}>`,
     );
@@ -253,7 +262,10 @@ describe("github-app.sh git and push", () => {
     const { dir, bare } = clone();
     await gh(["git", "o/r", dir, "--", "commit", "-q", "-m", "one"]);
     sh(["git", "checkout", "-q", "-b", "fix/x"], dir);
-    expect((await gh(["push", "o/r", dir, "fix/x"])).code).toBe(0);
+    const pushed = await gh(["push", "o/r", dir, "fix/x"]);
+    expect(pushed.code).toBe(0);
+    // the push subcommand asks for the push grant, not the git one
+    expect(pushed.seen.map((x) => (x as { purpose?: string }).purpose)).toEqual(["push"]);
     // Someone else moves the branch on the remote; the clone never fetched it.
     const other = join(dir, "..", "other");
     sh(["git", "clone", "-q", bare, other], dir);

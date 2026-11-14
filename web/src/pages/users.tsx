@@ -1,13 +1,13 @@
 import { useEffect, useState } from "react";
 import { Form, Link, useActionData, useFetcher, useLoaderData } from "react-router";
-import { get, post, type AllowedUser, type Bootstrap } from "../api.ts";
+import { get, post, type AllowedUser, type Bootstrap, type RolesView } from "../api.ts";
 import { guard } from "../routes/guard.ts";
 import { Banner } from "../ui/feedback.tsx";
 import { MemberPicker, type Picked } from "../ui/memberPicker.tsx";
 
 export const loader = async () => {
-  const [users, boot] = await Promise.all([get<AllowedUser[]>("users"), get<Bootstrap>("bootstrap")]);
-  return { users, owner: boot.ownerSlackId };
+  const [users, boot, roles] = await Promise.all([get<AllowedUser[]>("users"), get<Bootstrap>("bootstrap"), get<RolesView>("roles")]);
+  return { users, owner: boot.ownerSlackId, roles };
 };
 
 export const action = guard(async ({ request }) => {
@@ -30,32 +30,34 @@ export const action = guard(async ({ request }) => {
   return { ok: true };
 });
 
-const ROLE_HELP: Record<string, string> = {
-  owner: "full control, cannot be removed",
-  admin: "manages users; sandboxed like an executer",
-  executer: "sandboxed, tools assigned on Roles",
-  pal: "sandboxed read-only tools + review",
-};
+/** What a role is, in a line: the owner's own description, else how many permissions it grants. */
+const helpOf = (roles: RolesView): Record<string, string> =>
+  Object.fromEntries(roles.roles.map((r) => [r.name, r.description || (r.locked ? "full control, cannot be removed" : `${r.grants.length} permissions - see Roles`)]));
 
-const ROLES = ["pal", "executer", "admin"] as const;
+/** Every role a person can be put in: all but the owner, lowest rank first. */
+const assignable = (roles: RolesView): string[] =>
+  roles.roles.filter((r) => !r.locked).sort((a, b) => (a.rank ?? 0) - (b.rank ?? 0)).map((r) => r.name);
 
 /**
  * Adding someone: find them in the workspace, pick a role, add. A fetcher, so
  * the form can clear itself once the row lands without a page navigation.
  */
-function AddUser() {
+function AddUser({ roles }: { roles: RolesView }) {
+  const options = assignable(roles);
+  const help = helpOf(roles);
+  const lowest = roles.defaultRole ?? options[0] ?? "";
   const fetcher = useFetcher<{ ok?: boolean; added?: string; error?: string }>();
   const [picked, setPicked] = useState<Picked | undefined>();
-  const [role, setRole] = useState<(typeof ROLES)[number]>("pal");
+  const [role, setRole] = useState<string>(lowest);
   const busy = fetcher.state !== "idle";
   const done = fetcher.state === "idle" && fetcher.data?.ok ? fetcher.data.added : undefined;
 
   useEffect(() => {
     if (done) {
       setPicked(undefined);
-      setRole("pal");
+      setRole(lowest);
     }
-  }, [done]);
+  }, [done, lowest]);
 
   const already = picked?.member?.role;
   return (
@@ -73,7 +75,7 @@ function AddUser() {
           <MemberPicker picked={picked} onPick={setPicked} />
         </div>
         <div className="seg" role="radiogroup" aria-label="role">
-          {ROLES.map((r) => (
+          {options.map((r) => (
             <button
               type="button"
               key={r}
@@ -81,7 +83,7 @@ function AddUser() {
               aria-checked={role === r}
               className={role === r ? "seg-on" : ""}
               onClick={() => setRole(r)}
-              title={ROLE_HELP[r]}
+              title={help[r]}
             >
               {r}
             </button>
@@ -94,14 +96,15 @@ function AddUser() {
       <div className="add-user-foot muted">
         {already
           ? `${picked?.name} is already on the list as ${already}; adding changes their role.`
-          : ROLE_HELP[role]}
+          : help[role]}
       </div>
       {fetcher.data?.error && <div className="banner error">{fetcher.data.error}</div>}
     </fetcher.Form>
   );
 }
 
-function UserRow({ u, isOwner }: { u: AllowedUser; isOwner: boolean }) {
+function UserRow({ u, isOwner, roles }: { u: AllowedUser; isOwner: boolean; roles: RolesView }) {
+  const help = helpOf(roles);
   // One form per row; the inputs live in the cells and point at it by id.
   const form = `user-${u.slackId}`;
   return (
@@ -132,12 +135,12 @@ function UserRow({ u, isOwner }: { u: AllowedUser; isOwner: boolean }) {
           <span className="badge owner">owner</span>
         ) : (
           <select form={form} name="role" defaultValue={u.role}>
-            <option value="pal">pal</option>
-            <option value="executer">executer</option>
-            <option value="admin">admin</option>
+            {assignable(roles).map((r) => (
+              <option key={r} value={r}>{r}</option>
+            ))}
           </select>
         )}
-        <div className="muted">{ROLE_HELP[u.role]}</div>
+        <div className="muted">{help[u.role]}</div>
       </td>
       <td className="muted">{u.addedBy}</td>
       <td>
@@ -159,7 +162,7 @@ function UserRow({ u, isOwner }: { u: AllowedUser; isOwner: boolean }) {
 }
 
 export function UsersPage() {
-  const { users, owner } = useLoaderData() as { users: AllowedUser[]; owner: string };
+  const { users, owner, roles } = useLoaderData() as { users: AllowedUser[]; owner: string; roles: RolesView };
   const action = useActionData() as { error?: string } | undefined;
   return (
     <>
@@ -169,7 +172,7 @@ export function UsersPage() {
         review inbox and GitHub App use to know who is asking. What each role may do is on <Link to="/roles">Roles</Link>.
       </p>
       <Banner error={action?.error} />
-      <AddUser />
+      <AddUser roles={roles} />
       <div className="card table">
         <table>
           <thead>
@@ -177,7 +180,7 @@ export function UsersPage() {
           </thead>
           <tbody>
             {users.map((u) => (
-              <UserRow key={u.slackId} u={u} isOwner={u.slackId === owner} />
+              <UserRow key={u.slackId} u={u} isOwner={u.slackId === owner} roles={roles} />
             ))}
           </tbody>
         </table>

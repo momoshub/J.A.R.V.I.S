@@ -40,6 +40,7 @@ no classes.
   |    orcaQuestions (worker questions -> the thread that started it)      |
   |    offlineAlarm (keeps an "I'm offline" Slack scheduled msg armed)     |
   |    stuckSweeper (dead Orca workers, quiet own PRs -> owner DM, 15 min)  |
+  |    idleReaper (closes finished, idle Orca worker sessions, 30 min)      |
   |                                                                         |
   |  dashboard + JSON API (Bun.serve, loopback), /api/commands/run,         |
   |    /api/github-app/comment, /api/slack/proxy + /api/slack/file          |
@@ -130,6 +131,15 @@ no classes.
   commit, comment or review for 30 minutes, and DMs the owner what is new with
   the thread that started each (recorded when the app opened the PR, else found in the traces; an item is not repeated for 4 hours);
   `mindful` shows the same two lists on demand.
+  `idleReaper` (`ORCA_REAP_INTERVAL_MS`, default 30 min, 0 = off) reads
+  `orca orchestration worker-list` and `orca terminal list`, and closes through
+  Orca (`worker-release` when the worker settled, else `worker-stop`) every
+  supervised worker whose terminal has been silent for `ORCA_REAP_IDLE_MS`
+  (3 h) and whose task is finished, failed, blocked with no pending gate, or
+  absent (only once its worker ended). A worker with a waiting watch on its dispatch, an unanswered question,
+  a kept-open terminal, an attention flag, unproven liveness, a terminal another dispatch now owns, or a task blocked while its worker is still going (an `ask`) is skipped (a watch on the dispatch, its Run or its task counts), and
+  only supervised workers are candidates, so a user's own session and the bot's
+  `claude -p` turns are out of reach. It never kills a pid.
   None of them hold a session or a queue slot while they wait.
 - **Followed threads: debounce and gate.** An untagged message in a thread the bot
   follows (the `asked` and `own-thread` routes; tagged messages, DMs, one-on-one
@@ -215,10 +225,10 @@ no classes.
 
 No I/O, no frameworks. Just data shapes and functions of their inputs.
 
-- `types.ts` - core data shapes (`AllowedUser`, `StoredMessage`, roles: pal/executer/admin/owner)
+- `types.ts` - core data shapes (`AllowedUser`, `StoredMessage`; a role is just a name)
 - `access.ts`, `toolPolicy.ts`, `toolVisibility.ts` - who may talk to the bot, and the per-role CLI sandbox (skip-permissions vs `--allowedTools` allow-list + fixed cwd), incl. the host `notion` MCP server gated by `note`'s floor and the host `datadog` MCP server (read tools only, every role, writes denied by name)
 - `agentModels.ts` - the models of handed-off work (`model:subagent|worker|plan|loop`, defaults sonnet/sonnet/opus/sonnet): the turn env and the Explore/Plan `--agents` overrides
-- `rolePolicy.ts` - the dashboard-edited policy per role: on/off, and the commands, tools and MCP servers it is denied (restrict-only; the owner is never restricted)
+- `roles.ts` + `permissions.ts` + `roleSeed.ts` - roles are data: only `owner` is code (holds every permission, never stored); every other role is a stored row of the permissions it grants (`command:<name>`, `github:<action>`, `mcp:<server>`, tool tiers, guarded sub-actions), and `can(book, role, permission)` is the one question every role check asks. `roleSeed` holds what the built-in `pal`/`executer`/`admin` start with (reproducing the old hard-coded behaviour); `rolePolicy.ts` keeps what surrounds a role record (a switched-off role is off the allowlist, extra denied tool patterns)
 - `slackNames.ts` - how a person or conversation is shown: always name and id
 - `personality.ts`, `promptGuides.ts`, `conversation.ts`, `mentions.ts` - the system prompt from generic defaults + injected identity (procedure blocks as on-demand guide files for turns that can read them), context windowing, `<@ID>` annotation
 - `threadSession.ts`, `agentSession.ts` - one CLI session per thread and when it may be resumed
@@ -252,14 +262,14 @@ Orchestrates the domain and depends on **ports**, not concrete adapters.
 - `threadQueue.ts`, `runRegistry.ts` - one turn per thread, and stopping one
 - `followGate.ts` (application), `followGateModel.ts` - the per-thread buffer for a followed thread (a quiet window, a hard cap, injectable timers) and the cheap pal-model call that says reply, skip or wait
 - `ciGate.ts` (application) - the CI gate of `quick-review`: idempotent request-changes and approve against GitHub's own state, the watcher row for a running CI, and its poll
-- `watcher.ts`, `reminders.ts`, `loops.ts`, `reviewInbox.ts`, `reviewGuard.ts`, `innerChild.ts`, `offlineAlarm.ts`, `orcaQuestions.ts`, `stuckSweeper.ts` - the timers (`orcaQuestions` also sits on the tool-trace sink, linking each Orca worker to the thread that started it)
+- `watcher.ts`, `reminders.ts`, `loops.ts`, `reviewInbox.ts`, `reviewGuard.ts`, `innerChild.ts`, `offlineAlarm.ts`, `orcaQuestions.ts`, `idleReaper.ts`, `stuckSweeper.ts` - the timers (`orcaQuestions` also sits on the tool-trace sink, linking each Orca worker to the thread that started it)
 - `githubApp.ts` - calls from the GitHub App: dedupe/queue, identity mapping, the turn, the answer back
 - `workflow.ts`, `workflowFront.ts`, `workflowContinue.ts` - long tasks driven from one thread on a durable session
 - `accessRequests.ts` - unknown people ask the owner and admins, who decide with a reaction; on ✅ the person's original message (stored whole, with its Slack ts) is answered as a normal turn through the Slack intake, falling back to a short "you are in" line if the replay fails
 - `adapterMemory.ts`, `botProfile.ts`, `claudeTokens.ts` - memory, instance identity and CLI tokens
 - `slackAdmin.ts`, `draftReply.ts` - Console + power tools port, AI reply drafting
 - `dashboard.ts` - the dashboard's use cases (users, roles, memory, identity, commands, usage, modals) over narrow ports, returning an `Outcome` the server maps to a status
-- `rolePolicies.ts` - wraps the allowlist so a switched-off role is off it for every check in the bot; the dashboard alone gets the raw repo
+- `roles.ts` - seeds the built-in roles (folding in the old deny policies and `note`/`read` floors on the first boot) and holds the owner's role edits (create, grant, revoke, rename, delete); `rolePolicies.ts` - wraps the allowlist so a switched-off role is off it for every check in the bot; the dashboard alone gets the raw repo
 - `slackDirectory.ts` - the workspace's members (`users.list`, every cursor page) held in memory for the Users page search, refreshed at most every 10 minutes, one sweep shared by concurrent searches, last good copy kept on a failed refresh; the filter itself is `domain/slackMembers.ts`
 - `nameResolver.ts` - cached Slack names (conversations.info / users.info) for the dashboard, so a render never calls Slack per row
 
@@ -278,7 +288,7 @@ Concrete implementations of the seams and the transports.
 - `inbox/inboxRepo.ts` - the inbox queue shared by both processes
 - `llm/claudeCli.ts` - the default `LlmPort`, wraps the local `claude` CLI (`--resume`, `stream-json`, per-call policy -> `--allowedTools`/cwd/timeout, the timeout stopping the whole process tree, `turnEnv` for per-turn environment such as the Orca handle and the subagent/worker models, `agents` for the `--agents` definitions that pin Explore and Plan); `killTree.ts`, `toolTraceLog.ts` support it; `backgroundAgents.ts` finds a thread's `claude --bg` sessions and Orca workers in its trace and stops them through their own CLIs for `stop`
 - `llm/anthropic.ts` - alternative `LlmPort` backed by the Anthropic API
-- `db/` - `bun:sqlite` client, schema + migrations, one repo per table (users, role policies, messages, sessions, thread briefs, watches, reminders, loops, workflows, usage, turn and command logs, Orca worker threads and questions, ...), `secretBox.ts` for encrypted tokens, `tokenKeyStore.ts` for where its key lives (file, or a macOS Keychain item via the `security` CLI, `TOKEN_KEY_SOURCE`)
+- `db/` - `bun:sqlite` client, schema + migrations, one repo per table (users, roles, messages, sessions, thread briefs, watches, reminders, loops, workflows, usage, turn and command logs, Orca worker threads and questions, ...), `secretBox.ts` for encrypted tokens, `tokenKeyStore.ts` for where its key lives (file, or a macOS Keychain item via the `security` CLI, `TOKEN_KEY_SOURCE`)
 - `adapter/adapterStore.ts` - the memory adapter in the `adapter_files` table, mirrored to `data/adapter-mirror` so skills can be read by path
 - `github/` - `gh` CLI wrapper and review-request polling; the GitHub App's fetch client (`appClient.ts`, RS256 JWT -> cached installation token), credentials from files (`appCredentials.ts`) and webhook listener (`webhookServer.ts`)
 - `system/` - host probes (system load, Accessibility access, shell checks for watches, `orcaProbe.ts` reading Orca's status, newest Runs and their tasks for `sys` under one deadline), `guideWriter.ts`, which writes the prompt's how-to guides to `data/prompt-guides`, and `orcaTerminal.ts`, the bot's own Orca terminal (created once, checked against Orca at most once a minute, re-created when gone) whose handle every spawned turn gets as `ORCA_TERMINAL_HANDLE` so it can open Orca Runs and start workers, and `workerTranscript.ts`, which finds an Orca worker's Claude Code session (one message id from `worker-read --source transcript`, matched to the `uuid` in a `~/.claude/projects` jsonl) and sums what it used
@@ -312,19 +322,25 @@ Concrete implementations of the seams and the transports.
   bot process, outside every turn: no model, no session, no queue slot.
 - **Owner can never be locked out.** `decideAccess` grants the owner access even
   if the database is empty or broken.
-- **Role-based tool policy.** Only the owner runs the CLI full-access; every
-  other role (admin, executer, pal, anything unrecognised) is sandboxed:
-  allow-list + fixed cwd, no permission bypass, `--permission-mode dontAsk` so
-  an off-list command is refused at once (`SANDBOX_TOOLS` sets the default
-  list, `isFullAccess` is an exact match on `owner`). Orca is
-  owner-only (`ORCA_DENY` in `--disallowedTools` for the other three, since an
-  Orca worker runs with full host permissions); an executer gets code jobs
-  done in its own process with the Agent tool, and the prompt is role-aware
-  (`orca` flag on `buildSystemPrompt`). `quick-review` is a
-  preset that always runs full-access. On top of that, a per-role policy edited
-  from the dashboard (`role_policies`) can switch a role off or deny it
-  commands, tools and MCP servers - it only ever takes away, and never touches
-  the owner.
+- **Roles are data, and tool policy follows their grants.** Only `owner` is
+  hard-coded (always on, holds every permission). Every other role is a row in
+  `roles` - a name, a rank and the permissions it grants - and every role check
+  asks `can(book, role, permission)`: a command (`command:<name>`), a GitHub App
+  action (`github:<action>`), an MCP server (`mcp:<server>`), a tool tier or a
+  guarded sub-action. `tools:full-access` runs the CLI with full access (the
+  owner alone, as seeded: `isFullAccess` asks the book, so a role it does not
+  know holds nothing); without it the role is sandboxed (allow-list + fixed
+  cwd, no permission bypass, `--permission-mode dontAsk` so an off-list command
+  is refused at once, `SANDBOX_TOOLS` sets the default list), with
+  `tools:code` adding the code tools and the Agent tool, and every MCP server it
+  holds no grant for denied by name. Orca is `tools:orca` (`ORCA_DENY` in
+  `--disallowedTools` otherwise, since an Orca worker runs with full host
+  permissions), and the prompt is role-aware (`orca` flag on
+  `buildSystemPrompt`). `pal`, `executer` and `admin` are only the roles
+  seeded on first boot with the grants the old code hard-wired. Managing roles
+  is the owner's alone and cannot be granted, a role only manages people ranked
+  below it, and a switched-off role is off the allowlist. `quick-review` is a
+  preset that always runs full-access.
 - **The brain never names the actor.** Commands it runs carry a ticket bound to
   the person it is answering.
 - **The DB is committed** so identity/allowlist ship with the repo. Conversation
