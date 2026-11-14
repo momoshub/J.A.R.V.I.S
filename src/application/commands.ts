@@ -171,8 +171,12 @@ export const commandLineOf = (text: string, prefix: string = DEFAULT_COMMAND_PRE
  * Whether a slash invocation of this line is worth copying to the owner.
  * Unknown commands count: a failed guess is still something worth seeing.
  */
-/** Commands that cost nothing and so do not count against an allowance. */
-export const TRIVIAL_COMMANDS: readonly string[] = COMMANDS.filter((c) => c.trivial).map((c) => c.name);
+/**
+ * Commands that cost nothing and so do not count against an allowance. An internal
+ * command is the brain's own bookkeeping, not something the person it runs
+ * for asked for, so it never spends their allowance either.
+ */
+export const TRIVIAL_COMMANDS: readonly string[] = COMMANDS.filter((c) => c.trivial || c.internal).map((c) => c.name);
 
 /** Whether this line runs a tool-like command: result to the caller, not the thread. */
 export const isQuietCommand = (line: string): boolean => {
