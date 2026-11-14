@@ -37,4 +37,17 @@ describe("orca question repo", () => {
     expect(repo.record({ ...Q, messageId: "msg_2" }, T1, "closed", 5)).toBe(true);
     expect(repo.question("msg_2")).toEqual({ ...Q, messageId: "msg_2", state: "closed", attempts: 0 });
   });
+
+  test("askingDispatches lists dispatches with a question still unanswered, once each", () => {
+    const repo = createOrcaQuestionRepo(openDatabase(":memory:"));
+    repo.record({ messageId: "m1", runId: "run_a", dispatchId: "ctx_waiting" }, T1, "delivering", 1);
+    repo.record({ messageId: "m2", runId: "run_a", dispatchId: "ctx_waiting" }, T1, "delivered", 1);
+    repo.record({ messageId: "m3", runId: "run_a", dispatchId: "ctx_done" }, T1, "delivered", 1);
+    repo.settle("m3", "answered", 2);
+    repo.record({ messageId: "m4", runId: "run_a", dispatchId: "ctx_closed" }, T1, "closed", 1);
+    // gave_up and refused are still unanswered: the worker is still waiting
+    repo.record({ messageId: "m5", runId: "run_a", dispatchId: "ctx_gave_up" }, T1, "gave_up", 1);
+    repo.record({ messageId: "m6", runId: "run_a", dispatchId: "ctx_refused" }, T1, "refused", 1);
+    expect(repo.askingDispatches().sort()).toEqual(["ctx_gave_up", "ctx_refused", "ctx_waiting"]);
+  });
 });

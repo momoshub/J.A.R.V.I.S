@@ -9,6 +9,7 @@ import { join } from "node:path";
 import { z } from "zod";
 import { expandHome } from "../domain/dbPath.ts";
 import { parseAllowedOwners } from "../domain/githubApp.ts";
+import { DEFAULT_REAP_IDLE_MS, DEFAULT_REAP_INTERVAL_MS } from "../domain/idleWorkers.ts";
 import { parseSelfPrAccounts, RESTART_TURN_BUDGET_MS, type SelfPrAccounts } from "../domain/selfUpdate.ts";
 
 /** Where the GitHub App's credentials live by default: outside the repo, never in `.env`. */
@@ -127,6 +128,15 @@ const schema = z
     // budget (ms). Past it the thread is told to hold on and the turn is cut,
     // then picked up again by the next process on the same session.
     RESTART_TURN_BUDGET_MS: z.coerce.number().int().positive().default(RESTART_TURN_BUDGET_MS),
+    // Idle-worker reaper: how often (ms) the bot looks for Orca worker sessions
+    // whose task is over and that sit idle at their prompt, and closes them
+    // through Orca. 0 turns the reaper off. Default 30 min.
+    ORCA_REAP_INTERVAL_MS: z.coerce.number().int().min(0).default(DEFAULT_REAP_INTERVAL_MS),
+    // How long (ms) a worker's terminal must be silent before it can be closed.
+    // Default 3 h; never below a minute.
+    ORCA_REAP_IDLE_MS: z.coerce.number().int().min(60_000).default(DEFAULT_REAP_IDLE_MS),
+    // `true`: only log what the reaper would close, close nothing.
+    ORCA_REAP_DRY_RUN: boolFromString(false),
     // Channel the offline alarm reports to: a notice armed on Slack's side
     // that posts by itself if the host loses its connection, and is edited to
     // "back online" when it returns. Unset: no alarm. An id, not a name: the
@@ -249,6 +259,8 @@ export type AppConfig = {
   drainNoticeChannel?: string;
   /** How long a turn started while a restart waits may run before it is cut. */
   restartTurnBudgetMs: number;
+  /** Idle-worker reaper: sweep interval (0 = off), idle threshold, log-only mode. */
+  orcaReap: { intervalMs: number; idleMs: number; dryRun: boolean };
   /** Channel the offline alarm posts to when the host drops off; unset is off. */
   offlineAlarmChannel?: string;
   /** Channel for the owner's copy of other people's slash commands; unset is the owner's DM. */
@@ -334,6 +346,7 @@ export const loadConfig = (source: Record<string, string | undefined> = process.
     logDir: env.LOG_DIR,
     ...(env.DRAIN_NOTICE_CHANNEL ? { drainNoticeChannel: env.DRAIN_NOTICE_CHANNEL } : {}),
     restartTurnBudgetMs: env.RESTART_TURN_BUDGET_MS,
+    orcaReap: { intervalMs: env.ORCA_REAP_INTERVAL_MS, idleMs: env.ORCA_REAP_IDLE_MS, dryRun: env.ORCA_REAP_DRY_RUN },
     ...(env.OFFLINE_ALARM_CHANNEL ? { offlineAlarmChannel: env.OFFLINE_ALARM_CHANNEL } : {}),
     ...(env.SLASH_MIRROR_CHANNEL ? { slashMirrorChannel: env.SLASH_MIRROR_CHANNEL } : {}),
     githubApp: {
