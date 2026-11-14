@@ -14,6 +14,7 @@
  * as an ordinary code block, because a malformed table is still information and
  * a silent hole in the reply is not.
  */
+import { toSlackMarkdown } from "./slackFormat.ts";
 
 export type Block = { type: string } & Record<string, unknown>;
 
@@ -65,6 +66,11 @@ export const normalizeBlocks = (blocks: readonly Block[]): Block[] => {
       continue;
     }
     if ((b.type === "header" || b.type === "markdown") && isBlank(textField(b, "text"))) continue;
+    // A markdown block is standard Markdown, but the model writes mrkdwn.
+    if (b.type === "markdown" && typeof b.text === "string") {
+      out.push({ ...b, text: toSlackMarkdown(b.text) });
+      continue;
+    }
     if (b.type === "section" && isBlank(textField(b, "text"))) {
       if (Array.isArray(b.fields) && b.fields.length > 0) {
         const { text: _blank, ...rest } = b;
@@ -301,7 +307,7 @@ export const toBlockMessage = (
     if (!t) continue;
     prose.push(t);
     words.push(t);
-    blocks.push({ type: "markdown", text: t });
+    blocks.push({ type: "markdown", text: toSlackMarkdown(t) });
   }
   return {
     text: fallback(prose.join("\n\n")) || " ",

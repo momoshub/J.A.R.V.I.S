@@ -77,6 +77,46 @@ export const toMrkdwn = (text: string): string => {
 };
 
 /**
+ * An emphasis run in mrkdwn: `*bold*` or `~strike~`. The opener must not sit
+ * against a word character (`2*3*4` is arithmetic), a marker or a backslash,
+ * and must not be followed by a space (`a * b`, a `* ` bullet); the closer must
+ * follow a non-space and not touch a word character or another marker. A
+ * `**x**` pair never matches (each `*` touches another), so it is idempotent.
+ */
+const BOLD = /(?<![*\\\p{L}\p{N}])\*(?![\s*])([^*\n]*?[^\s*])\*(?![*\p{L}\p{N}])/gu;
+const STRIKE = /(?<![~\\\p{L}\p{N}])~(?![\s~])([^~\n]*?[^\s~])~(?![~\p{L}\p{N}])/gu;
+
+/**
+ * Write mrkdwn emphasis the way Slack's Markdown parser reads it.
+ *
+ * The model writes mrkdwn (`SLACK_FORMAT`), but a `markdown` block and the
+ * streaming `markdown_text` are standard Markdown, where `*x*` is ITALIC (a
+ * streamed `*nhip:*` came back from conversations.replies as italic, not bold).
+ * So on those paths only, `*x*` becomes `**x**` and `~x~` becomes `~~x~~`;
+ * `_x_` already means italic in both. Code (fenced or inline), Slack
+ * `<links|mentions>` and Markdown link targets are held out first, and a
+ * `* ` bullet, `a * b` and an unpaired marker are left alone. Never use this
+ * for `mrkdwn`-typed fields or the plain `text` fallback: there `**x**` is
+ * literal asterisks.
+ */
+export const toSlackMarkdown = (text: string): string => {
+  if (!text || (!text.includes("*") && !text.includes("~"))) return text;
+  const held: string[] = [];
+  const stash = (s: string): string => {
+    held.push(s);
+    return `\u0000${held.length - 1}\u0000`;
+  };
+  const out = text
+    .replace(/```[\s\S]*?```/g, stash)
+    .replace(/`[^`\n]*`/g, stash)
+    .replace(/<[^<>\s][^<>\n]*>/g, stash)
+    .replace(/\]\([^)\s]*\)/g, stash)
+    .replace(BOLD, "**$1**")
+    .replace(STRIKE, "~~$1~~");
+  return out.replace(/\u0000(\d+)\u0000/g, (_, i: string) => held[Number(i)] ?? "");
+};
+
+/**
  * Slack refuses a section block whose text is over 3000 characters, and refuses
  * the whole message with it. A command list grows a line at a time and would
  * cross that quietly, so long text is split across several sections instead.

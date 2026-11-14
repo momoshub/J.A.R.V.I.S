@@ -17,6 +17,7 @@
  */
 import type { Block } from "./blockKit.ts";
 import { FOOTER_BLOCK_ID } from "./messageFooter.ts";
+import { toSlackMarkdown } from "./slackFormat.ts";
 
 export type FinishedStep = {
   readonly title: string;
@@ -79,7 +80,7 @@ export const collapsedBlocks = (
   footer?: string,
 ): Block[] => {
   const blocks: Block[] = [];
-  if (body.trim()) blocks.push({ type: "markdown", text: body });
+  if (body.trim()) blocks.push({ type: "markdown", text: toSlackMarkdown(body) });
   const lines = [
     ...(collapsed ? [collapsed.summary, ...collapsed.failures.map((f) => `• ${f}`)] : []),
     ...(footer?.trim() ? [footer.trim()] : []),

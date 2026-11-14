@@ -19,6 +19,8 @@
 import type { AnyChunk, TaskUpdateChunk } from "@slack/types";
 import { isHiddenAction } from "../../domain/toolVisibility.ts";
 import { MAX_SILENCE_NOTE } from "../../domain/silence.ts";
+import { toSlackMarkdown } from "../../domain/slackFormat.ts";
+import { createEmphasisNormalizer } from "./emphasis.ts";
 import { createFenceNormalizer } from "./fences.ts";
 import type { FinishedStep } from "../../domain/collapseSteps.ts";
 import type { LlmUsage } from "../../application/ports.ts";
@@ -196,6 +198,11 @@ export const createSlackStream = (
   let used = 0;
   let pending: ReturnType<typeof setTimeout> | undefined;
   const fences = createFenceNormalizer();
+  // After the fences: markdown_text is standard Markdown, where mrkdwn `*x*` is italic.
+  const emphasis = createEmphasisNormalizer();
+  /** Prose out of the fence normaliser, as the Markdown Slack parses. */
+  const prose = (text: string): string => emphasis.push(text);
+  const proseFlush = (text: string): string => emphasis.push(text) + emphasis.flush();
   const kit = createBlockKitExtractor();
 
   const cancelPending = (): void => {
@@ -352,7 +359,7 @@ export const createSlackStream = (
         used = Math.max(0, used - JSON.stringify(chunk).length);
         log(`blocks refused, shown as text: ${errMsg(e)}`);
         const words = blocksToText(blocks);
-        const shown = words ? `\n${words}\n\n` : `\n\`\`\`\n${JSON.stringify(blocks, null, 2)}\n\`\`\`\n`;
+        const shown = words ? `\n${toSlackMarkdown(words)}\n\n` : `\n\`\`\`\n${JSON.stringify(blocks, null, 2)}\n\`\`\`\n`;
         await send({ markdown_text: shown }, shown.length);
       }
     });
@@ -366,11 +373,11 @@ export const createSlackStream = (
   const emitSegments = (segs: Segment[]) => {
     for (const seg of segs) {
       if (seg.kind === "text") {
-        const text = fences.push(seg.text);
+        const text = prose(fences.push(seg.text));
         if (text) appendText(text);
         continue;
       }
-      const held = fences.flush();
+      const held = proseFlush(fences.flush());
       if (held) appendText(held);
       appendBlocks(seg.blocks);
     }
@@ -627,7 +634,7 @@ export const createSlackStream = (
       cancelPending();
       completeThinking();
       emitSegments(kit.flush());
-      const tail = fences.flush();
+      const tail = proseFlush(fences.flush());
       if (tail) appendText(tail);
       try {
         await chain;
