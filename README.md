@@ -1,8 +1,10 @@
-# Jarvis
+# J.A.R.V.I.S.
 
-Jarvis is a configurable Slack agent bot. Its "brain" is your local **Claude Code CLI** (with full tool access) or the **Anthropic API**. It has SQLite memory, an allowlist, live streaming replies with a tool-call timeline, and an admin dashboard.
+Jarvis is a harness of harnesses. Claude Code is already a harness around a model; Jarvis is the harness around Claude Code (or the **Anthropic API**). It keeps the sessions, memory, roles and tool sandbox, schedules work, waits on CI and reviewers, runs background workers, and changes and redeploys its own source. Slack is only where people talk to it: one front end, not what it is. Live streaming replies with a tool-call timeline and an admin dashboard come with it.
 
-The codebase is generic - the bot's identity (name, persona, labels) lives in the database and is edited from the dashboard, so the same code runs any bot.
+The story of how it came to build itself: [J.A.R.V.I.S.](https://thediligentengineer.com/J.A.R.V.I.S.)
+
+The codebase is generic - the bot's identity (name, persona, labels) lives in the database and is edited from the dashboard, so the same code runs any assistant.
 
 ## Requirements / platform
 
