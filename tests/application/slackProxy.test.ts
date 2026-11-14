@@ -31,6 +31,19 @@ describe("Slack proxy", () => {
     expect(String(seen[0]!.init.body)).toBe("channel=C0OTHER0001&ts=1.1");
   });
 
+  test("a post from a turn in a thread is sent to Slack with that thread, and none is stripped", async () => {
+    const { proxy, tickets, seen } = setup();
+    const ticket = tickets.issue({ channel: "C0TEST00001", threadTs: "1700000000.000100" });
+    await proxy.call({ ticket, method: "chat.postMessage", params: { channel: "C0TEST00001", text: "done" } });
+    await proxy.call({ ticket, method: "chat.postMessage", params: { channel: "C0TEST00001", text: "fyi", thread_ts: "none" } });
+    await proxy.call({ ticket, method: "chat.postMessage", params: { channel: "C0TEST00001", text: "x", thread_ts: "1600000000.000200" } });
+    expect(seen.map((s) => String(s.init.body))).toEqual([
+      "channel=C0TEST00001&text=done&thread_ts=1700000000.000100",
+      "channel=C0TEST00001&text=fyi",
+      "channel=C0TEST00001&text=x&thread_ts=1600000000.000200",
+    ]);
+  });
+
   test("a write into the turn's own channel goes through", async () => {
     const { proxy, tickets, seen, logs } = setup();
     const ticket = tickets.issue({ channel: "C0TEST00001" });

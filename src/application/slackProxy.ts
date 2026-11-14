@@ -75,7 +75,7 @@ export const createSlackProxy = (deps: SlackProxyDeps): SlackProxy => {
     call: async ({ ticket, method, params }) => {
       const resolved = redeem(ticket);
       if (!resolved.ok) return failure(401, ticketError(resolved.reason, resolved.limit));
-      const checked = checkSlackCall(method, params, { channel: resolved.ctx.channel });
+      const checked = checkSlackCall(method, params, { channel: resolved.ctx.channel, threadTs: resolved.ctx.threadTs });
       if (!checked.ok) {
         log(`slack proxy refused ${String(method)}: ${checked.error}`);
         return failure(checked.status, checked.error);

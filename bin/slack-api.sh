@@ -20,6 +20,11 @@
 #          files.getUploadURLExternal, files.completeUploadExternal
 # A write only works in the channel this turn runs in (`channel_not_allowed`
 # otherwise). Values are plain strings; `blocks` and `files` are JSON strings.
+# When the turn runs in a thread, chat.postMessage and
+# files.completeUploadExternal without `thread_ts` are posted into that thread
+# (the bot fills it in); `thread_ts=none` is the explicit opt-out for a
+# deliberate top-level post and is removed before Slack is called. An explicit
+# `thread_ts` is always kept as given.
 # Downloading a private file is slack-file.sh, uploading one slack-upload.sh.
 #
 # Endpoint: JARVIS_SLACK_API_URL (the bot sets it), else the loopback dashboard
@@ -27,7 +32,7 @@
 set -uo pipefail
 
 if [ "$#" -lt 1 ] || [[ "$1" == -* ]]; then
-  sed -n '2,25p' "$0" >&2
+  sed -n '2,30p' "$0" >&2
   exit 2
 fi
 

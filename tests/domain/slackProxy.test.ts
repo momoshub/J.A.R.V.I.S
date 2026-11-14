@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { SLACK_PROXY_METHODS, checkSlackCall, isSlackFileUrl } from "../../src/domain/slackProxy.ts";
+import { SLACK_PROXY_METHODS, TOP_LEVEL_THREAD, checkSlackCall, isSlackFileUrl } from "../../src/domain/slackProxy.ts";
 
 const own = { channel: "C0TEST00001" };
 
@@ -42,6 +42,61 @@ describe("Slack proxy policy", () => {
       // no channel at all is not a way around it
       expect(checkSlackCall(method, { text: "hi" }, own).ok).toBe(false);
     }
+  });
+
+  describe("a turn in a thread posts into it by default", () => {
+    const inThread = { channel: "C0TEST00001", threadTs: "1700000000.000100" };
+    const post = (params: Record<string, string>, scope = inThread) => {
+      const call = checkSlackCall("chat.postMessage", { channel: scope.channel, ...params }, scope);
+      if (!call.ok) throw new Error(call.error);
+      return call.params;
+    };
+
+    test("chat.postMessage with no thread_ts gets the turn's thread", () => {
+      expect(post({ text: "done" })).toEqual({ channel: "C0TEST00001", text: "done", thread_ts: "1700000000.000100" });
+    });
+
+    test("files.completeUploadExternal with no thread_ts gets it too", () => {
+      const call = checkSlackCall("files.completeUploadExternal", { channel_id: inThread.channel, files: "[]" }, inThread);
+      expect(call.ok && call.params.thread_ts).toBe("1700000000.000100");
+    });
+
+    test("a blank thread_ts counts as not given", () => {
+      expect(post({ text: "done", thread_ts: "" }).thread_ts).toBe("1700000000.000100");
+      expect(post({ text: "done", thread_ts: "  " }).thread_ts).toBe("1700000000.000100");
+    });
+
+    test("an explicit thread_ts is kept, even another thread of the same channel", () => {
+      expect(post({ text: "done", thread_ts: "1600000000.000200" }).thread_ts).toBe("1600000000.000200");
+    });
+
+    test("thread_ts=none posts at the top level and is stripped before Slack", () => {
+      const params = post({ text: "heads up", thread_ts: TOP_LEVEL_THREAD });
+      expect(params).toEqual({ channel: "C0TEST00001", text: "heads up" });
+      expect("thread_ts" in params).toBe(false);
+      const upload = checkSlackCall("files.completeUploadExternal", { channel_id: inThread.channel, thread_ts: "none" }, inThread);
+      expect(upload.ok && "thread_ts" in upload.params).toBe(false);
+    });
+
+    test("a turn that is not in a thread is left alone", () => {
+      expect(post({ text: "hi" }, own as typeof inThread)).toEqual({ channel: "C0TEST00001", text: "hi" });
+    });
+
+    test("only new posts are defaulted: updates, reactions and reads pass through untouched", () => {
+      for (const [method, params] of [
+        ["chat.update", { channel: inThread.channel, ts: "1.1", text: "x" }],
+        ["reactions.add", { channel: inThread.channel, timestamp: "1.1", name: "eyes" }],
+        ["conversations.replies", { channel: "C0OTHER0001", ts: "1.1" }],
+      ] as const) {
+        const call = checkSlackCall(method, params, inThread);
+        expect(call.ok && call.params).toEqual(params);
+      }
+    });
+
+    test("the channel check still comes first", () => {
+      const call = checkSlackCall("chat.postMessage", { channel: "C0OTHER0001", text: "x" }, inThread);
+      expect(call.ok).toBe(false);
+    });
   });
 
   test("a read-only ticket cannot write at all", () => {

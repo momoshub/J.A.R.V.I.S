@@ -45,8 +45,20 @@ export const SLACK_PROXY_METHODS = {
   write: Object.keys(WRITE_METHODS),
 } as const;
 
-/** What the ticket allows: the channel a write may target. None means read-only. */
-export type SlackScope = { readonly channel?: string };
+/** What the ticket allows: the channel a write may target (none means read-only) and the thread the turn runs in. */
+export type SlackScope = { readonly channel?: string; readonly threadTs?: string };
+
+/**
+ * Writes that post a new message, with the parameter that places it in a thread.
+ * A turn running in a thread that forgets it lands a top-level message instead.
+ */
+const THREADED_WRITES: Readonly<Record<string, string>> = {
+  "chat.postMessage": "thread_ts",
+  "files.completeUploadExternal": "thread_ts",
+};
+
+/** `thread_ts=none` asks for a deliberate top-level post; the proxy strips it, Slack never sees it. */
+export const TOP_LEVEL_THREAD = "none";
 
 export type SlackCallCheck =
   | { readonly ok: true; readonly method: string; readonly params: Readonly<Record<string, string>> }
@@ -106,6 +118,17 @@ export const checkSlackCall = (method: unknown, rawParams: unknown, scope: Slack
   // `channels` is the older way to share a file into several places at once.
   if (method === "files.completeUploadExternal" && params.channels !== undefined) {
     return refuse(403, "param_not_allowed: files.completeUploadExternal takes channel_id, never channels");
+  }
+  const threadParam = THREADED_WRITES[method];
+  if (threadParam) {
+    const given = params[threadParam]?.trim();
+    if (given === TOP_LEVEL_THREAD) {
+      const rest = { ...params };
+      delete rest[threadParam];
+      return { ok: true, method, params: rest };
+    }
+    // Not given (or blank) and the turn runs in a thread: the reply belongs there. An explicit thread_ts is kept as is.
+    if (!given && scope.threadTs) return { ok: true, method, params: { ...params, [threadParam]: scope.threadTs } };
   }
   return { ok: true, method, params };
 };

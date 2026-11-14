@@ -719,6 +719,11 @@ command or act on GitHub, and a command ticket cannot call Slack.
 | write, only the channel the turn runs in | `chat.postMessage`, `chat.update`, `reactions.add`, `files.getUploadURLExternal`, `files.completeUploadExternal` |
 | files | a private file is `bin/slack-file.sh`, through `POST /api/slack/file`: Slack file urls only, and the token never follows a redirect off Slack |
 
+A `chat.postMessage` or `files.completeUploadExternal` from a turn that runs in a
+thread and names no `thread_ts` is posted into that thread; pass `thread_ts=none`
+for a deliberate top-level post (the bot removes it before calling Slack), and an
+explicit `thread_ts` is used as given.
+
 Anything else is refused (`method_not_allowed`), a write to another channel is
 `channel_not_allowed`, and a missing, revoked or expired ticket is refused before
 anything else. `slack-read.sh`, `slack-react.sh`, `slack-file.sh` and
