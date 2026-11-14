@@ -109,6 +109,53 @@ export const migrate = (db: Database): void => {
   migrateLearningStatus(db);
   migrateLoopOrigin(db);
   migrateRoles37(db);
+  migrateJourneys(db);
+};
+
+/**
+ * Migration v38: journeys, the bot's own record of its work.
+ *
+ * `journeys` is one row per piece of work; `journey_events` is append-only and
+ * never rewritten, so "what happened last week" is a query over `at`. Both are
+ * new tables, so nothing existing is touched and a rerun is a no-op.
+ */
+const migrateJourneys = (db: Database): void => {
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS journeys (
+      id          INTEGER PRIMARY KEY AUTOINCREMENT,
+      title       TEXT NOT NULL,
+      status      TEXT NOT NULL DEFAULT 'doing',
+      area        TEXT NOT NULL DEFAULT '',
+      channel_id  TEXT NOT NULL DEFAULT '',
+      thread_ts   TEXT NOT NULL DEFAULT '',
+      permalink   TEXT NOT NULL DEFAULT '',
+      prs         TEXT NOT NULL DEFAULT '[]',
+      progress    INTEGER NOT NULL DEFAULT 0,
+      now_text    TEXT NOT NULL DEFAULT '',
+      next_text   TEXT NOT NULL DEFAULT '',
+      created_by  TEXT NOT NULL,
+      created_at  INTEGER NOT NULL,
+      updated_at  INTEGER NOT NULL,
+      done_at     INTEGER NOT NULL DEFAULT 0
+    );
+  `);
+  db.exec("CREATE INDEX IF NOT EXISTS idx_journeys_status ON journeys (status, updated_at DESC);");
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS journey_events (
+      id          INTEGER PRIMARY KEY AUTOINCREMENT,
+      journey_id  INTEGER NOT NULL,
+      at          INTEGER NOT NULL,
+      kind        TEXT NOT NULL,
+      text        TEXT NOT NULL DEFAULT '',
+      actor       TEXT NOT NULL DEFAULT ''
+    );
+  `);
+  db.exec("CREATE INDEX IF NOT EXISTS idx_journey_events_journey ON journey_events (journey_id, id);");
+  db.exec("CREATE INDEX IF NOT EXISTS idx_journey_events_at ON journey_events (at);");
+  const { user_version } = db.query<{ user_version: number }, []>("PRAGMA user_version").get() ?? {
+    user_version: 0,
+  };
+  if (user_version < 38) db.exec("PRAGMA user_version = 38;");
 };
 
 /**

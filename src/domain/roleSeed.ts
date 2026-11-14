@@ -83,7 +83,7 @@ export const defaultGrants = (seed: string, input: SeedInput): readonly string[]
     // Admin stays on the `code` sandbox tier like an executer: `tools:full-access` is the owner's alone.
     grants.push(
       PERM.selfUpdate, PERM.approveCommands, PERM.decideAccess, PERM.manageSettings,
-      PERM.reviewPolicy, PERM.stopAny, PERM.twoFa, PERM.manageReminders, ...GITHUB_ALL,
+      PERM.reviewPolicy, PERM.stopAny, PERM.twoFa, PERM.manageReminders, PERM.writeJourneys, ...GITHUB_ALL,
     );
   }
   // An executer picks its own policy; a pal never does (`palOnly` in quick-review).
