@@ -24,6 +24,7 @@ export type HelpSubject = {
   readonly name: string;
   readonly usage: string;
   readonly summary: string;
+  /** Who may run it, as words: the roles holding its grant ("admin", "executer or admin"). */
   readonly minRole: string;
   readonly aliases?: readonly string[];
 };

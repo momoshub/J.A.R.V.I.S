@@ -24,7 +24,7 @@ if ! bun run typecheck; then
   exit 1
 fi
 
-echo "== tests"
+echo "== tests (queues behind any other full bun test on this host, see bunfig.toml)"
 if ! bun test; then
   echo "REFUSING TO RESTART: tests failed" >&2
   exit 1

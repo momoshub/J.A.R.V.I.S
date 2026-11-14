@@ -98,11 +98,13 @@ describe("note", () => {
     expect(out).toContain("admin");
   });
 
-  test("the floor is a setting, like read's", async () => {
+  test("who may publish is a grant now: `note access` says so and sets nothing", async () => {
     const d = deps();
     d.settings?.set(SETTING_KEYS.notionParent, "https://notion.so/team");
-    await run(d, "note access executer");
-    expect(d.settings?.get(SETTING_KEYS.noteMinRole)).toBe("executer");
+    const out = await run(d, "note access");
+    expect(out).toContain("command:note");
+    expect(out).toContain("role grant|revoke");
+    expect(d.settings?.get(SETTING_KEYS.noteMinRole)).toBeUndefined();
   });
 
   test("it is a tool, so the brain gets the url back instead of posting it", async () => {

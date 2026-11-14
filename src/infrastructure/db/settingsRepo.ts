@@ -11,6 +11,12 @@ export const SETTING_KEYS = {
   thinkingLabel: "thinking_label",
   thinkingDoneLabel: "thinking_done_label",
   disabledCommands: "disabled_commands",
+  /** MCP servers named by hand beyond the databases, Notion and Datadog; each is a `mcp:<server>` grant. Comma separated. */
+  roleMcpServers: "role_mcp_servers",
+  /** JSON list of the permission ids already seeded into the built-in roles, so a new one is seeded once and a revoke sticks. */
+  rolesSeededPerms: "roles_seeded_perms",
+  /** The role a person gets when approved from an access request. Empty = the lowest-ranked role. */
+  defaultRole: "default_role",
   executerTools: "executer_tools",
   /** Ordered csv of observability backends, e.g. `grafana,datadog`. */
   logSources: "log_sources",

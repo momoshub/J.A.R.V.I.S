@@ -1,23 +1,18 @@
 import { Form, useActionData, useLoaderData } from "react-router";
-import { get, post, type AllowedUser, type RoleView, type RolesView } from "../api.ts";
+import { get, post, type AllowedUser, type PermissionInfo, type RoleView, type RolesView } from "../api.ts";
 import { guard } from "../routes/guard.ts";
 import { Banner } from "../ui/feedback.tsx";
 
 /**
- * Roles - switch each role on or off, take commands, tools and MCP servers away
- * from it, and put people in it. The bot enforces from the same rows, so a
- * save here applies to the next message without a restart. A policy only ever
- * removes: what a role may do at most is still decided in code.
+ * Roles - the owner's page. Only the owner role is fixed (always on, holds every permission, cannot
+ * be restricted or deleted); every other role is data: a name, a rank, and the permissions it GRANTS.
+ * Tick what a role may do - each command, each GitHub App action, tool tiers, MCP servers - create
+ * your own, rename or delete one (refused while people hold it), and put people in a role. The bot
+ * enforces from the same rows, so a save applies to the next message without a restart.
  */
 export const loader = async () => {
   const [roles, users] = await Promise.all([get<RolesView>("roles"), get<AllowedUser[]>("users")]);
   return { roles, users };
-};
-
-/** Unchecked boxes are what get denied: the form posts what stays allowed. */
-const denied = (offered: string[], allowed: FormDataEntryValue[]): string[] => {
-  const keep = new Set(allowed.map(String));
-  return offered.filter((x) => !keep.has(x));
 };
 
 const lines = (v: FormDataEntryValue | null): string[] =>
@@ -33,69 +28,95 @@ export const action = guard(async ({ request }) => {
     await post("roles/assign", { slackId: fd.get("slackId"), role: fd.get("role") });
   } else if (intent === "executerTools") {
     await post("roles", { executerTools: fd.get("executerTools") });
+  } else if (intent === "create") {
+    await post("roles/save", {
+      name: fd.get("name"),
+      from: fd.get("from"),
+      create: true,
+      description: fd.get("description"),
+      rank: fd.get("rank") ?? "",
+      enabled: true,
+    });
+  } else if (intent === "delete") {
+    await post("roles/delete", { name: fd.get("name") });
+  } else if (intent === "rename") {
+    await post("roles/rename", { from: fd.get("name"), to: fd.get("to") });
+  } else if (intent === "default") {
+    await post("roles/default", { name: fd.get("name") });
+  } else if (intent === "mcpServer") {
+    await post("roles/mcp-server", { server: fd.get("server") });
   } else {
-    const offered = (name: string) => lines(fd.get(`offered-${name}`));
-    await post("roles/policy", {
-      role: fd.get("role"),
+    await post("roles/save", {
+      name: fd.get("name"),
+      rank: fd.get("rank"),
+      description: fd.get("description"),
       enabled: fd.get("enabled") === "on",
-      deniedCommands: denied(offered("commands"), fd.getAll("command")),
-      deniedTools: [...denied(offered("tools"), fd.getAll("tool")), ...lines(fd.get("extraTools"))],
-      deniedMcpServers: [...denied(offered("mcp"), fd.getAll("mcp")), ...lines(fd.get("extraMcp"))],
+      grants: fd.getAll("grant").map(String),
+      deniedTools: lines(fd.get("deniedTools")),
     });
   }
   return { ok: true };
 });
 
-const ROLE_HELP: Record<string, string> = {
-  owner: "full control - always on, never restricted",
-  admin: "manages users; sandboxed like an executer (code tools, no arbitrary shell)",
-  executer: "sandboxed: assigned tools, read-only databases, can open PRs",
-  pal: "sandboxed read-only tools + review",
-};
-
-function Checks({
-  name,
-  offered,
-  items,
-  deniedItems,
-  disabled,
-}: {
-  name: string;
-  /** Hidden field listing every box shown, so the action can tell unticked from absent. */
-  offered: string;
-  items: string[];
-  deniedItems: string[];
-  disabled: boolean;
-}) {
-  const off = new Set(deniedItems);
-  if (items.length === 0) return <p className="muted">Nothing to deny.</p>;
+function Grants({ role, catalogue, disabled }: { role: RoleView; catalogue: PermissionInfo[]; disabled: boolean }) {
+  const held = new Set(role.grants);
+  const groups = [...new Set(catalogue.map((p) => p.group))];
+  // A permission that no longer exists (a removed command) stays tickable until it is unticked.
+  const stale = role.grants.filter((g) => !catalogue.some((p) => p.id === g));
   return (
-    <div className="checks">
-      <input type="hidden" name={`offered-${offered}`} value={items.join(",")} />
-      {items.map((item) => (
-        <label className="check" key={item}>
-          <input type="checkbox" name={name} value={item} defaultChecked={!off.has(item)} disabled={disabled} />
-          <code>{item}</code>
-        </label>
-      ))}
-    </div>
+    <>
+      {groups.map((group) => {
+        const items = catalogue.filter((p) => p.group === group);
+        const on = items.filter((p) => held.has(p.id)).length;
+        return (
+          <details key={group} open={group !== "Commands"}>
+            <summary>
+              <b>{group}</b> <span className="muted">{on} of {items.length} granted</span>
+            </summary>
+            <div className="checks">
+              {items.map((p) => (
+                <label className="check" key={p.id} title={p.label}>
+                  <input type="checkbox" name="grant" value={p.id} defaultChecked={held.has(p.id)} disabled={disabled} />
+                  <code>{group === "Commands" ? p.id.replace(/^command:/, "") : p.id}</code>
+                </label>
+              ))}
+            </div>
+          </details>
+        );
+      })}
+      {stale.length > 0 && (
+        <details>
+          <summary>
+            <b>No longer offered</b> <span className="muted">{stale.length} held</span>
+          </summary>
+          <div className="checks">
+            {stale.map((id) => (
+              <label className="check" key={id}>
+                <input type="checkbox" name="grant" value={id} defaultChecked disabled={disabled} />
+                <code>{id}</code>
+              </label>
+            ))}
+          </div>
+        </details>
+      )}
+    </>
   );
 }
 
 function RoleCard({ role, view, users }: { role: RoleView; view: RolesView; users: AllowedUser[] }) {
   const locked = role.locked || !view.editable;
-  const extraTools = role.deniedTools.filter((t) => !view.tools.includes(t));
-  const extraMcp = role.deniedMcpServers.filter((s) => !view.mcpServers.includes(s));
-  const others = users.filter((u) => u.role !== role.role && u.role !== "owner");
+  const others = users.filter((u) => u.role !== role.name && u.role !== "owner");
+  const isDefault = view.defaultRole === role.name;
   return (
     <div className={`card${role.enabled ? "" : " off"}`}>
       <div className="card-body">
         <div className="role-head">
           <h2 style={{ margin: "12px 0 0" }}>
-            <span className={`badge ${role.role}`}>{role.role}</span>{" "}
+            <span className={`badge ${role.name}`}>{role.name}</span>{" "}
+            {role.seed && <span className="pill">built in</span>} {isDefault && <span className="pill">default</span>}{" "}
             {!role.enabled && <span className="pill">switched off</span>}
           </h2>
-          <span className="muted">{ROLE_HELP[role.role]}</span>
+          <span className="muted">{role.description || (role.locked ? "full control - always on, holds everything" : "")}</span>
         </div>
 
         <h3>Members</h3>
@@ -108,9 +129,9 @@ function RoleCard({ role, view, users }: { role: RoleView; view: RolesView; user
         {!role.locked && others.length > 0 && (
           <Form method="post" className="row">
             <input type="hidden" name="intent" value="assign" />
-            <input type="hidden" name="role" value={role.role} />
+            <input type="hidden" name="role" value={role.name} />
             <select name="slackId" required defaultValue="">
-              <option value="" disabled>add someone to {role.role}…</option>
+              <option value="" disabled>add someone to {role.name}…</option>
               {others.map((u) => (
                 <option key={u.slackId} value={u.slackId}>{`${u.name || "unknown"} (${u.slackId}) - now ${u.role}`}</option>
               ))}
@@ -119,44 +140,71 @@ function RoleCard({ role, view, users }: { role: RoleView; view: RolesView; user
           </Form>
         )}
 
-        <Form method="post">
-          <input type="hidden" name="intent" value="policy" />
-          <input type="hidden" name="role" value={role.role} />
-          <h3>Status</h3>
-          <label className="check">
-            <input type="checkbox" name="enabled" defaultChecked={role.enabled} disabled={locked} />
-            on - a switched-off role grants nothing: its members are treated as not on the allowlist
-          </label>
+        {role.locked ? (
+          <p className="muted">
+            The owner role cannot be switched off, restricted, renamed or deleted, and managing roles is its alone: no other role can be granted it.
+          </p>
+        ) : (
+          <>
+            <Form method="post">
+              <input type="hidden" name="intent" value="policy" />
+              <input type="hidden" name="name" value={role.name} />
+              <h3>Role</h3>
+              <div className="row">
+                <label>
+                  <span>Rank - higher outranks lower; a role only manages people below its own</span>
+                  <input name="rank" type="number" min={0} max={10000} defaultValue={role.rank ?? 0} disabled={locked} />
+                </label>
+                <label style={{ flex: 1 }}>
+                  <span>Description</span>
+                  <input name="description" defaultValue={role.description} disabled={locked} />
+                </label>
+              </div>
+              <label className="check">
+                <input type="checkbox" name="enabled" defaultChecked={role.enabled} disabled={locked} />
+                on - a switched-off role grants nothing: its members are treated as not on the allowlist
+              </label>
 
-          <h3>Commands (unticked = denied)</h3>
-          <Checks name="command" offered="commands" items={role.commands} deniedItems={role.deniedCommands} disabled={locked} />
+              <h3>Grants</h3>
+              <p className="muted">
+                What this role may do. A role with <code>tools:full-access</code> runs chat turns with any tool; without it the sandbox
+                applies (<code>tools:code</code> adds code edits, commits and PRs). Servers it holds no <code>mcp:</code> grant for
+                are denied by name.
+              </p>
+              <Grants role={role} catalogue={view.catalogue} disabled={locked} />
 
-          <h3>Tools (unticked = denied)</h3>
-          <Checks name="tool" offered="tools" items={view.tools} deniedItems={role.deniedTools} disabled={locked} />
-          {!locked && (
-            <label style={{ marginTop: 8 }}>
-              <span>Other denied tool patterns, one per line - e.g. <code>Bash(rm:*)</code></span>
-              <textarea name="extraTools" rows={2} spellCheck={false} defaultValue={extraTools.join("\n")} />
-            </label>
-          )}
+              <h3>Extra denied tools</h3>
+              <label>
+                <span>CLI tool patterns this role is refused whatever it is granted, one per line - e.g. <code>Bash(rm:*)</code></span>
+                <textarea name="deniedTools" rows={2} spellCheck={false} defaultValue={role.deniedTools.join("\n")} disabled={locked} />
+              </label>
+              <div className="row"><button type="submit" disabled={locked}>save {role.name}</button></div>
+            </Form>
 
-          <h3>MCP servers (unticked = denied)</h3>
-          <Checks name="mcp" offered="mcp" items={view.mcpServers} deniedItems={role.deniedMcpServers} disabled={locked} />
-          {!locked && (
-            <label style={{ marginTop: 8 }}>
-              <span>Other MCP servers to deny, one per line</span>
-              <textarea name="extraMcp" rows={2} spellCheck={false} defaultValue={extraMcp.join("\n")} />
-            </label>
-          )}
-
-          {locked ? (
-            <p className="muted">
-              {role.locked ? "The owner role cannot be switched off or restricted." : "Role policies are not wired up on this instance."}
-            </p>
-          ) : (
-            <div className="row"><button type="submit">save {role.role}</button></div>
-          )}
-        </Form>
+            <div className="row">
+              <Form method="post" className="row">
+                <input type="hidden" name="intent" value="rename" />
+                <input type="hidden" name="name" value={role.name} />
+                <input name="to" placeholder="new name" required style={{ width: 140 }} />
+                <button type="submit" className="ghost">rename</button>
+              </Form>
+              {!isDefault && (
+                <Form method="post">
+                  <input type="hidden" name="intent" value="default" />
+                  <input type="hidden" name="name" value={role.name} />
+                  <button type="submit" className="ghost" title="the role an approved access request gets">make default</button>
+                </Form>
+              )}
+              <Form method="post">
+                <input type="hidden" name="intent" value="delete" />
+                <input type="hidden" name="name" value={role.name} />
+                <button type="submit" className="danger" disabled={role.members.length > 0} title={role.members.length > 0 ? "move its members first" : ""}>
+                  delete
+                </button>
+              </Form>
+            </div>
+          </>
+        )}
       </div>
     </div>
   );
@@ -169,24 +217,57 @@ export function RolesPage() {
     <>
       <h1>Roles</h1>
       <p className="muted">
-        Roles rank <code>pal</code> &lt; <code>executer</code> &lt; <code>admin</code> &lt; <code>owner</code>, and what each may
-        do at most is fixed in code. Here you can only take away: switch a role off, or untick what it may not use. Commands above a
-        role's rank are not listed for it. Saves apply to the next message - no restart.
+        Only <code>owner</code> is fixed in code. Every other role is data: tick the permissions it grants, create your own, and put
+        people in it. <code>pal</code>, <code>executer</code> and <code>admin</code> are just the roles this instance started with, with
+        the grants the code used to hard-wire. Saves apply to the next message - no restart.
       </p>
       <Banner error={action?.error} />
+
+      {roles.editable && (
+        <div className="card">
+          <div className="card-body">
+            <h2 style={{ marginTop: 0 }}>New role</h2>
+            <Form method="post" className="row">
+              <input type="hidden" name="intent" value="create" />
+              <input name="name" placeholder="name, e.g. qa" required pattern="[a-z][a-z0-9_-]{0,31}" style={{ width: 160 }} />
+              <select name="from" defaultValue="">
+                <option value="">start with nothing</option>
+                {roles.roles.filter((r) => !r.locked).map((r) => (
+                  <option key={r.name} value={r.name}>copy from {r.name}</option>
+                ))}
+              </select>
+              <input name="rank" type="number" min={0} max={10000} placeholder="rank" style={{ width: 90 }} />
+              <input name="description" placeholder="description" style={{ flex: 1, minWidth: 160 }} />
+              <button type="submit">create</button>
+            </Form>
+          </div>
+        </div>
+      )}
+
       {roles.roles.map((r) => (
-        <RoleCard key={r.role} role={r} view={roles} users={users} />
+        <RoleCard key={r.name} role={r} view={roles} users={users} />
       ))}
 
-      <h2>Executer tools</h2>
+      <h2>MCP servers</h2>
       <p className="muted">
-        Tools the <span className="badge executer">executer</span> role is pre-approved for (one per line or comma-separated).
-        Blank falls back to the read-only pal set. e.g. <code>Read</code>, <code>WebSearch</code>, <code>Bash(gh pr view:*)</code>.
+        Servers a role can be granted: {roles.mcpServers.map((s) => <code key={s}>{s} </code>)}. Name one the host runs that is not
+        listed (it is then denied to every role without the grant).
+      </p>
+      <Form method="post" className="row">
+        <input type="hidden" name="intent" value="mcpServer" />
+        <input name="server" placeholder="server name as in ~/.claude.json" required />
+        <button type="submit" className="ghost">add server</button>
+      </Form>
+
+      <h2>Code-tier tools</h2>
+      <p className="muted">
+        Tools every role holding <code>tools:code</code> (the executer, as seeded) is pre-approved for, one per line or comma-separated.
+        Blank falls back to the read-only set. e.g. <code>Read</code>, <code>WebSearch</code>, <code>Bash(gh pr view:*)</code>.
       </p>
       <Form method="post" className="stack">
         <input type="hidden" name="intent" value="executerTools" />
         <textarea name="executerTools" defaultValue={roles.executerTools} rows={6} spellCheck={false} />
-        <div className="row"><button type="submit">save executer tools</button></div>
+        <div className="row"><button type="submit">save code-tier tools</button></div>
       </Form>
     </>
   );

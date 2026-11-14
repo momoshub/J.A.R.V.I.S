@@ -2,7 +2,8 @@
 import { helpText } from "../../domain/cloudwatch.ts";
 import { SETTING_KEYS } from "../../infrastructure/db/settingsRepo.ts";
 import { askCloudwatch } from "../cloudwatch.ts";
-import { RANK, type CommandDef } from "./shared.ts";
+import { PERM } from "../../domain/permissions.ts";
+import { type CommandDef } from "./shared.ts";
 
 export const CLOUDWATCH_COMMANDS: readonly CommandDef[] = [
   {
@@ -23,7 +24,7 @@ export const CLOUDWATCH_COMMANDS: readonly CommandDef[] = [
         const group = args[1];
         const current = deps.settings?.get(SETTING_KEYS.cloudwatchGroup) || "none";
         if (!group) return `The default log group is ${current === "none" ? "not set" : `\`${current}\``}. \`${prefix} cloudwatch default /log/group\` sets it, \`reset\` clears it.`;
-        if (RANK[actor.role] < RANK.admin) return "Only admins can change the default log group.";
+        if (!ctx.can(PERM.manageSettings)) return "You are not allowed to change the default log group.";
         if (group === "reset") {
           deps.settings?.set(SETTING_KEYS.cloudwatchGroup, "");
           return "Cleared the default log group: every query must name one with `--group`.";
@@ -37,7 +38,7 @@ export const CLOUDWATCH_COMMANDS: readonly CommandDef[] = [
 
       if (!deps.cloudwatch) return "CloudWatch queries are not wired up on this instance.";
       return askCloudwatch(
-        deps.cloudwatch,
+        { ...deps.cloudwatch, roles: deps.cloudwatch.roles ?? ctx.roles },
         { actor, channelId: ctx.channelId, threadTs: ctx.threadTs, reply: ctx.reply, usage: `${prefix} cloudwatch [--group /log/group] [--last 15m] <insights query>` },
         args,
       );

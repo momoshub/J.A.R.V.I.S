@@ -1,11 +1,14 @@
 /**
  * GitHub App actions - what a turn may ask the app to do on GitHub, as pure
  * data. Nothing here talks to GitHub: `planAction` validates one request and
- * turns it into the REST calls that carry it out, `mayActAsApp` is the role
- * gate. The app's identity is stronger than any one person's (it can be
- * installed on orgs the caller has no access to), so every action is admin+ and an
- * executer gets a short list, and the gate lives next to the actions, not scattered.
+ * turns it into the REST calls that carry it out, `permissionFor` names the
+ * permission a role must hold for it. The app's identity is stronger than any
+ * one person's (it can be installed on orgs the caller has no access to), so
+ * every action is its own grant (`github:<action>`, see `permissions.ts`) and
+ * the gate lives next to the actions, not scattered.
  */
+import { GITHUB_PERMISSION_ACTIONS, githubPerm } from "./permissions.ts";
+import { can, roleNamesWith, type RoleBook } from "./roles.ts";
 import type { UserRole } from "./types.ts";
 
 export const ACTIONS = [
@@ -37,31 +40,24 @@ export type ActionName = (typeof ACTIONS)[number];
 export const REVIEW_EVENTS = ["APPROVE", "REQUEST_CHANGES", "COMMENT"] as const;
 export const MERGE_METHODS = ["merge", "squash", "rebase"] as const;
 
-/** Admin and owner may run every action as the app. */
-export const isAppAdmin = (role: UserRole): boolean => role === "admin" || role === "owner";
+/** What `git-auth` is for: a `git` run or a `push` (both mint the same installation token). */
+export type GitPurpose = "git" | "push";
 
-/**
- * What an executer may do as the app: commit, open and edit a PR, comment, label it
- * and ask for reviewers. Reviews, merges, close/reopen and label removal stay admin+,
- * and an executer's `git-auth` carries the bot identity only, no token, so it can
- * commit as the app but never push (or force-push) with it.
- */
-export const EXECUTER_ACTIONS: readonly ActionName[] = ["git-auth", "pr-create", "pr-edit", "comment", "labels-add", "reviewers-request"];
+/** The permission a request needs. `ticket-renew` needs none of its own (see `mayActAsApp`). */
+export const permissionFor = (action: ActionName, purpose: GitPurpose = "git"): string | undefined =>
+  action === "ticket-renew" ? undefined : action === "git-auth" ? githubPerm(purpose) : githubPerm(action);
 
-/**
- * The role gate. Without an action it answers "may this role use the app at all"
- * (a request that does not plan is refused for that reason, not this one).
- */
-export const mayActAsApp = (role: UserRole, action?: ActionName): boolean =>
-  isAppAdmin(role) || (role === "executer" && (action === undefined || EXECUTER_ACTIONS.includes(action)));
+/** Does this role hold ANY github grant? What a worker's self-renewal and a ticket's minter must keep. */
+export const mayActAsApp = (book: RoleBook, role: UserRole): boolean =>
+  GITHUB_PERMISSION_ACTIONS.some((a) => can(book, role, githubPerm(a)));
 
-export const executerDenied = (action: string): string =>
-  `an executer may act as the app only for ${EXECUTER_ACTIONS.filter((a) => a !== "git-auth").join(", ")} and commits - ${action} needs an admin or the owner`;
-
-export const WORKER_MINTER_DENIED = "a worker ticket only works while whoever minted it is an admin or the owner";
-
-export const DENIED_MESSAGE =
-  "acting on GitHub as the app needs the executer role or above - ask an executer, an admin or the owner to do this, or use your own token";
+/** What a refused caller is told: which grant it lacks and who holds it. */
+export const deniedMessage = (book: RoleBook, role: UserRole, action: ActionName, purpose: GitPurpose = "git"): string => {
+  const perm = permissionFor(action, purpose);
+  return perm
+    ? `the *${role}* role may not act on GitHub as the app (${action === "git-auth" ? purpose : action}: needs \`${perm}\`, held by ${roleNamesWith(book, perm)}) - ask one of them, or use your own token`
+    : `the *${role}* role may not act on GitHub as the app - ask someone who may, or use your own token`;
+};
 
 /** One REST call. */
 export type GithubCall = { method: "GET" | "POST" | "PATCH" | "PUT" | "DELETE"; path: string; body?: unknown };
@@ -81,7 +77,12 @@ export type ActionRequest = {
   reviewers?: unknown;
   /** `ticket-renew` only: how long to extend for, like `3h`. */
   ttl?: unknown;
+  /** `git-auth` only: `push` when the helper is about to push (default `git`). */
+  purpose?: unknown;
 };
+
+/** `git-auth`'s purpose from a request: only `push` is distinct, anything else is `git`. */
+export const purposeOf = (req: ActionRequest): GitPurpose => (req.purpose === "push" ? "push" : "git");
 
 export type Plan = { ok: true; action: ActionName; repo: string; calls: GithubCall[] } | { ok: false; error: string };
 

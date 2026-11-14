@@ -21,6 +21,9 @@ import type { ThreadQueue } from "../threadQueue.ts";
 import type { ThreadSessionRepo } from "../../infrastructure/db/threadSessionRepo.ts";
 import type { ThreadBriefRepo } from "../../infrastructure/db/threadBriefRepo.ts";
 import type { AllowedUser, PromptContext, UserRole } from "../../domain/types.ts";
+import type { RoleBook } from "../../domain/roles.ts";
+import type { PermissionInfo } from "../../domain/permissions.ts";
+import type { RoleRepo } from "../../infrastructure/db/roleRepo.ts";
 import { type ToolPolicy } from "../../domain/toolPolicy.ts";
 import type { BackgroundAgentsPort, Clock, LlmPort } from "../ports.ts";
 import type { SlackAdminPort } from "../slackAdmin.ts";
@@ -82,10 +85,16 @@ export type CommandDeps = {
   /** Names of disabled commands (managed from the dashboard). */
   disabledCommands?: () => ReadonlySet<string>;
   /**
-   * Commands a role is denied by its dashboard policy, on top of `minRole`.
-   * Absent means none. The owner is never denied anything (`rolePolicy.ts`).
+   * The stored roles: what each is granted. Every role check in a command is
+   * `ctx.can(permission)`. Absent means the seeded defaults (`seededBook`).
    */
-  deniedCommands?: (role: UserRole) => ReadonlySet<string>;
+  roles?: RoleBook;
+  /** Fixed scratch directory of the sandboxed tier; a side question (`btw`) runs there. */
+  sandboxCwd?: string;
+  /** The role store, for `role` and for renames; absent where nothing can edit roles (a test). */
+  roleRepo?: RoleRepo;
+  /** Every grantable permission (the registry plus the MCP servers the host knows); absent means the built-in ones. */
+  roleCatalogue?: () => readonly PermissionInfo[];
   /**
    * The allowlist WITHOUT role policies applied. `users` hides members of a
    * switched-off role, which is right for every actor check - but the commands
@@ -221,6 +230,12 @@ export type Context = {
   fromBrainRun: boolean;
   /** Names of the trivial commands. Handed in so a group never imports the registry back. */
   trivialCommands: readonly string[];
+  /** The stored roles (or the seeded defaults) this command is judged against. */
+  roles: RoleBook;
+  /** Every permission a role can be granted, for the `role` command. */
+  catalogue: readonly PermissionInfo[];
+  /** Does the caller's role hold this permission? The one question every role check asks. */
+  can: (permission: string) => boolean;
 };
 
 /** A github PR url, for pulling the target out of a tool-call title. */
@@ -271,14 +286,16 @@ export const adapterDepsOf = (deps: CommandDeps): AdapterDeps | undefined =>
       }
     : undefined;
 
-export const RANK: Record<UserRole, number> = { pal: 0, executer: 1, admin: 2, owner: 3 };
 export const LEADING_MENTION = /^<@[A-Z0-9]+(?::[^>]+|\|[^>]+)?>\s*/;
 
 /** One definition of what a mentioned user looks like, shared with the transport. */
 export const slackIdOf = (token?: string): string | undefined => mentionedId(token);
 
-export const roleOf = (token?: string): UserRole | undefined =>
-  token === "owner" || token === "admin" || token === "executer" || token === "pal" ? token : undefined;
+/** A role name typed in a command, if such a role exists. */
+export const roleOf = (book: RoleBook, token?: string): UserRole | undefined => {
+  const t = (token ?? "").trim().toLowerCase();
+  return t && book.get(t) ? t : undefined;
+};
 
 /**
  * `24h`, `7d`, `90m`, or a bare number of hours. Undefined when it is not a

@@ -108,6 +108,7 @@ export const migrate = (db: Database): void => {
   migrateThreadBriefs(db);
   migrateLearningStatus(db);
   migrateLoopOrigin(db);
+  migrateRoles37(db);
 };
 
 /**
@@ -212,6 +213,36 @@ const migrateThreadBriefs = (db: Database): void => {
     user_version: 0,
   };
   if (user_version < 34) db.exec("PRAGMA user_version = 34;");
+};
+
+/**
+ * Migration v37: roles as data.
+ *
+ * One row per role except `owner`, which is code. `grants` is a JSON array of
+ * permission ids (`domain/permissions.ts`), `denied_tools` extra CLI deny patterns,
+ * `seed` the built-in a row was seeded as (it is how a permission added later finds
+ * the roles to seed it into, whatever they were renamed to). The rows are filled
+ * once at boot by `seedRoles` (application/roles.ts), which also folds the old
+ * `role_policies` deny lists in; that table stays only as the source of that fold.
+ */
+const migrateRoles37 = (db: Database): void => {
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS roles (
+      name         TEXT PRIMARY KEY,
+      rank         INTEGER NOT NULL DEFAULT 0,
+      description  TEXT NOT NULL DEFAULT '',
+      enabled      INTEGER NOT NULL DEFAULT 1,
+      grants       TEXT NOT NULL DEFAULT '[]',
+      denied_tools TEXT NOT NULL DEFAULT '[]',
+      seed         TEXT,
+      updated_by   TEXT NOT NULL DEFAULT '',
+      updated_at   INTEGER NOT NULL DEFAULT 0
+    );
+  `);
+  const { user_version } = db.query<{ user_version: number }, []>("PRAGMA user_version").get() ?? {
+    user_version: 0,
+  };
+  if (user_version < 37) db.exec("PRAGMA user_version = 37;");
 };
 
 /**

@@ -70,8 +70,9 @@ export type CommandMenu = {
   readonly omitted: number;
 };
 
-const RANK: Record<UserRole, number> = { pal: 0, executer: 1, admin: 2, owner: 3 };
-const GROUP_LABEL: Record<UserRole, string> = {
+/** A command is grouped under the role it is seeded open to (`minRole`); that is a heading, not a gate. */
+const GROUP_ORDER: readonly string[] = ["pal", "executer", "admin", "owner"];
+const GROUP_LABEL: Readonly<Record<string, string>> = {
   pal: "Anyone",
   executer: "Executers",
   admin: "Admins",
@@ -105,16 +106,18 @@ export const needsArguments = (usage: string): boolean => {
 /** The menu one role sees, newest-first by nothing - registry order is meaningful. */
 export const buildCommandMenu = (
   commands: readonly MenuCommand[],
-  role: UserRole,
+  /** Whether the asking role may run a command (its grant), by name. */
+  allowed: (command: string) => boolean,
   /** Never offered as a menu entry: it is the thing that opened the menu. */
   exclude: readonly string[] = ["help"],
 ): CommandMenu => {
-  const available = commands.filter((c) => RANK[role] >= RANK[c.minRole] && !exclude.includes(c.name));
+  const available = commands.filter((c) => allowed(c.name) && !exclude.includes(c.name));
 
   const groups: MenuGroup[] = [];
   let used = 0;
   let omitted = 0;
-  for (const tier of ["pal", "executer", "admin", "owner"] as const) {
+  const tiers = [...new Set([...GROUP_ORDER, ...available.map((c) => c.minRole)])];
+  for (const tier of tiers) {
     const inTier = available.filter((c) => c.minRole === tier);
     if (inTier.length === 0) continue;
     const room = Math.max(0, MENU_OPTION_MAX - used);
@@ -123,7 +126,7 @@ export const buildCommandMenu = (
     if (taken.length === 0) continue;
     used += taken.length;
     groups.push({
-      label: GROUP_LABEL[tier],
+      label: GROUP_LABEL[tier] ?? `${tier.charAt(0).toUpperCase()}${tier.slice(1)}`,
       options: taken.map((c) => ({
         label: clip(c.usage ? `${c.name} ${c.usage}` : c.name),
         value: c.name,

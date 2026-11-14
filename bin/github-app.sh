@@ -113,6 +113,11 @@ if [ "$1" = git ] || [ "$1" = push ]; then
       echo "git needs git arguments after the directory, e.g. -- commit -m msg" >&2
       exit 2
     fi
+    # Pushing is its own grant (github:push): the push subcommand asks for it, so a plain `git` run does not smuggle one in.
+    if [ "$1" = push ]; then
+      echo "use github-app.sh push <owner/repo> <dir> <branch> to push (it needs the push grant)" >&2
+      exit 2
+    fi
   else
     if [ "$#" -lt 1 ] || [ "$#" -gt 2 ]; then
       echo "usage: github-app.sh push <owner/repo> <local-repo-dir> <branch> [--force-with-lease]" >&2
@@ -150,8 +155,8 @@ if [ "$1" = git ] || [ "$1" = push ]; then
     set -- "$@" "$remote" "refs/heads/$branch:refs/heads/$branch"
   fi
 
-  auth_payload=$(TICKET="$ticket" REPO="$repo" python3 -c 'import json,os
-print(json.dumps({"ticket": os.environ["TICKET"], "action": "git-auth", "repo": os.environ["REPO"]}))') || exit 2
+  auth_payload=$(TICKET="$ticket" REPO="$repo" MODE="$mode" python3 -c 'import json,os
+print(json.dumps({"ticket": os.environ["TICKET"], "action": "git-auth", "repo": os.environ["REPO"], "purpose": os.environ["MODE"]}))') || exit 2
   auth_response=$(curl -s -X POST -H "Content-Type: application/json" -d "$auth_payload" "$endpoint")
   # Line 1 name, 2 email, 3 the Authorization header value. Never printed.
   auth=$(printf '%s' "$auth_response" | ENDPOINT="$endpoint" python3 -c 'import base64,json,os,sys

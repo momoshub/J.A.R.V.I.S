@@ -1,5 +1,5 @@
 /**
- * Role policies applied where the bot reads its allowlist.
+ * A switched-off role applied where the bot reads its allowlist.
  *
  * Every role check in the bot - chat access, command gates, buttons, the run
  * bridge, GitHub calls - starts from `users.get`. Wrapping the repo once, at
@@ -8,13 +8,14 @@
  * dashboard keeps the raw repo, since it has to see and edit those members.
  */
 import type { UserRole } from "../domain/types.ts";
-import { enforcedUser, isRoleEnabled, type RolePolicy } from "../domain/rolePolicy.ts";
+import type { RoleBook } from "../domain/roles.ts";
+import { enforcedUser, isRoleEnabled } from "../domain/rolePolicy.ts";
 import type { UserRepo } from "../infrastructure/db/userRepo.ts";
 
-export const enforceRolePolicies = (users: UserRepo, policyOf: (role: UserRole) => RolePolicy): UserRepo => ({
+export const enforceRolePolicies = (users: UserRepo, book: RoleBook): UserRepo => ({
   ...users,
-  get: (slackId) => enforcedUser(users.get(slackId), policyOf),
-  list: () => users.list().filter((u) => isRoleEnabled(policyOf(u.role))),
+  get: (slackId) => enforcedUser(users.get(slackId), book),
+  list: () => users.list().filter((u) => isRoleEnabled(book, u.role)),
 });
 
 /**
@@ -22,8 +23,8 @@ export const enforceRolePolicies = (users: UserRepo, policyOf: (role: UserRole) 
  * so plainly instead of being raised to the owner as a stranger asking in.
  */
 export const disabledRoleOf =
-  (users: UserRepo, policyOf: (role: UserRole) => RolePolicy) =>
+  (users: UserRepo, book: RoleBook) =>
   (slackId: string): UserRole | undefined => {
     const user = users.get(slackId);
-    return user && !isRoleEnabled(policyOf(user.role)) ? user.role : undefined;
+    return user && !isRoleEnabled(book, user.role) ? user.role : undefined;
   };

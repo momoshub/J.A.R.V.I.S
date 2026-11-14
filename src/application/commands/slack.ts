@@ -10,12 +10,10 @@ import { tellPrompt } from "../../domain/tellPrompt.ts";
 import { BRIEF_MAX_STORED_CHARS, cleanBriefText } from "../../domain/threadBrief.ts";
 import { frontKeyOf } from "../../domain/workflowFront.ts";
 import { workerStateOf } from "../workflowFront.ts";
-import type { UserRole } from "../../domain/types.ts";
-import { type CommandDef, RANK, slackIdOf } from "./shared.ts";
+import { PERM } from "../../domain/permissions.ts";
+import { can } from "../../domain/roles.ts";
+import { type CommandDef, slackIdOf } from "./shared.ts";
 import { logAndIgnore } from "../ignoredError.ts";
-
-/** Roles an allowance applies to; mirrors LIMITED_ROLES without the import cycle. */
-const LIMITED: readonly UserRole[] = ["pal"];
 
 export const SLACK_COMMANDS: readonly CommandDef[] = [
   {
@@ -70,7 +68,7 @@ Up to ${BOMB_SIZE} reactions; no category means *${DEFAULT_CATEGORY}*.`;
         const target = deps.users.get(id);
         if (!target) return "I do not know that user.";
         const allowance = allowanceFor(deps as CommandLimitDeps, target, trivialCommands);
-        if (!LIMITED.includes(target.role)) return `<@${id}> is *${target.role}* - no allowance applies.`;
+        if (can(ctx.roles, target.role, PERM.unlimited)) return `<@${id}> is *${target.role}* - no allowance applies.`;
         return `<@${id}>: ${allowance.used}/${allowance.limit} commands used in the last ${window}h.`;
       };
 
@@ -78,13 +76,13 @@ Up to ${BOMB_SIZE} reactions; no category means *${DEFAULT_CATEGORY}*.`;
       // No target: your own standing.
       if (!slackId) return report(actor.slackId);
       if (args.length === 1) {
-        if (RANK[actor.role] < RANK.admin && slackId !== actor.slackId) {
-          return "Only admins can look up someone else's allowance.";
+        if (!ctx.can(PERM.manageSettings) && slackId !== actor.slackId) {
+          return "You are not allowed to look up someone else's allowance.";
         }
         return report(slackId);
       }
 
-      if (RANK[actor.role] < RANK.admin) return "Only admins can change an allowance.";
+      if (!ctx.can(PERM.manageSettings)) return "You are not allowed to change an allowance.";
       const raw = (args[1] ?? "").toLowerCase();
       if (raw === "default" || raw === "reset") {
         setLimit(deps as CommandLimitDeps, slackId, undefined);

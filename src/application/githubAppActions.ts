@@ -2,8 +2,8 @@
  * Acting on GitHub as the app, for a turn.
  *
  * The turn never names who it is: its ticket does, and the ticket resolves to
- * the Slack user the turn runs as. An admin or the owner may use every action of the
- * app's identity, an executer the `EXECUTER_ACTIONS` (commit, no push), every attempt (allowed or refused) is written to the command
+ * the Slack user the turn runs as. Only an admin or the owner may use the
+ * app's identity, every attempt (allowed or refused) is written to the command
  * log, and the app's private key stays in the bot - a turn gets GitHub's JSON
  * back and nothing else. The installation is looked up for the target repo's
  * own owner, so an app installed on several orgs reaches each of them; GitHub's
@@ -11,14 +11,16 @@
  */
 import {
   type ActionRequest,
-  DENIED_MESSAGE,
-  executerDenied,
-  isAppAdmin,
+  deniedMessage,
   mayActAsApp,
+  permissionFor,
   planAction,
+  purposeOf,
   summarize,
-  WORKER_MINTER_DENIED,
 } from "../domain/githubAppAction.ts";
+import { can, type RoleBook } from "../domain/roles.ts";
+import { commandPerm, githubPerm } from "../domain/permissions.ts";
+import { seededBook } from "../domain/roleSeed.ts";
 import { isAllowedOwner } from "../domain/githubApp.ts";
 import type { AllowedUser } from "../domain/types.ts";
 import type { CommandLogRepo } from "../infrastructure/db/commandLogRepo.ts";
@@ -40,6 +42,8 @@ export type GithubActionDeps = {
   /** A worker extends its own live ticket (`ticket-renew`, see `workerTickets.renewSelf`). Absent means it cannot. */
   renewWorker?: (token: string, ttlMs: number) => WorkerRenewal;
   users: { get: (slackId: string) => AllowedUser | undefined };
+  /** The stored roles; each action needs its own `github:<action>` grant. Absent means the seeded defaults. */
+  roles?: RoleBook;
   github: {
     installationOfRepo: (repo: string) => Promise<number>;
     installationToken: (installationId: number) => Promise<string>;
@@ -107,6 +111,9 @@ const describe = (req: ActionRequest): string =>
   ]
     .filter((x) => x !== undefined && x !== "" && x !== null && x !== false)
     .join(" ");
+
+/** The seeded roles, for a caller with none wired: `worker-ticket` is admin and up as before. */
+const DEFAULT_BOOK: RoleBook = seededBook({ commands: [{ name: "worker-ticket", minRole: "admin" }] });
 
 export const createGithubActions = (deps: GithubActionDeps): GithubActions => {
   // The bot's numeric user id never changes, so look it up once per slug.
@@ -193,11 +200,17 @@ export const createGithubActions = (deps: GithubActionDeps): GithubActions => {
 
       if (worker && !worker.ok) refuse(worker.message);
       if (!user) refuse("whoever asked is not on the access list");
-      // A worker outlives the turn, so it keeps working (and renewing) only while its minter is admin+.
-      if (worker?.ok && user && !isAppAdmin(user.role)) refuse(WORKER_MINTER_DENIED);
-      if (user && !mayActAsApp(user.role)) refuse(DENIED_MESSAGE);
-      if (user && plan.ok && !mayActAsApp(user.role, plan.action)) refuse(executerDenied(plan.action));
       if (!plan.ok) return refuse(plan.error);
+      // Each action is its own grant, read from the stored role of whoever the ticket runs as. A worker ticket
+      // is checked against its minter's role on every redeem, so demoting the minter stops the worker at once.
+      const book = deps.roles ?? DEFAULT_BOOK;
+      // A worker outlives the turn, so it keeps working (and renewing) only while its minter may still mint one.
+      if (worker?.ok && user && !can(book, user.role, commandPerm("worker-ticket"))) refuse("a worker ticket only works while whoever minted it still holds the worker-ticket grant");
+      if (user) {
+        const perm = permissionFor(plan.action, purposeOf(req));
+        const allowed = perm ? can(book, user.role, perm) : mayActAsApp(book, user.role);
+        if (!allowed) refuse(deniedMessage(book, user.role, plan.action, purposeOf(req)));
+      }
       const owner = plan.repo.split("/")[0] ?? "";
       if (!isAllowedOwner(owner, deps.allowedOwners)) {
         return refuse(`${owner} is not in GITHUB_APP_ALLOWED_OWNERS, so the app will not act there`);
@@ -221,12 +234,14 @@ export const createGithubActions = (deps: GithubActionDeps): GithubActions => {
         if (plan.action === "git-auth") {
           // The token goes back to the helper only; the audit row never has it.
           // A worker's token is its own: one repo, git's permissions only, revoked with the ticket.
-          // An executer, and a worker ticket without `git-auth`/`push`, get the bot identity only: commits as the app, but no token to push with.
+          // Only a role holding `github:push` is handed a token: without it a role gets the bot identity, so it commits as the app but cannot push with it.
+          // A worker ticket follows the same rule (its minter must hold `github:push`) and also needs the `git-auth`/`push` word on the mint; without either it gets the identity only.
+          const mayPush = !!user && can(book, user.role, githubPerm("push"));
           const auth = worker?.ok
-            ? worker.push
+            ? worker.push && mayPush
               ? await workerGitAuth(installation, plan.repo, worker.id)
               : { token: "", ...(await botIdentity(installation)) }
-            : user && !isAppAdmin(user.role)
+            : user && !mayPush
               ? { token: "", ...(await botIdentity(installation)) }
               : await gitAuth(installation);
           log(true, `git-auth ${plan.repo}`);

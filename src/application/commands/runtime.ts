@@ -9,7 +9,8 @@ import { forHowLong, stillStoppingNotice, stoppedNotice } from "../../domain/run
 import { NOTHING_IN_BACKGROUND, stopReply } from "../../domain/threadBackground.ts";
 import { SETTING_KEYS } from "../../infrastructure/db/settingsRepo.ts";
 import { SIGNATURES } from "../../domain/messageFooter.ts";
-import { type Context, type CommandDef, RANK, askForToken, since, reviewAgentsOf } from "./shared.ts";
+import { type Context, type CommandDef, askForToken, since, reviewAgentsOf } from "./shared.ts";
+import { PERM } from "../../domain/permissions.ts";
 import { logAndIgnore } from "../ignoredError.ts";
 
 /**
@@ -58,17 +59,17 @@ export const RUNTIME_COMMANDS: readonly CommandDef[] = [
     minRole: "pal",
     usage: "",
     summary: "stop the turn running in this thread, and the background agents its turns started",
-    run: async ({ deps, actor, channelId, threadTs }) => {
+    run: async ({ can, deps, actor, channelId, threadTs }) => {
       if (!deps.runs) return "I cannot stop anything right now.";
       if (!threadTs) return "That only means something inside a thread.";
       const key = `${channelId}:${threadTs}`;
       const running = deps.runs.current(key);
-      const isAdmin = RANK[actor.role] >= RANK.admin;
+      const isAdmin = can(PERM.stopAny);
       // Your own turn is yours to stop; someone else's takes an admin, since a
       // turn is their work and often their money. Refused, nothing is touched -
       // the background agents included.
       if (running && running.actor !== actor.slackId && !isAdmin) {
-        return `That one is <@${running.actor}>'s, and it has been going ${forHowLong(deps.clock() - running.startedAt)}. Only they or an admin can stop it.`;
+        return `That one is <@${running.actor}>'s, and it has been going ${forHowLong(deps.clock() - running.startedAt)}. Only they or someone allowed to stop other people's turns can.`;
       }
       // A stop is a REQUEST. Asking twice must not read as two successful
       // stops - that is the lie the `stopping` state exists to prevent, and
@@ -106,12 +107,12 @@ export const RUNTIME_COMMANDS: readonly CommandDef[] = [
     minRole: "pal",
     usage: "[reset|on|off]",
     summary: "the CLI session this thread is talking to",
-    run: ({ deps, actor, channelId, threadTs, args, prefix }) => {
+    run: ({ can, deps, actor, channelId, threadTs, args, prefix }) => {
       const on = deps.threadSessionsOn?.() !== false;
       const want = (args[0] ?? "").toLowerCase();
 
       if (want === "on" || want === "off") {
-        if (RANK[actor.role] < RANK.admin) return "Only admins can switch thread sessions.";
+        if (!can(PERM.stopAny)) return "You are not allowed to switch thread sessions.";
         deps.settings?.set(SETTING_KEYS.threadSessions, want === "off" ? "off" : "");
         return want === "off"
           ? "Thread sessions *off* - every turn is a cold call again, with the thread replayed into it."
@@ -159,7 +160,7 @@ export const RUNTIME_COMMANDS: readonly CommandDef[] = [
       // Before the catch-all below, or it is never reached - which is exactly
       // what happened: `token who` answered with the usage line instead.
       if (want === "who" || want === "count" || want === "list" || want === "users") {
-        if (RANK[actor.role] < RANK.admin) return "Only admins can see that.";
+        if (!ctx.can(PERM.manageSettings)) return "You are not allowed to see that.";
         const held = deps.claudeTokens.list();
         if (held.length === 0) {
           return `Nobody has given me a token yet, so nobody can run a review. \`${slash} token\` opens the box.`;
@@ -192,14 +193,14 @@ export const RUNTIME_COMMANDS: readonly CommandDef[] = [
     usage: "<label> | list | add <label> | remove <label>",
     summary: "a 2FA code for a shared login I hold the setup key for",
     run: async (ctx) => {
-      const { deps, actor, args, slash } = ctx;
+      const { deps, args, slash } = ctx;
       if (!deps.totp) return "2FA storage is not wired up here.";
       const sub = (args[0] ?? "").toLowerCase();
 
       if (args.length === 0 || sub === "list" || sub === "ls") {
         const held = deps.totp.list();
         if (held.length === 0) {
-          return `I hold no setup keys yet. An admin adds one with \`${slash} 2fa add <name>\`.`;
+          return `I hold no setup keys yet. Someone allowed to manage setup keys adds one with \`${slash} 2fa add <name>\`.`;
         }
         const lines = held.map(
           (h) => `- \`${h.label}\`${h.account ? ` - ${h.account}` : ""}, added by <@${h.addedBy}> ${since(deps.clock() - h.updatedAt)}`,
@@ -208,7 +209,7 @@ export const RUNTIME_COMMANDS: readonly CommandDef[] = [
       }
 
       if (sub === "add" || sub === "set") {
-        if (RANK[actor.role] < RANK.admin) return "Only admins can add a setup key.";
+        if (!ctx.can(PERM.twoFa)) return "You are not allowed to add a setup key.";
         const label = normaliseLabel(args.slice(1).join(" "));
         if (!label) return `Name it: \`${slash} 2fa add <name>\` - that name is how you ask for a code later.`;
         // Never accept a setup key as command text: a message is readable by
@@ -220,7 +221,7 @@ export const RUNTIME_COMMANDS: readonly CommandDef[] = [
       }
 
       if (sub === "remove" || sub === "forget" || sub === "delete") {
-        if (RANK[actor.role] < RANK.admin) return "Only admins can remove a setup key.";
+        if (!ctx.can(PERM.twoFa)) return "You are not allowed to remove a setup key.";
         const label = normaliseLabel(args.slice(1).join(" "));
         if (!label) return `Which one? \`${slash} 2fa remove <name>\`.`;
         return deps.totp.remove(label)
@@ -254,7 +255,7 @@ export const RUNTIME_COMMANDS: readonly CommandDef[] = [
     usage: "[n|default]",
     summary: "how many child agents one review may fan out to",
     run: (ctx) => {
-      const { deps, actor, args, prefix } = ctx;
+      const { deps, args, prefix } = ctx;
       const current = reviewAgentsOf(deps);
       const describe = (n: number) => `at most *${n}* child ${n === 1 ? "agent" : "agents"} per review`;
       if (args.length === 0) {
@@ -263,7 +264,7 @@ export const RUNTIME_COMMANDS: readonly CommandDef[] = [
           ? `${describe(own)} (the default is ${DEFAULT_REVIEW_AGENTS}).`
           : `${describe(current)} - the default.`;
       }
-      if (RANK[actor.role] < RANK.admin) return "Only admins can change the review agent cap.";
+      if (!ctx.can(PERM.manageSettings)) return "You are not allowed to change the review agent cap.";
       const want = (args[0] ?? "").toLowerCase();
       if (args.length > 1) return `How many? \`${prefix} review-agents <n|default>\``;
       if (want === "default" || want === "reset") {
