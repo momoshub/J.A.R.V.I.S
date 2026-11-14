@@ -4,6 +4,7 @@ import { createUserRepo } from "../../src/infrastructure/db/userRepo.ts";
 import { createMessageRepo } from "../../src/infrastructure/db/messageRepo.ts";
 import { createCommandLogRepo } from "../../src/infrastructure/db/commandLogRepo.ts";
 import { createCommandApprovalRepo } from "../../src/infrastructure/db/commandApprovalRepo.ts";
+import { createJourneyRepo } from "../../src/infrastructure/db/journeyRepo.ts";
 import { createSettingsRepo } from "../../src/infrastructure/db/settingsRepo.ts";
 import { dispatchCommand, TRIVIAL_COMMANDS, type CommandDeps } from "../../src/application/commands.ts";
 import {
@@ -101,6 +102,16 @@ describe("allowance", () => {
       used: PAL_COMMAND_LIMIT,
       limit: PAL_COMMAND_LIMIT,
     });
+  });
+
+  test("the brain's internal journey runs in a pal's thread never spend the pal's allowance", async () => {
+    const { deps } = build();
+    const withJourneys: CommandDeps = { ...deps, journeys: createJourneyRepo(openDatabase(":memory:")) };
+    for (let i = 0; i < PAL_COMMAND_LIMIT + 2; i++) {
+      await dispatchCommand(withJourneys, actor(), "C1", "journey list", { fromBrainRun: true });
+    }
+    expect(allowanceFor(withJourneys, actor(), TRIVIAL_COMMANDS)).toMatchObject({ limited: false, used: 0 });
+    expect(await dispatchCommand(withJourneys, actor(), "C1", "ask what time is it")).not.toContain("used all");
   });
 
   test("trivial commands are free", async () => {

@@ -39,6 +39,11 @@ describe("parity: the seeded roles behave exactly as the hard-coded ones did", (
   test("every command: a role may run it exactly when its rank reached the command's minRole", () => {
     // `note` and `read` were gated by a settings floor (default admin), not by minRole: their minRole is now that default.
     for (const c of COMMANDS) {
+      // An internal command is the brain's own tool: no role holds a grant for it, not even the owner's typed line.
+      if (c.internal) {
+        for (const role of ROLES) if (role !== "owner") expect(can(book, role, commandPerm(c.name))).toBe(false);
+        continue;
+      }
       for (const role of ROLES) {
         const old = OLD_RANK[role]! >= OLD_RANK[c.minRole]!;
         expect({ command: c.name, role, can: can(book, role, commandPerm(c.name)) }).toEqual({ command: c.name, role, can: old });
@@ -175,6 +180,18 @@ describe("migration: existing deny policies and floors keep working with zero be
     // read had no floor set: admin and up, as before
     expect(can(book, "executer", commandPerm("read"))).toBe(false);
     expect(can(book, "admin", commandPerm("read"))).toBe(true);
+  });
+
+  test("boot drops the grants of a command that became internal, from built-in and custom roles alike", () => {
+    const { db, settings, repo } = stored();
+    const exec = repo.book.get("executer")!;
+    repo.save({ ...exec, grants: [...exec.grants, "journeys:write", commandPerm("journey")] }, "owner", 2);
+    repo.save({ name: "qa", rank: 1, description: "", enabled: true, grants: [commandPerm("ping"), "journeys:write"], deniedTools: [] }, "owner", 2);
+    seedRoles({ repo, settings, clock: () => 3, legacyPolicies: () => readLegacyPolicies(db), input: () => SEED });
+    for (const name of ["executer", "qa"]) {
+      expect(repo.book.get(name)!.grants.filter((g) => g.includes("journey"))).toEqual([]);
+    }
+    expect(can(repo.book, "qa", commandPerm("ping"))).toBe(true);
   });
 
   test("seeding is idempotent, a revoke sticks, and a later permission reaches only the built-ins", () => {

@@ -99,12 +99,24 @@ const firstSeed = (deps: SeedDeps): void => {
   deps.settings.set(SETTING_KEYS.rolesSeededPerms, JSON.stringify(allPermissionIds(input).sort()));
 };
 
+/** Grants a stored role may still carry from a command that became internal (`journey`); nothing reads them, so boot drops them. */
+export const RETIRED_GRANTS: readonly string[] = ["journeys:write", commandPerm("journey")];
+
+const dropRetiredGrants = (deps: SeedDeps): void => {
+  const at = deps.clock();
+  for (const role of deps.repo.stored()) {
+    if (!role.grants.some((g) => RETIRED_GRANTS.includes(g))) continue;
+    deps.repo.save({ ...role, grants: role.grants.filter((g) => !RETIRED_GRANTS.includes(g)) }, "seed", at);
+  }
+};
+
 /** Seed what is missing. Safe to run on every boot. */
 export const seedRoles = (deps: SeedDeps): void => {
   if (deps.repo.stored().length === 0) {
     firstSeed(deps);
     return;
   }
+  dropRetiredGrants(deps);
   const input = deps.input();
   const seen = seededBefore(deps.settings);
   const fresh = allPermissionIds(input).filter((p) => !seen.has(p));

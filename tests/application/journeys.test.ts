@@ -1,7 +1,8 @@
 import { describe, expect, test } from "bun:test";
 import { dispatchCommand, listCommandInfo, type CommandDeps } from "../../src/application/commands.ts";
 import { createJourneyRepo } from "../../src/infrastructure/db/journeyRepo.ts";
-import { seededBook } from "../../src/domain/roleSeed.ts";
+import { defaultGrants, seededBook } from "../../src/domain/roleSeed.ts";
+import { PERM, permissionCatalogue } from "../../src/domain/permissions.ts";
 import { OWNER, actor, build, db } from "./commandsFixture.ts";
 
 const HOUR = 3_600_000;
@@ -22,7 +23,10 @@ const setup = (start = 1_000_000_000) => {
 };
 
 const run = (deps: CommandDeps, line: string, who = actor(), threadTs?: string) =>
-  dispatchCommand(deps, who, "C1", line, threadTs ? { threadTs } : undefined);
+  dispatchCommand(deps, who, "C1", line, { fromBrainRun: true, ...(threadTs ? { threadTs } : {}) });
+
+/** What a person typing the line gets: no run bridge behind it. */
+const typed = (deps: CommandDeps, line: string, who = actor()) => dispatchCommand(deps, who, "C1", line);
 
 describe("journey command", () => {
   test("add opens a doing journey with its event, and links the thread it was typed in", async () => {
@@ -223,33 +227,66 @@ describe("journey command", () => {
     expect(await run(deps, "journey update 1 --pr https://github.com/a/b/pull/3")).toContain("#1");
   });
 
-  test("anyone who may run it can list and show; writing needs journeys:write", async () => {
+  test("a typed line is refused for every role, the owner included, and changes nothing", async () => {
     const { deps, journeys } = setup();
-    await run(deps, "journey add Visible");
-    const pal = actor({ slackId: "U3", role: "pal" });
-    const executer = actor({ slackId: "U4", role: "executer" });
-    const admin = actor({ slackId: "U5", role: "admin" });
-    for (const who of [pal, executer]) {
-      expect(await run(deps, "journey list", who)).toContain("Visible");
-      expect(await run(deps, "journey show 1", who)).toContain("Visible");
-      for (const line of ["journey add Nope", "journey update 1 --progress 9", "journey done 1", "journey drop 1"]) {
-        expect(await run(deps, line, who)).toContain("journeys:write");
+    await run(deps, "journey add Mine");
+    const roles = ["pal", "executer", "admin", "owner"] as const;
+    for (const role of roles) {
+      const who = actor({ slackId: `U-${role}`, role });
+      for (const line of ["journey list", "journey show 1", "journey help", "journey add Nope", "journey update 1 --progress 9", "journey done 1", "journey drop 1", "journeys list"]) {
+        expect(await typed(deps, line, who)).toContain("is internal");
       }
     }
     expect(journeys.list({ statuses: [] })).toHaveLength(1);
     expect(journeys.get(1)?.status).toBe("doing");
-    expect(await run(deps, "journey add Admin's own", admin)).toContain("journey #2");
-    expect(journeys.get(2)?.createdBy).toBe("U5");
+  });
+
+  test("my own turn runs it whoever it talks to, with no grant needed", async () => {
+    const { deps, journeys } = setup();
+    for (const role of ["pal", "executer", "admin", "owner"] as const) {
+      const who = actor({ slackId: `U-${role}`, role });
+      expect(await run(deps, `journey add From a ${role} thread`, who)).toContain("journey #");
+      expect(await run(deps, "journey list", who)).toContain(`From a ${role} thread`);
+    }
+    expect(await run(deps, "journey update 1 --progress 40", actor({ role: "pal" }))).toContain("#1");
+    expect(await run(deps, "journey done 1", actor({ role: "pal" }))).toContain("#1");
+    expect(journeys.get(1)).toMatchObject({ status: "done", progress: 100, createdBy: "U-pal" });
+  });
+
+  test("a stored role that never held a journey grant still lets the turn run it", async () => {
+    const { deps } = setup();
+    const bare = { ...deps, roles: seededBook({ commands: [] }) };
+    expect(await run(bare, "journey add No grant", actor({ role: "pal" }))).toContain("journey #1");
+  });
+
+  test("it is in no list a person reads: help, the dashboard commands, the grant catalogue", async () => {
+    const { deps } = setup();
+    for (const role of ["pal", "executer", "admin", "owner"] as const) {
+      expect(await typed(deps, "help", actor({ role }))).not.toContain("journey");
+    }
+    expect(listCommandInfo().map((c) => c.name)).not.toContain("journey");
+    expect(permissionCatalogue({ commands: listCommandInfo(), mcpServers: [] }).map((p) => p.id)).not.toContain("journeys:write");
+    expect(Object.values(PERM)).not.toContain("journeys:write");
+    for (const seed of ["pal", "executer", "admin"]) {
+      const grants = defaultGrants(seed, { commands: listCommandInfo().map((c) => ({ name: c.name, minRole: c.minRole })), dbServers: [], executerDbServers: [], extraMcpServers: [] });
+      expect(grants.filter((g) => g.includes("journey"))).toEqual([]);
+    }
+  });
+
+  test("a near miss never suggests it", async () => {
+    const { deps } = setup();
+    expect(await typed(deps, "journy list")).not.toContain("journey");
   });
 
   test("help lists the subcommands and does not run anything", async () => {
     const { deps, journeys } = setup();
     const out = await run(deps, "journey help");
+    expect(out).not.toContain("journeys:write");
     for (const word of ["add", "update", "done", "drop", "list", "show", "--since"]) expect(out).toContain(word);
     expect(journeys.list({ statuses: [] })).toHaveLength(0);
   });
 
   test("without a repo it says so", async () => {
-    expect(await dispatchCommand(build(), actor(), "C1", "journey list")).toContain("nowhere to keep journeys");
+    expect(await dispatchCommand(build(), actor(), "C1", "journey list", { fromBrainRun: true })).toContain("nowhere to keep journeys");
   });
 });

@@ -38,8 +38,6 @@ export const PERM = {
   shellWatch: "watch:shell",
   /** List and cancel everyone's reminders. */
   manageReminders: "reminders:manage-all",
-  /** Add, update, finish and drop journeys; listing them is open to anyone who may run `journey`. */
-  writeJourneys: "journeys:write",
   /** `cloudwatch` runs straight away with the cost warning; without it the request waits for Confirm. */
   cloudwatchDirect: "cloudwatch:direct",
 } as const;
@@ -79,7 +77,6 @@ const NAMED_LABELS: Record<string, string> = {
   [PERM.twoFa]: "Add and remove 2FA setup keys",
   [PERM.shellWatch]: "Shell-check watches, and see everyone's watches",
   [PERM.manageReminders]: "List and cancel everyone's reminders",
-  [PERM.writeJourneys]: "Add, update, finish and drop journeys",
   [PERM.cloudwatchDirect]: "CloudWatch runs directly, no Confirm step",
 };
 

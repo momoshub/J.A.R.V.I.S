@@ -241,6 +241,10 @@ describe("buildSystemPrompt", () => {
     expect(p).toContain("open a journey");
     expect(p).toContain("X/jarvis journey add <title>");
     expect(p).toContain("journey done <id>");
+    expect(p).toContain("journey list");
+    expect(p).toContain("internal to you");
+    expect(p).toContain("a typed line is refused");
+    expect(p).not.toContain("journeys:write");
     // no way to run commands, no line about them
     expect(buildSystemPrompt({ ...opts, runScript: undefined })).not.toContain("open a journey");
   });

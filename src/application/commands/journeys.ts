@@ -22,12 +22,9 @@ import {
   type JourneyFlags,
   type JourneyStatus,
 } from "../../domain/journey.ts";
-import { PERM } from "../../domain/permissions.ts";
 import type { JourneyPatch } from "../../infrastructure/db/journeyRepo.ts";
 import { logAndIgnore } from "../ignoredError.ts";
 import { type CommandDef } from "./shared.ts";
-
-const WRITES = new Set(["add", "new", "update", "set", "done", "finish", "drop", "cancel"]);
 
 /** The patch a flag set asks for, or why it cannot be read. */
 const patchOf = (f: JourneyFlags): { ok: true; patch: JourneyPatch } | { ok: false; error: string } => {
@@ -67,12 +64,13 @@ export const JOURNEY_COMMANDS: readonly CommandDef[] = [
   {
     name: "journey",
     aliases: ["journeys"],
-    // Reading is open; writing is the `journeys:write` permission below.
+    // Mine alone: refused unless the brain runs it in its own turn, so no role or grant is involved.
+    internal: true,
     minRole: "pal",
     ownHelp: true,
     usage: "add <title> [--area X] [--now ...] | update <id> [--status S] [--progress N] [--now ...] [--next ...] [--pr url] [--note ...] | done <id> | drop <id> | list [status] [--since 7d] | show <id> | help",
     summary: "my own record of work I did, am doing, or will do: add, update, done, drop, list, show",
-    run: async ({ can, deps, actor, rest, prefix, threadTs, channelId }) => {
+    run: async ({ deps, actor, rest, prefix, threadTs, channelId }) => {
       if (!deps.journeys) return "I have nowhere to keep journeys right now.";
       const repo = deps.journeys;
       const now = deps.clock();
@@ -81,10 +79,6 @@ export const JOURNEY_COMMANDS: readonly CommandDef[] = [
       const flags = parseFlags(tokens.slice(1));
 
       if (sub === "help" || sub === "?") return helpText(prefix);
-
-      if (WRITES.has(sub) && !can(PERM.writeJourneys)) {
-        return `Writing journeys needs the *${PERM.writeJourneys}* permission. \`${prefix} journey list\` and \`${prefix} journey show <id>\` are open to you.`;
-      }
 
       if (sub === "list" || sub === "ls") {
         if (flags.error) return `${flags.error}. \`${prefix} journey help\``;

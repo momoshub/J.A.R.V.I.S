@@ -168,5 +168,5 @@ export const helpText = (prefix: string): string =>
     `- \`${prefix} journey list [planned|doing|blocked|done|dropped|open|all] [--since 7d] [--area X]\` (open ones by default)`,
     `- \`${prefix} journey show <id>\` - the fields and the event trail`,
     '_`--now ""` (also `--next`, `--area`) clears a field._',
-    "_Anyone may list and show; add, update, done and drop need the journeys:write permission (admin and owner by default). Run in a thread, `add` links that thread._",
+    "_Mine alone: only I run this, in my own turn; a typed line is refused. Run in a thread, `add` links that thread._",
   ].join("\n");

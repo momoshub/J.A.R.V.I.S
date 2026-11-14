@@ -122,6 +122,9 @@ export const COMMANDS: readonly CommandDef[] = [
   ...CLOUDWATCH_COMMANDS,
 ];
 
+/** What a person can see and run: the internal commands (the brain's own tools) are left out of every list. */
+const PUBLIC_COMMANDS: readonly CommandDef[] = COMMANDS.filter((c) => !c.internal);
+
 const byName = new Map<string, CommandDef>();
 for (const c of COMMANDS) {
   byName.set(c.name, c);
@@ -129,7 +132,7 @@ for (const c of COMMANDS) {
 }
 
 /** The roles as stored, or the seeded defaults where nothing is wired. A command's `minRole` is only that seed. */
-const DEFAULT_BOOK: RoleBook = seededBook({ commands: COMMANDS.map((c) => ({ name: c.name, minRole: c.minRole })) });
+const DEFAULT_BOOK: RoleBook = seededBook({ commands: PUBLIC_COMMANDS.map((c) => ({ name: c.name, minRole: c.minRole })) });
 export const bookOf = (deps: { roles?: RoleBook }): RoleBook => deps.roles ?? DEFAULT_BOOK;
 
 /** May this role run the command? Its grant decides; `help` is how anyone finds out what else they can do, so it is always open. */
@@ -140,7 +143,7 @@ export const mayRun = (book: RoleBook, role: UserRole, command: string): boolean
 const runnable = (book: RoleBook, role: UserRole) => (c: CommandDef): boolean => mayRun(book, role, c.name);
 
 const renderHelp = (book: RoleBook, role: UserRole, prefix: string, slash: string): string => {
-  const lines = COMMANDS.filter(runnable(book, role)).map(
+  const lines = PUBLIC_COMMANDS.filter(runnable(book, role)).map(
     (c) => `- \`${c.name}${c.usage ? ` ${c.usage}` : ""}\` - ${c.summary}`,
   );
   return [
@@ -168,8 +171,12 @@ export const commandLineOf = (text: string, prefix: string = DEFAULT_COMMAND_PRE
  * Whether a slash invocation of this line is worth copying to the owner.
  * Unknown commands count: a failed guess is still something worth seeing.
  */
-/** Commands that cost nothing and so do not count against an allowance. */
-export const TRIVIAL_COMMANDS: readonly string[] = COMMANDS.filter((c) => c.trivial).map((c) => c.name);
+/**
+ * Commands that cost nothing and so do not count against an allowance. An internal
+ * command is the brain's own bookkeeping, not something the person it runs
+ * for asked for, so it never spends their allowance either.
+ */
+export const TRIVIAL_COMMANDS: readonly string[] = COMMANDS.filter((c) => c.trivial || c.internal).map((c) => c.name);
 
 /** Whether this line runs a tool-like command: result to the caller, not the thread. */
 export const isQuietCommand = (line: string): boolean => {
@@ -189,7 +196,7 @@ export const notifiesOwner = (line: string): boolean => {
 
 /** Metadata for every command, ordered as declared - for the dashboard. */
 export const listCommandInfo = (): CommandInfo[] =>
-  COMMANDS.map((c) => ({
+  PUBLIC_COMMANDS.map((c) => ({
     name: c.name,
     aliases: [...(c.aliases ?? [])],
     minRole: c.minRole,
@@ -248,7 +255,7 @@ export const dispatchCommand = async (
     // Name the near miss rather than sending someone to read forty lines to
     // find the word they almost typed. Only commands their role can actually
     // run, so a suggestion is never a door that turns out to be locked.
-    const reachable = COMMANDS.filter(runnable(bookOf(deps), actor.role)).flatMap((c) => [
+    const reachable = PUBLIC_COMMANDS.filter(runnable(bookOf(deps), actor.role)).flatMap((c) => [
       c.name,
       ...(c.aliases ?? []),
     ]);
@@ -272,9 +279,17 @@ export const dispatchCommand = async (
     log(command.name, false, msg);
     return msg;
   }
+  // An internal command is the brain's own tool: only its turn (the run bridge) may run it, whoever that turn
+  // is talking to. Checked before any role, so the owner typing it is refused like anyone else.
+  if (command.internal && !opts.fromBrainRun) {
+    const msg = `\`${command.name}\` is internal: I keep it myself and nobody runs it by hand.`;
+    log(command.name, false, msg);
+    return msg;
+  }
   const book = bookOf(deps);
   // The grant is the gate: the roles are data, and a command's `minRole` is only where the grant started.
-  if (!mayRun(book, actor.role, command.name)) {
+  // The brain runs an internal command as whoever its turn serves, so no grant is asked of that caller.
+  if (!command.internal && !mayRun(book, actor.role, command.name)) {
     const msg = `That command needs *${holders(book, command.name)}* access. You are *${actor.role}*.`;
     log(command.name, false, msg);
     return msg;
@@ -300,7 +315,7 @@ export const dispatchCommand = async (
   }
   // A limited role that has run out is not turned away - the command is parked
   // and put to the owner. Trivial commands never count and are never held.
-  if (!command.trivial && !opts.preApproved) {
+  if (!command.trivial && !command.internal && !opts.preApproved) {
     const allowance = allowanceFor(deps as CommandLimitDeps, actor, TRIVIAL_COMMANDS);
     if (allowance.limited) {
       const msg = await holdForApproval(
