@@ -204,8 +204,9 @@ const SCRIPT_NAME = /^[\w.+-]{1,40}$/;
 /**
  * Quoted text with its separators and spaces blanked to `_`, so a `;`, `|` or
  * newline inside a quoted value can never split the command and surface the
- * value's tail as a program. Undefined when a quote is left open, or on a
- * `$(...)`/backtick substitution outside single quotes (`TOKEN="$(op read x)" gh`).
+ * value's tail as a program, and a `# comment` is dropped to the end of its line.
+ * Undefined when a quote is left open, or on a `$(...)`/backtick substitution
+ * outside single quotes (`TOKEN="$(op read x)" gh`).
  */
 const blankQuoted = (command: string): string | undefined => {
   let out = "";
@@ -225,6 +226,11 @@ const blankQuoted = (command: string): string | undefined => {
     } else {
       // An unquoted `$(...)` or backtick substitution runs its own words: give up.
       if (ch === "`" || (ch === "$" && chars[i + 1] === "(")) return undefined;
+      // A `#` that starts a word comments out the rest of the line: drop it.
+      if (ch === "#" && (i === 0 || /\s/.test(chars[i - 1] ?? ""))) {
+        while (i + 1 < chars.length && chars[i + 1] !== "\n") i++;
+        continue;
+      }
       if (ch === "'" || ch === '"') quote = ch;
       out += ch;
     }
@@ -247,8 +253,14 @@ const WRAPPERS = ["bash", "sh", "zsh", "sudo", "env", "time", "nohup", "exec"];
 const bashStep = (command: string): string | undefined => {
   const blanked = blankQuoted(command);
   // An array assignment `a=(x y z)` and ANSI-C `$'...'` quoting are not modelled: give up.
-  if (blanked === undefined || /=\(/.test(blanked) || blanked.includes("$'")) return undefined;
-  const segments = blanked
+  // Whitespace bash does not split on (a non-breaking space) would misplace a word: give up too.
+  if (blanked === undefined || /=\(/.test(blanked) || blanked.includes("$'") || /[^\S \t\n]/.test(blanked)) {
+    return undefined;
+  }
+  // A heredoc body is data, never commands: read only up to the end of the line that opens it.
+  const heredoc = /<<(?!<)/.exec(blanked);
+  const lineEnd = heredoc ? blanked.indexOf("\n", heredoc.index) : -1;
+  const segments = (lineEnd >= 0 ? blanked.slice(0, lineEnd) : blanked)
     .replace(/>\|/g, ">")
     .split(/&&|\|\||;|\||\n/)
     .map((x) => x.trim())

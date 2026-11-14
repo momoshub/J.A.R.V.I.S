@@ -568,8 +568,16 @@ describe("createClaudeCliLlm", () => {
     expect(title("env A=1 SECRET_FILE=/Users/kai/acme-merger.txt")).toBe("Run: 🏃 Running a command");
     expect(title("exec {fd}>/tmp/acme-q3-layoffs.log")).toBe("Run: 🏃 Running a command");
     expect(title("X=$'it\\'s; /a/notes.sh x' Y=\\' git")).toBe("Run: 🏃 Running a command");
-    expect(title("#/Users/kai/acme/file.sh\ngit status")).toBe("Run: 🏃 Running a command");
+    expect(title("#/Users/kai/acme/file.sh\ngit status")).toBe("Run: 🏃 Running git");
     expect(title('"${BOT_SLACK_CALL}" chat.postMessage')).toBe("Run: 🏃 Calling Slack");
+    expect(title("cd ~/clients/acme  # q3 layoffs | sk-live-AbC123\nls")).toBe("Run: 🏃 Listing files");
+    expect(title("cd ~/repo  # build && deploy acme-merger\nmake")).toBe("Run: 🏃 Running make");
+    expect(title("cd /repo   # acme-merger; layoffs list\ngit status")).toBe("Run: 🏃 Running git");
+    expect(title("cd /repo # notes: acme | merger.txt")).toBe("Run: 🏃 Running a command");
+    expect(title("git log --format=a#b | head")).toBe("Run: 🏃 Running git");
+    expect(title("cd /repo <<EOF\n/Users/kai/acme-merger.txt\nEOF")).toBe("Run: 🏃 Running a command");
+    expect(title("cat <<EOF > /tmp/x\nsecret-line here\nEOF")).toBe("Run: 🏃 Reading a file");
+    expect(title("X=a\u00a0acme-merger.txt git")).toBe("Run: 🏃 Running a command");
   });
 
   test("summarizeTool points the card's details at the trace log line, never the command", () => {
