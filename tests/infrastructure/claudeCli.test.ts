@@ -578,6 +578,9 @@ describe("createClaudeCliLlm", () => {
     expect(title("cd /repo <<EOF\n/Users/kai/acme-merger.txt\nEOF")).toBe("Run: 🏃 Running a command");
     expect(title("cat <<EOF > /tmp/x\nsecret-line here\nEOF")).toBe("Run: 🏃 Reading a file");
     expect(title("X=a\u00a0acme-merger.txt git")).toBe("Run: 🏃 Running a command");
+    expect(title("cd ~/clients/acme &# q3 layoffs | sk-live-AbC123\nls")).toBe("Run: 🏃 Listing files");
+    expect(title("cd /repo &# notes: acme | merger.txt")).toBe("Run: 🏃 Running a command");
+    expect(title("cd /x && \\\n  /Users/kai/acme.sh")).toBe("Run: 🏃 Running acme");
   });
 
   test("summarizeTool points the card's details at the trace log line, never the command", () => {

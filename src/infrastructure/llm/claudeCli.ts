@@ -216,7 +216,8 @@ const blankQuoted = (command: string): string | undefined => {
     const ch = chars[i] ?? "";
     // A backslash escapes the next char everywhere but inside single quotes.
     if (ch === "\\" && quote !== "'") {
-      out += `_${i + 1 < chars.length ? "_" : ""}`;
+      // A backslash-newline joins the lines, as bash does; any other escape is blanked.
+      if (chars[i + 1] !== "\n") out += `_${i + 1 < chars.length ? "_" : ""}`;
       i++;
     } else if (quote) {
       // Inside double quotes a substitution opens its own quoting: give up.
@@ -226,8 +227,8 @@ const blankQuoted = (command: string): string | undefined => {
     } else {
       // An unquoted `$(...)` or backtick substitution runs its own words: give up.
       if (ch === "`" || (ch === "$" && chars[i + 1] === "(")) return undefined;
-      // A `#` that starts a word comments out the rest of the line: drop it.
-      if (ch === "#" && (i === 0 || /\s/.test(chars[i - 1] ?? ""))) {
+      // A `#` that starts a word (after a space or an operator such as `&`) comments out the rest of the line: drop it.
+      if (ch === "#" && (i === 0 || /[\s;&|()<>]/.test(chars[i - 1] ?? ""))) {
         while (i + 1 < chars.length && chars[i + 1] !== "\n") i++;
         continue;
       }
