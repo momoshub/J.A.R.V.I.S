@@ -490,10 +490,97 @@ describe("createClaudeCliLlm", () => {
 
   test("summarizeTool does not fall back to the raw command without a description", () => {
     const out = summarizeTool("Bash", '{"command":"curl -H secret https://x"}');
-    expect(out.title).toBe("Run: 🏃 Running a command");
+    expect(out.title).toBe("Run: 🏃 Calling a URL");
+    expect(out.title).not.toContain("secret");
     expect(out.details).toBeUndefined();
     expect(out.command).toBe("curl -H secret https://x");
-    expect(summarizeTool("Bash", '{"command":"ls","description":"  "}').title).toBe("Run: 🏃 Running a command");
+    expect(summarizeTool("Bash", '{"command":"ls","description":"  "}').title).toBe("Run: 🏃 Listing files");
+  });
+
+  test("summarizeTool labels a described-less Bash step by its program, never its arguments", () => {
+    const title = (command: string) => summarizeTool("Bash", JSON.stringify({ command })).title;
+    expect(title("git push origin fix/x")).toBe("Run: 🏃 Running git");
+    expect(title("gh pr view 12 --json state")).toBe("Run: 🏃 Using the GitHub CLI");
+    expect(title("bun test tests/foo.test.ts")).toBe("Run: 🏃 Running tests");
+    expect(title("bun run test")).toBe("Run: 🏃 Running tests");
+    expect(title("bun run typecheck")).toBe("Run: 🏃 Checking types");
+    expect(title("rg -n token src")).toBe("Run: 🏃 Searching files");
+    expect(title("find . -name '*.ts'")).toBe("Run: 🏃 Searching files");
+    expect(title("sed -n '1,20p' secrets.txt")).toBe("Run: 🏃 Reading a file");
+    expect(title("tail -f /var/log/x")).toBe("Run: 🏃 Reading a file");
+    expect(title("sqlite3 /Users/x/db.sqlite 'select 1'")).toBe("Run: 🏃 Running sqlite3");
+  });
+
+  test("summarizeTool skips cd, env assignments and wrappers, and names a script by its basename", () => {
+    const title = (command: string) => summarizeTool("Bash", JSON.stringify({ command })).title;
+    expect(title("cd /Users/x/repo && git status")).toBe("Run: 🏃 Running git");
+    expect(title("FOO=bar BAZ='a b' gh api repos/o/r")).toBe("Run: 🏃 Using the GitHub CLI");
+    expect(title("sudo git fetch")).toBe("Run: 🏃 Running git");
+    expect(title("/Users/x/repo/bin/slack-react.sh C1 1.2 fire")).toBe("Run: 🏃 Running slack-react");
+    expect(title("bash ./bin/merge-when-green.sh 12")).toBe("Run: 🏃 Running merge-when-green");
+    expect(title('"$BOT_SLACK_CALL" chat.postMessage channel=C1 text=hi')).toBe("Run: 🏃 Calling Slack");
+    expect(title("cat notes.md | grep todo")).toBe("Run: 🏃 Reading a file");
+    expect(title("/Users/x/bin/slack-react.sh C1 1.2 fire")).not.toContain("/Users");
+  });
+
+  test("summarizeTool keeps `Running a command` when no program can be read", () => {
+    const title = (command: string) => summarizeTool("Bash", JSON.stringify({ command })).title;
+    expect(title("")).toBe("Run: 🏃 Running a command");
+    expect(title("cd /tmp")).toBe("Run: 🏃 Running a command");
+    expect(title("FOO=bar")).toBe("Run: 🏃 Running a command");
+    expect(title('"$HOME_THING" --flag')).toBe("Run: 🏃 Running a command");
+    expect(summarizeTool("Bash", "{}").title).toBe("Run: 🏃 Running a command");
+    // A description still wins over the program.
+    expect(summarizeTool("Bash", '{"command":"git push","description":"Push the branch"}').title).toBe("Run: 🏃 Push the branch");
+  });
+
+  test("summarizeTool never reads a quoted value or a wrapper option's value as the program", () => {
+    const title = (command: string) => summarizeTool("Bash", JSON.stringify({ command })).title;
+    expect(title("API_KEY='abc|hunter2' ./deploy.sh")).toBe("Run: 🏃 Running deploy");
+    expect(title("PGPASSWORD='s3cr;Tpass' psql -h db")).toBe("Run: 🏃 Running psql");
+    expect(title('cd "/Users/x/client acme; notes" && ls')).toBe("Run: 🏃 Listing files");
+    expect(title('TOKEN="a b\nzz c" gh x')).toBe("Run: 🏃 Using the GitHub CLI");
+    expect(title('X="a\\"; b" git status')).toBe("Run: 🏃 Running git");
+    expect(title("echo 'open; quote")).toBe("Run: 🏃 Running a command");
+    expect(title("sudo -u deploybot git pull")).toBe("Run: 🏃 Running a command");
+    expect(title("env -u VAR git pull")).toBe("Run: 🏃 Running a command");
+    expect(title("env A=1 B=2 git pull")).toBe("Run: 🏃 Running git");
+    expect(title("KEY=$(echo abc def) gh api user")).toBe("Run: 🏃 Running a command");
+    expect(title("TOKEN=$(op read op://acme-vault/prod/token) gh api user")).toBe("Run: 🏃 Running a command");
+    expect(title("KEY=$(cat ~/.config/acme-token | tr -d x) gh api user")).toBe("Run: 🏃 Running a command");
+    expect(title("KEY=`cat ~/.prod_key | head -1` gh api user")).toBe("Run: 🏃 Running a command");
+    expect(title("X=$(echo a; hunter2) ls")).toBe("Run: 🏃 Running a command");
+    expect(title("TOKEN=$(\nhunter2\n) gh x")).toBe("Run: 🏃 Running a command");
+    expect(title("GH_TOKEN=$(gh auth token -u bot) gh pr view 37")).toBe("Run: 🏃 Running a command");
+    expect(title('TOKEN="$(op read "op://acme/prod; sk-live-AbC123 x")" gh api user')).toBe("Run: 🏃 Running a command");
+    expect(title('X="$(echo "a; hunter2 ok")" git status')).toBe("Run: 🏃 Running a command");
+    expect(title('MSG="$(git log -1 --format="%s by %an")" && echo "$MSG"')).toBe("Run: 🏃 Running a command");
+    expect(title("X='$(literal) `too`' git status")).toBe("Run: 🏃 Running git");
+    expect(title("exec >/tmp/acme-q3-layoffs.log 2>&1")).toBe("Run: 🏃 Running a command");
+    expect(title("</Users/kai/acme-q3-layoffs.txt wc -l")).toBe("Run: 🏃 Running a command");
+    expect(title("2>/Users/kai/clients/acme-merger.txt git status")).toBe("Run: 🏃 Running a command");
+    expect(title("&>/tmp/out.log git status")).toBe("Run: 🏃 Running a command");
+    expect(title('files=(src/a.ts /Users/kai/clients/acme-merger.txt src/c.ts); wc -l "${files[@]}"')).toBe("Run: 🏃 Running a command");
+    expect(title('arr[0]=/Users/kai/clients/acme-merger.txt; cat "${arr[0]}"')).toBe("Run: 🏃 Running a command");
+    expect(title("PYTHONPATH+=:/Users/kai/clients/acme-merger python3 x.py")).toBe("Run: 🏃 Running a command");
+    expect(title("PATH+=:/Users/kai/clients/acme-merger/bin && make")).toBe("Run: 🏃 Running a command");
+    expect(title("cd /x >|/tmp/acme-q3-layoffs.log")).toBe("Run: 🏃 Running a command");
+    expect(title("env A=1 SECRET_FILE=/Users/kai/acme-merger.txt")).toBe("Run: 🏃 Running a command");
+    expect(title("exec {fd}>/tmp/acme-q3-layoffs.log")).toBe("Run: 🏃 Running a command");
+    expect(title("X=$'it\\'s; /a/notes.sh x' Y=\\' git")).toBe("Run: 🏃 Running a command");
+    expect(title("#/Users/kai/acme/file.sh\ngit status")).toBe("Run: 🏃 Running git");
+    expect(title('"${BOT_SLACK_CALL}" chat.postMessage')).toBe("Run: 🏃 Calling Slack");
+    expect(title("cd ~/clients/acme  # q3 layoffs | sk-live-AbC123\nls")).toBe("Run: 🏃 Listing files");
+    expect(title("cd ~/repo  # build && deploy acme-merger\nmake")).toBe("Run: 🏃 Running make");
+    expect(title("cd /repo   # acme-merger; layoffs list\ngit status")).toBe("Run: 🏃 Running git");
+    expect(title("cd /repo # notes: acme | merger.txt")).toBe("Run: 🏃 Running a command");
+    expect(title("git log --format=a#b | head")).toBe("Run: 🏃 Running git");
+    expect(title("cd /repo <<EOF\n/Users/kai/acme-merger.txt\nEOF")).toBe("Run: 🏃 Running a command");
+    expect(title("cat <<EOF > /tmp/x\nsecret-line here\nEOF")).toBe("Run: 🏃 Reading a file");
+    expect(title("X=a\u00a0acme-merger.txt git")).toBe("Run: 🏃 Running a command");
+    expect(title("cd ~/clients/acme &# q3 layoffs | sk-live-AbC123\nls")).toBe("Run: 🏃 Listing files");
+    expect(title("cd /repo &# notes: acme | merger.txt")).toBe("Run: 🏃 Running a command");
+    expect(title("cd /x && \\\n  /Users/kai/acme.sh")).toBe("Run: 🏃 Running acme");
   });
 
   test("summarizeTool points the card's details at the trace log line, never the command", () => {
@@ -664,7 +751,7 @@ describe("createClaudeCliLlm.stream", () => {
     >;
     expect(tools).toHaveLength(2);
     expect(tools[0]).toMatchObject({ id: "toolu_1", status: "in_progress" });
-    expect(tools[0]!.title).toBe("Run: 🏃 Running a command");
+    expect(tools[0]!.title).toBe("Run: 🏃 Listing files");
     expect(tools[0]!.command).toContain("ls");
     expect(tools[1]).toMatchObject({ id: "toolu_1", status: "complete" });
   });

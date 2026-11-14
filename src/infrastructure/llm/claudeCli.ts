@@ -181,6 +181,125 @@ const describedStep = (input: Record<string, unknown>): string | undefined => {
 
 const str = (v: unknown): string => (typeof v === "string" ? v : "");
 
+/** Programs whose name says the step: [program, plain-English step]. */
+const PROGRAM_STEPS: Record<string, string> = {
+  git: "Running git",
+  gh: "Using the GitHub CLI",
+  curl: "Calling a URL",
+  wget: "Calling a URL",
+  grep: "Searching files",
+  rg: "Searching files",
+  find: "Searching files",
+  fd: "Searching files",
+  cat: "Reading a file",
+  head: "Reading a file",
+  tail: "Reading a file",
+  ls: "Listing files",
+  tsc: "Checking types",
+};
+
+const ENV_ASSIGNMENT = /^\w+=(?:"[^"]*"|'[^']*'|\S*)\s+/;
+const SCRIPT_NAME = /^[\w.+-]{1,40}$/;
+
+/**
+ * Quoted text with its separators and spaces blanked to `_`, so a `;`, `|` or
+ * newline inside a quoted value can never split the command and surface the
+ * value's tail as a program, and a `# comment` is dropped to the end of its line.
+ * Undefined when a quote is left open, or on a `$(...)`/backtick substitution
+ * outside single quotes (`TOKEN="$(op read x)" gh`).
+ */
+const blankQuoted = (command: string): string | undefined => {
+  let out = "";
+  let quote = "";
+  const chars = [...command];
+  for (let i = 0; i < chars.length; i++) {
+    const ch = chars[i] ?? "";
+    // A backslash escapes the next char everywhere but inside single quotes.
+    if (ch === "\\" && quote !== "'") {
+      // A backslash-newline joins the lines, as bash does; any other escape is blanked.
+      if (chars[i + 1] !== "\n") out += `_${i + 1 < chars.length ? "_" : ""}`;
+      i++;
+    } else if (quote) {
+      // Inside double quotes a substitution opens its own quoting: give up.
+      if (quote === '"' && (ch === "`" || (ch === "$" && chars[i + 1] === "("))) return undefined;
+      if (ch === quote) quote = "";
+      out += ch === quote || !/[\s;&|]/.test(ch) ? ch : "_";
+    } else {
+      // An unquoted `$(...)` or backtick substitution runs its own words: give up.
+      if (ch === "`" || (ch === "$" && chars[i + 1] === "(")) return undefined;
+      // A `#` that starts a word (after a space or an operator such as `&`) comments out the rest of the line: drop it.
+      if (ch === "#" && (i === 0 || /[\s;&|()<>]/.test(chars[i - 1] ?? ""))) {
+        while (i + 1 < chars.length && chars[i + 1] !== "\n") i++;
+        continue;
+      }
+      if (ch === "'" || ch === '"') quote = ch;
+      out += ch;
+    }
+  }
+  return quote ? undefined : out;
+};
+
+const WRAPPERS = ["bash", "sh", "zsh", "sudo", "env", "time", "nohup", "exec"];
+
+/**
+ * A plain-English label for a Bash call that came without a description, from
+ * the PROGRAM it runs and never its arguments (those carry paths and secrets).
+ * Skips `cd X &&`, env assignments and `bash`/`sudo`-style wrappers; a wrapper
+ * with an option (`sudo -u bob`) gives up rather than guess which word is the
+ * option's value. Quoted text never splits a segment, and an unclosed quote
+ * gives up, as does any program word that is really an assignment, a brace
+ * redirect or a comment. A script is named by its basename without extension,
+ * `"$BOT_SLACK_CALL"` by its variable. Undefined when nothing sensible can be read.
+ */
+const bashStep = (command: string): string | undefined => {
+  const blanked = blankQuoted(command);
+  // An array assignment `a=(x y z)` and ANSI-C `$'...'` quoting are not modelled: give up.
+  // Whitespace bash does not split on (a non-breaking space) would misplace a word: give up too.
+  if (blanked === undefined || /=\(/.test(blanked) || blanked.includes("$'") || /[^\S \t\n]/.test(blanked)) {
+    return undefined;
+  }
+  // A heredoc body is data, never commands: read only up to the end of the line that opens it.
+  const heredoc = /<<(?!<)/.exec(blanked);
+  const lineEnd = heredoc ? blanked.indexOf("\n", heredoc.index) : -1;
+  const segments = (lineEnd >= 0 ? blanked.slice(0, lineEnd) : blanked)
+    .replace(/>\|/g, ">")
+    .split(/&&|\|\||;|\||\n/)
+    .map((x) => x.trim())
+    .filter(Boolean);
+  for (const segment of segments) {
+    let rest = segment;
+    while (ENV_ASSIGNMENT.test(rest)) rest = rest.replace(ENV_ASSIGNMENT, "");
+    let [program = "", ...args] = rest.split(/\s+/);
+    if (!program || program === "cd" || /^\w+=/.test(program)) continue;
+    // `bash script.sh`, `sudo git ...`, `env A=1 git`: the program is the next word.
+    while (WRAPPERS.includes(program) && args.length > 0) {
+      if (args[0]?.startsWith("-")) return undefined;
+      [program = "", ...args] = args;
+      while (/^\w+=/.test(program) && args.length > 0) [program = "", ...args] = args;
+    }
+    // `>/x/y.log`, `2>err`, `&>out`: a redirect target is an argument, never the program.
+    if (/^(?:\d*[<>]|&>)/.test(program)) return undefined;
+    const variable = /^"?\$\{?(\w+)\}?"?$/.exec(program)?.[1];
+    if (variable !== undefined) return /SLACK/i.test(variable) ? "Calling Slack" : undefined;
+    // `a[0]=x`, `PATH+=:x`, `{fd}>x`, a trailing `env` assignment, a `#` comment: not a program.
+    if (/[=()[\]{}]/.test(program) || program.startsWith("#")) return undefined;
+    const name = program.replace(/^["']|["']$/g, "").split("/").pop() ?? "";
+    const bare = name.replace(/\.(sh|bash|zsh|py|js|ts|rb)$/, "");
+    if (bare in PROGRAM_STEPS) return PROGRAM_STEPS[bare];
+    if (bare === "sed") return args.includes("-n") ? "Reading a file" : "Running sed";
+    if (bare === "bun" || bare === "npm" || bare === "pnpm" || bare === "yarn") {
+      const [sub = "", script = ""] = args;
+      const target = sub === "run" || sub === "x" ? script : sub;
+      if (target === "test") return "Running tests";
+      if (target === "typecheck") return "Checking types";
+      return `Running ${bare}`;
+    }
+    if (!SCRIPT_NAME.test(bare)) return undefined;
+    return redactPaths(redactSecrets(`Running ${bare}`));
+  }
+  return undefined;
+};
+
 /** A memory write or read: the notes folder of the adapter, or the learnings API. */
 const touchesMemory = (name: string, input: Record<string, unknown>): boolean =>
   name === "Bash"
@@ -221,7 +340,7 @@ export const summarizeTool = (
   } else if (touchesMemory(name, input)) {
     label = `Memory: 🧠 ${described ?? (name === "Read" ? "Reading a memory note" : "Updating memory")}`;
   } else if (name === "Bash") {
-    label = `Run: 🏃 ${described ?? "Running a command"}`;
+    label = `Run: 🏃 ${described ?? (command !== undefined ? bashStep(command) : undefined) ?? "Running a command"}`;
   } else if (name === "Agent" || name === "Task") {
     // Foreground (run_in_background: false) is an FAgent; background, the default, a plain Agent.
     label =
