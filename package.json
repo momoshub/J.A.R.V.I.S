@@ -1,7 +1,7 @@
 {
   "name": "jarvis",
   "version": "0.1.0",
-  "description": "Jarvis, a harness of harnesses around Claude Code: sessions, memory, roles, workers and self-updates, talked to through Slack",
+  "description": "Jarvis, a harness of harnesses around Claude Code (or the Anthropic API), for now: sessions, memory, roles, workers and self-updates, talked to through Slack",
   "type": "module",
   "license": "Apache-2.0",
   "module": "src/index.ts",
