@@ -175,7 +175,10 @@ export const judge = (c: Candidate, ctx: ReapContext): Verdict => {
   if (idleMs < ctx.idleMs) return skip("not idle long enough");
 
   const settled = SETTLED_WORKER.has(w.state);
-  if (w.taskId === undefined) return { reap: true, why: "not tied to a task", settled, idleMs };
+  // A supervised worker always has a task, so a row without one is unreadable data, not "no task": only an agent that ended is closed.
+  if (w.taskId === undefined) {
+    return ENDED_WORKER.has(w.state) ? { reap: true, why: "not tied to a task, worker ended", settled, idleMs } : skip("task unknown while its worker is still going");
+  }
   const status = c.taskStatus;
   if (status !== undefined && FINISHED_TASK.has(status)) return { reap: true, why: `task ${status}`, settled, idleMs };
   if (status === "blocked") {

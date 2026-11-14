@@ -54,9 +54,14 @@ describe("judge", () => {
     expect(judge(cand({}, {}, 3), ctx())).toMatchObject({ reap: true });
   });
 
-  test("a worker not tied to any task is eligible", () => {
-    const c = cand({ taskStatus: undefined });
-    expect(judge({ ...c, worker: { ...c.worker, taskId: undefined } }, ctx())).toMatchObject({ reap: true, why: "not tied to a task" });
+  test("a worker with no task is closed only once its agent ended; a running one is skipped", () => {
+    const noTask = (state: string) => {
+      const c = cand({ taskStatus: undefined }, { state });
+      return { ...c, worker: { ...c.worker, taskId: undefined } };
+    };
+    expect(judge(noTask("ready"), ctx())).toEqual({ reap: false, why: "task unknown while its worker is still going" });
+    expect(judge(noTask("succeeded"), ctx())).toMatchObject({ reap: true, why: "not tied to a task, worker ended", settled: true });
+    expect(judge(noTask("stopped"), ctx())).toMatchObject({ reap: true, settled: false });
   });
 
   test("a task still running is never reaped, even idle for days", () => {

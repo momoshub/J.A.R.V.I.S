@@ -63,11 +63,12 @@ describe("idle reaper", () => {
         { id: "ctx_fresh", task: "t_fresh", term: "term_4" },
         { id: "ctx_watched", task: "t_w", term: "term_5" },
         { id: "ctx_asking", task: "t_a", term: "term_6" },
-        { id: "ctx_notask", term: "term_7" },
+        { id: "ctx_notask", state: "succeeded", term: "term_7" },
+        { id: "ctx_notask_running", term: "term_10" },
         { id: "ctx_kept", task: "t_k", term: "term_8", retained: true },
         { id: "ctx_attn", task: "t_attn", term: "term_9", attention: true },
       ],
-      idleHours: { ctx_done: 10, ctx_failed_task: 20, ctx_running: 50, ctx_fresh: 1, ctx_watched: 9, ctx_asking: 9, ctx_notask: 6, ctx_kept: 9, ctx_attn: 9 },
+      idleHours: { ctx_done: 10, ctx_failed_task: 20, ctx_running: 50, ctx_fresh: 1, ctx_watched: 9, ctx_asking: 9, ctx_notask: 6, ctx_notask_running: 60, ctx_kept: 9, ctx_attn: 9 },
       tasks: { t_done: "completed", t_failed: "failed", t_run: "dispatched", t_fresh: "completed", t_w: "completed", t_a: "completed", t_k: "completed", t_attn: "completed" },
       watches: ["bun bin/orca-worker-wait.ts ctx_watched --past-wait"],
       asking: ["ctx_asking"],
@@ -77,7 +78,7 @@ describe("idle reaper", () => {
     expect(h.closers().map((c) => [c[1], c[3]])).toEqual([
       ["worker-stop", "ctx_failed_task"],
       ["worker-release", "ctx_done"],
-      ["worker-stop", "ctx_notask"],
+      ["worker-release", "ctx_notask"],
     ]);
     expect(h.logs).toHaveLength(3);
     expect(h.logs[0]).toContain("closed ctx_failed_task (term_2, idle 1200 min, task failed) via worker-stop");

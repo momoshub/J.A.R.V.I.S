@@ -136,7 +136,7 @@ no classes.
   Orca (`worker-release` when the worker settled, else `worker-stop`) every
   supervised worker whose terminal has been silent for `ORCA_REAP_IDLE_MS`
   (3 h) and whose task is finished, failed, blocked with no pending gate, or
-  absent. A worker with a waiting watch on its dispatch, an unanswered question,
+  absent (only once its worker ended). A worker with a waiting watch on its dispatch, an unanswered question,
   a kept-open terminal, an attention flag, unproven liveness, a terminal another dispatch now owns, or a task blocked while its worker is still going (an `ask`) is skipped (a watch on the dispatch, its Run or its task counts), and
   only supervised workers are candidates, so a user's own session and the bot's
   `claude -p` turns are out of reach. It never kills a pid.
