@@ -1,6 +1,8 @@
+import { seededBook } from "../../src/domain/roleSeed.ts";
+import { staticBook } from "../../src/domain/roles.ts";
 import { describe, expect, test } from "bun:test";
 import { createSettingsRepo } from "../../src/infrastructure/db/settingsRepo.ts";
-import { dispatchCommand, isQuietCommand } from "../../src/application/commands.ts";
+import { dispatchCommand, isQuietCommand, listCommandInfo } from "../../src/application/commands.ts";
 import type { LlmPort } from "../../src/application/ports.ts";
 import { OWNER, db, actor, slackCalls, build } from "./commandsFixture.ts";
 
@@ -179,24 +181,27 @@ describe("reviews run on the caller's own Claude token", () => {
     expect(isQuietCommand("ticket help me the page is broken")).toBe(false);
   });
 
-  test("read's floor is configurable, and a refusal says who can run it", async () => {
+  test("read is a grant, and a refusal names the roles that hold it", async () => {
     // owner-only made it useless for the case it exists for: a teammate asking
-    // it to follow a document the team shares
+    // it to follow a document the team shares - so who may run it is the owner's to grant
     const { deps } = withTokens({ [OWNER]: TOKEN });
     const pal = actor({ slackId: "U0PAL77", role: "pal" });
     deps.users.upsert(pal);
     const link = "https://app.notion.com/p/handbook-1a2b3c4d5e6f7081920a1b2c3d4e5f61";
 
     const refused = await dispatchCommand(deps, pal, "C1", `read ${link}`);
-    expect(refused).toContain("*admin* and above"); // the default floor
-    expect(refused).toContain("Ask someone at that level");
-    expect(refused).toContain("paste the content here");
+    expect(refused).toContain("needs *admin* access"); // where the old default floor started
 
-    // an admin may open it up, and then the pal gets through
-    expect(await dispatchCommand(deps, pal, "C1", "read access pal")).toContain("Only admins");
-    expect(await dispatchCommand(deps, actor(), "C1", "read access pal")).toContain("open to *pal*");
-    expect(deps.settings!.get("read_min_role")).toBe("pal");
-    expect(await dispatchCommand(deps, pal, "C1", "read")).toContain("Read what?");
+    // `read access` no longer sets anything: it says whose grant it is and how to change it
+    const how = await dispatchCommand(deps, actor(), "C1", "read access");
+    expect(how).toContain("command:read");
+    expect(how).toContain("role grant|revoke");
+    expect(deps.settings!.get("read_min_role")).toBeUndefined();
+
+    // the owner grants it to the pal's role, and the pal gets through
+    const book = seededBook({ commands: listCommandInfo().map((c) => ({ name: c.name, minRole: c.minRole })) });
+    const opened = staticBook(book.list().filter((r) => r.name !== "owner").map((r) => (r.name === "pal" ? { ...r, grants: [...r.grants, "command:read"] } : r)));
+    expect(await dispatchCommand({ ...deps, roles: opened }, pal, "C1", "read")).toContain("Read what?");
   });
 
   test("read runs on the host login, and is open to admins by default", async () => {
@@ -359,7 +364,7 @@ describe("reviews run on the caller's own Claude token", () => {
 
     const pal = actor({ slackId: "U0PAL0005", role: "pal" });
     deps.users.upsert(pal);
-    expect(await dispatchCommand(deps, pal, "C1", "token who")).toContain("Only admins");
+    expect(await dispatchCommand(deps, pal, "C1", "token who")).toContain("You are not allowed");
   });
 
   test("token who says plainly when nobody has one", async () => {
@@ -436,7 +441,7 @@ describe("review fan-out cap", () => {
     deps.settings = createSettingsRepo(db);
     const pal = actor({ slackId: "U0PAL0002", role: "pal" });
 
-    expect(await dispatchCommand(deps, pal, "C1", "review-agents 2")).toContain("Only admins");
+    expect(await dispatchCommand(deps, pal, "C1", "review-agents 2")).toContain("You are not allowed");
     expect(await dispatchCommand(deps, actor(), "C1", "review-agents 0")).toContain("A number from 1");
     expect(await dispatchCommand(deps, actor(), "C1", "review-agents 99")).toContain("A number from 1");
     expect(await dispatchCommand(deps, actor(), "C1", "review-agents lots")).toContain("A number from 1");
@@ -650,7 +655,7 @@ describe("per-repo review policy", () => {
     // an executer may ask for the stricter run, but not the looser one
     const exec = actor({ slackId: "U0EXE0006", role: "executer" });
     deps.users.upsert(exec);
-    expect(await dispatchCommand(deps, exec, "C1", `rv ${PR} --policy first`, { reply })).toContain("only an admin");
+    expect(await dispatchCommand(deps, exec, "C1", `rv ${PR} --policy first`, { reply })).toContain("only someone who manages settings");
     await dispatchCommand(deps, exec, "C1", `rv ${OTHER} --policy after`, { reply });
     expect(calls).toEqual([OTHER]); // approved after the review, not before
   });
@@ -779,7 +784,7 @@ describe("per-repo review policy", () => {
     const exec = actor({ slackId: "U0EXE0007", role: "executer" });
     deps.users.upsert(exec);
 
-    expect(await dispatchCommand(deps, exec, "C1", `rv ${PR} --policy first`, { reply })).toContain("only an admin");
+    expect(await dispatchCommand(deps, exec, "C1", `rv ${PR} --policy first`, { reply })).toContain("only someone who manages settings");
     expect(calls).toEqual([]);
   });
 
@@ -848,7 +853,7 @@ describe("logsource", () => {
   test("a pal cannot change it", async () => {
     const deps = withSettings();
     const pal = actor({ slackId: "U0PAL0001", role: "pal" });
-    expect(await dispatchCommand(deps, pal, "C1", "logsource datadog")).toContain("Only admins");
+    expect(await dispatchCommand(deps, pal, "C1", "logsource datadog")).toContain("You are not allowed");
     expect(deps.settings!.get("log_sources")).toBeUndefined();
   });
 });
@@ -869,8 +874,8 @@ describe("review-inbox command", () => {
     const pal = actor({ slackId: "U0PAL0099", role: "pal" });
     await dispatchCommand(deps, pal, "C1", "review-inbox link pal-gh");
     expect(deps.settings.get("github_login:pal-gh")).toBe("U0PAL0099");
-    expect(await dispatchCommand(deps, pal, "C1", "review-inbox link other-gh <@U0OTHER01>")).toContain("only an admin");
-    expect(await dispatchCommand(deps, pal, "C1", "review-inbox channel <#C123>")).toContain("Only admins");
+    expect(await dispatchCommand(deps, pal, "C1", "review-inbox link other-gh <@U0OTHER01>")).toContain("only someone who manages settings");
+    expect(await dispatchCommand(deps, pal, "C1", "review-inbox channel <#C123>")).toContain("You are not allowed");
   });
 
   test("an admin links someone else", async () => {

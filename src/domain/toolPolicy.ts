@@ -1,23 +1,26 @@
 /**
- * Per-role tool policy for the Claude CLI brain.
+ * Per-role tool policy for the Claude CLI brain, built from what the role is GRANTED
+ * (`domain/roles.ts`; the seeded defaults reproduce the old tiers):
  *
- * - owner: full access (skip permissions, any tool, the normal cwd). The ONLY role
- *   that gets it: `isFullAccess` is an exact match, so a role the bot does not
- *   know (a mistyped or custom name) lands on the strict side below
- * - pal / anything unknown: sandboxed read-only tools in a fixed scratch dir (may
+ * - `tools:full-access` (the owner only, as seeded): full access (skip permissions, any tool, the normal cwd).
+ *   A role the book does not know (a mistyped or custom name, `undefined` from a failed lookup) holds
+ *   nothing, so it lands on the strict side below
+ * - no grant (pal as seeded, and anything unknown): sandboxed read-only tools in a fixed scratch dir (may
  *   still use `quick-review`); the allow-list is data, see `SANDBOX_TOOLS`
- * - executer and admin: sandboxed, tools assigned from the control deck, plus the read-only databases
- *   and the code tools - edit files, commit, push a branch and open a PR - the
- *   Agent/Task tool for parallel or long work in its own process, and the
- *   browser tools to test a UI change on the host Mac
- *
- * Orca is the owner's alone: a worker runs with full permissions on the host,
- * so a role that can start one escapes its own sandbox (`ORCA_DENY`).
+ * - `tools:code` (executer and admin as seeded): sandboxed, tools assigned from the control deck, plus the code
+ *   tools - edit files, commit, push a branch and open a PR - the Agent/Task tool for parallel or long work in
+ *   its own process, and the browser tools to test a UI change on the host Mac
+ * - `mcp:<server>`: a database server, Notion or Datadog; a server the role lacks is denied by name
+ * - `tools:orca`: Orca workers. A worker runs with full permissions on the host, so a role that can start
+ *   one escapes its own sandbox: only the owner has it unless the owner grants it (`ORCA_DENY` otherwise).
  *
  * When `skipPermissions` is false the CLI runs with an `--allowedTools` allow-list
  * and `--permission-mode dontAsk` (see `claudeCli.ts`), so anything off the list
  * is denied at once - the turn is non-interactive, a prompt would hang it.
  */
+import { PERM, mcpPerm } from "./permissions.ts";
+import { can, type RoleBook } from "./roles.ts";
+import { mcpCatalogue, seededBook } from "./roleSeed.ts";
 import type { UserRole } from "./types.ts";
 
 export type ToolPolicy = {
@@ -86,11 +89,11 @@ export const sandboxToolsOf = (custom: readonly string[] | undefined): readonly 
   custom && custom.length > 0 ? custom : PAL_TOOLS;
 
 /**
- * Only the owner runs without a sandbox. An exact match on purpose: a role this
- * code does not recognise (a custom name, a bad row, `undefined` from a failed
- * lookup) must not fall through to full access.
+ * Whether the role runs without a sandbox: it holds `tools:full-access` (the owner alone, as seeded).
+ * A role the book does not know (a custom name, a bad row, `undefined` from a failed lookup)
+ * holds nothing, so it must not fall through to full access.
  */
-export const isFullAccess = (role: UserRole): boolean => role === "owner";
+export const isFullAccess = (role: UserRole, book: RoleBook = seededBook()): boolean => can(book, role, PERM.fullAccess);
 
 /**
  * Ways out of the shell commands a read-only list may carry, denied to every
@@ -172,8 +175,8 @@ export const ORCA_DENY: readonly string[] = [
   "Bash(~/Applications/Orca.app/Contents/Resources/bin/orca:*)",
 ];
 
-/** Orca is for the owner only. Everyone else uses the Agent tool in their own process. */
-export const mayUseOrca = (role: UserRole): boolean => role === "owner";
+/** Orca is the owner's unless the owner grants `tools:orca`. Everyone else uses the Agent tool in their own process. */
+export const mayUseOrca = (role: UserRole, book: RoleBook = seededBook()): boolean => can(book, role, PERM.orca);
 
 export const ALWAYS_DISALLOW: readonly string[] = [
   ...SLACK_CONNECTOR_WRITES,
@@ -262,13 +265,8 @@ export const DATADOG_WRITE_TOOLS: readonly string[] = [
   "submit_mcp_feedback",
 ].map((t) => `${DATADOG_MCP_SERVER}__${t}`);
 
-const ROLE_RANK: Record<UserRole, number> = { pal: 0, executer: 1, admin: 2, owner: 3 };
-
-/** The default floor of `note`: it writes with the host's Notion identity. */
-export const DEFAULT_NOTION_FLOOR: UserRole = "admin";
-
-export const mayUseNotion = (role: UserRole, floor: UserRole = DEFAULT_NOTION_FLOOR): boolean =>
-  ROLE_RANK[role] >= ROLE_RANK[floor];
+/** The host's Notion server writes as the host, like `note`: a grant (`mcp:notion`), admin and owner as seeded. */
+export const mayUseNotion = (role: UserRole, book: RoleBook = seededBook()): boolean => can(book, role, mcpPerm("notion"));
 
 /**
  * Tools a side question may use: none.
@@ -435,7 +433,7 @@ export type ToolPolicyOptions = {
   readonly githubCommentScript?: string;
   /**
    * Absolute path of the GitHub App action helper. Granted to every role like
-   * the others: the bot checks the admin role of the turn's ticket holder
+   * the others: the bot checks the `github:<action>` grant of the turn's ticket holder
    * before it does anything, so the grant itself carries no authority.
    */
   readonly githubAppScript?: string;
@@ -476,17 +474,10 @@ export type ToolPolicyOptions = {
    * knows what the work there is worth.
    */
   readonly channelModel?: string;
-  /**
-   * Extra denials from the role's dashboard policy (`domain/rolePolicy.ts`):
-   * tools and whole MCP servers it may not use. Appended to every branch's
-   * `--disallowedTools`, since a denial is the only lever that refuses.
-   */
-  readonly roleDisallow?: readonly string[];
-  /**
-   * Lowest role that may use the host's Notion MCP server (`note`'s floor).
-   * Absent means the default, admin.
-   */
-  readonly notionFloor?: UserRole;
+  /** The stored roles: what each is granted. Absent means the seeded defaults. */
+  readonly roles?: RoleBook;
+  /** MCP servers named by hand beyond the databases, Notion and Datadog; a role without the grant has them denied. */
+  readonly extraMcpServers?: readonly string[];
 };
 
 /**
@@ -509,12 +500,34 @@ const withHelpers = (tools: readonly string[], opts: ToolPolicyOptions): readonl
 const modelOf = (role: UserRole, opts: ToolPolicyOptions): string | undefined =>
   opts.channelModel?.trim() || opts.models?.[role];
 
+/** The stored roles, or - with none wired - the seeded defaults for the servers this call knows about. */
+const bookFor = (opts: ToolPolicyOptions): RoleBook =>
+  opts.roles ??
+  seededBook({
+    dbServers: opts.dbServers ?? [],
+    executerDbServers: opts.executerDbServers ?? [],
+    extraMcpServers: opts.extraMcpServers ?? [],
+  });
+
+/** MCP servers (bare names) the role holds no grant for: denied by name, since an allow-list never refuses. */
+export const deniedMcpServers = (role: UserRole, opts: ToolPolicyOptions): readonly string[] => {
+  const book = bookFor(opts);
+  const catalogue = mcpCatalogue({
+    dbServers: [...(opts.dbServers ?? []), ...(opts.executerDbServers ?? [])],
+    extraMcpServers: opts.extraMcpServers ?? [],
+  });
+  return catalogue.filter((s) => !can(book, role, mcpPerm(s)));
+};
+
+const serverTool = (server: string): string => `mcp__${server}`;
+
 export const toolPolicyFor = (role: UserRole, opts: ToolPolicyOptions): ToolPolicy => {
-  const base = basePolicyFor(role, opts);
-  // Below the floor the server is denied by name (an allow-list never refuses).
+  const book = bookFor(opts);
+  const base = basePolicyFor(role, opts, book);
+  // A denial is the only lever that refuses: the role's own extra denials, every MCP server it lacks, Datadog's writers.
   const extra = [
-    ...(opts.roleDisallow ?? []),
-    ...(mayUseNotion(role, opts.notionFloor) ? [] : [NOTION_MCP_SERVER]),
+    ...(book.get(role)?.deniedTools ?? []),
+    ...deniedMcpServers(role, opts).map(serverTool),
     ...DATADOG_WRITE_TOOLS,
   ];
   return extra.length
@@ -522,52 +535,42 @@ export const toolPolicyFor = (role: UserRole, opts: ToolPolicyOptions): ToolPoli
     : base;
 };
 
-/** Pre-approval for a sandboxed role at or above the Notion floor. */
-const notionAllow = (role: UserRole, opts: ToolPolicyOptions): readonly string[] =>
-  mayUseNotion(role, opts.notionFloor) ? [NOTION_MCP_SERVER] : [];
-
-const basePolicyFor = (role: UserRole, opts: ToolPolicyOptions): ToolPolicy => {
-  if (isFullAccess(role)) {
+const basePolicyFor = (role: UserRole, opts: ToolPolicyOptions, book: RoleBook): ToolPolicy => {
+  const orca = can(book, role, PERM.orca);
+  const withoutOrca = (tools: readonly string[]): readonly string[] =>
+    orca ? tools.filter((t) => !ORCA_DENY.includes(t)) : tools;
+  if (can(book, role, PERM.fullAccess)) {
     return {
       skipPermissions: true,
       cwd: opts.fullCwd,
       model: modelOf(role, opts),
-      // Full access still does not mean "post as a human" or "bill us per query".
-      disallowedTools: ALWAYS_DISALLOW,
+      // Full access still does not mean "post as a human" or "bill us per query", and Orca is its own grant.
+      disallowedTools: orca ? ALWAYS_DISALLOW : [...ALWAYS_DISALLOW, ...ORCA_DENY],
     };
   }
-  if (role === "executer" || role === "admin") {
-    // Admin outranks executer, so it never has fewer tools than one: the same
-    // sandboxed code tools, with no shell beyond the allow-list. Its model stays its own.
-    return {
-      skipPermissions: false,
-      cwd: opts.sandboxCwd,
-      allowedTools: withHelpers(
-        [
-          ...(opts.executerTools && opts.executerTools.length > 0 ? opts.executerTools : sandboxToolsOf(opts.sandboxTools)),
-          ...dbServerTools(opts.executerDbServers ?? []),
-          ...EXECUTER_CODE_TOOLS,
-          ...executerBrowserTools(opts),
-          ...notionAllow(role, opts),
-          ...DATADOG_READ_TOOLS,
-        ],
-        opts,
-      ),
-      disallowedTools: executerDisallow(opts.protectedPaths, opts.dbServers, opts.executerDbServers),
-      model: modelOf(role, opts),
-    };
-  }
-  // pal, and any role not named above (a custom or mistyped one): the strict,
-  // read-only side. A turn reads pages, attachments and PRs that anyone can
-  // write, so what it may run has to be a short list, never everything.
+  // Sandboxed. Database servers are denied unless the role holds that server's grant.
+  const dbServers = opts.dbServers ?? [];
+  const heldDb = [...new Set([...dbServers, ...(opts.executerDbServers ?? [])])].filter((s) => can(book, role, mcpPerm(s)));
+  const deniedDb = dbServers.filter((s) => !heldDb.includes(s));
+  const code = can(book, role, PERM.code);
+  const datadog = can(book, role, mcpPerm("datadog"));
+  const notion = can(book, role, mcpPerm("notion"));
+  const allowed = [
+    ...(code && opts.executerTools && opts.executerTools.length > 0 ? opts.executerTools : sandboxToolsOf(opts.sandboxTools)),
+    ...dbServerTools(heldDb),
+    ...(code ? [...EXECUTER_CODE_TOOLS, ...executerBrowserTools(opts)] : []),
+    ...(notion ? [NOTION_MCP_SERVER] : []),
+    ...(datadog ? DATADOG_READ_TOOLS : []),
+  ];
   return {
     skipPermissions: false,
     cwd: opts.sandboxCwd,
-    allowedTools: withHelpers(
-      [...sandboxToolsOf(opts.sandboxTools), ...notionAllow(role, opts), ...DATADOG_READ_TOOLS],
-      opts,
+    allowedTools: withHelpers(allowed, opts),
+    // The read-only side also loses every redirect: a turn reads pages and PRs anyone can write, and `cat x > ~/.zshrc` would pass as a read.
+    disallowedTools: withoutOrca(
+      code ? executerDisallow(opts.protectedPaths, deniedDb, []) : [...sandboxDisallow(deniedDb), ...READ_ONLY_REDIRECT_DENY],
     ),
-    disallowedTools: [...sandboxDisallow(opts.dbServers ?? []), ...READ_ONLY_REDIRECT_DENY],
-    model: modelOf("pal", opts),
+    // A role the book does not know is the strict side, and takes pal's model with it.
+    model: modelOf(book.get(role) ? role : "pal", opts),
   };
 };

@@ -1,99 +1,51 @@
 import { describe, expect, test } from "bun:test";
-import {
-  currentCommandName,
-  defaultRolePolicy,
-  disabledRoleReason,
-  enforcedUser,
-  isCommandDenied,
-  isRoleEnabled,
-  knownMcpServers,
-  parseRolePolicy,
-  policyDisallow,
-  type RolePolicy,
-} from "../../src/domain/rolePolicy.ts";
-import type { AllowedUser, UserRole } from "../../src/domain/types.ts";
+import { CORE_TOOLS, UNDENIABLE_COMMANDS, currentCommandName, disabledRoleReason, enforcedUser, isRoleEnabled, mcpServerTool, parseDeniedTools, roleNames } from "../../src/domain/rolePolicy.ts";
+import { staticBook } from "../../src/domain/roles.ts";
+import { builtinRoles } from "../../src/domain/roleSeed.ts";
+import type { AllowedUser } from "../../src/domain/types.ts";
 
-const user = (role: UserRole): AllowedUser => ({ slackId: "U1", role, displayName: "", addedBy: "x", createdAt: 0 });
-const off = (role: UserRole): RolePolicy => ({ ...defaultRolePolicy(role), enabled: false });
+const book = staticBook(builtinRoles({ commands: [], dbServers: [], executerDbServers: [], extraMcpServers: [] }));
+const off = staticBook(builtinRoles({ commands: [], dbServers: [], executerDbServers: [], extraMcpServers: [] }).map((r) => (r.name === "admin" ? { ...r, enabled: false } : r)));
+const user = (role: string): AllowedUser => ({ slackId: "U1", role, displayName: "", addedBy: "x", createdAt: 1 });
 
-describe("role policy", () => {
-  test("a switched-off role grants nothing, but the owner role can never be switched off", () => {
-    expect(isRoleEnabled(off("pal"))).toBe(false);
-    expect(isRoleEnabled(off("owner"))).toBe(true);
-    expect(enforcedUser(user("pal"), off)).toBeUndefined();
-    expect(enforcedUser(user("owner"), off)?.role).toBe("owner");
-    expect(enforcedUser(user("pal"), defaultRolePolicy)?.role).toBe("pal");
-    expect(enforcedUser(undefined, defaultRolePolicy)).toBeUndefined();
+describe("a switched-off role", () => {
+  test("is off the allowlist, the owner never is, and a deleted role grants nothing", () => {
+    expect(enforcedUser(user("admin"), book)).toBeDefined();
+    expect(enforcedUser(user("admin"), off)).toBeUndefined();
+    expect(enforcedUser(user("owner"), off)).toBeDefined();
+    expect(enforcedUser(user("gone"), book)).toBeUndefined();
+    expect(enforcedUser(undefined, book)).toBeUndefined();
+    expect(isRoleEnabled(off, "admin")).toBe(false);
+    expect(isRoleEnabled(off, "owner")).toBe(true);
   });
 
-  test("denials apply to every role but the owner, and never to help", () => {
-    const deny = (role: UserRole): RolePolicy => ({
-      ...defaultRolePolicy(role),
-      deniedCommands: ["ping", "help"],
-      deniedTools: ["Bash"],
-      deniedMcpServers: ["notion"],
-    });
-    expect(isCommandDenied(deny("admin"), "ping")).toBe(true);
-    expect(isCommandDenied(deny("admin"), "help")).toBe(false);
-    expect(isCommandDenied(deny("owner"), "ping")).toBe(false);
-    expect(policyDisallow(deny("pal"))).toEqual(["Bash", "mcp__notion"]);
-    expect(policyDisallow(deny("owner"))).toEqual([]);
+  test("the reason names the role", () => {
+    expect(disabledRoleReason("qa")).toContain("qa role is switched off");
+  });
+});
+
+describe("what surrounds a role record", () => {
+  test("roles list highest rank first, the owner on top", () => {
+    expect(roleNames(book)).toEqual(["owner", "admin", "executer", "pal"]);
   });
 
-  test("names stored before the rename carry over: review is quick-review, approve is dropped", () => {
+  test("help cannot be denied, and a server name maps to its mcp__ tool", () => {
+    expect(UNDENIABLE_COMMANDS).toContain("help");
+    expect(mcpServerTool("notion")).toBe("mcp__notion");
+    expect(mcpServerTool("mcp__notion")).toBe("mcp__notion");
+    expect(CORE_TOOLS).toContain("Bash");
+  });
+
+  test("a denied tool list is checked, comma or line separated, de-duplicated", () => {
+    expect(parseDeniedTools("Bash(rm:*), WebFetch\nWebFetch")).toEqual({ ok: true, tools: ["Bash(rm:*)", "WebFetch"] });
+    expect(parseDeniedTools(["Read"])).toEqual({ ok: true, tools: ["Read"] });
+    expect(parseDeniedTools("")).toEqual({ ok: true, tools: [] });
+    expect(parseDeniedTools("rm -rf /").ok).toBe(false);
+  });
+
+  test("a stored command name follows a rename; approve maps to nothing", () => {
     expect(currentCommandName("review")).toBe("quick-review");
-    expect(currentCommandName(" Review ")).toBe("quick-review");
-    expect(currentCommandName("approve")).toBeUndefined(); // denying a bare approval never meant denying a review
-    expect(currentCommandName("ping")).toBe("ping");
-  });
-
-  test("parse checks names, normalises servers, refuses the owner and help", () => {
-    const parse = (over: Record<string, unknown>) =>
-      parseRolePolicy(
-        { role: "executer", enabled: true, deniedCommands: [], deniedTools: [], deniedMcpServers: [], ...over },
-        ["ping", "quick-review", "help"],
-      );
-    expect(parse({ role: "owner" }).ok).toBe(false);
-    expect(parse({ role: "god" }).ok).toBe(false);
-    expect(parse({ deniedCommands: ["nope"] }).ok).toBe(false);
-    expect(parse({ deniedCommands: ["help"] }).ok).toBe(false);
-    expect(parse({ deniedTools: ["Bash; rm"] }).ok).toBe(false);
-    expect(parse({ deniedMcpServers: ["bad server"] }).ok).toBe(false);
-    expect(
-      parse({
-        enabled: false,
-        deniedCommands: "Ping, quick-review, ping",
-        deniedTools: "Bash(rm:*)\nWrite",
-        deniedMcpServers: ["mcp__acme-pg-prod", "notion"],
-      }),
-    ).toEqual({
-      ok: true,
-      policy: {
-        role: "executer",
-        enabled: false,
-        deniedCommands: ["ping", "quick-review"],
-        deniedTools: ["Bash(rm:*)", "Write"],
-        deniedMcpServers: ["acme-pg-prod", "notion"],
-      },
-    });
-    // A policy saved before the rename is carried over: review -> quick-review, approve dropped.
-    expect(parse({ deniedCommands: ["review", "approve", "ping"] })).toMatchObject({
-      ok: true,
-      policy: { deniedCommands: ["quick-review", "ping"] },
-    });
-    // Anything but an explicit false keeps the role on.
-    expect(parse({ enabled: undefined })).toMatchObject({ policy: { enabled: true } });
-  });
-
-  test("known MCP servers come from the configured database list, the code's connectors and what policies already deny", () => {
-    const servers = knownMcpServers([{ ...defaultRolePolicy("pal"), deniedMcpServers: ["custom-db"] }], ["pg-prod"]);
-    expect(servers).toContain("pg-prod");
-    expect(servers).toContain("claude_ai_Notion");
-    expect(servers).toContain("custom-db");
-    expect(servers).toEqual([...servers].sort());
-  });
-
-  test("the refusal names the role", () => {
-    expect(disabledRoleReason("executer")).toContain("executer role is switched off");
+    expect(currentCommandName(" PING ")).toBe("ping");
+    expect(currentCommandName("approve")).toBeUndefined();
   });
 });

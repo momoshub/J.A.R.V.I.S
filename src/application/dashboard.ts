@@ -11,17 +11,12 @@ import type { AllowedUser, UserRole } from "../domain/types.ts";
 import { DEFAULT_PERSONALITY } from "../domain/personality.ts";
 import { PAL_TOOLS } from "../domain/toolPolicy.ts";
 import { GITHUB_LINK_PREFIX, githubLinkKey } from "../domain/reviewInbox.ts";
-import {
-  CORE_TOOLS,
-  ROLES,
-  UNDENIABLE_COMMANDS,
-  currentCommandName,
-  defaultRolePolicy,
-  effectivePolicy,
-  knownMcpServers,
-  parseRolePolicy,
-  type RolePolicy,
-} from "../domain/rolePolicy.ts";
+import { CORE_TOOLS, currentCommandName, parseDeniedTools } from "../domain/rolePolicy.ts";
+import { OWNER_ROLE, isOwnerRole, validRoleName, type Role } from "../domain/roles.ts";
+import { isKnownPermission, isOwnerOnlyPermission } from "../domain/permissions.ts";
+import { seededBook, type SeedInput } from "../domain/roleSeed.ts";
+import { addMcpServer, catalogueFor, defaultRoleOf, deleteRole, renameRole, setDefaultRole, type RoleEditDeps } from "./roles.ts";
+import type { RoleRepo } from "../infrastructure/db/roleRepo.ts";
 import { labelMentions, mentionedIds, userLabel } from "../domain/slackNames.ts";
 import type { NameResolver } from "./nameResolver.ts";
 import { KIT_MODAL_PREFIX, viewProblem, type KitView } from "../domain/kitEvents.ts";
@@ -127,11 +122,10 @@ export type DashboardPorts = {
     readonly remove: (key: string) => void;
     readonly list: () => readonly { readonly key: string; readonly value: string }[];
   };
-  /** Per-role policy - the same rows the bot enforces from. Absent: roles read as defaults and cannot be edited. */
-  readonly rolePolicies?: {
-    readonly list: () => readonly RolePolicy[];
-    readonly save: (policy: RolePolicy, by: string, at: number) => void;
-  };
+  /** The stored roles - the same rows the bot enforces from. Absent: roles read as the seeded defaults and cannot be edited. */
+  readonly roleRepo?: RoleRepo;
+  /** The subset of the database servers an executer may query (`EXECUTER_DB_MCP_SERVERS`), for the seeded catalogue. */
+  readonly executerDbMcpServers?: readonly string[];
   /** Cached Slack names for channels and people, so no page shows a bare id. */
   readonly names?: NameResolver;
   readonly adapter?: MemoryAdapterPort;
@@ -184,14 +178,7 @@ const beforeId = (v: string | null | undefined): number | undefined => {
   const n = Number(v);
   return v && Number.isInteger(n) && n > 0 ? n : undefined;
 };
-/**
- * A role the deck may hand out, or undefined. Never `owner` (there is one, and
- * it comes from the environment), and never a silent fallback: bad input is
- * refused, because the fallback would be a demotion nobody asked for.
- */
-const assignable = (v: unknown): UserRole | undefined =>
-  v === "admin" || v === "executer" || v === "pal" ? v : undefined;
-const BAD_ROLE = "Pick admin, executer or pal";
+const BAD_ROLE = "Pick one of the roles on the Roles page";
 const GITHUB_LOGIN = /^[A-Za-z0-9](?:[A-Za-z0-9-]{0,38})$/;
 const gateError = (r: { readonly violations?: readonly string[] }, fallback: string): Refusal =>
   refuse((r.violations ?? [fallback]).join("; "));
@@ -202,10 +189,30 @@ export const usageWindowMs = (hours: string | null): number => {
   return (Number.isFinite(h) && h > 0 ? Math.min(h, 24 * 365) : 24) * 3_600_000;
 };
 
-const RANK: Record<UserRole, number> = { pal: 0, executer: 1, admin: 2, owner: 3 };
-
 export const createDashboardService = (p: DashboardPorts) => {
-  const rolePolicies = (): readonly RolePolicy[] => p.rolePolicies?.list() ?? ROLES.map(defaultRolePolicy);
+  const commandSeeds = (): SeedInput["commands"] => listCommandInfo().map((c) => ({ name: c.name, minRole: c.minRole }));
+  const extraServers = (): string[] =>
+    (p.settings.get(SETTING_KEYS.roleMcpServers) ?? "").split(/[,\n]/).map((x) => x.trim()).filter(Boolean);
+  const seedInput = (): SeedInput => ({
+    commands: commandSeeds(),
+    dbServers: p.dbMcpServers ?? [],
+    executerDbServers: p.executerDbMcpServers ?? [],
+    extraMcpServers: extraServers(),
+  });
+  const book = () => p.roleRepo?.book ?? seededBook(seedInput());
+  const catalogue = () => catalogueFor(seedInput(), listCommandInfo());
+  /** The dashboard is the owner's: edits are made as the owner, who holds everything. */
+  const editDeps = (): RoleEditDeps | undefined =>
+    p.roleRepo ? { repo: p.roleRepo, settings: p.settings, clock: p.clock, by: BY, editor: OWNER_ROLE, catalogue: catalogue() } : undefined;
+  /**
+   * A role the deck may hand out, or undefined. Never `owner` (there is one, and
+   * it comes from the environment), and never a silent fallback: bad input is
+   * refused, because the fallback would be a demotion nobody asked for.
+   */
+  const assignable = (v: unknown): UserRole | undefined => {
+    const name = typeof v === "string" ? v.trim().toLowerCase() : "";
+    return name && !isOwnerRole(name) && book().get(name) ? name : undefined;
+  };
 
   /** Slack id -> its GitHub logins, from the `github_login:` links the review inbox and GitHub App use. */
   const githubLogins = (): Map<string, string[]> => {
@@ -263,7 +270,7 @@ export const createDashboardService = (p: DashboardPorts) => {
     const slackId = text(slackIdIn);
     if (!SLACK_ID.test(slackId)) return refuse("Invalid Slack id");
     if (slackId === p.ownerSlackId) return refuse("The owner record cannot be modified");
-    const next = assignable(role ?? "pal");
+    const next = role === undefined ? defaultRoleOf(book(), p.settings) : assignable(role);
     if (!next) return refuse(BAD_ROLE);
     const existing = p.users.get(slackId);
     p.users.upsert({
@@ -392,50 +399,122 @@ export const createDashboardService = (p: DashboardPorts) => {
   },
 
   /**
-   * Every role with its policy and members, plus what can be denied. Commands
-   * are offered per role only up to its rank: a role cannot be granted past a
-   * command's `minRole`, so there is nothing to tick above it.
+   * Every role with its grants and members, plus everything that can be granted
+   * and the extra tool patterns that can be denied. Only the owner is locked.
    */
   roles: () => {
-    const policies = rolePolicies();
     const users = p.users.list();
-    const commands = listCommandInfo();
+    const cat = catalogue();
     return {
-      roles: policies.map((policy) => ({
-        ...effectivePolicy(policy),
-        // Names stored before a rename read back under their current name, so the page shows what the bot enforces.
-        deniedCommands: effectivePolicy(policy)
-          .deniedCommands.map(currentCommandName)
-          .filter((c): c is string => !!c),
-        locked: policy.role === "owner",
+      roles: book().list().map((r) => ({
+        name: r.name,
+        rank: isOwnerRole(r.name) ? null : r.rank,
+        description: r.description,
+        enabled: r.enabled,
+        grants: isOwnerRole(r.name) ? [] : r.grants,
+        deniedTools: r.deniedTools,
+        seed: r.seed ?? null,
+        locked: isOwnerRole(r.name),
         members: users
-          .filter((u) => u.role === policy.role || (policy.role === "owner" && u.slackId === p.ownerSlackId))
+          .filter((u) => u.role === r.name || (isOwnerRole(r.name) && u.slackId === p.ownerSlackId))
           .map((u) => ({ slackId: u.slackId, name: u.displayName })),
-        commands: commands
-          .filter((c) => RANK[policy.role] >= RANK[c.minRole] && !UNDENIABLE_COMMANDS.includes(c.name))
-          .map((c) => c.name),
       })),
+      catalogue: cat,
       tools: CORE_TOOLS,
-      mcpServers: knownMcpServers(policies, p.dbMcpServers),
-      editable: !!p.rolePolicies,
+      mcpServers: cat.filter((c) => c.group === "MCP servers").map((c) => c.id.replace(/^mcp:/, "")),
+      defaultRole: defaultRoleOf(book(), p.settings) ?? null,
+      editable: !!p.roleRepo,
       executerTools: p.settings.get(SETTING_KEYS.executerTools) ?? "",
       palTools: PAL_TOOLS,
     };
   },
 
-  /** Switch a role on or off and set what it is denied. The owner role is never restricted. */
-  saveRolePolicy: (body: {
-    readonly role: unknown;
-    readonly enabled: unknown;
-    readonly deniedCommands: unknown;
-    readonly deniedTools: unknown;
-    readonly deniedMcpServers: unknown;
+  /**
+   * Create a role or save one: its rank, description, whether it is on, the permissions it grants and the
+   * extra CLI tool patterns it is denied. The owner role is never edited, whatever is posted.
+   */
+  saveRole: (body: {
+    readonly name: unknown;
+    readonly rank?: unknown;
+    readonly description?: unknown;
+    readonly enabled?: unknown;
+    readonly grants?: unknown;
+    readonly deniedTools?: unknown;
+    /** A new role only: start from this role's rank, grants and denied tools when none are posted. */
+    readonly from?: unknown;
+    /** Make a NEW role: refused when the name is taken, so a create can never overwrite one. */
+    readonly create?: unknown;
   }): Outcome<null> => {
-    if (!p.rolePolicies) return refuse("Role policies are not wired up", 503);
-    const parsed = parseRolePolicy(body, listCommandInfo().map((c) => c.name));
-    if (!parsed.ok) return refuse(parsed.error);
-    p.rolePolicies.save(parsed.policy, BY, p.clock());
+    const edit = editDeps();
+    if (!edit) return refuse("Roles are not wired up", 503);
+    const name = text(body.name).toLowerCase();
+    if (isOwnerRole(name)) return refuse("The owner role is fixed: it always holds everything and cannot be edited");
+    const existing = book().get(name);
+    if (body.create === true && existing) return refuse(`There is already a role called ${name}`);
+    if (!existing) {
+      const bad = validRoleName(name);
+      if (bad) return refuse(bad);
+    }
+    const base = !existing && text(body.from) ? book().get(text(body.from).toLowerCase()) : undefined;
+    if (!existing && text(body.from) && (!base || isOwnerRole(base.name))) return refuse("Copy from one of the roles below the owner");
+    const rank = body.rank === undefined || body.rank === "" ? (existing?.rank ?? base?.rank ?? 0) : Number(body.rank);
+    if (!Number.isInteger(rank) || rank < 0 || rank > 10_000) return refuse("A rank is a whole number from 0 to 10000");
+    const grants = [
+      ...new Set(
+        (Array.isArray(body.grants) ? body.grants : base?.grants ?? []).map((g) => String(g ?? "").trim()).filter(Boolean),
+      ),
+    ];
+    const cat = catalogue();
+    const owned = grants.find(isOwnerOnlyPermission);
+    if (owned) return refuse(`${owned} is the owner's alone: managing roles can never be granted`);
+    // A permission that no longer exists (a removed command) may stay on a role until it is unticked; a new one must be real.
+    const fresh = grants.filter((g) => !existing?.grants.includes(g));
+    const unknown = fresh.find((g) => !isKnownPermission(g, cat));
+    if (unknown) return refuse(`Not a permission I know: ${unknown}`);
+    const tools = parseDeniedTools(body.deniedTools ?? base?.deniedTools ?? []);
+    if (!tools.ok) return refuse(tools.error);
+    const role: Role = {
+      name,
+      rank,
+      description: text(body.description).slice(0, 300),
+      enabled: body.enabled !== false,
+      grants,
+      deniedTools: tools.tools,
+      ...(existing?.seed ? { seed: existing.seed } : {}),
+    };
+    edit.repo.save(role, BY, p.clock());
     return done(null);
+  },
+
+  /** Delete a role nobody holds. Refused (naming who holds it) otherwise. */
+  deleteRole: (nameIn: unknown): Outcome<null> => {
+    const edit = editDeps();
+    if (!edit) return refuse("Roles are not wired up", 503);
+    const name = text(nameIn).toLowerCase();
+    const r = deleteRole(edit, name, p.users.list().filter((u) => u.role === name));
+    return r.ok ? done(null) : refuse(r.error);
+  },
+
+  /** Rename a role; everyone who holds it moves with it. */
+  renameRole: (fromIn: unknown, toIn: unknown): Outcome<null> => {
+    const edit = editDeps();
+    if (!edit) return refuse("Roles are not wired up", 503);
+    const r = renameRole(edit, text(fromIn).toLowerCase(), text(toIn).toLowerCase());
+    return r.ok ? done(null) : refuse(r.error);
+  },
+
+  /** The role an approved access request gets. */
+  setDefaultRole: (nameIn: unknown): Outcome<null> => {
+    const edit = editDeps();
+    if (!edit) return refuse("Roles are not wired up", 503);
+    const r = setDefaultRole(edit, text(nameIn).toLowerCase());
+    return r.ok ? done(null) : refuse(r.error);
+  },
+
+  /** Name an MCP server the host knows by hand, so a role can be granted (or kept from) it. */
+  addMcpServer: (serverIn: unknown): Outcome<null> => {
+    const r = addMcpServer(p.settings, text(serverIn));
+    return r.ok ? done(null) : refuse(r.error);
   },
 
   /** The executer role's tool allow-list, comma or newline separated. */

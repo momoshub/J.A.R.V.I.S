@@ -233,9 +233,9 @@ describe("formatResult", () => {
   });
 });
 
-test("help explains the roles, the cost guard and the example", () => {
+test("help explains who runs it (by grant), the cost guard and the example", () => {
   const text = helpText("X/jv");
-  for (const needle of ["owner", "executer", "admin", "Confirm", "3 weeks", "audited", "--group", "--last", "X/jv cloudwatch"]) {
+  for (const needle of ["owner", "cloudwatch:direct", "command:cloudwatch", "Confirm", "3 weeks", "audited", "--group", "--last", "X/jv cloudwatch"]) {
     expect(text).toContain(needle);
   }
 });

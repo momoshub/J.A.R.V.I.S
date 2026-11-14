@@ -28,6 +28,7 @@ import {
   type QueryResult,
 } from "../domain/cloudwatch.ts";
 import { SIGNATURES } from "../domain/messageFooter.ts";
+import type { RoleBook } from "../domain/roles.ts";
 import type { AllowedUser } from "../domain/types.ts";
 import type { Clock } from "./ports.ts";
 import type { SlackAdminPort } from "./slackAdmin.ts";
@@ -53,6 +54,8 @@ export type CloudwatchDeps = {
   settings?: SettingsRepo;
   clock: Clock;
   ownerSlackId: string;
+  /** The stored roles; absent means the seeded defaults. */
+  roles?: RoleBook;
   /** How long a Confirm message stays live. */
   ttlMs?: number;
   /** Timer for settling an unanswered request; injected so tests need not wait. */
@@ -118,8 +121,8 @@ export const execute = async (deps: CloudwatchDeps, stored: StoredCloudwatch, co
  */
 export const askCloudwatch = async (deps: CloudwatchDeps, ask: AskContext, args: readonly string[]): Promise<string> => {
   const { actor, channelId, threadTs } = ask;
-  const mode = cloudwatchMode(actor.role);
-  if (mode === "refuse") return refusal(actor.role);
+  const mode = cloudwatchMode(actor.role, deps.roles);
+  if (mode === "refuse") return refusal(actor.role, deps.roles);
 
   const prepared = await prepare(deps, args, ask.usage);
   if (typeof prepared === "string") return prepared;
@@ -222,7 +225,7 @@ export const decideCloudwatch = async (
     return { kind: "decided" };
   }
   const requester = deps.users.get(stored.requestedBy);
-  if (!requester || cloudwatchMode(requester.role) === "refuse") {
+  if (!requester || cloudwatchMode(requester.role, deps.roles) === "refuse") {
     deps.repo.finish(stored.id, { ok: false, error: "requester no longer allowed" }, now);
     await settle("⚠️ not run - the requester is no longer allowed to run CloudWatch queries");
     return { kind: "decided" };

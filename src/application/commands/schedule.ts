@@ -12,7 +12,9 @@ import {
 import { MAX_LOOPS_PER_USER, cleanName, loopRef, nextRun, parseLoopArgs, scheduleText } from "../../domain/loop.ts";
 import { proposeScriptLoop } from "../loopApproval.ts";
 import { loopOriginText } from "../loops.ts";
-import { type CommandDef, RANK, parseWindow } from "./shared.ts";
+import { type CommandDef, parseWindow } from "./shared.ts";
+import { PERM } from "../../domain/permissions.ts";
+import { isOwnerRole, roleNamesWith } from "../../domain/roles.ts";
 
 export const SCHEDULE_COMMANDS: readonly CommandDef[] = [
   {
@@ -68,7 +70,7 @@ export const SCHEDULE_COMMANDS: readonly CommandDef[] = [
     quiet: true,
     usage: "pr|checks|reply|url|worker <target> [--past-wait] <what to do> | <what to do> -- <shell check> | list | cancel",
     summary: "wait for a PR, CI, a reply, a url or an Orca worker, then carry on in this thread by itself",
-    run: async ({ deps, actor, args, rest, prefix, threadTs, channelId }) => {
+    run: async ({ can, roles, deps, actor, args, rest, prefix, threadTs, channelId }) => {
       if (!deps.watches) return "I have nowhere to keep a watch right now.";
       const sub = (args[0] ?? "").toLowerCase();
 
@@ -76,7 +78,7 @@ export const SCHEDULE_COMMANDS: readonly CommandDef[] = [
         // A pal sees their own; the rest name other people's channels and checks.
         const waiting = deps.watches
           .waiting(20)
-          .filter((w) => RANK[actor.role] >= RANK.executer || w.slackUserId === actor.slackId);
+          .filter((w) => can(PERM.shellWatch) || w.slackUserId === actor.slackId);
         if (waiting.length === 0) return "I am not waiting for anything.";
         const now = deps.clock();
         return waiting
@@ -100,8 +102,8 @@ export const SCHEDULE_COMMANDS: readonly CommandDef[] = [
       if (!parsed.ok) {
         return `${parsed.error}. \`${prefix} watch pr <url> <what to do>\`, or \`${prefix} watch <what to do> -- <shell check>\``;
       }
-      if (parsed.check && RANK[actor.role] < RANK.executer) {
-        return `A shell check needs *executer* access. \`${prefix} watch pr|checks|reply|url|worker <target> <what to do>\` is open to you.`;
+      if (parsed.check && !can(PERM.shellWatch)) {
+        return `A shell check needs the *${PERM.shellWatch}* permission (held by ${roleNamesWith(roles, PERM.shellWatch)}). \`${prefix} watch pr|checks|reply|url|worker <target> <what to do>\` is open to you.`;
       }
       const now = deps.clock();
       // A named wait builds its own predicate. The raw `-- <shell>` form still
@@ -169,12 +171,12 @@ export const SCHEDULE_COMMANDS: readonly CommandDef[] = [
     minRole: "pal",
     usage: "[me|<@someone>] (in 2h | at 15:00 [today|tomorrow] | tomorrow 9am | on 2026-12-01) <what> | list | cancel <id>",
     summary: "remind you (or someone) of something here, at a time",
-    run: async ({ deps, actor, args, rest, prefix, threadTs, channelId }) => {
+    run: async ({ can, deps, actor, args, rest, prefix, threadTs, channelId }) => {
       if (!deps.reminders) return "I have nowhere to keep a reminder right now.";
       const now = deps.clock();
       const offset = deps.tzOffsetMinutes?.() ?? -new Date(now).getTimezoneOffset();
       const sub = (args[0] ?? "").toLowerCase();
-      const admin = actor.role === "admin" || actor.role === "owner";
+      const admin = can(PERM.manageReminders);
 
       if (sub === "list" && args.length <= 2) {
         const all = admin && (args[1] ?? "").toLowerCase() === "all";
@@ -263,7 +265,7 @@ export const SCHEDULE_COMMANDS: readonly CommandDef[] = [
         const id = Number((args[1] ?? "").replace(/^#/, ""));
         const l = Number.isInteger(id) ? deps.loops.get(id) : undefined;
         if (!l || (l.state !== "active" && l.state !== "pending")) return `There is no active loop #${args[1]}.`;
-        if (l.createdBy !== actor.slackId && actor.role !== "owner") {
+        if (l.createdBy !== actor.slackId && !isOwnerRole(actor.role)) {
           return `#${l.id} is not yours to cancel - ask <@${l.createdBy}>.`;
         }
         // A pending loop was never live: cancelling it deletes it, and its buttons go dead.
@@ -281,7 +283,7 @@ export const SCHEDULE_COMMANDS: readonly CommandDef[] = [
         return "A script loop is never made from a typed line, even the owner's. Ask me in plain words what to run and how often, and I will write the script and put it to the owner to approve.";
       }
       // From a turn it is the owner's alone, and even then it waits for their Approve.
-      if (parsed.command && actor.role !== "owner") {
+      if (parsed.command && !isOwnerRole(actor.role)) {
         return "A script loop runs shell, so only the owner can have me create one. A prompt loop (`loop every <schedule> <prompt>`) is open to you.";
       }
       if (deps.loops.liveBy(actor.slackId, MAX_LOOPS_PER_USER + 1).length >= MAX_LOOPS_PER_USER) {

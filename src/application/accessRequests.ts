@@ -18,16 +18,17 @@ import type { SlackAdminPort } from "./slackAdmin.ts";
 import type { AccessRequestRepo } from "../infrastructure/db/accessRequestRepo.ts";
 import type { UserRepo } from "../infrastructure/db/userRepo.ts";
 import { logAndIgnore } from "./ignoredError.ts";
+import { PERM } from "../domain/permissions.ts";
+import { can, type RoleBook } from "../domain/roles.ts";
+import { seededBook } from "../domain/roleSeed.ts";
+import { defaultRoleOf } from "./roles.ts";
 
 /** Reactions the owner uses to decide. Aliases included - people reach for whichever. */
 export const APPROVE_REACTIONS = ["white_check_mark", "heavy_check_mark", "ballot_box_with_check", "+1"];
 export const REJECT_REACTIONS = ["x", "negative_squared_cross_mark", "no_entry", "no_entry_sign", "-1"];
 
-/** Role granted on approval. Deliberately the lowest one. */
-export const GRANTED_ROLE: UserRole = "pal";
-
-/** Roles that may decide an access request. */
-export const DECIDERS: readonly UserRole[] = ["owner", "admin"];
+/** The role an approval grants: the `default_role` setting, else the lowest-ranked one - never more than that. */
+const grantedRole = (deps: AccessRequestDeps): UserRole => defaultRoleOf(deps.roles ?? seededBook(), deps.settings) ?? "pal";
 
 /** Excerpt of the message quoted to the owner. */
 const ASKED_CHARS = 200;
@@ -47,6 +48,8 @@ export type AccessRequestDeps = {
    * instance's business, and `src/` carries no instance identity.
    */
   settings?: SettingsRepo;
+  /** The stored roles; absent means the seeded defaults. */
+  roles?: RoleBook;
 };
 
 export type Requester = {
@@ -59,13 +62,13 @@ export type Requester = {
   messageTs?: string;
 };
 
-/** The owner plus every admin, owner first, without repeats. */
+/** The owner plus everyone whose role holds `access:decide`, owner first, without repeats. */
 const decidersOf = (deps: AccessRequestDeps): string[] => [
   ...new Set([
     deps.ownerSlackId,
     ...deps.users
       .list()
-      .filter((u) => DECIDERS.includes(u.role))
+      .filter((u) => can(deps.roles ?? seededBook(), u.role, PERM.decideAccess))
       .map((u) => u.slackId),
   ]),
 ];
@@ -118,7 +121,7 @@ export const requestAccess = async (
   );
 
   const name = who.displayName ? ` (${who.displayName})` : "";
-  const text = `🙋 <@${who.slackUserId}>${name} is asking me something and is not on the list.\n> ${clip(who.text)}\n\nReact ✅ to add them as *${GRANTED_ROLE}*, ❌ to decline.`;
+  const text = `🙋 <@${who.slackUserId}>${name} is asking me something and is not on the list.\n> ${clip(who.text)}\n\nReact ✅ to add them as *${grantedRole(deps)}*, ❌ to decline.`;
 
   // Everyone who may decide has to be able to see it, so each of them gets the
   // notice and a reaction on any one of them resolves the request.
@@ -169,7 +172,7 @@ export const decideAccessRequest = async (
   // The owner always counts, even before they are in the allowlist.
   const clicker = deps.users.get(event.slackUserId);
   const mayDecide =
-    event.slackUserId === deps.ownerSlackId || (clicker !== undefined && DECIDERS.includes(clicker.role));
+    event.slackUserId === deps.ownerSlackId || (clicker !== undefined && can(deps.roles ?? seededBook(), clicker.role, PERM.decideAccess));
   if (!mayDecide) return { kind: "ignored" };
 
   const approve = APPROVE_REACTIONS.includes(event.reaction);
@@ -185,10 +188,11 @@ export const decideAccessRequest = async (
     return { kind: "ignored" };
   }
 
+  const granted = grantedRole(deps);
   if (approve) {
     deps.users.upsert({
       slackId: request.slackUserId,
-      role: GRANTED_ROLE,
+      role: granted,
       displayName: request.displayName,
       addedBy: deps.ownerSlackId,
       createdAt: now,
@@ -202,7 +206,7 @@ export const decideAccessRequest = async (
         n.channel,
         n.ts,
         approve
-          ? `✅ <@${request.slackUserId}> was added as *${GRANTED_ROLE}* by <@${event.slackUserId}>.`
+          ? `✅ <@${request.slackUserId}> was added as *${granted}* by <@${event.slackUserId}>.`
           : `❌ <@${request.slackUserId}> was declined by <@${event.slackUserId}>.`,
       )
       .catch(logAndIgnore("access request decision notice"));
