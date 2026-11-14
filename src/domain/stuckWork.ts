@@ -45,6 +45,8 @@ export type StuckWork = {
   readonly prs: readonly QuietPr[];
   /** What could not be checked (Orca down, `gh` failed), so "nothing" is not claimed. */
   readonly problems: readonly string[];
+  /** Tasks this scan closed because their thread already had the report (see `reportedAfter`). */
+  readonly autoClosed?: number;
 };
 
 export const NO_STUCK_WORK: StuckWork = { tasks: [], prs: [], problems: [] };
@@ -118,6 +120,55 @@ export const parseDispatchedTasks = (stdout: string): DispatchedTask[] | undefin
     return [{ taskId, title: str(t.title) ?? "", ...(dispatchId ? { dispatchId } : {}), ...(assignee ? { assignee } : {}) }];
   });
 };
+
+/**
+ * Whether `worker-show --json` says the worker finished successfully: state
+ * `succeeded`, nothing else. Died, failed, cancelled, stopped, waiting on an
+ * `ask`, unreadable - none of those is a success, so none is auto-closed.
+ */
+export const workerSucceeded = (workerShowStdout: string): boolean => {
+  const r = parseJson(workerShowStdout);
+  return isRecord(r) && r.ok === true && isRecord(r.result) && r.result.state === "succeeded";
+};
+
+/** Orca writes `2026-11-14 17:31:57` (UTC, no zone) beside ISO strings: both are read as UTC. */
+const utcTime = (v: unknown): number => {
+  if (typeof v !== "string") return 0;
+  const t = Date.parse(/^\d{4}-\d\d-\d\d \d\d:\d\d:\d\d$/.test(v) ? `${v.replace(" ", "T")}Z` : v);
+  return Number.isFinite(t) ? t : 0;
+};
+
+/**
+ * When the worker ended, from `worker-show --json --full`: the dispatch's
+ * `completedAt`, else the worker's last update, in ms. Undefined when the
+ * state is not `succeeded` or no time is given - without an end there is
+ * nothing to compare a report against, so the task stays flagged.
+ */
+export const workerEndedAt = (fullStdout: string): number | undefined => {
+  const r = parseJson(fullStdout);
+  if (!isRecord(r) || r.ok !== true || !isRecord(r.result)) return undefined;
+  const { dispatch, worker } = r.result;
+  if (!isRecord(worker) || worker.state !== "succeeded") return undefined;
+  const at = utcTime(isRecord(dispatch) ? dispatch.completedAt : undefined) || utcTime(worker.updatedAt);
+  return at > 0 ? at : undefined;
+};
+
+/** One message of a Slack thread, as far as the sweep cares. */
+export type ThreadPost = { readonly ts: string; /** Posted by the bot's own user. */ readonly own: boolean };
+
+/**
+ * Whether the bot itself posted in the thread after the worker ended: the
+ * report. A person's message never counts (they may be asking where the
+ * report is), nor does a bot post from before the end. Slack's `ts` is
+ * seconds with a fraction while Orca's end time is whole seconds, so a post
+ * must land in a later second than the end - closing a task early is worse
+ * than flagging one for one more sweep.
+ */
+export const reportedAfter = (posts: readonly ThreadPost[], endedAt: number): boolean =>
+  posts.some((p) => p.own && Number(p.ts) * 1000 >= endedAt + 1000);
+
+/** The `--result` an auto-closed task carries. */
+export const AUTO_CLOSE_RESULT = "auto-closed: worker succeeded and the thread has a report after it ended";
 
 const FINAL_STATES = new Set(["succeeded", "failed", "cancelled", "stopped"]);
 
@@ -382,6 +433,7 @@ export const toReport = (
   const kept = Object.fromEntries(Object.entries(seen).filter(([, at]) => now - at < repeatMs));
   for (const t of tasks) kept[taskKey(t)] = now;
   for (const p of prs) kept[prKeyOf(p)] = now;
+  // The auto-closed count is for `mindful` only: a DM about work that needs nobody is noise.
   return { fresh: { tasks, prs, problems: work.problems }, seen: kept };
 };
 

@@ -3,6 +3,7 @@ import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { appendFileSync } from "node:fs";
+import { AUTO_CLOSE_RESULT, type ThreadPost } from "../../src/domain/stuckWork.ts";
 import { createStuckWorkProbe, findOwners, type TraceCache } from "../../src/infrastructure/system/stuckWorkProbe.ts";
 import type { CommandRunner } from "../../src/infrastructure/llm/backgroundAgents.ts";
 
@@ -167,5 +168,87 @@ describe("stuck work probe", () => {
     expect(findOwners(dir, 0, cache).prs.has("o/r#8")).toBe(true);
     expect(findOwners(dir, Date.now() + 60_000, cache).prs.size).toBe(0);
     expect(cache.size).toBe(0);
+  });
+});
+
+describe("auto-close of reported tasks", () => {
+  const ENDED = "2026-11-08 11:00:00"; // Orca writes UTC without a zone
+  const ts = (iso: string): string => String(Date.parse(iso) / 1000);
+  const bot = (iso: string): ThreadPost => ({ ts: ts(iso), own: true });
+  const human = (iso: string): ThreadPost => ({ ts: ts(iso), own: false });
+
+  const scan = async (opts: {
+    concise?: string;
+    full?: string;
+    posts?: readonly ThreadPost[] | "throws";
+    update?: string;
+    dispatchId?: string;
+    withReader?: boolean;
+  }) => {
+    const id = opts.dispatchId ?? "ctx_dead01";
+    const orca = orcaFake({
+      "orchestration run-list": '{"ok":true,"result":{"runs":[{"id":"run_1"}]}}',
+      "orchestration task-list --run run_1": `{"ok":true,"result":{"tasks":[{"id":"task_dead","status":"dispatched","title":"Console v3","dispatchId":"${id}"}]}}`,
+      [`orchestration worker-show --dispatch ${id} --json`]: opts.concise ?? '{"ok":true,"result":{"state":"succeeded","liveness":"live"}}',
+      [`orchestration worker-show --dispatch ${id} --full`]:
+        opts.full ?? `{"ok":true,"result":{"dispatch":{"completedAt":"${ENDED}"},"worker":{"state":"succeeded","updatedAt":"2026-11-08 11:00:01"}}}`,
+      "orchestration task-update --id task_dead": opts.update ?? '{"ok":true,"result":{"task":{"id":"task_dead","status":"completed"}}}',
+    });
+    const reads: string[] = [];
+    const probe = createStuckWorkProbe({
+      orca: orca.run,
+      gh: ghFake("[]"),
+      traceDir: traceDir(),
+      now: () => NOW,
+      ...(opts.withReader === false
+        ? {}
+        : {
+            readThread: async (owner) => {
+              reads.push(`${owner.channelId}/${owner.threadTs}`);
+              if (opts.posts === "throws") throw new Error("not_in_channel");
+              return opts.posts ?? [];
+            },
+          }),
+    });
+    const work = await probe.scan();
+    return { work, reads, updates: orca.calls.filter((c) => c.startsWith("orchestration task-update")) };
+  };
+
+  test("closes a succeeded worker whose thread has the bot's own post after it ended, and drops it from the list", async () => {
+    const { work, reads, updates } = await scan({ posts: [human("2026-11-08 10:00:00"), bot("2026-11-08 11:30:00")] });
+    expect(reads).toEqual(["C1/100.1"]);
+    expect(updates).toEqual([`orchestration task-update --id task_dead --run run_1 --status completed --result ${AUTO_CLOSE_RESULT} --json`]);
+    expect(work.tasks).toEqual([]);
+    expect(work.autoClosed).toBe(1);
+    expect(work.problems).toEqual([]);
+  });
+
+  const stays = (name: string, opts: Parameters<typeof scan>[0], reads = true) =>
+    test(`stays flagged, never closed: ${name}`, async () => {
+      const r = await scan(opts);
+      expect(r.updates).toEqual([]);
+      expect(r.work.autoClosed).toBeUndefined();
+      expect(r.work.tasks.map((t) => t.taskId)).toEqual(["task_dead"]);
+      if (!reads) expect(r.reads).toEqual([]);
+    });
+
+  stays("no reply in the thread at all", { posts: [] });
+  stays("the bot's only post is from before the worker ended", { posts: [bot("2026-11-08 10:59:00")] });
+  stays("the bot's post is in the same second as the end", { posts: [{ ts: `${ts("2026-11-08 11:00:00")}.500000`, own: true }] });
+  stays("only a person replied after the end", { posts: [bot("2026-11-08 10:00:00"), human("2026-11-08 11:30:00")] });
+  stays("Slack could not be read", { posts: "throws" });
+  stays("no Slack reader is wired", { posts: [bot("2026-11-08 11:30:00")], withReader: false });
+  stays("the worker exited without succeeding", { concise: '{"ok":true,"result":{"state":"ready","liveness":"exited"}}', posts: [bot("2026-11-08 11:30:00")] }, false);
+  stays("the worker failed", { concise: '{"ok":true,"result":{"state":"failed","liveness":"live"}}', posts: [bot("2026-11-08 11:30:00")] }, false);
+  stays("the worker was stopped", { concise: '{"ok":true,"result":{"state":"stopped"}}', posts: [bot("2026-11-08 11:30:00")] }, false);
+  stays("the full record has no end time", { full: '{"ok":true,"result":{"dispatch":{},"worker":{"state":"succeeded"}}}', posts: [bot("2026-11-08 11:30:00")] }, false);
+  stays("the full record says it did not succeed", { full: `{"ok":true,"result":{"dispatch":{"completedAt":"${ENDED}"},"worker":{"state":"failed"}}}`, posts: [bot("2026-11-08 11:30:00")] }, false);
+  stays("the thread is unknown", { dispatchId: "ctx_nothread1", posts: [bot("2026-11-08 11:30:00")] }, false);
+
+  test("stays flagged when Orca refuses the close", async () => {
+    const r = await scan({ posts: [bot("2026-11-08 11:30:00")], update: '{"ok":false,"error":{"code":"nope"}}' });
+    expect(r.updates).toHaveLength(1);
+    expect(r.work.autoClosed).toBeUndefined();
+    expect(r.work.tasks.map((t) => t.taskId)).toEqual(["task_dead"]);
   });
 });

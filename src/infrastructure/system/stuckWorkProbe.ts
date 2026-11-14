@@ -6,22 +6,30 @@
  * Read-only: `orca orchestration run-list` / `task-list` / `worker-show`,
  * `orca terminal show` for a task dispatched without a worker, `gh pr list` in
  * the repo folder, and the per-thread tool traces. Needs no sender terminal -
- * those reads work outside any Orca pane. Never throws: whatever could not be
+ * those reads work outside any Orca pane. The one write: a task whose worker
+ * succeeded and whose thread already holds the bot's own post after the worker
+ * ended was finished, only never marked, so it is set `completed` (`task-update`)
+ * instead of being reported. Anything short of both proofs stays reported. Never throws: whatever could not be
  * checked comes back in `problems`, never as "nothing stuck".
  */
 import { readdirSync, statSync } from "node:fs";
 import { join } from "node:path";
 import {
+  AUTO_CLOSE_RESULT,
   deadWorkerReason,
   parseDispatchedTasks,
   parseOpenPrs,
   parseRunPage,
   prRef,
   quietPrs,
+  reportedAfter,
   RUN_WINDOW_MS,
   terminalGone,
   traceStarts,
+  workerEndedAt,
+  workerSucceeded,
   type OwnerThread,
+  type ThreadPost,
   type StuckTask,
   type StuckWork,
 } from "../../domain/stuckWork.ts";
@@ -58,6 +66,8 @@ export type StuckWorkProbeConfig = {
   quietMs?: number;
   /** PR -> thread records written when the bot opened the PR (`stuck_pr_threads`); wins over the trace match. */
   recordedOwners?: () => ReadonlyMap<string, OwnerThread>;
+  /** A thread's messages (read-only); throws when Slack will not say. Without it nothing is auto-closed. */
+  readThread?: (owner: OwnerThread) => Promise<readonly ThreadPost[]>;
 };
 
 /** What one trace started, remembered until the file changes. */
@@ -143,7 +153,25 @@ export const createStuckWorkProbe = (config: StuckWorkProbeConfig): StuckWorkPro
     return ids;
   };
 
-  const stuckTasks = async (problems: string[]): Promise<Omit<StuckTask, "owner">[]> => {
+  const fullWorkerShow = (dispatchId: string) => orcaJson(["worker-show", "--dispatch", dispatchId, "--full"]);
+
+  /**
+   * Whether this task's thread has the bot's own post after the worker ended and
+   * Orca took the close. Any doubt - no owner thread, Slack unreadable, a
+   * `task-update` that did not answer ok - is false, so the task is reported.
+   */
+  const autoClosed = async (t: { taskId: string; runId: string; endedAt?: number }, owner: OwnerThread | undefined): Promise<boolean> => {
+    if (!t.endedAt || !owner || !config.readThread) return false;
+    try {
+      if (!reportedAfter(await config.readThread(owner), t.endedAt)) return false;
+      const out = await orcaJson(["task-update", "--id", t.taskId, "--run", t.runId, "--status", "completed", "--result", AUTO_CLOSE_RESULT]);
+      return (JSON.parse(out.stdout) as { ok?: unknown } | null)?.ok === true;
+    } catch {
+      return false;
+    }
+  };
+
+  const stuckTasks = async (problems: string[]): Promise<(Omit<StuckTask, "owner"> & { endedAt?: number })[]> => {
     const runs = await runIds();
     if (!runs) {
       problems.push("Orca (not running, or `run-list` failed)");
@@ -158,8 +186,14 @@ export const createStuckWorkProbe = (config: StuckWorkProbeConfig): StuckWorkPro
     const checked = await mapLimited(dispatched, CONCURRENCY, async (t) => {
       if (t.dispatchId) {
         // `worker-show` exits 1 on `dispatch_not_found` but still prints JSON.
-        const why = deadWorkerReason((await orcaJson(["worker-show", "--dispatch", t.dispatchId])).stdout);
-        return why ? { ...t, why } : undefined;
+        const shown = (await orcaJson(["worker-show", "--dispatch", t.dispatchId])).stdout;
+        const why = deadWorkerReason(shown);
+        if (!why) return undefined;
+        // The concise view has no times: ask for the full record only for a success.
+        const endedAt = config.readThread && workerSucceeded(shown)
+          ? workerEndedAt((await fullWorkerShow(t.dispatchId)).stdout)
+          : undefined;
+        return { ...t, why, ...(endedAt ? { endedAt } : {}) };
       }
       if (!t.assignee) return undefined;
       const shown = await config.orca(["terminal", "show", "--terminal", t.assignee, "--json"]);
@@ -167,7 +201,14 @@ export const createStuckWorkProbe = (config: StuckWorkProbeConfig): StuckWorkPro
     });
     return checked
       .filter((t): t is NonNullable<typeof t> => t !== undefined)
-      .map((t) => ({ taskId: t.taskId, runId: t.runId, title: t.title, why: t.why, ...(t.dispatchId ? { dispatchId: t.dispatchId } : {}) }));
+      .map((t) => ({
+        taskId: t.taskId,
+        runId: t.runId,
+        title: t.title,
+        why: t.why,
+        ...(t.dispatchId ? { dispatchId: t.dispatchId } : {}),
+        ...(t.endedAt ? { endedAt: t.endedAt } : {}),
+      }));
   };
 
   const quiet = async (problems: string[]) => {
@@ -189,13 +230,18 @@ export const createStuckWorkProbe = (config: StuckWorkProbeConfig): StuckWorkPro
     scan: async () => {
       try {
         const problems: string[] = [];
-        const [tasks, prs] = await Promise.all([stuckTasks(problems), quiet(problems)]);
-        if (tasks.length === 0 && prs.length === 0) return { tasks: [], prs: [], problems };
+        const [found, prs] = await Promise.all([stuckTasks(problems), quiet(problems)]);
+        if (found.length === 0 && prs.length === 0) return { tasks: [], prs: [], problems };
         const owners = findOwners(config.traceDir, config.now() - OWNER_TRACE_WINDOW_MS, traces);
         const recorded = config.recordedOwners?.();
         const withOwner = <T>(item: T, owner: OwnerThread | undefined): T => (owner ? { ...item, owner } : item);
+        const ownerOf = (t: { dispatchId?: string }) => (t.dispatchId ? owners.dispatches.get(t.dispatchId) : undefined);
+        const closed = await mapLimited(found, CONCURRENCY, (t) => autoClosed(t, ownerOf(t)));
+        const tasks = found.filter((_, i) => !closed[i]).map(({ endedAt: _endedAt, ...t }) => t);
+        const autoClosedCount = closed.filter(Boolean).length;
         return {
-          tasks: tasks.map((t) => withOwner(t, t.dispatchId ? owners.dispatches.get(t.dispatchId) : undefined)),
+          ...(autoClosedCount > 0 ? { autoClosed: autoClosedCount } : {}),
+          tasks: tasks.map((t) => withOwner(t, ownerOf(t))),
           prs: prs.map((p) => withOwner(p, recorded?.get(prRef(p.url)) ?? owners.prs.get(prRef(p.url)))),
           problems,
         };
