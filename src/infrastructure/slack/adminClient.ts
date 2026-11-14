@@ -291,6 +291,11 @@ export const createSlackAdmin = (client: WebClient, clock: () => number = Date.n
       return posted.ts ? { channel, ts: posted.ts } : undefined;
     },
 
+    openDm: async (userId) => {
+      const open = (await client.conversations.open({ users: userId })) as { channel?: { id?: string } };
+      return open.channel?.id;
+    },
+
     postDm: async (userId, text, by) => {
       const open = (await client.conversations.open({ users: userId })) as { channel?: { id?: string } };
       const channel = open.channel?.id;

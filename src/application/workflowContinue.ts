@@ -44,7 +44,7 @@ export type ContinueDeps = {
   workflows?: WorkflowRepo;
   clock: Clock;
   /** The ordinary turn path, wired at the composition root. */
-  runTurn?: (req: ContinueTurnRequest) => Promise<void>;
+  runTurn?: (req: ContinueTurnRequest) => Promise<unknown>;
   slack?: { post: (channel: string, text: string, threadTs?: string, by?: string) => Promise<unknown> };
   /** Timer for the next step; injected so tests need not wait. */
   continueTimer?: (fn: () => void, ms: number) => void;

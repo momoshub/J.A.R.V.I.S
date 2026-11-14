@@ -127,7 +127,9 @@ export type HandleMessageDeps = {
     workerLane?: boolean;
     /** A loop's scheduled fire: runs on the `loop` model (see `InboundMessage.model`). */
     loop?: boolean;
-  }) => Promise<void>;
+    /** Return the final reply (when it is a real answer) instead of posting it; a loop's fire. */
+    hold?: boolean;
+  }) => Promise<{ text: string } | void>;
   /** Timer for a workflow's next step; injected so tests need not wait. */
   continueTimer?: (fn: () => void, ms: number) => void;
   /** Set of disabled command names (managed from the dashboard). */

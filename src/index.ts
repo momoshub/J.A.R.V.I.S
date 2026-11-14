@@ -70,7 +70,7 @@ import { noTools } from "./domain/toolPolicy.ts";
 import { GATE_TIMEOUT_MS } from "./application/followGate.ts";
 import { createClaudeJsonReader, unknownMcpServers, unlistedLocalMcpServers } from "./infrastructure/llm/mcpConfig.ts";
 import { createReminderSender } from "./application/reminders.ts";
-import { createLoopRunner } from "./application/loops.ts";
+import { createLoopRunner, loopReplyOf } from "./application/loops.ts";
 import { expirePendingLoops, type LoopApprovalDeps } from "./application/loopApproval.ts";
 import { injectedLearnings, type LearningApprovalDeps } from "./application/learningApproval.ts";
 import { createShellCheck } from "./infrastructure/system/shellCheck.ts";
@@ -653,6 +653,7 @@ const main = async () => {
       unprompted,
       workerLane,
       loop,
+      hold,
     }: {
       channelId: string;
       threadTs: string;
@@ -663,6 +664,7 @@ const main = async () => {
       unprompted?: boolean;
       workerLane?: boolean;
       loop?: boolean;
+      hold?: boolean;
     }) => {
       const result = await respond(deps, {
         channelId,
@@ -681,6 +683,8 @@ const main = async () => {
       });
       // A turn nobody watched live can still answer with a note about not
       // answering; posted, it reads as the whole reply.
+      // A loop's fire: the runner posts it (with its header) or not at all.
+      if (hold) return result.kind === "ignored" ? undefined : loopReplyOf(result.text);
       if (result.kind !== "ignored" && result.text.trim() && !isSilenceNote(result.text)) {
         // Signed with what the turn cost, as a reply streamed live would be.
         await slackAdmin.post(
@@ -1127,7 +1131,20 @@ const main = async () => {
     clock,
     runTurn: deps.runTurn!,
     offsetMinutes: () => hostOffsetMin(clock()),
+    openDm: async (userId) => slackAdmin.openDm?.(userId),
     dm: async (userId, text) => slackAdmin.postDm(userId, text, SIGNATURES.loop),
+    // A silent run's turn lived under a made-up thread; a reply under the posted message resumes its session.
+    anchored: (from) => watches.waitingAt(from.channel, from.ts) > 0,
+    adopt: (from, to) => {
+      if (to) {
+        threadSessions.move(from.channel, from.ts, to.channel, to.ts, to.ts);
+        watches.rebind(from.channel, from.ts, to.ts);
+        reminders.rebind(from.channel, from.ts, to.ts);
+      } else {
+        // Silent: no message exists; a reminder posts fine at the DM's top level.
+        reminders.rebind(from.channel, from.ts, "");
+      }
+    },
     permalink: (channel, ts) => slackAdmin.permalink?.(channel, ts) ?? Promise.resolve(undefined),
     // Unattended spend needs a role that can still start a loop: a demoted or removed creator's loops stop.
     check: createShellCheck(fullCwd, readOnlySlackEnv),

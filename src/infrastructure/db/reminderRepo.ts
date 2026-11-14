@@ -67,6 +67,8 @@ export type ReminderRepo = {
   /** Try again later after a failed post, counting the attempt. */
   retry: (id: number, dueAt: number, at: number, error: string) => void;
   settle: (id: number, state: ReminderState, at: number, error?: string) => void;
+  /** Re-bind the waiting reminders of one thread to another (`""` = top level); returns how many. */
+  rebind: (channelId: string, fromTs: string, toTs: string) => number;
 };
 
 export const createReminderRepo = (db: DbClient): ReminderRepo => {
@@ -96,7 +98,12 @@ export const createReminderRepo = (db: DbClient): ReminderRepo => {
     "UPDATE reminders SET state = $state, updated_at = $at, last_error = COALESCE($error, last_error) WHERE id = $id",
   );
 
+  const rebindStmt = db.query(
+    "UPDATE reminders SET thread_ts = $toTs WHERE channel_id = $channelId AND thread_ts = $fromTs AND state = 'waiting'",
+  );
+
   return {
+    rebind: (channelId, fromTs, toTs) => rebindStmt.run({ $channelId: channelId, $fromTs: fromTs, $toTs: toTs }).changes,
     add: (r, at) =>
       toReminder(
         insertStmt.get({
