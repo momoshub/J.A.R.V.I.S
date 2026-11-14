@@ -204,7 +204,8 @@ const SCRIPT_NAME = /^[\w.+-]{1,40}$/;
 /**
  * Quoted text with its separators and spaces blanked to `_`, so a `;`, `|` or
  * newline inside a quoted value can never split the command and surface the
- * value's tail as a program. Undefined when a quote is left open.
+ * value's tail as a program. Undefined when a quote is left open, or on an
+ * unquoted `$(...)`/backtick substitution (`TOKEN=$(op read x) gh`).
  */
 const blankQuoted = (command: string): string | undefined => {
   let out = "";
@@ -220,6 +221,8 @@ const blankQuoted = (command: string): string | undefined => {
       if (ch === quote) quote = "";
       out += ch === quote || !/[\s;&|]/.test(ch) ? ch : "_";
     } else {
+      // An unquoted `$(...)` or backtick substitution runs its own words: give up.
+      if (ch === "`" || (ch === "$" && chars[i + 1] === "(")) return undefined;
       if (ch === "'" || ch === '"') quote = ch;
       out += ch;
     }

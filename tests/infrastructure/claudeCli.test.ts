@@ -545,6 +545,13 @@ describe("createClaudeCliLlm", () => {
     expect(title("sudo -u deploybot git pull")).toBe("Run: 🏃 Running a command");
     expect(title("env -u VAR git pull")).toBe("Run: 🏃 Running a command");
     expect(title("env A=1 B=2 git pull")).toBe("Run: 🏃 Running git");
+    expect(title("KEY=$(echo abc def) gh api user")).toBe("Run: 🏃 Running a command");
+    expect(title("TOKEN=$(op read op://acme-vault/prod/token) gh api user")).toBe("Run: 🏃 Running a command");
+    expect(title("KEY=$(cat ~/.config/acme-token | tr -d x) gh api user")).toBe("Run: 🏃 Running a command");
+    expect(title("KEY=`cat ~/.prod_key | head -1` gh api user")).toBe("Run: 🏃 Running a command");
+    expect(title("X=$(echo a; hunter2) ls")).toBe("Run: 🏃 Running a command");
+    expect(title("TOKEN=$(\nhunter2\n) gh x")).toBe("Run: 🏃 Running a command");
+    expect(title("GH_TOKEN=$(gh auth token -u bot) gh pr view 37")).toBe("Run: 🏃 Running a command");
   });
 
   test("summarizeTool points the card's details at the trace log line, never the command", () => {
