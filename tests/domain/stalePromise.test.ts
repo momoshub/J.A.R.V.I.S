@@ -2,6 +2,7 @@ import { describe, expect, test } from "bun:test";
 import {
   eligible,
   looksLikePromise,
+  humanSince,
   parseNudged,
   parsePromiseVerdict,
   pruneNudged,
@@ -90,5 +91,22 @@ describe("nudged record", () => {
     expect(parseNudged("not json")).toEqual({});
     expect(parseNudged(JSON.stringify({ a: { ts: 1 } }))).toEqual({});
     expect(Object.keys(pruneNudged(map, NOW))).toEqual(["C1:1.1"]);
+  });
+});
+
+describe("per-thread bound", () => {
+  test("a record keeps its seen and rejected marks", () => {
+    const map = { "C1:1.1": { ts: "5.1", at: 9, seen: 10, rejected: "6.1" } };
+    expect(parseNudged(JSON.stringify(map))).toEqual(map);
+  });
+  test("a thread is nudged again only after a person spoke since the last nudge", () => {
+    const r = [
+      { ts: "5.1", own: true },
+      { ts: "6.1", own: true },
+    ];
+    expect(humanSince(r, "")).toBe(true);
+    expect(humanSince(r, "5.1")).toBe(false);
+    expect(humanSince([...r, { ts: "7.1", own: false }], "5.1")).toBe(true);
+    expect(humanSince([{ ts: "4.1", own: false }, ...r], "5.1")).toBe(false);
   });
 });

@@ -8,12 +8,17 @@
  *
  * Cheap checks run first (the thread's own state, then Slack, then the
  * promise heuristic, then the worker probe, then the model), so a quiet
- * workspace costs one query. Each bot message is nudged at most once: its ts is
- * stored before the turn starts, so a restart never repeats it. A failed
- * lookup leaves the thread for the next sweep.
+ * workspace costs one query. Each bot message is nudged at most once, and a
+ * thread at most once until a person has spoken in it again (a nudged turn may
+ * end on a new promise): the ts is stored before the turn starts, so a restart
+ * never repeats it. A message judged NO is remembered too, and a thread read
+ * and decided is not read again until a newer turn is stored. The thread's
+ * state is re-read after the slow checks, right before firing. A failed lookup
+ * leaves the thread for the next sweep.
  */
 import {
   eligible,
+  humanSince,
   looksLikePromise,
   nudgeText,
   parseNudged,
@@ -87,6 +92,8 @@ export const createStalePromiseSweep = (deps: StalePromiseDeps): StalePromiseSwe
     for (const t of candidates) {
       if (sent >= deps.maxNudges || looks >= (deps.maxLooks ?? MAX_LOOKS)) break;
       const key = threadKey(t.channelId, t.threadTs);
+      // Already read and decided, and nothing stored since: no Slack read, no look.
+      if (nudged[key]?.seen !== undefined && t.lastAt <= nudged[key].seen) continue;
       const state = {
         turnRunning: deps.turnRunning(t.channelId, t.threadTs),
         workflowActive: deps.workflowActive(t.channelId, t.threadTs),
@@ -99,33 +106,74 @@ export const createStalePromiseSweep = (deps: StalePromiseDeps): StalePromiseSwe
       if (!early.ok) continue;
       looks++;
       let last: { ts: string; own: boolean; text: string } | undefined;
+      let replies: readonly { ts: string; own: boolean; text: string }[] = [];
+      const readAt = deps.clock();
       try {
-        last = (await deps.replies(t.channelId, t.threadTs)).at(-1);
+        replies = await deps.replies(t.channelId, t.threadTs);
+        last = replies.at(-1);
       } catch (e) {
         log(`could not read ${key}: ${e instanceof Error ? e.message : String(e)}`);
         continue;
       }
       if (!last) continue;
+      const prev = nudged[key];
+      const decide = (extra: { rejected?: string } = {}): void => {
+        nudged = { ...nudged, [key]: { ts: prev?.ts ?? "", at: prev?.at ?? now, ...(prev?.rejected ? { rejected: prev.rejected } : {}), ...extra, seen: readAt } };
+        deps.settings.set(deps.nudgedKey, JSON.stringify(nudged));
+      };
       const verdict = eligible({
         ...state,
         lastIsOwn: last.own,
         lastTs: last.ts,
         now,
         minAgeMs: deps.minAgeMs,
-        ...(nudged[key] ? { nudgedTs: nudged[key].ts } : {}),
+        ...(prev?.ts ? { nudgedTs: prev.ts } : {}),
       });
-      if (!verdict.ok || !looksLikePromise(last.text)) continue;
+      if (!verdict.ok) {
+        // A person answered last, or it was already nudged: nothing new until a newer turn.
+        if (verdict.why === "last message is not the bot's" || verdict.why === "already nudged") decide();
+        continue;
+      }
+      if (prev?.rejected === last.ts) continue;
+      if (!looksLikePromise(last.text)) {
+        decide({ rejected: last.ts });
+        continue;
+      }
+      if (!humanSince(replies, prev?.ts ?? "")) {
+        decide();
+        continue;
+      }
       if (await deps.liveWorker(t.channelId, t.threadTs).catch(() => true)) continue;
       if (!deps.mayRun(t.slackUserId)) continue;
       if (deps.confirm) {
         const promised = await deps.confirm(last.text, t).catch((e: unknown) => {
           log(`classification failed for ${key}: ${e instanceof Error ? e.message : String(e)}`);
-          return false;
+          return undefined;
         });
-        if (!promised) continue;
+        if (promised === undefined) continue;
+        if (!promised) {
+          decide({ rejected: last.ts });
+          continue;
+        }
+      }
+      // The slow checks above took time: the thread may have started a turn or set a watch since.
+      const fresh = eligible({
+        lastIsOwn: true,
+        lastTs: last.ts,
+        now,
+        minAgeMs: 0,
+        turnRunning: deps.turnRunning(t.channelId, t.threadTs),
+        workflowActive: deps.workflowActive(t.channelId, t.threadTs),
+        watches: deps.watches(t.channelId, t.threadTs),
+        reminders: deps.reminders(t.channelId, t.threadTs),
+        liveWorker: false,
+      });
+      if (!fresh.ok) {
+        log(`skipped ${key}: ${fresh.why} after the checks`);
+        continue;
       }
       // Recorded before the turn starts: a restart mid-turn must not nudge again.
-      nudged = { ...nudged, [key]: { ts: last.ts, at: now } };
+      nudged = { ...nudged, [key]: { ts: last.ts, at: now, seen: readAt } };
       deps.settings.set(deps.nudgedKey, JSON.stringify(nudged));
       const ageMs = now - tsMs(last.ts);
       const minutes = Math.round(ageMs / 60_000);

@@ -148,8 +148,10 @@ no classes.
   là ...") and has nothing waiting on it (no running turn, workflow, watch,
   reminder or live Orca worker). It steers each such session once, as the same
   internal turn `tell` starts (do it now, set a watch, or end with `NO_REPLY`), and
-  posts nothing itself; a bot message is nudged at most once (`stale_promise_nudged`
-  setting), at most 3 per sweep, each nudge logged as `[stale-promise]` and an
+  posts nothing itself; a bot message is nudged at most once and a thread only
+  again after a person spoke in it (`stale_promise_nudged` setting, which also
+  remembers NO verdicts so they are not re-asked), thread state is re-read right
+  before firing, at most 3 per sweep, each nudge logged as `[stale-promise]` and an
   activity `stale_promise_nudge` event.
   None of them hold a session or a queue slot while they wait.
 - **Followed threads: debounce and gate.** An untagged message in a thread the bot
@@ -249,7 +251,7 @@ No I/O, no frameworks. Just data shapes and functions of their inputs.
 - `threadFollow.ts`, `followGate.ts` - which untagged thread messages the bot answers, and the pure rules of the gate in front of a followed thread (settings, bypass, batch windows, verdict parsing, the gate's prompt)
 - `journey.ts` - the bot's own work log: statuses, flag parsing for the internal `journey` command (run only by the brain's own turn, never typed), the one-line and help text
 - `watch.ts`, `reminder.ts`, `loop.ts`, `selfUpdate.ts`, `runControl.ts`, `threadBackground.ts` - waits, reminders, draining restart, stopping a turn and the background agents its thread started
-- `stalePromise.ts`, `tellPrompt.ts` - the stale-promise rules (bilingual promise heuristic, the model's yes/no question, which threads may be nudged, the once-only record) and the internal steer text shared by `tell` and the sweep
+- `stalePromise.ts`, `tellPrompt.ts` - the stale-promise rules (bilingual promise heuristic, the model's yes/no question, which threads may be nudged, the per-thread record) and the internal steer text shared by `tell` and the sweep
 - `workerUsage.ts` - an Orca worker's tokens summed from its Claude Code transcript (deduped per message) and priced per model (the one price table)
 - `offlineAlarm.ts` - the dead man's switch notice and its back-online edit
 - `systemStatus.ts`, `orcaStatus.ts`, `systemBlocks.ts` - `sys`: the host verdict and numbers, Orca's runtime/runs/tasks parsed from its CLI JSON and counted, and the Block Kit message (header, fields, trend, Orca table) with the plain report as its fallback

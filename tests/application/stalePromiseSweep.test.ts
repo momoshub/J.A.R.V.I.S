@@ -72,7 +72,15 @@ describe("stale promise sweep", () => {
     expect(restarted.turns).toHaveLength(0);
     const next = setup({
       store: first.store,
-      replies: { "C1:100.1": [{ ts: ts(40), own: true, text: "I'll fix the table next." }] },
+      deps: { clock: () => NOW + 60 * MIN },
+      threads: [{ channelId: "C1", threadTs: "100.1", lastAt: NOW + 10 * MIN, slackUserId: "U1" }],
+      replies: {
+        "C1:100.1": [
+          { ts: ts(45), own: true, text: PROMISE },
+          { ts: ts(-5), own: false, text: "ok go on" },
+          { ts: ts(-10), own: true, text: "I'll fix the table next." },
+        ],
+      },
     });
     await next.sweep.tick();
     expect(next.turns).toHaveLength(1);
@@ -169,5 +177,80 @@ describe("stale promise sweep", () => {
     });
     expect(await s.sweep.tick()).toBe(1);
     expect(s.turns[0]?.threadTs).toBe("2.1");
+  });
+
+  test("a nudged turn that writes a new promise is not nudged again until a person speaks", async () => {
+    const first = setup();
+    await first.sweep.tick();
+    expect(first.turns).toHaveLength(1);
+    // The steered turn answered with another promise; nobody replied.
+    const again = setup({
+      store: first.store,
+      deps: { clock: () => NOW + 60 * MIN },
+      threads: [{ channelId: "C1", threadTs: "100.1", lastAt: NOW + 10 * MIN, slackUserId: "U1" }],
+      replies: {
+        "C1:100.1": [
+          { ts: ts(45), own: true, text: PROMISE },
+          { ts: ts(-10), own: true, text: "Still waiting on CI, I'll post the result once it lands." },
+        ],
+      },
+    });
+    expect(await again.sweep.tick()).toBe(0);
+    expect(await again.sweep.tick()).toBe(0);
+    expect(again.turns).toHaveLength(0);
+  });
+
+  test("a thread that changes while the model is asked is not nudged", async () => {
+    for (const [name, flip] of [
+      ["turn", (s: { turn: boolean }) => (s.turn = true)],
+      ["watch", (s: { watch: number }) => (s.watch = 1)],
+    ] as const) {
+      const live = { turn: false, watch: 0 };
+      const { sweep, turns, store } = setup({
+        deps: {
+          turnRunning: () => live.turn,
+          watches: () => live.watch,
+          confirm: async () => {
+            flip(live as never);
+            return true;
+          },
+        },
+      });
+      expect(await sweep.tick()).toBe(0);
+      expect(turns, name).toHaveLength(0);
+      expect(store.size, name).toBe(0);
+    }
+  });
+
+  test("a NO verdict is not asked again and does not use up the looks", async () => {
+    let asked = 0;
+    const s = setup({
+      deps: {
+        confirm: async () => {
+          asked++;
+          return false;
+        },
+      },
+    });
+    await s.sweep.tick();
+    await s.sweep.tick();
+    expect(asked).toBe(1);
+    expect(s.turns).toHaveLength(0);
+    const rec = JSON.parse(s.store.get("nudged") ?? "{}") as Record<string, { seen?: number; rejected?: string }>;
+    expect(rec["C1:100.1"]?.rejected).toBe(ts(45));
+    // Looks budget: rejected threads are skipped before Slack, so a stale promise behind them is reached.
+    const threads: EndedThread[] = [1, 2, 3].map((n) => ({
+      channelId: "C1",
+      threadTs: `${n}.1`,
+      lastAt: NOW - (n === 3 ? 60 : 45) * MIN,
+      slackUserId: "U1",
+    }));
+    const replies = Object.fromEntries(
+      threads.map((t) => [`C1:${t.threadTs}`, [{ ts: ts(t.threadTs === "3.1" ? 60 : 45), own: true, text: t.threadTs === "3.1" ? PROMISE : "All done." }]]),
+    );
+    const b = setup({ threads, replies, deps: { maxLooks: 2 } });
+    expect(await b.sweep.tick()).toBe(0);
+    expect(await b.sweep.tick()).toBe(1);
+    expect(b.turns[0]?.threadTs).toBe("3.1");
   });
 });

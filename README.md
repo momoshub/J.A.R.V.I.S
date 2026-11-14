@@ -720,7 +720,8 @@ a question to the person, an offer or a finished answer is not a promise). The
 bot then steers that thread's own session once, the same internal turn `tell`
 uses: do the work now, set a watch, or end with `NO_REPLY` if nothing is pending.
 The sweep itself posts nothing to Slack and nobody is DMed. A message is nudged at
-most once, even across restarts, and at most 3 threads are nudged per sweep.
+most once, even across restarts, a thread is nudged again only after a person has
+spoken in it, and at most 3 threads are nudged per sweep.
 `STALE_PROMISE_INTERVAL_MS=0` turns it off.
 
 ## How the brain runs a command

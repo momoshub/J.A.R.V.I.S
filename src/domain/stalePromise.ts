@@ -7,7 +7,7 @@
  *
  * Everything that decides anything is here, with no I/O: the cheap bilingual
  * (English + Vietnamese) promise heuristic, the model's question and answer,
- * which threads are eligible, the nudge text and the once-only record.
+ * which threads are eligible, the nudge text and the per-thread record.
  */
 
 export const DEFAULT_SWEEP_INTERVAL_MS = 15 * 60_000;
@@ -116,8 +116,19 @@ export const nudgeText = (ageMs: number): string => {
   return `Your last message in this thread promised further work ${minutes} minutes ago, and nothing has happened since: no turn is running and no watch, reminder or worker is waiting for it. Do the work now. If it needs to wait on something, set a watch or a reminder for it. If nothing is actually pending (the message was only an answer), post nothing and end the turn with NO_REPLY.`;
 };
 
-/** thread key -> the bot message ts last nudged, and when. */
-export type NudgedMap = Record<string, { readonly ts: string; readonly at: number }>;
+/**
+ * Per thread: `ts`/`at` the bot message last nudged and when (`ts` is "" if the
+ * thread was only looked at); `seen` when the thread was last read from Slack and
+ * decided, so a stored turn written before it needs no new look; `rejected` the
+ * bot message ts the model or heuristic answered NO for.
+ */
+export type NudgedEntry = {
+  readonly ts: string;
+  readonly at: number;
+  readonly seen?: number;
+  readonly rejected?: string;
+};
+export type NudgedMap = Record<string, NudgedEntry>;
 
 export const threadKey = (channelId: string, threadTs: string): string => `${channelId}:${threadTs}`;
 
@@ -129,7 +140,12 @@ export const parseNudged = (raw: string | undefined): NudgedMap => {
     const out: NudgedMap = {};
     for (const [k, e] of Object.entries(v)) {
       if (e && typeof e === "object" && "ts" in e && "at" in e && typeof e.ts === "string" && typeof e.at === "number") {
-        out[k] = { ts: e.ts, at: e.at };
+        out[k] = {
+          ts: e.ts,
+          at: e.at,
+          ...("seen" in e && typeof e.seen === "number" ? { seen: e.seen } : {}),
+          ...("rejected" in e && typeof e.rejected === "string" ? { rejected: e.rejected } : {}),
+        };
       }
     }
     return out;
@@ -141,3 +157,10 @@ export const parseNudged = (raw: string | undefined): NudgedMap => {
 /** Drops records too old to matter, so the setting does not grow forever. */
 export const pruneNudged = (map: NudgedMap, now: number): NudgedMap =>
   Object.fromEntries(Object.entries(map).filter(([, e]) => now - e.at < SEEN_KEEP_MS));
+
+/**
+ * A thread is nudged again only after a person spoke in it since the last nudge:
+ * the nudged turn can itself end on a new promise, which must not start a loop.
+ */
+export const humanSince = (replies: readonly { ts: string; own: boolean }[], nudgedTs: string): boolean =>
+  !nudgedTs || replies.some((r) => !r.own && tsMs(r.ts) > tsMs(nudgedTs));
