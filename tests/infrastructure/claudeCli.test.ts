@@ -560,6 +560,16 @@ describe("createClaudeCliLlm", () => {
     expect(title("</Users/kai/acme-q3-layoffs.txt wc -l")).toBe("Run: 🏃 Running a command");
     expect(title("2>/Users/kai/clients/acme-merger.txt git status")).toBe("Run: 🏃 Running a command");
     expect(title("&>/tmp/out.log git status")).toBe("Run: 🏃 Running a command");
+    expect(title('files=(src/a.ts /Users/kai/clients/acme-merger.txt src/c.ts); wc -l "${files[@]}"')).toBe("Run: 🏃 Running a command");
+    expect(title('arr[0]=/Users/kai/clients/acme-merger.txt; cat "${arr[0]}"')).toBe("Run: 🏃 Running a command");
+    expect(title("PYTHONPATH+=:/Users/kai/clients/acme-merger python3 x.py")).toBe("Run: 🏃 Running a command");
+    expect(title("PATH+=:/Users/kai/clients/acme-merger/bin && make")).toBe("Run: 🏃 Running a command");
+    expect(title("cd /x >|/tmp/acme-q3-layoffs.log")).toBe("Run: 🏃 Running a command");
+    expect(title("env A=1 SECRET_FILE=/Users/kai/acme-merger.txt")).toBe("Run: 🏃 Running a command");
+    expect(title("exec {fd}>/tmp/acme-q3-layoffs.log")).toBe("Run: 🏃 Running a command");
+    expect(title("X=$'it\\'s; /a/notes.sh x' Y=\\' git")).toBe("Run: 🏃 Running a command");
+    expect(title("#/Users/kai/acme/file.sh\ngit status")).toBe("Run: 🏃 Running a command");
+    expect(title('"${BOT_SLACK_CALL}" chat.postMessage')).toBe("Run: 🏃 Calling Slack");
   });
 
   test("summarizeTool points the card's details at the trace log line, never the command", () => {

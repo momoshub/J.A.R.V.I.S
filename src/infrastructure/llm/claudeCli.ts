@@ -240,13 +240,16 @@ const WRAPPERS = ["bash", "sh", "zsh", "sudo", "env", "time", "nohup", "exec"];
  * Skips `cd X &&`, env assignments and `bash`/`sudo`-style wrappers; a wrapper
  * with an option (`sudo -u bob`) gives up rather than guess which word is the
  * option's value. Quoted text never splits a segment, and an unclosed quote
- * gives up. A script is named by its basename without extension,
+ * gives up, as does any program word that is really an assignment, a brace
+ * redirect or a comment. A script is named by its basename without extension,
  * `"$BOT_SLACK_CALL"` by its variable. Undefined when nothing sensible can be read.
  */
 const bashStep = (command: string): string | undefined => {
   const blanked = blankQuoted(command);
-  if (blanked === undefined) return undefined;
+  // An array assignment `a=(x y z)` and ANSI-C `$'...'` quoting are not modelled: give up.
+  if (blanked === undefined || /=\(/.test(blanked) || blanked.includes("$'")) return undefined;
   const segments = blanked
+    .replace(/>\|/g, ">")
     .split(/&&|\|\||;|\||\n/)
     .map((x) => x.trim())
     .filter(Boolean);
@@ -265,6 +268,8 @@ const bashStep = (command: string): string | undefined => {
     if (/^(?:\d*[<>]|&>)/.test(program)) return undefined;
     const variable = /^"?\$\{?(\w+)\}?"?$/.exec(program)?.[1];
     if (variable !== undefined) return /SLACK/i.test(variable) ? "Calling Slack" : undefined;
+    // `a[0]=x`, `PATH+=:x`, `{fd}>x`, a trailing `env` assignment, a `#` comment: not a program.
+    if (/[=()[\]{}]/.test(program) || program.startsWith("#")) return undefined;
     const name = program.replace(/^["']|["']$/g, "").split("/").pop() ?? "";
     const bare = name.replace(/\.(sh|bash|zsh|py|js|ts|rb)$/, "");
     if (bare in PROGRAM_STEPS) return PROGRAM_STEPS[bare];
