@@ -1348,10 +1348,18 @@ Identity and learnings are stored in the DB and applied on the next reply - no r
 ## Testing
 
 ```bash
-bun test           # full suite
+bun test           # full suite (queues behind other full runs on this host, see below)
 bun run typecheck  # tsc --noEmit
 bun run test:e2e   # opt-in, real Slack: every e2e/*.e2e.ts (see below)
 ```
+
+### One full run at a time per host
+
+Several worktrees (bot turns, workers, `bin/jarvis-restart.sh`) running the whole suite at once can load a laptop past 20 and starve everything else. So a full `bun test` takes a host-wide lock first and lowers its own priority (`nice`); a second one waits its turn and says who holds the lock. This works for plain `bun test` too: `bunfig.toml` preloads `tests/support/hostLockPreload.ts`.
+
+- Runs that name a file, directory or filter (`bun test path/x.test.ts`) are cheap and skip the lock. CI (`CI` set) skips it too.
+- The lock is a file in `~/.cache/jarvis-test-lock`, outside the worktree so every worktree shares it. A holder that died (including a `--bail` stop, which leaves the file behind) is detected by its pid (and process start time) and its lock taken over.
+- Env (read straight from the environment, not `src/config/env.ts`): `JARVIS_TEST_LOCK=0` turns it off, `JARVIS_TEST_LOCK_TIMEOUT_MS` (default 1800000) is how long to wait before giving up with exit 1, `JARVIS_TEST_NICE` (default 10), `JARVIS_TEST_LOCK_DIR`.
 
 ### End-to-end tests against real Slack (opt-in)
 

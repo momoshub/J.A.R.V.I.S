@@ -354,3 +354,5 @@ Concrete implementations of the seams and the transports.
 TDD, bottom-up: domain (pure) -> repos (`:memory:`) -> use cases (fakes) ->
 dashboard (via its exported `handle`) -> the Slack handler (via the extracted
 `createHandler`/`shouldHandleDm`, with fake clients/streamers).
+Full `bun test` runs queue on a host-wide lock (`bunfig.toml` preload, `tests/support/hostLock.ts`) so several
+worktrees testing at once do not overload the host; CI, single-file runs and `JARVIS_TEST_LOCK=0` skip it.
