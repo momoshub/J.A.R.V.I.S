@@ -552,6 +552,14 @@ describe("createClaudeCliLlm", () => {
     expect(title("X=$(echo a; hunter2) ls")).toBe("Run: 🏃 Running a command");
     expect(title("TOKEN=$(\nhunter2\n) gh x")).toBe("Run: 🏃 Running a command");
     expect(title("GH_TOKEN=$(gh auth token -u bot) gh pr view 37")).toBe("Run: 🏃 Running a command");
+    expect(title('TOKEN="$(op read "op://acme/prod; sk-live-AbC123 x")" gh api user')).toBe("Run: 🏃 Running a command");
+    expect(title('X="$(echo "a; hunter2 ok")" git status')).toBe("Run: 🏃 Running a command");
+    expect(title('MSG="$(git log -1 --format="%s by %an")" && echo "$MSG"')).toBe("Run: 🏃 Running a command");
+    expect(title("X='$(literal) `too`' git status")).toBe("Run: 🏃 Running git");
+    expect(title("exec >/tmp/acme-q3-layoffs.log 2>&1")).toBe("Run: 🏃 Running a command");
+    expect(title("</Users/kai/acme-q3-layoffs.txt wc -l")).toBe("Run: 🏃 Running a command");
+    expect(title("2>/Users/kai/clients/acme-merger.txt git status")).toBe("Run: 🏃 Running a command");
+    expect(title("&>/tmp/out.log git status")).toBe("Run: 🏃 Running a command");
   });
 
   test("summarizeTool points the card's details at the trace log line, never the command", () => {

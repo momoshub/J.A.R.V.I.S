@@ -204,8 +204,8 @@ const SCRIPT_NAME = /^[\w.+-]{1,40}$/;
 /**
  * Quoted text with its separators and spaces blanked to `_`, so a `;`, `|` or
  * newline inside a quoted value can never split the command and surface the
- * value's tail as a program. Undefined when a quote is left open, or on an
- * unquoted `$(...)`/backtick substitution (`TOKEN=$(op read x) gh`).
+ * value's tail as a program. Undefined when a quote is left open, or on a
+ * `$(...)`/backtick substitution outside single quotes (`TOKEN="$(op read x)" gh`).
  */
 const blankQuoted = (command: string): string | undefined => {
   let out = "";
@@ -218,6 +218,8 @@ const blankQuoted = (command: string): string | undefined => {
       out += `_${i + 1 < chars.length ? "_" : ""}`;
       i++;
     } else if (quote) {
+      // Inside double quotes a substitution opens its own quoting: give up.
+      if (quote === '"' && (ch === "`" || (ch === "$" && chars[i + 1] === "("))) return undefined;
       if (ch === quote) quote = "";
       out += ch === quote || !/[\s;&|]/.test(ch) ? ch : "_";
     } else {
@@ -259,6 +261,8 @@ const bashStep = (command: string): string | undefined => {
       [program = "", ...args] = args;
       while (/^\w+=/.test(program) && args.length > 0) [program = "", ...args] = args;
     }
+    // `>/x/y.log`, `2>err`, `&>out`: a redirect target is an argument, never the program.
+    if (/^(?:\d*[<>]|&>)/.test(program)) return undefined;
     const variable = /^"?\$\{?(\w+)\}?"?$/.exec(program)?.[1];
     if (variable !== undefined) return /SLACK/i.test(variable) ? "Calling Slack" : undefined;
     const name = program.replace(/^["']|["']$/g, "").split("/").pop() ?? "";
