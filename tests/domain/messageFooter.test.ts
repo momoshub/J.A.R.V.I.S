@@ -88,7 +88,7 @@ describe("blocks", () => {
   test("a plain post becomes a markdown block plus the footer, keeping its text fallback", () => {
     const msg = signedText("hello *there*", line);
     expect(msg.text).toBe("hello *there*");
-    expect(msg.blocks).toEqual([{ type: "markdown", text: "hello *there*" }, footerBlock(line)]);
+    expect(msg.blocks).toEqual([{ type: "markdown", text: "hello **there**" }, footerBlock(line)]);
   });
 
   test("a long plain post stays one markdown block, so Slack does not fold it behind Show more", () => {

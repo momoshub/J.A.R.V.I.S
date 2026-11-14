@@ -36,7 +36,7 @@ describe("every message the admin client writes is signed", () => {
     await admin.post("C1", "hello **there**", "100.1");
     const [, a] = calls[0]!;
     expect(a).toMatchObject({ channel: "C1", thread_ts: "100.1", text: "hello *there*" });
-    expect((a.blocks as Block[])[0]).toMatchObject({ type: "markdown", text: "hello *there*" });
+    expect((a.blocks as Block[])[0]).toMatchObject({ type: "markdown", text: "hello **there**" });
     expect(footerOf(a)).toMatchObject({ type: "context", block_id: FOOTER_BLOCK_ID });
     expect(signedBy(a)).toBe(footerLine("Jarvis", NOW));
   });

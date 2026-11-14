@@ -19,7 +19,7 @@
  * the usage and any step summary sitting in the same block.
  */
 import { type Block, MAX_BLOCKS } from "./blockKit.ts";
-import { SECTION_LIMIT } from "./slackFormat.ts";
+import { SECTION_LIMIT, toSlackMarkdown } from "./slackFormat.ts";
 
 /** Who signs what. Anything not listed here is plain Jarvis. */
 export const SIGNATURES = {
@@ -161,7 +161,7 @@ export const signedText = (mrkdwn: string, line: string): { text: string; blocks
   return {
     text: mrkdwn || " ",
     blocks: withFooter(
-      [...(head ? [{ type: "markdown", text: head }] : []), ...rest.flatMap((c) => sectionChunks(c)).map(section)],
+      [...(head ? [{ type: "markdown", text: toSlackMarkdown(head) }] : []), ...rest.flatMap((c) => sectionChunks(c)).map(section)],
       line,
     ),
   };

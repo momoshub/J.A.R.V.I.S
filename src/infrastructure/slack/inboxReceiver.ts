@@ -14,6 +14,7 @@
 import type { ConnectionHealth } from "../../domain/connectionHealth.ts";
 import { gatewayHealth } from "../../domain/inbox.ts";
 import { envelopeThread, unnotified } from "../../domain/drainNotice.ts";
+import { toSlackMarkdown } from "../../domain/slackFormat.ts";
 import { footerLine, SIGNATURES, withFooter } from "../../domain/messageFooter.ts";
 import type { InboxRepo, InboxRow, Interrupted } from "../inbox/inboxRepo.ts";
 import { ignoreQuietly } from "../../application/ignoredError.ts";
@@ -297,7 +298,7 @@ export const tidyInterrupted = async (
           text: notice,
           // The markdown block is what a stopped stream accepts; the footer
           // rides under it, signed and stamped like every other message.
-          blocks: withFooter([{ type: "markdown", text: notice }], footerLine(SIGNATURES.jarvis, clock())),
+          blocks: withFooter([{ type: "markdown", text: toSlackMarkdown(notice) }], footerLine(SIGNATURES.jarvis, clock())),
         })
         .catch(fail("rewrite", ts));
     } else {
