@@ -227,6 +227,13 @@ describe("the Approve / Reject buttons", () => {
     expect(d.learnings!.get(row.id)?.status).toBe("rejected");
   });
 
+  test("the owner's Approve counts on the DM as Slack sends it back, with its text escaped", async () => {
+    const { d, row, press } = await proposed();
+    const asSlackSendsIt = approvalText(row.id, FACT, MEMBER.slackId).replaceAll("> ", "&gt; ");
+    expect(await press({ shown: [asSlackSendsIt] })).toEqual({ kind: "approved", id: row.id });
+    expect(injectedLearnings(d.learnings!)).toEqual([FACT]);
+  });
+
   test("anyone else's press changes nothing", async () => {
     const { d, row, press } = await proposed();
     expect(await press({ slackUserId: MEMBER.slackId })).toEqual({ kind: "refused", why: "not-owner", id: row.id });

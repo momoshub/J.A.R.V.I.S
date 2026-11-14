@@ -171,6 +171,9 @@ export const decideLearning = async (
   return { kind: "approved", learning: l, warnings };
 };
 
+/** Slack's three entities back to the characters, `&amp;` last so `&amp;gt;` stays `&gt;`. */
+const unescapeSlack = (text: string): string => text.replaceAll("&lt;", "<").replaceAll("&gt;", ">").replaceAll("&amp;", "&");
+
 export type PressOutcome =
   | { readonly kind: "approved" | "rejected"; readonly id: number }
   | { readonly kind: "refused"; readonly why: DecisionRefusal; readonly id?: number }
@@ -200,7 +203,8 @@ export const decideLearningPress = async (
   const l = deps.learnings.get(Number(press.value));
   if (!l) return { kind: "unknown" };
   // Slack does not reliably flag an app's own chat.update as edited, so what the message shows decides.
-  const showsTheFact = (press.shown ?? []).join("\n").includes(approvalCore(l.content));
+  // Slack hands block text back with its own escaping (the quote's `>` comes back as `&gt;`), so both sides are unescaped first.
+  const showsTheFact = unescapeSlack((press.shown ?? []).join("\n")).includes(unescapeSlack(approvalCore(l.content)));
   const fromTheDm = !!l.noticeChannel && !!l.noticeTs && press.channel === l.noticeChannel && press.messageTs === l.noticeTs;
   if (!fromTheDm || press.edited || !showsTheFact) {
     deps.log?.(`learning #${l.id} press refused: not the untouched approval DM`);
