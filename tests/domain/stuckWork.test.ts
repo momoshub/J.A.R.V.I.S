@@ -17,6 +17,9 @@ import {
   stuckDm,
   toReport,
   traceStarts,
+  reportedAfter,
+  workerEndedAt,
+  workerSucceeded,
   type StuckWork,
 } from "../../src/domain/stuckWork.ts";
 
@@ -214,7 +217,7 @@ describe("traceStarts", () => {
       result("2", '{"dispatchId":"ctx_def456"}'),
       "not json",
     ].join("\n");
-    expect(traceStarts(trace)).toEqual({ dispatches: [], prs: [] });
+    expect(traceStarts(trace)).toEqual({ dispatches: [], created: [], prs: [] });
   });
 });
 
@@ -306,5 +309,65 @@ describe("recorded PR threads", () => {
     expect(parsePrThreads("nope")).toEqual({});
     expect(parsePrThreads('{"a":1,"b":"no-slash"}')).toEqual({});
     expect(recordedOwners('{"o/r#1":"C1/"}').size).toBe(0);
+  });
+});
+
+describe("traceStarts created", () => {
+  const call = (id: string, command: string) => JSON.stringify({ kind: "call", id, name: "Bash", input: JSON.stringify({ command }) });
+  const result = (id: string, output: string) => JSON.stringify({ kind: "result", id, output });
+  test("only a worker-start whose output names exactly one dispatch is the one it created", () => {
+    const clean = [call("a", "orca orchestration worker-start --spec x"), result("a", '{"ok":true,"result":{"dispatchId":"ctx_aaaaaa"}}')].join("\n");
+    expect(traceStarts(clean).created).toEqual(["ctx_aaaaaa"]);
+    const mixed = [
+      call("b", "orca orchestration worker-start --spec x; orca orchestration worker-show --dispatch ctx_bbbbbb"),
+      result("b", '{"dispatchId":"ctx_cccccc"} {"dispatchId":"ctx_bbbbbb"}'),
+    ].join("\n");
+    const started = traceStarts(mixed);
+    expect(started.created).toEqual([]);
+    expect(started.dispatches.sort()).toEqual(["ctx_bbbbbb", "ctx_cccccc"]);
+  });
+});
+
+describe("auto-close rule", () => {
+  test("only a succeeded worker counts as finished", () => {
+    expect(workerSucceeded('{"ok":true,"result":{"state":"succeeded","liveness":"exited"}}')).toBe(true);
+    for (const state of ["failed", "cancelled", "stopped", "ready", "blocked"]) {
+      expect(workerSucceeded(`{"ok":true,"result":{"state":"${state}"}}`)).toBe(false);
+    }
+    expect(workerSucceeded('{"ok":false,"error":{"code":"dispatch_not_found"}}')).toBe(false);
+    expect(workerSucceeded("not json")).toBe(false);
+  });
+
+  test("the end is the dispatch's completedAt as UTC, else the worker's last update, else unknown", () => {
+    const full = (dispatch: string, state = "succeeded") => `{"ok":true,"result":{"dispatch":${dispatch},"worker":{"state":"${state}","updatedAt":"2026-11-14 17:32:00"}}}`;
+    expect(workerEndedAt(full('{"completedAt":"2026-11-14 17:40:05"}'))).toBe(Date.parse("2026-11-14T17:40:05Z"));
+    expect(workerEndedAt(full('{"completedAt":"2026-11-14T17:40:05Z"}'))).toBe(Date.parse("2026-11-14T17:40:05Z"));
+    expect(workerEndedAt(full('{"completedAt":null}'))).toBe(Date.parse("2026-11-14T17:32:00Z"));
+    expect(workerEndedAt(full('{"completedAt":"2026-11-14 17:40:05"}', "failed"))).toBeUndefined();
+    expect(workerEndedAt('{"ok":true,"result":{"worker":{"state":"succeeded"}}}')).toBeUndefined();
+    expect(workerEndedAt("")).toBeUndefined();
+  });
+
+  test("a report is the bot's own post in a later second than the end", () => {
+    const end = Date.parse("2026-11-14T17:40:05Z");
+    const at = (s: number) => String(end / 1000 + s);
+    expect(reportedAfter([{ ts: at(60), own: true }], end)).toBe(true);
+    expect(reportedAfter([{ ts: at(2), own: true }], end)).toBe(true);
+    expect(reportedAfter([{ ts: at(0.5), own: true }], end)).toBe(false);
+    expect(reportedAfter([{ ts: at(-60), own: true }], end)).toBe(false);
+    expect(reportedAfter([{ ts: at(60), own: false }], end)).toBe(false);
+    expect(reportedAfter([], end)).toBe(false);
+  });
+
+  test("the auto-closed count is not carried into the owner's DM", () => {
+    const work: StuckWork = {
+      tasks: [{ taskId: "t1", runId: "r", title: "x", why: "worker exited" }],
+      prs: [],
+      problems: [],
+      autoClosed: 2,
+    };
+    const { fresh } = toReport(work, {}, 1_000);
+    expect(fresh.autoClosed).toBeUndefined();
+    expect(stuckDm(fresh, 1_000, "!")).not.toContain("auto-closed");
   });
 });

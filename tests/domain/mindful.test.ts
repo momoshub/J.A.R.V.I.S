@@ -45,6 +45,14 @@ describe("mindfulReport", () => {
     expect(out).toContain("_could not check: Orca (not running)_");
   });
 
+  test("auto-closed tasks get one quiet line, and are not stuck", () => {
+    const out = mindfulReport({ ...base, stuckWork: { tasks: [], prs: [], problems: [], autoClosed: 2 } });
+    expect(out).toContain("_auto-closed 2 reported tasks_");
+    expect(out).toContain("nothing running, nothing stuck");
+    expect(out).not.toContain("no live worker");
+    expect(mindfulReport({ ...base, stuckWork: { tasks: [], prs: [], problems: [], autoClosed: 1 } })).toContain("auto-closed 1 reported task_");
+  });
+
   test("a quiet instance says so instead of printing empty headings", () => {
     expect(mindfulReport(base)).toContain("nothing running, nothing stuck");
   });

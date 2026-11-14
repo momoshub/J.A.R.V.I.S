@@ -708,6 +708,15 @@ hours - a restart does not reset that. When Orca or `gh` cannot be asked it
 says nothing rather than claim all is well; `mindful` shows the same lists on
 demand, with a "could not check" line when that happens.
 
+A task is closed rather than reported when its work was in fact done: the worker
+succeeded (not died, failed, stopped or waiting on a question) and the Slack
+thread that started it holds a message from the bot itself posted after the
+worker ended. The task is then set `completed` with the result
+"auto-closed: worker succeeded and the thread has a report after it ended", and
+`mindful` adds one quiet line, "auto-closed N reported tasks". A person's reply,
+a bot post from before the worker ended, no linked thread or a Slack read that
+fails never closes anything: the task stays in the list.
+
 ## Stale promises
 
 A turn sometimes ends with "next I will update the post" (or "việc tiếp theo là

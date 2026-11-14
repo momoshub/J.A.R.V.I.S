@@ -165,6 +165,8 @@ export const mindfulReport = (view: MindfulView, team?: string): string => {
 
   // Also broken, just outside a turn: a worker that died, a PR nobody is driving.
   if (work.length > 0) lines.push(...work, "");
+  const closed = view.stuckWork?.autoClosed ?? 0;
+  if (closed > 0) lines.push(`_auto-closed ${closed} reported task${closed === 1 ? "" : "s"}_`, "");
 
   if (view.live.length > 0) {
     lines.push(`*running now* - ${view.live.length}`);

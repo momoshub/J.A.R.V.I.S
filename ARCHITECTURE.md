@@ -134,7 +134,7 @@ no classes.
   whose worker is gone, and `gh` for open PRs on the bot's own repo with no
   commit, comment or review for 30 minutes, and DMs the owner what is new with
   the thread that started each (recorded when the app opened the PR, else found in the traces; an item is not repeated for 4 hours);
-  `mindful` shows the same two lists on demand.
+  `mindful` shows the same two lists on demand. A task whose worker succeeded and whose thread already has the bot's own post after the worker ended is set `completed` instead of listed (the sweep and `mindful` share the probe); anything less stays flagged.
   `idleReaper` (`ORCA_REAP_INTERVAL_MS`, default 30 min, 0 = off) reads
   `orca orchestration worker-list` and `orca terminal list`, and closes through
   Orca (`worker-release` when the worker settled, else `worker-stop`) every
