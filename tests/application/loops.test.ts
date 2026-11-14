@@ -1,7 +1,7 @@
 import { beforeEach, describe, expect, test } from "bun:test";
 import { openDatabase, type DbClient } from "../../src/infrastructure/db/client.ts";
 import { createLoopRepo, type LoopRepo } from "../../src/infrastructure/db/loopRepo.ts";
-import { createLoopRunner, type LoopTurnRequest } from "../../src/application/loops.ts";
+import { createLoopRunner, loopReplyOf, type LoopTurnRequest } from "../../src/application/loops.ts";
 import { dispatchCommand } from "../../src/application/commands.ts";
 import { respond, type RespondDeps } from "../../src/application/respond.ts";
 import type { CommandDeps } from "../../src/application/commands/shared.ts";
@@ -21,7 +21,8 @@ let ran: string[];
 let failDm = false;
 /** What a held turn answers; undefined = a silent run. */
 let reply: string | undefined;
-let adopted: { from: { channel: string; ts: string }; to: { channel: string; ts: string } }[];
+let anchored = false;
+let adopted: { from: { channel: string; ts: string }; to?: { channel: string; ts: string } }[];
 let check: CheckResult = { code: 0, output: "" };
 
 const HOUR = 3_600_000;
@@ -44,6 +45,7 @@ const runner = (
     },
     openDm: async (userId) => (failDm ? undefined : `D-${userId}`),
     adopt: (from, to) => adopted.push({ from, to }),
+    anchored: () => anchored,
     dm: async (userId, text) => {
       if (failDm) return undefined;
       dms.push({ userId, text });
@@ -86,6 +88,7 @@ beforeEach(() => {
   failDm = false;
   reply = "found 3 new words";
   adopted = [];
+  anchored = false;
   check = { code: 0, output: "" };
 });
 
@@ -126,8 +129,20 @@ describe("loop runner: prompt mode", () => {
     await flush();
     expect(turns).toHaveLength(1);
     expect(dms).toHaveLength(0);
-    expect(adopted).toHaveLength(0);
+    // Nothing posted, so nothing to move onto; the runner still lets thread-bound reminders fall back to the top level.
+    expect(adopted).toEqual([{ from: { channel: "D-U1", ts: turns[0]!.threadTs }, to: undefined }]);
     expect(loops.get(l.id)?.state).toBe("active");
+  });
+
+  test("a silent run that left a watch behind posts its header alone as the watch's anchor", async () => {
+    reply = undefined;
+    anchored = true;
+    const l = add({ name: "Slang" });
+    now += HOUR;
+    await runner().tick();
+    await flush();
+    expect(dms).toEqual([{ userId: "U1", text: `🔁 Slang - loop #${l.id}, every 1h` }]);
+    expect(adopted[0]?.to).toEqual({ channel: "D-U1", ts: "1.000" });
   });
 
   test("a blank reply is silent too", async () => {
@@ -167,7 +182,7 @@ describe("loop runner: prompt mode", () => {
     });
     await r.tick();
     await flush();
-    expect(adopted).toHaveLength(0);
+    expect(adopted).toEqual([{ from: { channel: "D-U1", ts: turns.length ? turns[0]!.threadTs : expect.any(String) }, to: undefined }]);
     expect(loops.get(l.id)?.state).toBe("active");
     expect(loops.get(l.id)?.lastError ?? "").not.toContain("could not start");
   });
@@ -908,5 +923,24 @@ describe("loop origin in storage", () => {
     await runner({ permalink: link }).tick();
     await flush();
     expect(dms[0]?.text).toBe(`🔁 search for slang - loop #${l.id}, every 1h\n\nfound 3 new words`);
+  });
+});
+
+describe("loopReplyOf", () => {
+  test("keeps a real answer, trimmed", () => {
+    expect(loopReplyOf("  3 new words\n")).toEqual({ text: "3 new words" });
+    expect(loopReplyOf("Checked it. No_reply is a funny name for a variable.")).toEqual({
+      text: "Checked it. No_reply is a funny name for a variable.",
+    });
+  });
+
+  test("drops empty, silence notes, the empty-reply fallback and a trailing NO_REPLY", () => {
+    expect(loopReplyOf("")).toBeUndefined();
+    expect(loopReplyOf("NO_REPLY")).toBeUndefined();
+    expect(loopReplyOf("`NO_REPLY`")).toBeUndefined();
+    expect(loopReplyOf("nothing to add")).toBeUndefined();
+    expect(loopReplyOf("I do not have anything useful to add there.")).toBeUndefined();
+    expect(loopReplyOf("Checked the board: nothing new.\n\nNO_REPLY")).toBeUndefined();
+    expect(loopReplyOf("Nothing new on the PR board. NO_REPLY")).toBeUndefined();
   });
 });

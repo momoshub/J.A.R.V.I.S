@@ -24,6 +24,8 @@ import type { Loop, LoopRepo } from "../infrastructure/db/loopRepo.ts";
 import type { Clock } from "./ports.ts";
 import { logAndIgnore } from "./ignoredError.ts";
 import { CHECK_TIMEOUT_MS, type CheckResult } from "./watcher.ts";
+import { EMPTY_REPLY_FALLBACK } from "./handleMessage.ts";
+import { isSilenceNote } from "../domain/silence.ts";
 
 /** Same hand-back as the watcher's, so both wake a thread the same way. */
 export type LoopTurnRequest = {
@@ -41,6 +43,21 @@ export type LoopTurnRequest = {
 
 /** A held turn's final reply when it is a real answer; nothing for a silent run. */
 export type LoopTurnReply = { text: string } | undefined | void;
+
+/** A trailing NO_REPLY line, with or without a summary written before it. */
+const TRAILING_NO_REPLY = /(?:^|\n|[.!?:]\s)[\s`*_~"'(]*no[_ ]reply[\s`*_~"').!]*$/i;
+
+/**
+ * What a loop's final reply is worth posting: nothing for an empty reply, the
+ * "nothing useful to add" fallback an empty reply becomes, a silence note, or a
+ * reply that ENDS in NO_REPLY (a model told to say nothing often writes a line
+ * first; the last word is the decision).
+ */
+export const loopReplyOf = (text: string): { text: string } | undefined => {
+  const t = text.trim();
+  if (!t || t === EMPTY_REPLY_FALLBACK || isSilenceNote(t) || TRAILING_NO_REPLY.test(t)) return undefined;
+  return { text: t };
+};
 
 /**
  * ` · <link|created here>` for the message that created `l`, or nothing: an
@@ -72,10 +89,20 @@ export type LoopRunnerDeps = {
    */
   dm: (slackUserId: string, text: string) => Promise<{ channel: string; ts: string } | undefined>;
   /**
-   * Move the session of the thread a silent run's turn used onto the message
-   * that was then posted, so a reply under it resumes the same conversation.
+   * Called once a run is over, with the made-up thread the turn used and the
+   * message posted for it (none for a silent run): move what was bound to that
+   * thread - the session, and any watch or reminder the turn set - onto the
+   * message, or for a silent run onto the DM's top level. Not everything keyed
+   * by a thread follows (workflows, follows and worker questions do not).
+   * The CLI session keeps its name from the made-up ts.
    */
-  adopt?: (from: { channel: string; ts: string }, to: { channel: string; ts: string }) => void;
+  adopt?: (from: { channel: string; ts: string }, to?: { channel: string; ts: string }) => void;
+  /**
+   * Whether the turn left thread-bound work waiting on that made-up thread (a
+   * watch reports back into its thread). That run cannot stay silent: the
+   * thread has to exist, so the header is posted as its anchor.
+   */
+  anchored?: (from: { channel: string; ts: string }) => boolean;
   /** A link to one Slack message, for the origin line of a run's announcement. Without it there is no link. */
   permalink?: (channel: string, ts: string) => Promise<string | undefined>;
   /** The watcher's shell runner: same cwd, env and timeout. Without it a script loop is stopped. */
@@ -174,17 +201,26 @@ export const createLoopRunner = (deps: LoopRunnerDeps): LoopRunner => {
       deps.loops.reschedule(l.id, next, deps.clock(), msg);
       void say(l, `${loopRef(l.id, l.name)}: could not start its turn: ${msg}`, "loop start-failed notice");
     };
-    // The turn answered: header + reply as one top-level DM, session moved onto it.
+    // Over: the reply (if any) goes out as one top-level DM, header first, and
+    // what the turn bound to its made-up thread follows. A run that left a
+    // watch behind is anchored by the header even with nothing to say.
+    const from = { channel: dmChannel, ts: threadTs };
     const deliver = async (reply: LoopTurnReply): Promise<void> => {
       const text = reply?.text.trim();
-      if (!text) return;
+      let to: { channel: string; ts: string } | undefined;
       try {
-        const header = `🔁 ${l.name} - loop #${l.id}, ${l.schedule}${await loopOriginText(l, deps.permalink)}`;
-        const ref = await deps.dm(l.createdBy, `${header}\n\n${text}`);
-        if (ref) deps.adopt?.({ channel: dmChannel, ts: threadTs }, ref);
-        else log(`loop ${l.id}: its reply could not be posted`);
+        if (text || deps.anchored?.(from)) {
+          const header = `🔁 ${l.name} - loop #${l.id}, ${l.schedule}${await loopOriginText(l, deps.permalink)}`;
+          to = await deps.dm(l.createdBy, text ? `${header}\n\n${text}` : header);
+          if (!to) log(`loop ${l.id}: its reply could not be posted`);
+        }
       } catch (e) {
         log(`loop ${l.id}: its reply could not be posted: ${e instanceof Error ? e.message : String(e)}`);
+      }
+      try {
+        deps.adopt?.(from, to);
+      } catch (e) {
+        log(`loop ${l.id}: could not move its thread state: ${e instanceof Error ? e.message : String(e)}`);
       }
     };
     try {

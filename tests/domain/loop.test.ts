@@ -162,7 +162,7 @@ describe("loopTurnText", () => {
     expect(t).toContain("post nothing anywhere in Slack");
     expect(t).toContain("explicitly asks you to send, post or report");
     expect(t).toContain("needs a person");
-    expect(t).toContain("end with exactly NO_REPLY");
+    expect(t).toContain("reply with exactly NO_REPLY and nothing else");
   });
 });
 
@@ -172,7 +172,6 @@ describe("loopThreadTs", () => {
     expect(loopThreadTs(now, 7)).toMatch(/^\d{10}\.\d{6}$/);
     expect(loopThreadTs(now, 7)).not.toBe(loopThreadTs(now, 8));
     expect(loopThreadTs(now, 7)).toBe(loopThreadTs(now, 7));
-    expect(Number(loopThreadTs(now, 7))).toBeGreaterThan(Math.floor(now / 1000) - 1);
   });
 });
 

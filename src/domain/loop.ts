@@ -292,14 +292,14 @@ export const nextRun = (s: Schedule, after: number, offsetMin: number): number =
  * the whole of what lands in Slack; the turn's own Slack calls would add to it.
  */
 export const loopTurnText = (id: number, schedule: string, prompt: string, name: string = ""): string =>
-  `[loop ${id}] Scheduled run${name ? ` of "${name}"` : ""} (${schedule}) - nobody is watching live. Stay silent: post nothing anywhere in Slack (no chat.postMessage, no reply, no reaction) unless the task below explicitly asks you to send, post or report something, or something genuinely needs a person (a failure, a decision). In that case say it in your final reply, short: what you did and what needs a person, nothing else. If there is nothing to say, end with exactly NO_REPLY.\n\n${prompt}`;
+  `[loop ${id}] Scheduled run${name ? ` of "${name}"` : ""} (${schedule}) - nobody is watching live. Stay silent: post nothing anywhere in Slack (no chat.postMessage, no reply, no reaction) unless the task below explicitly asks you to send, post or report something, or something genuinely needs a person (a failure, a decision). In that case say it in your final reply, short: what you did and what needs a person, nothing else. If there is nothing to say, reply with exactly NO_REPLY and nothing else - no summary before it.\n\n${prompt}`;
 
 /**
  * The thread key a silent run's turn lives under until it has something to
  * say: a DM message that does not exist yet has no ts, and one turn per
  * (channel, ts) is what keeps its session and queue. `now` in seconds plus the
  * loop id in the microsecond part, so two loops due in the same tick never
- * share a key, and it sorts after anything in the DM like `syntheticTs`.
+ * share a key, and it is never shown: it only has to be unique.
  */
 export const loopThreadTs = (nowMs: number, id: number): string =>
   `${Math.floor(nowMs / 1000)}.${String(id % 1_000_000).padStart(6, "0")}`;

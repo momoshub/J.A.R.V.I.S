@@ -76,6 +76,10 @@ export type WatchRepo = {
   settle: (id: number, state: WatchState, at: number, error?: string) => void;
   /** End every watch on a thread; returns how many. */
   cancelThread: (channelId: string, threadTs: string, at: number) => number;
+  /** Waiting watches bound to a thread. */
+  waitingAt: (channelId: string, threadTs: string) => number;
+  /** Re-bind the waiting watches of one thread to another; returns how many. */
+  rebind: (channelId: string, fromTs: string, toTs: string) => number;
 };
 
 export const createWatchRepo = (db: DbClient): WatchRepo => {
@@ -107,7 +111,16 @@ export const createWatchRepo = (db: DbClient): WatchRepo => {
     "UPDATE watches SET state = 'cancelled', updated_at = $at WHERE channel_id = $channelId AND thread_ts = $threadTs AND state = 'waiting'",
   );
 
+  const waitingAtStmt = db.query<{ n: number }, [string, string]>(
+    "SELECT COUNT(*) AS n FROM watches WHERE channel_id = ? AND thread_ts = ? AND state = 'waiting'",
+  );
+  const rebindStmt = db.query(
+    "UPDATE watches SET thread_ts = $toTs WHERE channel_id = $channelId AND thread_ts = $fromTs AND state = 'waiting'",
+  );
+
   return {
+    waitingAt: (channelId, threadTs) => waitingAtStmt.get(channelId, threadTs)?.n ?? 0,
+    rebind: (channelId, fromTs, toTs) => rebindStmt.run({ $channelId: channelId, $fromTs: fromTs, $toTs: toTs }).changes,
     add: (w, at) =>
       toWatch(
         insertStmt.get({
