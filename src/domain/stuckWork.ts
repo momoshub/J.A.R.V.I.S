@@ -334,14 +334,18 @@ const PR_URL = /https:\/\/github\.com\/[\w.-]+\/[\w.-]+\/pull\/\d+/g;
 /**
  * What a thread's trace shows it started: the Orca dispatches its
  * `worker-start` calls printed and the PRs its `gh pr create` or `github-app.sh pr-create` calls printed.
- * Only for naming an owner in a report - unlike `backgroundLaunches`, which
- * decides what `stop` may end, a loose match here costs a wrong link at worst,
- * so a brief written with `cat > f; orca ... worker-start` in one call still
- * counts. Never throws.
+ * `dispatches` is for naming an owner in a report - unlike `backgroundLaunches`,
+ * which decides what `stop` may end, a loose match there costs a wrong link at
+ * worst, so a brief written with `cat > f; orca ... worker-start` in one call
+ * still counts, and so does any other `ctx_` id that call printed.
+ * `created` is the strict subset that may gate a WRITE (the auto-close): a
+ * `worker-start` call whose output carries exactly one dispatch id, which can
+ * only be the one it created. Never throws.
  */
-export const traceStarts = (traceText: string): { dispatches: string[]; prs: string[] } => {
+export const traceStarts = (traceText: string): { dispatches: string[]; created: string[]; prs: string[] } => {
   const calls = new Map<string, string>();
   const dispatches = new Set<string>();
+  const created = new Set<string>();
   const prs = new Set<string>();
   for (const line of traceText.split("\n")) {
     if (!line.trim()) continue;
@@ -355,14 +359,15 @@ export const traceStarts = (traceText: string): { dispatches: string[]; prs: str
     const command = row.kind === "result" && typeof row.output === "string" ? calls.get(row.id) : undefined;
     if (!command || typeof row.output !== "string") continue;
     if (WORKER_START.test(command)) {
-      for (const m of row.output.matchAll(DISPATCH_ID)) dispatches.add(m[1] ?? m[2] ?? "");
+      const ids = new Set([...row.output.matchAll(DISPATCH_ID)].map((m) => m[1] ?? m[2] ?? "").filter(Boolean));
+      for (const id of ids) dispatches.add(id);
+      if (ids.size === 1) for (const id of ids) created.add(id);
     }
     if (PR_CREATE.test(command)) {
       for (const m of row.output.matchAll(PR_URL)) prs.add(prRef(m[0]));
     }
   }
-  dispatches.delete("");
-  return { dispatches: [...dispatches], prs: [...prs] };
+  return { dispatches: [...dispatches], created: [...created], prs: [...prs] };
 };
 
 /** How many PR -> thread records are kept; the oldest go first. */

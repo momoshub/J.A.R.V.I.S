@@ -71,7 +71,7 @@ export type StuckWorkProbeConfig = {
 };
 
 /** What one trace started, remembered until the file changes. */
-export type TraceCache = Map<string, { mtime: number; size: number; started: { dispatches: string[]; prs: string[] } }>;
+export type TraceCache = Map<string, { mtime: number; size: number; started: { dispatches: string[]; created: string[]; prs: string[] } }>;
 
 /**
  * Which thread started each dispatch and each PR, newest trace winning. The
@@ -83,15 +83,18 @@ export const findOwners = (
   traceDir: string,
   since: number,
   cache?: TraceCache,
-): { dispatches: Map<string, OwnerThread>; prs: Map<string, OwnerThread> } => {
+): { dispatches: Map<string, OwnerThread>; sure: Map<string, OwnerThread>; prs: Map<string, OwnerThread> } => {
   const dispatches = new Map<string, OwnerThread>();
+  // Dispatch -> thread for the auto-close only: created by a `worker-start` in exactly one thread, named by no other.
+  const created = new Map<string, OwnerThread[]>();
+  const mentioned = new Map<string, number>();
   const prs = new Map<string, OwnerThread>();
   const files: { channelId: string; threadTs: string; mtime: number; size: number }[] = [];
   let channels: string[] = [];
   try {
     channels = readdirSync(traceDir);
   } catch {
-    return { dispatches, prs };
+    return { dispatches, sure: new Map(), prs };
   }
   for (const channelId of channels) {
     if (channelId === "_none") continue;
@@ -121,13 +124,19 @@ export const findOwners = (
         ? hit.started
         : traceStarts(readThreadTrace(traceDir, f.channelId, f.threadTs, OWNER_TRACE_BYTES));
     cache?.set(key, { mtime: f.mtime, size: f.size, started });
-    for (const d of started.dispatches) dispatches.set(d, owner);
+    for (const d of started.dispatches) {
+      dispatches.set(d, owner);
+      mentioned.set(d, (mentioned.get(d) ?? 0) + 1);
+    }
+    for (const d of started.created) created.set(d, [...(created.get(d) ?? []), owner]);
     for (const p of started.prs) prs.set(p, owner);
   }
   // A trace gone or out of the window is not remembered either.
   const live = new Set(files.map((f) => `${f.channelId}/${f.threadTs}`));
   for (const key of cache?.keys() ?? []) if (!live.has(key)) cache?.delete(key);
-  return { dispatches, prs };
+  const sure = new Map<string, OwnerThread>();
+  for (const [d, owned] of created) if (owned.length === 1 && mentioned.get(d) === 1) sure.set(d, owned[0]!);
+  return { dispatches, sure, prs };
 };
 
 export const createStuckWorkProbe = (config: StuckWorkProbeConfig): StuckWorkProbe => {
@@ -236,7 +245,9 @@ export const createStuckWorkProbe = (config: StuckWorkProbeConfig): StuckWorkPro
         const recorded = config.recordedOwners?.();
         const withOwner = <T>(item: T, owner: OwnerThread | undefined): T => (owner ? { ...item, owner } : item);
         const ownerOf = (t: { dispatchId?: string }) => (t.dispatchId ? owners.dispatches.get(t.dispatchId) : undefined);
-        const closed = await mapLimited(found, CONCURRENCY, (t) => autoClosed(t, ownerOf(t)));
+        // A write needs the unambiguous owner; the loose one only names a thread in the report.
+        const sureOf = (t: { dispatchId?: string }) => (t.dispatchId ? owners.sure.get(t.dispatchId) : undefined);
+        const closed = await mapLimited(found, CONCURRENCY, (t) => autoClosed(t, sureOf(t)));
         const tasks = found.filter((_, i) => !closed[i]).map(({ endedAt: _endedAt, ...t }) => t);
         const autoClosedCount = closed.filter(Boolean).length;
         return {

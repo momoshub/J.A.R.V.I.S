@@ -217,7 +217,7 @@ describe("traceStarts", () => {
       result("2", '{"dispatchId":"ctx_def456"}'),
       "not json",
     ].join("\n");
-    expect(traceStarts(trace)).toEqual({ dispatches: [], prs: [] });
+    expect(traceStarts(trace)).toEqual({ dispatches: [], created: [], prs: [] });
   });
 });
 
@@ -309,6 +309,22 @@ describe("recorded PR threads", () => {
     expect(parsePrThreads("nope")).toEqual({});
     expect(parsePrThreads('{"a":1,"b":"no-slash"}')).toEqual({});
     expect(recordedOwners('{"o/r#1":"C1/"}').size).toBe(0);
+  });
+});
+
+describe("traceStarts created", () => {
+  const call = (id: string, command: string) => JSON.stringify({ kind: "call", id, name: "Bash", input: JSON.stringify({ command }) });
+  const result = (id: string, output: string) => JSON.stringify({ kind: "result", id, output });
+  test("only a worker-start whose output names exactly one dispatch is the one it created", () => {
+    const clean = [call("a", "orca orchestration worker-start --spec x"), result("a", '{"ok":true,"result":{"dispatchId":"ctx_aaaaaa"}}')].join("\n");
+    expect(traceStarts(clean).created).toEqual(["ctx_aaaaaa"]);
+    const mixed = [
+      call("b", "orca orchestration worker-start --spec x; orca orchestration worker-show --dispatch ctx_bbbbbb"),
+      result("b", '{"dispatchId":"ctx_cccccc"} {"dispatchId":"ctx_bbbbbb"}'),
+    ].join("\n");
+    const started = traceStarts(mixed);
+    expect(started.created).toEqual([]);
+    expect(started.dispatches.sort()).toEqual(["ctx_bbbbbb", "ctx_cccccc"]);
   });
 });
 

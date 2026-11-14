@@ -173,11 +173,13 @@ describe("stuck work probe", () => {
 
 describe("auto-close of reported tasks", () => {
   const ENDED = "2026-11-08 11:00:00"; // Orca writes UTC without a zone
-  const ts = (iso: string): string => String(Date.parse(iso) / 1000);
+  // Zone-less strings parse as local time: read them as UTC so the boundary cases hold in any TZ.
+  const ts = (iso: string): string => String(Date.parse(`${iso.replace(" ", "T")}Z`) / 1000);
   const bot = (iso: string): ThreadPost => ({ ts: ts(iso), own: true });
   const human = (iso: string): ThreadPost => ({ ts: ts(iso), own: false });
 
   const scan = async (opts: {
+    extraTrace?: boolean;
     concise?: string;
     full?: string;
     posts?: readonly ThreadPost[] | "throws";
@@ -195,10 +197,18 @@ describe("auto-close of reported tasks", () => {
       "orchestration task-update --id task_dead": opts.update ?? '{"ok":true,"result":{"task":{"id":"task_dead","status":"completed"}}}',
     });
     const reads: string[] = [];
+    const dir = traceDir();
+    if (opts.extraTrace) {
+      // A newer thread whose call also printed this dispatch id (a worker-show chained after its own worker-start).
+      const call = JSON.stringify({ kind: "call", id: "z", name: "Bash", input: JSON.stringify({ command: `orca orchestration worker-start --spec y; orca orchestration worker-show --dispatch ${id}` }) });
+      const result = JSON.stringify({ kind: "result", id: "z", output: `{"dispatchId":"ctx_other01"} {"dispatchId":"${id}"}` });
+      mkdirSync(join(dir, "C2"));
+      writeFileSync(join(dir, "C2", "200.1.jsonl"), `${call}\n${result}`);
+    }
     const probe = createStuckWorkProbe({
       orca: orca.run,
       gh: ghFake("[]"),
-      traceDir: traceDir(),
+      traceDir: dir,
       now: () => NOW,
       ...(opts.withReader === false
         ? {}
@@ -244,6 +254,13 @@ describe("auto-close of reported tasks", () => {
   stays("the full record has no end time", { full: '{"ok":true,"result":{"dispatch":{},"worker":{"state":"succeeded"}}}', posts: [bot("2026-11-08 11:30:00")] }, false);
   stays("the full record says it did not succeed", { full: `{"ok":true,"result":{"dispatch":{"completedAt":"${ENDED}"},"worker":{"state":"failed"}}}`, posts: [bot("2026-11-08 11:30:00")] }, false);
   stays("the thread is unknown", { dispatchId: "ctx_nothread1", posts: [bot("2026-11-08 11:30:00")] }, false);
+
+  test("stays flagged when another thread's trace also names the dispatch, even if the bot posted there after the end", async () => {
+    const r = await scan({ extraTrace: true, posts: [bot("2026-11-08 11:30:00")] });
+    expect(r.updates).toEqual([]);
+    expect(r.reads).toEqual([]);
+    expect(r.work.tasks.map((t) => t.taskId)).toEqual(["task_dead"]);
+  });
 
   test("stays flagged when Orca refuses the close", async () => {
     const r = await scan({ posts: [bot("2026-11-08 11:30:00")], update: '{"ok":false,"error":{"code":"nope"}}' });

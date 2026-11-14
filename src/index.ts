@@ -422,7 +422,9 @@ const main = async () => {
     now: clock,
     recordedOwners: () => recordedOwners(settings.get(SETTING_KEYS.stuckPrThreads)),
     // Read-only: a finished task is auto-closed only when the bot itself posted in its thread after the worker ended.
-    readThread: (owner) => slackAdmin.replies(owner.channelId, owner.threadTs),
+    // `own` is `userId === botId`: with an empty bot id every user-less (webhook) post would count, so it needs a non-empty id.
+    readThread: async (owner) =>
+      (await slackAdmin.replies(owner.channelId, owner.threadTs)).map((m) => ({ ts: m.ts, own: m.own && m.userId !== "" })),
   });
   // Model per role: a dashboard/command override wins, otherwise the env value,
   // otherwise the adapter default. Read per call so a change needs no restart.
