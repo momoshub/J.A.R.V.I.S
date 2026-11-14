@@ -135,3 +135,19 @@ describe("createBackgroundAgents", () => {
     expect(out.unchecked).toEqual([]);
   });
 });
+
+describe("liveForThread", () => {
+  test("true while anything the thread started is live or unverifiable, false when all are gone or none exist", async () => {
+    writeTrace("C7", "1.1", [bash("orca orchestration worker-start --spec x --json", '{"ok":true,"result":{"dispatchId":"ctx_a1b2c3"}}', "U-me")]);
+    writeTrace("C7", "2.2", [bash("orca orchestration worker-start --spec x --json", '{"ok":true,"result":{"dispatchId":"ctx_0d0d0d"}}', "U-me")]);
+    const agents = createBackgroundAgents({ traceDir: dir, run: fakeRun().run });
+    expect(await agents.liveForThread?.({ channelId: "C7", threadTs: "1.1" })).toBe(true);
+    expect(await agents.liveForThread?.({ channelId: "C7", threadTs: "2.2" })).toBe(false);
+    expect(await agents.liveForThread?.({ channelId: "C7", threadTs: "9.9" })).toBe(false);
+    const broken = createBackgroundAgents({
+      traceDir: dir,
+      run: async () => ({ code: 1, stdout: "", stderr: "orca not running" }),
+    });
+    expect(await broken.liveForThread?.({ channelId: "C7", threadTs: "2.2" })).toBe(true);
+  });
+});

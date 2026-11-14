@@ -65,6 +65,7 @@ import { startWebhookServer } from "./infrastructure/github/webhookServer.ts";
 import { createGithubAppRepo } from "./infrastructure/db/githubAppRepo.ts";
 import { createInnerChild, steerViaRespond } from "./application/innerChild.ts";
 import { decideAccess } from "./domain/access.ts";
+import { sessionThreadKey } from "./domain/agentSession.ts";
 import { createDriftRepo } from "./infrastructure/db/driftRepo.ts";
 import { createSelfIssueRepo } from "./infrastructure/db/selfIssueRepo.ts";
 import { noTools } from "./domain/toolPolicy.ts";
@@ -145,6 +146,8 @@ import { recordedOwners, recordPrThread } from "./domain/stuckWork.ts";
 import { createStuckWorkProbe } from "./infrastructure/system/stuckWorkProbe.ts";
 import { createStuckSweeper } from "./application/stuckSweeper.ts";
 import { createIdleReaper } from "./application/idleReaper.ts";
+import { createStalePromiseSweep } from "./application/stalePromiseSweep.ts";
+import { classifyMessage, classifySystem, parsePromiseVerdict } from "./domain/stalePromise.ts";
 import { SWEEP_TICK_MS } from "./domain/stuckWork.ts";
 import { teamFromPermalink } from "./domain/mindful.ts";
 import type { RespondDeps } from "./application/respond.ts";
@@ -1417,6 +1420,57 @@ const main = async () => {
   (firstReap as { unref?: () => void } | undefined)?.unref?.();
   (reapTimer as { unref?: () => void } | undefined)?.unref?.();
 
+  // A turn that ended on "next I will ..." with nothing left to do it (no turn,
+  // watch, reminder or worker) stalls until someone prods it. Every 15 min the
+  // sweep steers each such thread's session once, through the same internal
+  // turn `tell` starts; nothing is posted to Slack by the sweep. It starts
+  // turns, so it holds while a restart drains. STALE_PROMISE_INTERVAL_MS=0 is off.
+  const staleEveryMs = config.stalePromise.intervalMs;
+  const stalePromise =
+    staleEveryMs > 0
+      ? createStalePromiseSweep({
+          clock,
+          enabled: () => !draining,
+          threads: messages.endedOnBot,
+          replies: (channel, threadTs) => slackAdmin.replies(channel, threadTs),
+          turnRunning: (channel, threadTs) => runs.inThread(sessionThreadKey(channel, threadTs)).length > 0,
+          workflowActive: (channel, threadTs) => !!workflows.activeFor(channel, threadTs),
+          watches: watches.waitingAt,
+          reminders: reminders.waitingAt,
+          liveWorker: async (channelId, threadTs) => (await deps.backgroundAgents?.liveForThread?.({ channelId, threadTs })) ?? false,
+          // A cheap yes/no from the pal model (Haiku by default), no tools. A failed
+          // call is no nudge: the thread is looked at again next sweep.
+          confirm: async (text, who) =>
+            parsePromiseVerdict(
+              await llm.complete({
+                system: classifySystem(profile().name),
+                messages: [{ role: "user", content: classifyMessage(text), speakerId: who.slackUserId }],
+                policy: {
+                  skipPermissions: false,
+                  cwd: sandboxCwd,
+                  model: modelsForRoles().pal,
+                  disallowedTools: noTools(config.dbMcpServers),
+                  timeoutMs: GATE_TIMEOUT_MS,
+                },
+                bill: { actor: who.slackUserId, kind: "stale-promise", channel: who.channelId, threadTs: who.threadTs },
+              }),
+            ),
+          mayRun: (id) => decideAccess(id, config.ownerSlackId, users.get).allowed,
+          runTurn: deps.runTurn!,
+          settings,
+          nudgedKey: SETTING_KEYS.stalePromiseNudged,
+          minAgeMs: config.stalePromise.minAgeMs,
+          windowMs: config.stalePromise.windowMs,
+          maxNudges: config.stalePromise.maxNudges,
+          log: (msg) => console.error(`[stale-promise] ${msg}`),
+          activity: (event, data) => activity.event(event, data),
+        })
+      : undefined;
+  const firstStale = stalePromise ? setTimeout(() => void stalePromise.tick(), 180_000) : undefined;
+  const staleTimer = stalePromise ? setInterval(() => void stalePromise.tick(), staleEveryMs) : undefined;
+  (firstStale as { unref?: () => void } | undefined)?.unref?.();
+  (staleTimer as { unref?: () => void } | undefined)?.unref?.();
+
   // Dead man's switch for the host's flaky connection: keeps an "I'm offline"
   // notice armed on Slack's side, so an outage gets reported even though the
   // host cannot reach Slack to say so. Runs while draining too - a restart is
@@ -1448,6 +1502,8 @@ const main = async () => {
     clearInterval(sweepTimer);
     clearTimeout(firstReap);
     clearInterval(reapTimer);
+    clearTimeout(firstStale);
+    clearInterval(staleTimer);
     clearInterval(alarmTimer);
     // A deliberate stop is not an outage. This covers `launchctl kickstart -k`
     // and a Mac shutting down or logging out too (all SIGTERM): a few unarmed

@@ -82,9 +82,26 @@ export type MessageRepo = {
   pageForChannel: (channelId: string, before: number | undefined, limit: number) => MessagePage;
   /** How many turns a channel holds. */
   countForChannel: (channelId: string) => number;
+  /**
+   * Threads whose newest stored turn is the bot's, written between `since` and
+   * `before` (ms), newest first, with the person that thread last heard from.
+   */
+  endedOnBot: (since: number, before: number, limit: number) => EndedThread[];
 };
 
+export type EndedThread = { channelId: string; threadTs: string; lastAt: number; slackUserId: string };
+
 export const createMessageRepo = (db: DbClient): MessageRepo => {
+  const endedStmt = db.query<{ channel_id: string; thread_ts: string; created_at: number; user_id: string | null }, [number, number, number]>(
+    `SELECT m.channel_id, m.thread_ts, m.created_at,
+       (SELECT u.slack_user_id FROM messages u
+         WHERE u.channel_id = m.channel_id AND u.thread_ts = m.thread_ts AND u.role = 'user'
+         ORDER BY u.id DESC LIMIT 1) AS user_id
+     FROM messages m
+     WHERE m.thread_ts != '' AND m.role = 'assistant' AND m.created_at >= ? AND m.created_at <= ?
+       AND m.id = (SELECT MAX(x.id) FROM messages x WHERE x.channel_id = m.channel_id AND x.thread_ts = m.thread_ts)
+     ORDER BY m.created_at DESC LIMIT ?`,
+  );
   const insertStmt = db.query(
     `INSERT INTO messages (channel_id, slack_user_id, role, content, created_at, slack_ts, thread_ts)
      VALUES ($channelId, $slackUserId, $role, $content, $createdAt, $slackTs, $threadTs)
@@ -148,6 +165,10 @@ export const createMessageRepo = (db: DbClient): MessageRepo => {
       return rows.length > size && oldest ? { messages, nextBefore: oldest.id } : { messages };
     },
     countForChannel: (channelId) => channelCountStmt.get(channelId)?.n ?? 0,
+    endedOnBot: (since, before, limit) =>
+      endedStmt.all(since, before, Math.max(1, limit)).flatMap((r) =>
+        r.user_id ? [{ channelId: r.channel_id, threadTs: r.thread_ts, lastAt: r.created_at, slackUserId: r.user_id }] : [],
+      ),
     append: (message, createdAt) => {
       const row = insertStmt.get({
         $channelId: message.channelId,

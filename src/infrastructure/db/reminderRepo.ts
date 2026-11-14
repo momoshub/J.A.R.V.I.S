@@ -63,6 +63,8 @@ export type ReminderRepo = {
   waiting: (limit?: number) => Reminder[];
   /** Still waiting and set by, or aimed at, this person. */
   waitingFor: (slackUserId: string, limit?: number) => Reminder[];
+  /** How many reminders are waiting in this thread. */
+  waitingAt: (channelId: string, threadTs: string) => number;
   get: (id: number) => Reminder | undefined;
   /** Try again later after a failed post, counting the attempt. */
   retry: (id: number, dueAt: number, at: number, error: string) => void;
@@ -88,6 +90,9 @@ export const createReminderRepo = (db: DbClient): ReminderRepo => {
     `SELECT * FROM reminders WHERE state = 'waiting'
        AND (created_by = ? OR (',' || targets || ',') LIKE ?)
      ORDER BY due_at ASC LIMIT ?`,
+  );
+  const waitingAtStmt = db.query<{ n: number }, [string, string]>(
+    "SELECT COUNT(*) AS n FROM reminders WHERE channel_id = ? AND thread_ts = ? AND state = 'waiting'",
   );
   const getStmt = db.query<Row, [number]>("SELECT * FROM reminders WHERE id = ?");
   const retryStmt = db.query(
@@ -117,6 +122,7 @@ export const createReminderRepo = (db: DbClient): ReminderRepo => {
         }) as Row,
       ),
     due: (now, limit = 20) => dueStmt.all(now, Math.max(1, limit)).map(toReminder),
+    waitingAt: (channelId, threadTs) => waitingAtStmt.get(channelId, threadTs)?.n ?? 0,
     waiting: (limit = 50) => waitingStmt.all(Math.max(1, limit)).map(toReminder),
     waitingFor: (id, limit = 20) => waitingForStmt.all(id, `%,${id},%`, Math.max(1, limit)).map(toReminder),
     get: (id) => {

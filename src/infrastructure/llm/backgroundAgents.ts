@@ -119,6 +119,17 @@ export const createBackgroundAgents = (opts: {
       : run([orca, "orchestration", "worker-stop", "--dispatch", l.id, "--json"]);
 
   return {
+    liveForThread: async ({ channelId, threadTs }): Promise<boolean> => {
+      try {
+        const launches = backgroundLaunches(
+          readThreadTrace(opts.traceDir, channelId, threadTs, opts.tailBytes ?? BACKGROUND_TRACE_BYTES),
+        );
+        if (launches.length === 0) return false;
+        return (await checkAll(launches)).some((c) => c.liveness !== "gone");
+      } catch {
+        return true;
+      }
+    },
     stopForThread: async ({ channelId, threadTs, actor, mayStopOthers }): Promise<BackgroundStopResult> => {
       try {
         const launches = backgroundLaunches(
