@@ -196,7 +196,7 @@ export const fixPrompt = (
     `- never edit ${sourceDir} itself, other sessions are working in it. cut a worktree: \`git -C ${sourceDir} fetch origin && git -C ${sourceDir} worktree add ${sourceDir}/.claude/worktrees/issue-${i.id} -b fix/issue-${i.id} origin/main\`, then \`bun install\` there and do all the work in it`,
     "- make the smallest fix that solves it, with a test that fails without it. follow the repo's AGENTS.md (or CLAUDE.md)",
     "- never weaken a role check, a safety rule or the inner child itself to make a problem go away",
-    "- in the worktree run `bun run typecheck` and `bun test`. if they do not pass before a PR exists, push nothing, remove the worktree and report that",
+    "- in the worktree run `bun run typecheck` and `bun test` (a full run queues behind other full runs on this host and may wait a while: that is not a hang, do not kill it or turn the lock off). if they do not pass before a PR exists, push nothing, remove the worktree and report that",
     `- when they pass: commit (no co-author line), push the branch and open a PR`,
     `- ${STANDALONE_REVIEW_RULE}`,
     ...(accounts ? [`- ${selfPrAccountsRule(accounts)}`] : []),

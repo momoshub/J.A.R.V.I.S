@@ -127,6 +127,9 @@ const schema = z
     // budget (ms). Past it the thread is told to hold on and the turn is cut,
     // then picked up again by the next process on the same session.
     RESTART_TURN_BUDGET_MS: z.coerce.number().int().positive().default(RESTART_TURN_BUDGET_MS),
+    // Not config of the bot: JARVIS_TEST_LOCK, JARVIS_TEST_LOCK_TIMEOUT_MS,
+    // JARVIS_TEST_NICE and JARVIS_TEST_LOCK_DIR are read by the `bun test`
+    // preload (tests/support/hostLock.ts) so full test runs queue per host.
     // Channel the offline alarm reports to: a notice armed on Slack's side
     // that posts by itself if the host loses its connection, and is edited to
     // "back online" when it returns. Unset: no alarm. An id, not a name: the

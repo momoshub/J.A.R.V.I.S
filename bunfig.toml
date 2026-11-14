@@ -1,0 +1,3 @@
+[test]
+# Full runs queue on a host-wide lock so parallel worktrees do not pile up (tests/support/hostLock.ts)
+preload = ["./tests/support/hostLockPreload.ts"]
