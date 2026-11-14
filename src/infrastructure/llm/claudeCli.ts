@@ -202,14 +202,46 @@ const ENV_ASSIGNMENT = /^\w+=(?:"[^"]*"|'[^']*'|\S*)\s+/;
 const SCRIPT_NAME = /^[\w.+-]{1,40}$/;
 
 /**
+ * Quoted text with its separators and spaces blanked to `_`, so a `;`, `|` or
+ * newline inside a quoted value can never split the command and surface the
+ * value's tail as a program. Undefined when a quote is left open.
+ */
+const blankQuoted = (command: string): string | undefined => {
+  let out = "";
+  let quote = "";
+  const chars = [...command];
+  for (let i = 0; i < chars.length; i++) {
+    const ch = chars[i] ?? "";
+    // A backslash escapes the next char everywhere but inside single quotes.
+    if (ch === "\\" && quote !== "'") {
+      out += `_${i + 1 < chars.length ? "_" : ""}`;
+      i++;
+    } else if (quote) {
+      if (ch === quote) quote = "";
+      out += ch === quote || !/[\s;&|]/.test(ch) ? ch : "_";
+    } else {
+      if (ch === "'" || ch === '"') quote = ch;
+      out += ch;
+    }
+  }
+  return quote ? undefined : out;
+};
+
+const WRAPPERS = ["bash", "sh", "zsh", "sudo", "env", "time", "nohup", "exec"];
+
+/**
  * A plain-English label for a Bash call that came without a description, from
  * the PROGRAM it runs and never its arguments (those carry paths and secrets).
- * Skips `cd X &&`, env assignments and `bash`/`sudo`-style wrappers. A script
- * is named by its basename without extension, `"$BOT_SLACK_CALL"` by its
- * variable. Undefined when nothing sensible can be read.
+ * Skips `cd X &&`, env assignments and `bash`/`sudo`-style wrappers; a wrapper
+ * with an option (`sudo -u bob`) gives up rather than guess which word is the
+ * option's value. Quoted text never splits a segment, and an unclosed quote
+ * gives up. A script is named by its basename without extension,
+ * `"$BOT_SLACK_CALL"` by its variable. Undefined when nothing sensible can be read.
  */
 const bashStep = (command: string): string | undefined => {
-  const segments = command
+  const blanked = blankQuoted(command);
+  if (blanked === undefined) return undefined;
+  const segments = blanked
     .split(/&&|\|\||;|\||\n/)
     .map((x) => x.trim())
     .filter(Boolean);
@@ -218,11 +250,11 @@ const bashStep = (command: string): string | undefined => {
     while (ENV_ASSIGNMENT.test(rest)) rest = rest.replace(ENV_ASSIGNMENT, "");
     let [program = "", ...args] = rest.split(/\s+/);
     if (!program || program === "cd" || /^\w+=/.test(program)) continue;
-    // `bash script.sh`, `sudo git ...`: the program is the next word.
-    while (["bash", "sh", "zsh", "sudo", "env", "time", "nohup", "exec"].includes(program) && args.length > 0) {
-      const next = args.findIndex((a) => !a.startsWith("-"));
-      if (next < 0) break;
-      [program = "", ...args] = args.slice(next);
+    // `bash script.sh`, `sudo git ...`, `env A=1 git`: the program is the next word.
+    while (WRAPPERS.includes(program) && args.length > 0) {
+      if (args[0]?.startsWith("-")) return undefined;
+      [program = "", ...args] = args;
+      while (/^\w+=/.test(program) && args.length > 0) [program = "", ...args] = args;
     }
     const variable = /^"?\$\{?(\w+)\}?"?$/.exec(program)?.[1];
     if (variable !== undefined) return /SLACK/i.test(variable) ? "Calling Slack" : undefined;

@@ -534,6 +534,19 @@ describe("createClaudeCliLlm", () => {
     expect(summarizeTool("Bash", '{"command":"git push","description":"Push the branch"}').title).toBe("Run: 🏃 Push the branch");
   });
 
+  test("summarizeTool never reads a quoted value or a wrapper option's value as the program", () => {
+    const title = (command: string) => summarizeTool("Bash", JSON.stringify({ command })).title;
+    expect(title("API_KEY='abc|hunter2' ./deploy.sh")).toBe("Run: 🏃 Running deploy");
+    expect(title("PGPASSWORD='s3cr;Tpass' psql -h db")).toBe("Run: 🏃 Running psql");
+    expect(title('cd "/Users/x/client acme; notes" && ls')).toBe("Run: 🏃 Listing files");
+    expect(title('TOKEN="a b\nzz c" gh x')).toBe("Run: 🏃 Using the GitHub CLI");
+    expect(title('X="a\\"; b" git status')).toBe("Run: 🏃 Running git");
+    expect(title("echo 'open; quote")).toBe("Run: 🏃 Running a command");
+    expect(title("sudo -u deploybot git pull")).toBe("Run: 🏃 Running a command");
+    expect(title("env -u VAR git pull")).toBe("Run: 🏃 Running a command");
+    expect(title("env A=1 B=2 git pull")).toBe("Run: 🏃 Running git");
+  });
+
   test("summarizeTool points the card's details at the trace log line, never the command", () => {
     const spot = { file: "logs/threads/C1/1.2.jsonl", line: 7 };
     const out = summarizeTool("Bash", '{"command":"ls","description":"List files"}', spot);
