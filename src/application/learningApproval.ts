@@ -200,7 +200,11 @@ export const decideLearningPress = async (
   const l = deps.learnings.get(Number(press.value));
   if (!l) return { kind: "unknown" };
   // Slack does not reliably flag an app's own chat.update as edited, so what the message shows decides.
-  const showsTheFact = (press.shown ?? []).join("\n").includes(approvalCore(l.content));
+  // Slack hands the quote marker back as `&gt; `, so either form of the marker counts. The fact itself stays
+  // compared escaped: a raw `<` shown (a live link or mention) never matches the stored `&lt;`.
+  const core = approvalCore(l.content);
+  const shown = (press.shown ?? []).join("\n");
+  const showsTheFact = shown.includes(core) || shown.includes(`&gt; ${core.slice(2)}`);
   const fromTheDm = !!l.noticeChannel && !!l.noticeTs && press.channel === l.noticeChannel && press.messageTs === l.noticeTs;
   if (!fromTheDm || press.edited || !showsTheFact) {
     deps.log?.(`learning #${l.id} press refused: not the untouched approval DM`);
