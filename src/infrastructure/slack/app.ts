@@ -1658,6 +1658,25 @@ export const createSlackApp = (config: SlackAppConfig, deps: Deps) => {
           channel: e.item.channel,
           ts: e.item.ts,
         });
+        if (outcome.kind === "format_flagged") {
+          const channelId = e.item.channel;
+          await handle({
+            channelId,
+            userId: e.user,
+            teamId: context.teamId,
+            text: outcome.prompt,
+            threadTs: outcome.threadTs,
+            messageTs: syntheticTs(),
+            client: asClient(client),
+            say: (m) =>
+              client.chat.postMessage({
+                channel: channelId,
+                text: m.text,
+                thread_ts: m.thread_ts ?? outcome.threadTs,
+                ...(m.blocks ? { blocks: m.blocks } : {}),
+              }),
+          });
+        }
         log(`message reaction ${e.reaction} on ${e.item.channel}/${e.item.ts}: ${outcome.kind}${outcome.kind === "ignored" ? ` (${outcome.why})` : ""}`);
       } catch (err) {
         log(`message reaction failed: ${err instanceof Error ? err.message : String(err)}`);

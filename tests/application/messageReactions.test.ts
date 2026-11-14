@@ -49,6 +49,36 @@ describe("message reactions", () => {
     expect(messageActionFor("thumbsup")).toBeUndefined();
   });
 
+  test("bug maps to fix_format, skin tones included", () => {
+    expect(messageActionFor("bug")).toBe("fix_format");
+    expect(messageActionFor("bug::skin-tone-4")).toBe("fix_format");
+  });
+
+  test("bug on the bot's thread reply starts a fix turn in that thread", async () => {
+    const { calls, deps } = build(reply());
+    const out = await actOnMessageReaction(deps, react("bug"));
+    expect(out.kind).toBe("format_flagged");
+    if (out.kind !== "format_flagged") return;
+    expect(out.threadTs).toBe("1.0");
+    expect(out.ts).toBe("2.0");
+    expect(out.prompt).toContain("2.0");
+    expect(out.prompt).toContain("C1");
+    expect(out.prompt).toContain("NO_REPLY");
+    expect(calls).toEqual([]);
+  });
+
+  test("bug on a top-level bot message uses its own ts as the thread", async () => {
+    const { deps } = build(reply({ threadTs: undefined }));
+    const out = await actOnMessageReaction(deps, react("bug::skin-tone-2"));
+    expect(out).toMatchObject({ kind: "format_flagged", threadTs: "2.0" });
+  });
+
+  test("bug from anyone else, or on someone else's message, is ignored", async () => {
+    expect((await actOnMessageReaction(build(reply()).deps, react("bug", "USOMEONE"))).kind).toBe("ignored");
+    expect((await actOnMessageReaction(build(reply({ userId: "UHUMAN" })).deps, react("bug"))).kind).toBe("ignored");
+    expect((await actOnMessageReaction(build(undefined).deps, react("bug"))).kind).toBe("ignored");
+  });
+
   test("baby_symbol sends a thread reply to the channel", async () => {
     const { calls, deps } = build(reply());
     expect((await actOnMessageReaction(deps, react("baby_symbol"))).kind).toBe("broadcast");
