@@ -8,6 +8,15 @@ describe("journey parsing", () => {
     ]);
   });
 
+  test("a quote closes at the end of a word, and an empty value is kept", () => {
+    expect(tokenize("--now 'it's broken' --next \"\" x")).toEqual(["--now", "it's broken", "--next", "", "x"]);
+    expect(parseFlags(["--now", "", "--next="])).toMatchObject({ now: "", next: "" });
+  });
+
+  test("cleanLine turns Slack syntax into plain words", () => {
+    expect(cleanLine("<!channel> hi <@U1> <https://a.test|doc> *b* `c` &amp; d", 100)).toBe("channel hi U1 doc b c d");
+  });
+
   test("parseFlags separates words from flags and reports the first problem", () => {
     const f = parseFlags(tokenize(`1 shipped --progress 40 --pr <https://github.com/a/b/pull/2|PR> --note="a b"`));
     expect(f).toMatchObject({ words: ["1", "shipped"], progress: "40", note: "a b", prs: ["https://github.com/a/b/pull/2"] });

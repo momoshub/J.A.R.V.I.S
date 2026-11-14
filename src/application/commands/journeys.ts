@@ -4,6 +4,7 @@ import {
   MAX_AREA,
   MAX_LINE,
   MAX_NOTE,
+  MAX_PRS,
   MAX_TITLE,
   OPEN_STATUSES,
   PR_URL_RE,
@@ -121,6 +122,7 @@ export const JOURNEY_COMMANDS: readonly CommandDef[] = [
       if (sub === "add" || sub === "new") {
         const title = cleanLine(flags.words.join(" "), MAX_TITLE);
         if (!title) return `What is it? \`${prefix} journey add <title> [--area X] [--now "..."]\``;
+        if (flags.title !== undefined) return `The title is the words after \`add\`; \`--title\` is for \`update\`. \`${prefix} journey help\``;
         const read = patchOf(flags);
         if (!read.ok) return `${read.error}. \`${prefix} journey help\``;
         const p = read.patch;
@@ -163,6 +165,11 @@ export const JOURNEY_COMMANDS: readonly CommandDef[] = [
           ? { ...read.patch, status: closing, ...(closingNote && !read.patch.note ? { note: closingNote } : {}) }
           : read.patch;
         if (Object.keys(patch).length === 0) return `Change what? \`${prefix} journey update ${id} --progress 40 --now "..."\` (see \`${prefix} journey help\`)`;
+        const before = repo.get(id);
+        if (!before) return `There is no journey #${id}. \`${prefix} journey list\``;
+        if (patch.pr && !before.prs.includes(patch.pr) && before.prs.length >= MAX_PRS) {
+          return `#${id} already lists ${MAX_PRS} PRs, which is the most one journey keeps.`;
+        }
         const j = repo.update(id, patch, now, actor.slackId);
         if (!j) return `There is no journey #${id}. \`${prefix} journey list\``;
         return `${statusEmoji(j.status)} #${j.id} *${j.title}* - ${j.status}${j.status === "done" || j.status === "dropped" ? "" : ` ${j.progress}%`}`;

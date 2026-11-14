@@ -10,6 +10,7 @@
  * Nothing here is clever: this file parses the typed line and words the
  * answer; the repo keeps the rows.
  */
+import { plainSlack } from "./loop.ts";
 import { parseSpan } from "./reminder.ts";
 import { humanDuration } from "./watch.ts";
 
@@ -38,9 +39,21 @@ const STATUS_EMOJI: Record<JourneyStatus, string> = {
 
 export const isStatus = (v: string): v is JourneyStatus => (JOURNEY_STATUSES as readonly string[]).includes(v);
 
-/** One line of plain text: Slack markup and newlines are the caller's own, so neither is trusted into a row. */
+/**
+ * One line of plain text. The text is typed by a person or written by a turn
+ * that may have read something hostile, and `list` / `show` post it back, so
+ * it must never become a mention, a link or a broadcast: `<!channel>`,
+ * `<@U1>` and `<url|label>` are read first (what is left is the words), then
+ * the markers that make bold, strike, code and links are dropped, like a
+ * loop's name. Underscores stay, for `snake_case` names.
+ */
 export const cleanLine = (text: string, max: number): string =>
-  text.replace(/\s+/g, " ").trim().slice(0, max);
+  plainSlack(text)
+    .replace(/[<>&*~`|\\]/g, " ")
+    .replace(/\s+/g, " ")
+    .trim()
+    .slice(0, max)
+    .trim();
 
 /** A GitHub pull request url, the only link a journey keeps as a PR. */
 export const PR_URL_RE = /^https?:\/\/github\.com\/[\w.-]+\/[\w.-]+\/pull\/\d+$/;
@@ -54,12 +67,9 @@ export const unwrapLink = (token: string): string => token.replace(/^<|>$/g, "")
  */
 export const tokenize = (line: string): string[] => {
   const out: string[] = [];
-  const re = /(?:--[\w-]+=)?(?:["“”]([^"“”]*)["“”]|['‘’]([^'‘’]*)['‘’]|(\S+))/g;
-  for (const m of line.matchAll(re)) {
-    const whole = m[0];
-    const key = whole.match(/^(--[\w-]+=)/)?.[1] ?? "";
-    out.push(key + (m[1] ?? m[2] ?? m[3] ?? ""));
-  }
+  // A quote closes only at the end of a word, so `'it's broken'` is one value.
+  const re = /(--[\w-]+=)?(?:["“”](.*?)["“”](?=\s|$)|['‘’](.*?)['‘’](?=\s|$)|(\S+))/g;
+  for (const m of line.matchAll(re)) out.push((m[1] ?? "") + (m[2] ?? m[3] ?? m[4] ?? ""));
   return out;
 };
 
@@ -80,6 +90,8 @@ export type JourneyFlags = {
 };
 
 const VALUE_FLAGS = ["status", "progress", "now", "next", "area", "note", "title", "since", "pr"] as const;
+/** Free text a person may blank out (`--now ""`); the rest need a value. */
+const CLEARABLE = ["now", "next", "area", "note"];
 
 export const parseFlags = (tokens: readonly string[]): JourneyFlags => {
   const words: string[] = [];
@@ -99,7 +111,7 @@ export const parseFlags = (tokens: readonly string[]): JourneyFlags => {
       continue;
     }
     const value = eq === -1 ? tokens[++i] : t.slice(eq + 1);
-    if (value === undefined || value === "") {
+    if (value === undefined || (value === "" && !CLEARABLE.includes(name))) {
       error ??= `\`--${name}\` needs a value`;
       continue;
     }
@@ -155,5 +167,6 @@ export const helpText = (prefix: string): string =>
     `- \`${prefix} journey done <id> [note]\` / \`${prefix} journey drop <id> [reason]\``,
     `- \`${prefix} journey list [planned|doing|blocked|done|dropped|open|all] [--since 7d] [--area X]\` (open ones by default)`,
     `- \`${prefix} journey show <id>\` - the fields and the event trail`,
+    '_`--now ""` (also `--next`, `--area`) clears a field._',
     "_Anyone may list and show; add, update, done and drop need the journeys:write permission (admin and owner by default). Run in a thread, `add` links that thread._",
   ].join("\n");

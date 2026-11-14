@@ -167,10 +167,60 @@ describe("journey command", () => {
     expect(await run(deps, "journey show")).toContain("no journey with that id");
   });
 
-  test("a title with markup and newlines is flattened and clipped", async () => {
+  test("a title is flattened and clipped", async () => {
     const { deps, journeys } = setup();
     await run(deps, `journey add "${"x".repeat(300)}"`);
     expect(journeys.get(1)?.title).toHaveLength(120);
+  });
+
+  test("Slack markup never survives into a row, so a read cannot ping anyone", async () => {
+    const { deps, journeys } = setup();
+    await run(deps, 'journey add "ping <!channel> and <!here> and <@U0PAL0001> *bold* `code`" --area "<!everyone>" --now "see <https://x.test/a|the doc> &amp; more" --next "<!subteam^S1|team> go"');
+    await run(deps, 'journey update 1 --note "<!channel> done" --title "<!channel> renamed"');
+    const j = journeys.get(1)!;
+    for (const text of [j.title, j.area, j.now, j.next, ...journeys.events(1).map((e) => e.text)]) {
+      expect(text).not.toMatch(/[<>`*|]|&amp;|!channel|!here|!everyone/);
+    }
+    expect(j).toMatchObject({ area: "everyone", now: "see the doc more" });
+    expect(j.title).toBe("channel renamed");
+    const shown = await run(deps, "journey show 1");
+    const listed = await run(deps, "journey list");
+    for (const out of [shown, listed]) expect(out).not.toMatch(/<!|<@U0PAL/);
+  });
+
+  test("a single-quoted value may hold an apostrophe", async () => {
+    const { deps, journeys } = setup();
+    await run(deps, "journey add Fix --now 'it's broken' --next 'Kai's call'");
+    expect(journeys.get(1)).toMatchObject({ title: "Fix", now: "it's broken", next: "Kai's call" });
+  });
+
+  test("an empty value clears now, next and area; the trail says so", async () => {
+    const { deps, journeys } = setup();
+    await run(deps, 'journey add Ship --area Ops --now "writing" --next "review"');
+    await run(deps, 'journey update 1 --now "" --next= --area ""');
+    expect(journeys.get(1)).toMatchObject({ now: "", next: "", area: "" });
+    expect(journeys.events(1).map((e) => e.text)).toEqual(expect.arrayContaining(["now: (cleared)", "next: (cleared)", "area: (cleared)"]));
+    expect(await run(deps, 'journey update 1 --status ""')).toContain("needs a value");
+  });
+
+  test("title, area and next changes each leave an event", async () => {
+    const { deps, journeys } = setup();
+    await run(deps, "journey add Ship");
+    await run(deps, 'journey update 1 --title "Ship v2" --area Ops --next "tag it"');
+    expect(journeys.events(1).map((e) => e.text).slice(1)).toEqual(["title: Ship v2", "area: Ops", "next: tag it"]);
+  });
+
+  test("add refuses --title instead of ignoring it, and an eleventh PR is said out loud", async () => {
+    const { deps, journeys } = setup();
+    expect(await run(deps, "journey add x --title y")).toContain("--title");
+    expect(journeys.list({ statuses: [] })).toHaveLength(0);
+    await run(deps, "journey add Many");
+    for (let n = 1; n <= 10; n++) await run(deps, `journey update 1 --pr https://github.com/a/b/pull/${n}`);
+    expect(journeys.get(1)?.prs).toHaveLength(10);
+    expect(await run(deps, "journey update 1 --pr https://github.com/a/b/pull/11")).toContain("already lists 10 PRs");
+    expect(journeys.get(1)?.prs).toHaveLength(10);
+    // a PR it already has is not a new one
+    expect(await run(deps, "journey update 1 --pr https://github.com/a/b/pull/3")).toContain("#1");
   });
 
   test("anyone who may run it can list and show; writing needs journeys:write", async () => {

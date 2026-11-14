@@ -148,7 +148,8 @@ export type JourneyRepo = {
   list: (filter?: JourneyFilter) => Journey[];
   /**
    * Applies the patch and appends one event per thing that changed (status,
-   * progress, a new PR, a changed `now`, a note). Undefined when there is no such journey.
+   * progress, a new PR, a changed title, area, `now` or `next`, a note). A PR past
+   * `MAX_PRS` is not added; the caller says so. Undefined when there is no such journey.
    */
   update: (id: number, patch: JourneyPatch, at: number, actor: string) => Journey | undefined;
   /** Records where the journey's thread lives, once the permalink is known. */
@@ -234,7 +235,14 @@ export const createJourneyRepo = (db: DbClient): JourneyRepo => {
     if (status !== cur.status) event(id, at, "status", `${cur.status} -> ${status}`, actor);
     if (progress !== cur.progress) event(id, at, "progress", `${progress}%`, actor);
     if (prs.length !== cur.prs.length) event(id, at, "pr", p.pr ?? "", actor);
-    if (now !== cur.now && now) event(id, at, "note", `now: ${now}`, actor);
+    // Fields that are snapshots, not history: each change is a note so the trail still shows it.
+    const title = p.title ?? cur.title;
+    const area = p.area ?? cur.area;
+    const next = p.next ?? cur.next;
+    if (title !== cur.title) event(id, at, "note", `title: ${title}`, actor);
+    if (area !== cur.area) event(id, at, "note", `area: ${area || "(cleared)"}`, actor);
+    if (now !== cur.now) event(id, at, "note", `now: ${now || "(cleared)"}`, actor);
+    if (next !== cur.next) event(id, at, "note", `next: ${next || "(cleared)"}`, actor);
     if (p.note) event(id, at, "note", p.note, actor);
     return toJourney(getStmt.get(id) as Row);
   });
