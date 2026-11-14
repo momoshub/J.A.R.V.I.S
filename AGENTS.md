@@ -4,7 +4,7 @@ Guidance for any coding agent working on this repo. `CLAUDE.md` is a symlink to 
 
 ## What this is
 
-Jarvis is a harness of harnesses (Bun + TypeScript): it wraps the local **Claude Code CLI** (default) or the Anthropic API, and Slack is its front end, not what it is. It has SQLite memory, an allowlist with roles, live streaming replies, a command registry, and a React admin dashboard. The code is **generic** - the running instance's identity (name, persona, prefixes, etc.) lives in the DB / env, never hardcoded.
+Jarvis is a harness of harnesses (Bun + TypeScript): it wraps the local **Claude Code CLI** (default) or the Anthropic API, for now, and Slack is its front end, not what it is. It has SQLite memory, an allowlist with roles, live streaming replies, a command registry, and a React admin dashboard. The code is **generic** - the running instance's identity (name, persona, prefixes, etc.) lives in the DB / env, never hardcoded.
 
 ## Commands
 
