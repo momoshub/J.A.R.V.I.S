@@ -1,14 +1,10 @@
-import { afterEach, describe, expect, test } from "bun:test";
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { afterEach, describe, expect, setDefaultTimeout, test } from "bun:test";
 import { join } from "node:path";
-import { tmpdir } from "node:os";
+
+// every Slack call is its own helper process (bash, python, curl), and the box is shared
+setDefaultTimeout(30_000);
 
 const SCRIPT = join(import.meta.dir, "..", "..", "bin", "slack-read.sh");
-
-const dirs: string[] = [];
-afterEach(() => {
-  for (const d of dirs.splice(0)) rmSync(d, { recursive: true, force: true });
-});
 
 const THREAD = {
   ok: true,
@@ -26,71 +22,75 @@ const USERS: Record<string, unknown> = {
   U0GONE00000: { ok: false, error: "user_not_found" },
 };
 
+const TICKET = "jvsl_test-ticket";
+
 /**
- * A stand-in `curl` on PATH answering conversations.replies and users.info from
- * fixtures, and logging every users.info call so the one-lookup-per-id cache
- * can be asserted.
+ * A stand-in for the bot's Slack proxy: a local server answering conversations.replies and users.info from
+ * fixtures, and logging every users.info call so the one-lookup-per-id cache can be asserted. The helper holds
+ * a ticket, never a token, so this is the only thing it can talk to.
  */
-const fakeCurl = (thread: unknown = THREAD) => {
-  const dir = mkdtempSync(join(tmpdir(), "slack-read-test-"));
-  dirs.push(dir);
-  writeFileSync(join(dir, "thread.json"), JSON.stringify(thread));
-  for (const [id, body] of Object.entries(USERS)) writeFileSync(join(dir, `${id}.json`), JSON.stringify(body));
-  writeFileSync(
-    join(dir, "curl"),
-    `#!/usr/bin/env bash
-args="$*"
-case "$args" in
-  *conversations.replies*) cat "${dir}/thread.json" ;;
-  *users.info*)
-    id=$(printf '%s' "$args" | grep -oE 'user=[A-Z0-9]+' | cut -d= -f2)
-    echo "$id" >> "${dir}/lookups.txt"
-    cat "${dir}/$id.json" ;;
-  *) echo '{"ok":false,"error":"unexpected"}' ;;
-esac
-`,
-    { mode: 0o755 },
-  );
-  return dir;
+const fakeProxy = (thread: unknown = THREAD) => {
+  const lookups: string[] = [];
+  const tickets: unknown[] = [];
+  const server = Bun.serve({
+    port: 0,
+    fetch: async (req) => {
+      const { ticket, method, params } = (await req.json()) as { ticket: unknown; method: string; params: Record<string, string> };
+      tickets.push(ticket);
+      if (method === "conversations.replies") return Response.json(thread);
+      if (method === "users.info") {
+        lookups.push(params.user ?? "");
+        return Response.json(USERS[params.user ?? ""] ?? { ok: false, error: "user_not_found" });
+      }
+      return Response.json({ ok: false, error: "unexpected" });
+    },
+  });
+  return { server, lookups, tickets, url: `http://127.0.0.1:${server.port}/api/slack` };
 };
 
-const replies = async (dir: string) => {
+const replies = async (proxy: ReturnType<typeof fakeProxy>) => {
   const proc = Bun.spawn({
     cmd: ["bash", SCRIPT, "replies", "C1", "1.1"],
     stdout: "pipe",
     stderr: "pipe",
-    env: { ...process.env, SLACK_BOT_TOKEN: "xoxb-test", PATH: `${dir}:${process.env.PATH}` },
+    // no bot token in this environment: the only thing the helper has is the ticket
+    env: { ...process.env, SLACK_BOT_TOKEN: undefined, JARVIS_SLACK_TICKET: TICKET, JARVIS_SLACK_API_URL: proxy.url },
   });
   const [stdout, code] = await Promise.all([new Response(proc.stdout).text(), proc.exited]);
   expect(code).toBe(0);
   return JSON.parse(stdout) as { messages: { user: string; user_name?: string; text: string }[] };
 };
 
+let current: ReturnType<typeof fakeProxy> | undefined;
+const proxyFor = (thread?: unknown) => (current = fakeProxy(thread));
+afterEach(() => current?.server.stop(true));
+
 describe("slack-read.sh names every user id", () => {
   test("each message carries the author's name, not just the id", async () => {
     // the failure this exists for: the thread showed only U0ALEX00001 and the
     // bot guessed a name from memory for U0ALEX00001
-    const { messages } = await replies(fakeCurl());
+    const { messages } = await replies(proxyFor());
     expect(messages[0]!.user_name).toBe("Alex Example");
     expect(messages[1]!.user_name).toBe("Jarvis");
   });
 
   test("mentions in the text read <@U…:name>, labelled ones included", async () => {
-    const { messages } = await replies(fakeCurl());
+    const { messages } = await replies(proxyFor());
     expect(messages[1]!.text).toBe("looking, <@U0ALEX00001:Alex Example> - cc <@U0OWNER0001:Kai>");
   });
 
   test("an id users.info will not answer for stays as it is, never guessed", async () => {
-    const { messages } = await replies(fakeCurl());
+    const { messages } = await replies(proxyFor());
     expect(messages[2]!.user_name).toBeUndefined();
     expect(messages[2]!.text).toBe("ping <@U0GONE00000>");
   });
 
   test("each id is looked up once however often it appears", async () => {
-    const dir = fakeCurl();
-    await replies(dir);
-    const lookups = readFileSync(join(dir, "lookups.txt"), "utf8").trim().split("\n");
-    expect(lookups.sort()).toEqual(["U0ALEX00001", "U0BOT000001", "U0GONE00000", "U0OWNER0001"]);
+    const proxy = proxyFor();
+    await replies(proxy);
+    expect([...proxy.lookups].sort()).toEqual(["U0ALEX00001", "U0BOT000001", "U0GONE00000", "U0OWNER0001"]);
+    // every call, the reads and the lookups, presented this turn's ticket and nothing else
+    expect(new Set(proxy.tickets)).toEqual(new Set([TICKET]));
   });
 
   test("a read past ARG_MAX still comes back whole and named", async () => {
@@ -100,7 +100,7 @@ describe("slack-read.sh names every user id", () => {
       ok: true,
       messages: Array.from({ length: 400 }, (_, i) => ({ user: "U0ALEX00001", ts: `1.${i}`, text: "x".repeat(3000) })),
     };
-    const { messages } = await replies(fakeCurl(big));
+    const { messages } = await replies(proxyFor(big));
     expect(messages).toHaveLength(400);
     expect(messages[399]!.user_name).toBe("Alex Example");
   });

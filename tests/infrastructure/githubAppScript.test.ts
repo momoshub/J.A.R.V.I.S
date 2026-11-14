@@ -30,6 +30,65 @@ const file = (text: string) => {
   return f;
 };
 
+/** Env with no endpoint of its own: the script must find the bot from the ticket file or DASHBOARD_PORT. */
+const runUnrouted = async (ticketLines: string, env: Record<string, string> = {}) => {
+  const server = Bun.serve({ port: 0, fetch: async (req) => new Response(JSON.stringify({ ok: true, path: new URL(req.url).pathname })) });
+  try {
+    const f = file(ticketLines.replaceAll("{port}", String(server.port)));
+    const proc = Bun.spawn({
+      cmd: ["bash", SCRIPT, "comment", "o/r", "5", file("hi")],
+      stdout: "pipe",
+      stderr: "pipe",
+      env: { ...process.env, GITHUB_APP_ACTION_URL: "", DASHBOARD_PORT: "", JARVIS_RUN_TICKET: "", JARVIS_RUN_TICKET_FILE: f, ...env },
+    });
+    const [stdout, stderr, code] = await Promise.all([new Response(proc.stdout).text(), new Response(proc.stderr).text(), proc.exited]);
+    return { stdout, stderr, code };
+  } finally {
+    server.stop(true);
+  }
+};
+
+describe("github-app.sh endpoint from the ticket file", () => {
+  test("uses the base URL on line 2 when no URL or DASHBOARD_PORT is set", async () => {
+    const r = await runUnrouted("jvwk_x\nhttp://127.0.0.1:{port}\n");
+    expect(r.code).toBe(0);
+    expect(JSON.parse(r.stdout)).toEqual({ ok: true, path: "/api/github-app/action" });
+  }, SLOW);
+
+  test("the explicit URL and DASHBOARD_PORT win over it", async () => {
+    const a = await runUnrouted("jvwk_x\nhttp://127.0.0.1:1\n", { GITHUB_APP_ACTION_URL: "http://127.0.0.1:{port}/explicit".replace("{port}", "0") });
+    expect(a.code).toBe(1);
+    expect(a.stderr).toContain("http://127.0.0.1:0/explicit");
+    const b = await runUnrouted("jvwk_x\nhttp://127.0.0.1:{port}\n", { DASHBOARD_PORT: "1" });
+    expect(b.code).toBe(1);
+    expect(b.stderr).toContain("http://127.0.0.1:1/api/github-app/action");
+  }, SLOW);
+
+  test("a one-line file keeps the default (2001); a non-loopback line 2 is ignored", async () => {
+    for (const lines of ["jvwk_x\n", "jvwk_x\nhttp://evil.example:80\n"]) {
+      const r = await runUnrouted(lines, { GITHUB_APP_PRINT_ENDPOINT: "1" });
+      expect(r.code).toBe(0);
+      expect(r.stdout.trim()).toBe("http://127.0.0.1:2001/api/github-app/action");
+    }
+  }, SLOW);
+
+  test("line 2 is followed only when digits are all that follow the colon", async () => {
+    for (const bad of ["http://127.0.0.1:1@evil.example", "http://127.0.0.1:2002/x", "http://127.0.0.1:", "http://127.0.0.1:80a"]) {
+      const r = await runUnrouted(`jvwk_x\n${bad}\n`, { GITHUB_APP_PRINT_ENDPOINT: "1" });
+      expect(r.code).toBe(0);
+      expect(r.stdout.trim()).toBe("http://127.0.0.1:2001/api/github-app/action");
+    }
+    const ok = await runUnrouted("jvwk_x\nhttp://127.0.0.1:2002\n", { GITHUB_APP_PRINT_ENDPOINT: "1" });
+    expect(ok.stdout.trim()).toBe("http://127.0.0.1:2002/api/github-app/action");
+  }, SLOW);
+
+  test("a call the bot does not answer names the endpoint it tried", async () => {
+    const r = await runUnrouted("jvwk_x\nhttp://127.0.0.1:1\n");
+    expect(r.code).toBe(1);
+    expect(r.stderr).toContain("no usable answer from the bot at http://127.0.0.1:1/api/github-app/action");
+  }, SLOW);
+});
+
 describe("github-app.sh", () => {
   test("pr-create sends the ticket from the environment and every field", async () => {
     const r = await run(["pr-create", "o/r", "--head", "fix/x", "--base", "master", "--title", "My \"title\"", "--body-file", file("body\n"), "--draft"]);

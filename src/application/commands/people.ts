@@ -7,7 +7,7 @@ import { defaultRoleOf } from "../roles.ts";
 import { spendReport } from "../../domain/spendReport.ts";
 import { workerCostReport } from "../workerCost.ts";
 import { humanDuration } from "../../domain/watch.ts";
-import { parseRenewArgs, parseWorkerTicketArgs, WORKER_LIFETIME_MAX_MS, WORKER_TTL_MAX_MS } from "../../domain/workerTicket.ts";
+import { COMMIT_IDENTITY, parseRenewArgs, parseWorkerTicketArgs, WORKER_LIFETIME_MAX_MS, WORKER_TTL_MAX_MS } from "../../domain/workerTicket.ts";
 import { renewalSummary } from "../workerTickets.ts";
 import { type Context, type CommandDef, slackIdOf, roleOf, parseWindow, recordsOf } from "./shared.ts";
 import { logAndIgnore } from "../ignoredError.ts";
@@ -90,7 +90,7 @@ export const PEOPLE_COMMANDS: readonly CommandDef[] = [
     aliases: ["wticket"],
     // The `command:worker-ticket` grant (admin and up as seeded). The minter's own `github:*` grants are re-checked on every redeem, so a ticket can never carry more than its minter holds.
     minRole: "admin",
-    usage: "<owner/repo> <ctx_...|pending> [pr-create|comment|pr-edit|git|push|labels-add|reviewers-request ...] [--ttl 3h] | bind <id> <ctx_...> | revoke <id|ctx_...> | renew <id|ctx_...> [--ttl 3h]",
+    usage: "<owner/repo> <ctx_...|pending> [pr-create|comment|pr-edit|push|labels-add|reviewers-request ...] [--ttl 3h] | bind <id> <ctx_...> | revoke <id|ctx_...> | renew <id|ctx_...> [--ttl 3h]",
     summary: "mint a scoped GitHub App ticket for an Orca worker (one repo, a few actions, hours, revoked when it ends; `renew` extends one, 24h at most)",
     // The token goes back to the brain and nowhere else.
     quiet: true,
@@ -141,12 +141,12 @@ export const PEOPLE_COMMANDS: readonly CommandDef[] = [
       if (bound && !bound.ok) return bound.error;
       return [
         `JARVIS_RUN_TICKET_FILE=${file}`,
-        `Worker ticket ${id} for ${req.repo}: ${req.actions.join(", ")}; good for ${humanDuration(req.ttlMs)}${clamped ? " (capped)" : ""} from ${bound ? "now" : "the bind"}, revoked when the worker ends.`,
+        `Worker ticket ${id} for ${req.repo}: ${req.actions.map((a) => (a === COMMIT_IDENTITY ? "git-commit (commit as the app, no push token)" : a === "git-auth" ? "git-auth (push-capable token)" : a)).join(", ")}; good for ${humanDuration(req.ttlMs)}${clamped ? " (capped)" : ""} from ${bound ? "now" : "the bind"}, revoked when the worker ends.`,
         `Renewal: a live worker extends its own ticket with \`bin/github-app.sh ticket-renew <owner/repo> [--ttl 3h]\` (at most ${humanDuration(WORKER_TTL_MAX_MS)} per renewal); after it lapsed an admin runs \`${prefix} worker-ticket renew ${id}\`. A ticket lives ${humanDuration(WORKER_LIFETIME_MAX_MS)} at most from its bind.`,
         bound
           ? `Bound to ${req.dispatchId}.`
           : `Not usable yet: after worker-start prints its dispatch id, run \`${prefix} worker-ticket bind ${id} <ctx_...>\` (pending tickets lapse in 10 minutes).`,
-        "The token is in that file (mode 0600), not here. Put ONLY the path in the worker's brief, to export as JARVIS_RUN_TICKET_FILE before bin/github-app.sh; never read or print the file. It cannot run commands, other repos or other actions, and the file is deleted when the worker ends. Pushing is not part of it: the worker pushes with the one-shot human credential.",
+        "The token is in that file (mode 0600), not here. Put ONLY the path in the worker's brief, to export as JARVIS_RUN_TICKET_FILE before bin/github-app.sh; never read or print the file. It cannot run commands, other repos or other actions, and the file is deleted when the worker ends. Commits go out as the app by default (`bin/github-app.sh git <owner/repo> <dir> -- commit ...`: the app's name and email, no token); pushing is not part of it unless the mint named `push`, so the worker pushes with the one-shot human credential.",
       ].join("\n");
     },
   },

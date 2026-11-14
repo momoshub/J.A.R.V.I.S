@@ -204,6 +204,8 @@ export type DispatchOptions = {
   slash?: string;
   /** Thread the command came from; workflows are bound to one. */
   threadTs?: string;
+  /** Slack ts of the message the command came from, for a command that remembers its origin. */
+  messageTs?: string;
   /** Already approved by someone with authority - skip the allowance check. */
   preApproved?: boolean;
   /** Destination sink for progress + direct results (thread or DM). */
@@ -317,6 +319,7 @@ export const dispatchCommand = async (
       actor,
       channelId,
       threadTs: opts.threadTs,
+      messageTs: opts.messageTs,
       args,
       rest,
       prefix,

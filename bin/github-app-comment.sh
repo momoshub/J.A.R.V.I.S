@@ -9,8 +9,11 @@
 # issue/PR - so a turn can answer the call it came from and nothing else. The
 # app's private key never reaches the turn; the bot holds it.
 #
-# Endpoint: GITHUB_APP_COMMENT_URL, else the loopback dashboard on
-# DASHBOARD_PORT (default 2001).
+# Endpoint, first that is set: GITHUB_APP_COMMENT_URL; the loopback dashboard on
+# DASHBOARD_PORT; the base URL on line 2 of the JARVIS_RUN_TICKET_FILE (a
+# worker's ticket file; its shell has no DASHBOARD_PORT); else 2001. A failed
+# call names the endpoint it tried (GITHUB_APP_PRINT_ENDPOINT=1 prints it and exits,
+# sending nothing).
 set -uo pipefail
 
 if [ "$#" -ne 3 ]; then
@@ -19,6 +22,19 @@ if [ "$#" -ne 3 ]; then
 fi
 
 ticket=${JARVIS_RUN_TICKET:-}
+ticket_base=
+# A worker's ticket file: line 1 the token, line 2 (optional) where the bot listens.
+if [ -z "$ticket" ] && [ -n "${JARVIS_RUN_TICKET_FILE:-}" ]; then
+  ticket=$(sed -n 1p "$JARVIS_RUN_TICKET_FILE" 2>/dev/null | tr -d '[:space:]')
+  ticket_base=$(sed -n 2p "$JARVIS_RUN_TICKET_FILE" 2>/dev/null | tr -d '[:space:]')
+  # Digits only after the colon: a glob like [0-9]* would let
+  # http://127.0.0.1:1@evil.example through (curl reads 127.0.0.1:1 as userinfo).
+  case "$ticket_base" in
+    http://127.0.0.1:*[!0-9]* | http://127.0.0.1:) ticket_base= ;;
+    http://127.0.0.1:*) ;;
+    *) ticket_base= ;;
+  esac
+fi
 if [ -z "$ticket" ]; then
   echo "no ticket in this turn's environment - I cannot post to GitHub here" >&2
   exit 3
@@ -32,7 +48,19 @@ if [ ! -s "$file" ]; then
   exit 2
 fi
 
-endpoint=${GITHUB_APP_COMMENT_URL:-http://127.0.0.1:${DASHBOARD_PORT:-2001}/api/github-app/comment}
+# Explicit URL, then DASHBOARD_PORT, then the ticket file's base URL, then 2001.
+if [ -n "${GITHUB_APP_COMMENT_URL:-}" ]; then
+  endpoint=$GITHUB_APP_COMMENT_URL
+elif [ -z "${DASHBOARD_PORT:-}" ] && [ -n "$ticket_base" ]; then
+  endpoint=$ticket_base/api/github-app/comment
+else
+  endpoint=http://127.0.0.1:${DASHBOARD_PORT:-2001}/api/github-app/comment
+fi
+# Debug/test hook: print the endpoint this call would use and stop, sending nothing.
+if [ -n "${GITHUB_APP_PRINT_ENDPOINT:-}" ]; then
+  printf '%s\n' "$endpoint"
+  exit 0
+fi
 payload=$(TICKET="$ticket" REPO="$repo" NUM="$number" FILE="$file" python3 -c '
 import json, os
 print(json.dumps({
@@ -41,4 +69,9 @@ print(json.dumps({
     "number": int(os.environ["NUM"]) if os.environ["NUM"].isdigit() else 0,
     "body": open(os.environ["FILE"], encoding="utf-8").read(),
 }))')
-curl -s -X POST -H "Content-Type: application/json" -d "$payload" "$endpoint"
+response=$(curl -s -X POST -H "Content-Type: application/json" -d "$payload" "$endpoint")
+if [ -z "$response" ]; then
+  echo "no usable answer from the bot at $endpoint" >&2
+  exit 1
+fi
+printf '%s\n' "$response"

@@ -9,6 +9,8 @@ import { openDatabase } from "../../src/infrastructure/db/client.ts";
 import { createRoleRepo } from "../../src/infrastructure/db/roleRepo.ts";
 import { readLegacyPolicies } from "../../src/infrastructure/db/rolePolicyRepo.ts";
 import { createSettingsRepo } from "../../src/infrastructure/db/settingsRepo.ts";
+import type { SlackAdminPort } from "../../src/application/slackAdmin.ts";
+import { createLearningsRepo } from "../../src/infrastructure/db/learningsRepo.ts";
 
 const OWNER = "UOWNER1";
 
@@ -49,11 +51,6 @@ const ports = (over: Partial<DashboardPorts> = {}) => {
     },
     learnings: {
       list: () => learnings,
-      add: (content, createdBy) => learnings.push({ id: learnings.length + 1, content, createdBy }),
-      update: (id, content) => {
-        const l = learnings.find((x) => x.id === id);
-        if (l) l.content = content;
-      },
       remove: (id) => void learnings.splice(learnings.findIndex((x) => x.id === id), 1),
     },
     settings: {
@@ -71,7 +68,6 @@ const ports = (over: Partial<DashboardPorts> = {}) => {
 const adapter = (over: Partial<MemoryAdapterPort> = {}): MemoryAdapterPort => ({
   status: () => "ok",
   view: () => ({ policy: "", notes: "", skills: [], people: [], channels: [], revisions: [], items: 7 }),
-  remember: () => ({ ok: true, warnings: ["w"] }),
   revert: () => ({ ok: true }),
   files: () => [{ path: "a.md", content: "x" }],
   edit: () => ({ ok: true }),
@@ -114,20 +110,36 @@ describe("dashboard use cases", () => {
     expect((await failing.app.listUsers())[0]?.name).toBe("");
   });
 
-  test("teach writes to the adapter when there is one, the table otherwise", () => {
-    const plain = ports();
-    expect(plain.app.teach("  ").ok).toBe(false);
-    expect(plain.app.teach(" a fact ")).toEqual({ ok: true, value: {} });
-    expect(plain.learnings[0]).toMatchObject({ content: "a fact", createdBy: "dashboard" });
+  test("teach never saves: it stores pending, tells the caller so, and asks the owner", async () => {
+    const db = openDatabase(":memory:");
+    const repo = createLearningsRepo(db);
+    const dms: string[] = [];
+    const app = createDashboardService(
+      ports({
+        learningApproval: {
+          learnings: repo,
+          clock: () => 5,
+          ownerSlackId: OWNER,
+          slack: { postDmInteractive: async (u: string, text: string) => (dms.push(`${u}:${text}`), { channel: `D-${u}`, ts: "9.1" }) } as unknown as SlackAdminPort,
+        },
+      }).p,
+    );
+    expect((await app.teach("  ")).ok).toBe(false);
+    const out = await app.teach(" a fact ");
+    expect(out).toMatchObject({ ok: true, value: { status: "pending" } });
+    expect(repo.list()).toEqual([]);
+    expect(repo.pending()[0]).toMatchObject({ content: "a fact", createdBy: "agent", noticeTs: "9.1" });
+    expect(dms).toHaveLength(1);
+    expect(dms[0]).toContain(OWNER);
 
-    const said: string[] = [];
-    const withAdapter = ports({ adapter: adapter({ remember: (c) => (said.push(c), { ok: true, warnings: ["w"] }) }) });
-    expect(withAdapter.app.teach("x")).toEqual({ ok: true, value: { warnings: ["w"] } });
-    expect(said).toEqual(["x"]);
-    expect(withAdapter.learnings).toEqual([]);
+    // an adapter changes nothing here: the fact only reaches it when the owner approves
+    const withAdapter = ports({ adapter: adapter(), learningApproval: { learnings: repo, clock: () => 5, ownerSlackId: OWNER } });
+    expect((await createDashboardService(withAdapter.p).teach("another")).ok).toBe(true);
+    expect(repo.pending().map((l) => l.content)).toEqual(["a fact", "another"]);
+  });
 
-    const refused = ports({ adapter: adapter({ remember: () => ({ ok: false, violations: ["a", "b"] }) }) });
-    expect(refused.app.teach("x")).toEqual({ ok: false, error: "a; b", status: 400 });
+  test("teach is refused when approval is not wired", async () => {
+    expect(await ports().app.teach("x")).toEqual({ ok: false, error: "Learnings are not wired up", status: 503 });
   });
 
   test("overview counts adapter items instead of the empty table", () => {

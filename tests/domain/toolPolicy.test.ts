@@ -1,7 +1,13 @@
 import { describe, expect, test } from "bun:test";
 import { builtinRoles } from "../../src/domain/roleSeed.ts";
 import { staticBook } from "../../src/domain/roles.ts";
+import type { UserRole } from "../../src/domain/types.ts";
 import {
+  FRONT_DENY,
+  isFullAccess,
+  READ_ONLY_REDIRECT_DENY,
+  SHELL_ESCAPE_DENY,
+  sandboxToolsOf,
   DATADOG_MCP_SERVER,
   DATADOG_READ_TOOLS,
   DATADOG_WRITE_TOOLS,
@@ -42,25 +48,21 @@ const opts = {
 };
 
 describe("the bot's config dir (GitHub App key, worker ticket files)", () => {
-  test("pal and executer cannot Read it; owner and admin are not restricted", () => {
+  test("every role but the owner cannot Read it; the owner is not restricted", () => {
     expect(SANDBOX_DISALLOW).toContain("Read(~/.config/jarvis/**)");
-    for (const role of ["pal", "executer"] as const) {
+    for (const role of ["pal", "executer", "admin"] as const) {
       expect(toolPolicyFor(role, opts).disallowedTools).toContain("Read(~/.config/jarvis/**)");
     }
-    for (const role of ["owner", "admin"] as const) {
-      expect(toolPolicyFor(role, opts).disallowedTools ?? []).not.toContain("Read(~/.config/jarvis/**)");
-    }
+    expect(toolPolicyFor("owner", opts).disallowedTools ?? []).not.toContain("Read(~/.config/jarvis/**)");
   });
 });
 
 describe("toolPolicyFor", () => {
-  test("owner and admin run unsandboxed in the working directory", () => {
-    for (const role of ["owner", "admin"] as const) {
-      const p = toolPolicyFor(role, opts);
-      expect(p.skipPermissions).toBe(true);
-      expect(p.cwd).toBe("/work");
-      expect(p.allowedTools).toBeUndefined(); // no allow-list: everything is permitted
-    }
+  test("the owner runs unsandboxed in the working directory", () => {
+    const p = toolPolicyFor("owner", opts);
+    expect(p.skipPermissions).toBe(true);
+    expect(p.cwd).toBe("/work");
+    expect(p.allowedTools).toBeUndefined(); // no allow-list: everything is permitted
   });
 
   test("some things are denied even at full access", () => {
@@ -107,7 +109,7 @@ describe("toolPolicyFor", () => {
     const p = toolPolicyFor("pal", opts);
     expect(p.skipPermissions).toBe(false);
     expect(p.cwd).toBe("/scratch");
-    expect(p.disallowedTools).toEqual([...SANDBOX_DISALLOW, NOTION_MCP_SERVER, ...DATADOG_WRITE_TOOLS]); // below note's floor
+    expect(p.disallowedTools).toEqual([...SANDBOX_DISALLOW, ...READ_ONLY_REDIRECT_DENY, NOTION_MCP_SERVER, ...DATADOG_WRITE_TOOLS]); // below note's floor
     expect(p.allowedTools).not.toContain("Write");
   });
 
@@ -295,7 +297,7 @@ describe("model per role", () => {
     const p = toolPolicyFor("pal", { ...opts, models: { pal: "haiku" } });
     expect(p.skipPermissions).toBe(false);
     expect(p.cwd).toBe("/scratch");
-    expect(p.disallowedTools).toEqual([...SANDBOX_DISALLOW, NOTION_MCP_SERVER, ...DATADOG_WRITE_TOOLS]); // below note's floor
+    expect(p.disallowedTools).toEqual([...SANDBOX_DISALLOW, ...READ_ONLY_REDIRECT_DENY, NOTION_MCP_SERVER, ...DATADOG_WRITE_TOOLS]); // below note's floor
   });
 });
 
@@ -313,13 +315,11 @@ describe("database MCP servers", () => {
     }
   });
 
-  test("full-access roles keep them - investigate is the reason they are here", () => {
-    for (const role of ["admin", "owner"] as const) {
-      const p = toolPolicyFor(role, { fullCwd: "/tmp/full", dbServers: DB_NAMES });
-      for (const server of DB_MCP_SERVERS) {
-        expect(p.disallowedTools ?? []).not.toContain(server);
-      }
-    }
+  test("the owner keeps them - investigate is the reason they are here; admin is denied", () => {
+    const owner = toolPolicyFor("owner", { fullCwd: "/tmp/full", dbServers: DB_NAMES });
+    for (const server of DB_MCP_SERVERS) expect(owner.disallowedTools ?? []).not.toContain(server);
+    const admin = toolPolicyFor("admin", { sandboxCwd: "/tmp/box", dbServers: DB_NAMES });
+    for (const server of DB_MCP_SERVERS) expect(admin.disallowedTools).toContain(server);
   });
 
   test("a side question cannot run a production query", () => {
@@ -470,5 +470,128 @@ describe("the host's Datadog MCP server", () => {
 
   test("a side question gets none of it", () => {
     expect(NO_TOOLS).toContain(DATADOG_MCP_SERVER);
+  });
+});
+
+describe("the shell is gated by the caller's role", () => {
+  const strict = ["pal"] as const;
+  const viaSandboxList = ["pal", "admin"] as const;
+
+  test("the owner gets bypass and no allow-list", () => {
+    const p = toolPolicyFor("owner", opts);
+    expect(p.skipPermissions).toBe(true);
+    expect(p.allowedTools).toBeUndefined();
+  });
+
+  test("every other role drops bypass and runs on an allow-list in the scratch dir", () => {
+    for (const role of ["pal", "admin", "executer"] as const) {
+      const p = toolPolicyFor(role, opts);
+      expect(p.skipPermissions).toBe(false);
+      expect(p.cwd).toBe("/scratch");
+      expect(p.allowedTools?.length).toBeGreaterThan(0);
+    }
+  });
+
+  test("an unknown role falls to the strict side, never to full access", () => {
+    for (const odd of ["nobody", "", "OWNER", "owner "]) {
+      const p = toolPolicyFor(odd as UserRole, opts);
+      expect(isFullAccess(odd as UserRole)).toBe(false);
+      expect(p.skipPermissions).toBe(false);
+      expect(p.allowedTools).toBeDefined();
+      expect(p.disallowedTools).toContain("Bash(*>*)");
+    }
+    const lost = toolPolicyFor(undefined as unknown as UserRole, opts);
+    expect(lost.skipPermissions).toBe(false);
+  });
+
+  test("the default allow-list has no shell reader, but the bot's helpers and the read tools", () => {
+    const withHelpers = {
+      ...opts,
+      slackReadScript: "/bin/slack-read.sh",
+      fileScript: "/bin/slack-file.sh",
+      runScript: "/bin/jarvis-run.sh",
+      githubAppScript: "/bin/github-app.sh",
+    };
+    for (const role of strict) {
+      const tools = toolPolicyFor(role, withHelpers).allowedTools ?? [];
+      // no shell reader is explicitly allowed: that would match any path and read the
+      // secrets `Read` is denied. The CLI's built-in cat/ls/head/grep are auto-allowed
+      // inside the scratch cwd only. sed/find/rg/jq can write, run code or print the
+      // environment: opt-in through SANDBOX_TOOLS, never the default.
+      for (const cmd of ["cat", "grep", "ls", "head", "tail", "jq", "sed", "find", "rg", "wc"]) {
+        expect(tools).not.toContain(`Bash(${cmd}:*)`);
+      }
+      for (const t of ["Read", "Grep", "Glob", "WebFetch", "WebSearch", "Bash(git log:*)", "Bash(gh pr view:*)"]) {
+        expect(tools).toContain(t);
+      }
+      for (const h of ["slack-read", "slack-file", "jarvis-run", "github-app"]) {
+        expect(tools).toContain(`Bash(/bin/${h}.sh:*)`);
+      }
+      // nothing that writes, runs arbitrary code or leaves the machine
+      for (const t of ["Bash", "Bash(*)", "Bash(curl:*)", "Bash(rm:*)", "Bash(git push:*)", "Write", "Edit", "Bash(bash:*)"]) {
+        expect(tools).not.toContain(t);
+      }
+    }
+  });
+
+  test("an off-list command is not on the allow-list and no role gets a bare Bash", () => {
+    for (const role of ["pal", "admin", "executer"] as const) {
+      const tools = toolPolicyFor(role, opts).allowedTools ?? [];
+      expect(tools).not.toContain("Bash");
+      expect(tools.some((t) => /^Bash\((curl|wget|ssh|bash|sh|osascript|rm|env|printenv)[: ]/.test(t))).toBe(false);
+    }
+  });
+
+  test("the ways out of the read-only commands are denied, to every sandboxed role", () => {
+    const denied = toolPolicyFor("pal", opts).disallowedTools ?? [];
+    for (const d of [...SHELL_ESCAPE_DENY, ...READ_ONLY_REDIRECT_DENY]) expect(denied).toContain(d);
+    expect(toolPolicyFor("admin", opts).disallowedTools).toContain("Bash(sed *-*i*)");
+    // substring patterns, so a quote or a combined flag does not get past them
+    for (const d of ["Bash(sed *-*i*)", "Bash(find *exec*)", "Bash(rg *--pre*)", "Bash(jq *env*)", "Bash(jq *ENV*)"]) {
+      expect(SHELL_ESCAPE_DENY).toContain(d);
+    }
+    expect(denied).toContain("Read(**/.env)");
+    // an executer commits with messages that carry `>`, so only the read-only roles lose redirects
+    const exe = toolPolicyFor("executer", opts).disallowedTools ?? [];
+    expect(exe).toContain("Bash(sed *-*i*)");
+    expect(exe).not.toContain("Bash(*>*)");
+    expect(toolPolicyFor("admin", opts).disallowedTools).not.toContain("Bash(*>*)");
+  });
+
+  test("admin never has fewer tools than an executer, and is not bypassed", () => {
+    const admin = toolPolicyFor("admin", opts);
+    const exe = toolPolicyFor("executer", opts);
+    expect(admin.skipPermissions).toBe(false);
+    expect(admin.allowedTools).toEqual(expect.arrayContaining([...(exe.allowedTools ?? [])]));
+    expect(admin.allowedTools).not.toContain("Bash");
+    expect(admin.disallowedTools).toEqual(expect.arrayContaining([...ORCA_DENY]));
+  });
+
+  test("SANDBOX_TOOLS replaces the default list, and every denial still applies", () => {
+    const custom = ["Read", "Bash(cat:*)"];
+    expect(sandboxToolsOf(custom)).toEqual(custom);
+    expect(sandboxToolsOf([])).toBe(PAL_TOOLS);
+    expect(sandboxToolsOf(undefined)).toBe(PAL_TOOLS);
+    for (const role of viaSandboxList) {
+      const p = toolPolicyFor(role, { ...opts, sandboxTools: custom });
+      expect(p.allowedTools).toEqual(expect.arrayContaining(custom));
+      expect(p.allowedTools).not.toContain("WebFetch");
+      expect(p.disallowedTools).toContain("Bash(sed *-*i*)");
+      expect(p.skipPermissions).toBe(false);
+    }
+  });
+
+  test("the owner is unaffected by SANDBOX_TOOLS", () => {
+    const p = toolPolicyFor("owner", { ...opts, sandboxTools: ["Read"] });
+    expect(p.skipPermissions).toBe(true);
+    expect(p.allowedTools).toBeUndefined();
+  });
+});
+
+describe("the workflow front", () => {
+  test("FRONT_DENY fences the shell whatever role started the workflow", () => {
+    expect(FRONT_DENY).toEqual(expect.arrayContaining([...SHELL_ESCAPE_DENY, ...READ_ONLY_REDIRECT_DENY, "Read(~/.config/jarvis/**)"]));
+    // an owner's own policy carries none of them, which is why the front adds them
+    expect(toolPolicyFor("owner", opts).disallowedTools ?? []).not.toContain("Bash(*>*)");
   });
 });

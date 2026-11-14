@@ -13,6 +13,9 @@
  * never spawns anything at all.
  */
 
+import { sessionThreadKey } from "../domain/agentSession.ts";
+import { frontKeyOf } from "../domain/workflowFront.ts";
+
 /**
  * `stopping` is its own state because a stop is a REQUEST, not an event. The
  * process may take a moment to die, or - as happened - never die at all, and a
@@ -91,15 +94,47 @@ export type RunRegistry = {
   /**
    * Record that the turn answering this message opened a streamed message.
    * Matched by the message, because the stream is made before the turn has a
-   * run id anyone outside it can see.
+   * run id anyone outside it can see. False when no tracked run owns the
+   * message any more (its turn already ended).
    */
-  streamOpened: (channelId: string, messageTs: string, streamTs: string) => void;
+  streamOpened: (channelId: string, messageTs: string, streamTs: string) => boolean;
+  /**
+   * What to do when a thread's agent session may go idle: a run ended, the
+   * thread had been put in `processing` by a streamed reply (`streamOpened`),
+   * and nothing else is live in it. Set once by the Slack app.
+   */
+  onSessionIdle: (fn: (channelId: string, threadTs: string) => void) => void;
+  /**
+   * The same check for a caller that knows a stream was opened but whose run
+   * may already be gone (a reply streamed out after the turn was untracked):
+   * marks the thread and fires at once when nothing is live in it.
+   */
+  sessionMayIdle: (channelId: string, threadTs: string) => void;
 };
 
 type Entry = { run: TrackedRun; abort: AbortController };
 
+const FRONT_SUFFIX = frontKeyOf("");
+
+/** A run's thread key without the workflow front's lane suffix. */
+const baseKeyOf = (key: string): string => (key.endsWith(FRONT_SUFFIX) ? key.slice(0, -FRONT_SUFFIX.length) : key);
+
 export const createRunRegistry = (clock: () => number = () => Date.now()): RunRegistry => {
   const byId = new Map<string, Entry>();
+  // Threads whose agent session a streamed reply put in `processing`, by base
+  // key (both lanes of a workflow thread share one session). Whichever run ends
+  // with nothing else live in the thread idles it, so it never depends on the
+  // LAST run having opened a stream of its own: a queued turn that stays quiet,
+  // or a workflow worker step that never goes through the Slack handler.
+  const processing = new Map<string, { channelId: string; threadTs: string }>();
+  let idle: (channelId: string, threadTs: string) => void = () => {};
+
+  const settle = (base: string): void => {
+    const mark = processing.get(base);
+    if (!mark || [...byId.values()].some((e) => baseKeyOf(e.run.key) === base)) return;
+    processing.delete(base);
+    idle(mark.channelId, mark.threadTs);
+  };
 
   // Undefined when it has ALREADY been asked to stop: the caller needs to tell
   // "I stopped it" from "it was asked and has not let go", and only the first
@@ -131,6 +166,7 @@ export const createRunRegistry = (clock: () => number = () => Date.now()): RunRe
         },
         done: () => {
           byId.delete(run.id);
+          settle(baseKeyOf(run.key));
         },
       };
     },
@@ -147,8 +183,18 @@ export const createRunRegistry = (clock: () => number = () => Date.now()): RunRe
     },
     streamOpened: (channelId, messageTs, streamTs) => {
       const entry = [...byId.values()].find((e) => e.run.channelId === channelId && e.run.messageTs === messageTs);
-      if (!entry) return;
+      if (!entry) return false;
       entry.run.streams = [...(entry.run.streams ?? []), streamTs];
+      processing.set(baseKeyOf(entry.run.key), { channelId, threadTs: entry.run.threadTs ?? messageTs });
+      return true;
+    },
+    onSessionIdle: (fn) => {
+      idle = fn;
+    },
+    sessionMayIdle: (channelId, threadTs) => {
+      const base = sessionThreadKey(channelId, threadTs);
+      processing.set(base, { channelId, threadTs });
+      settle(base);
     },
   };
 };

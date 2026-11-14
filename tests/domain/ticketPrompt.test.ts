@@ -184,13 +184,12 @@ describe("ticketChatRules", () => {
 describe("posting, and not apologising for it", () => {
   const p = ticketPrompt("it broke", "Bot", { tracker: "https://notion.so/t" }, { channelId: "C9", threadTs: "1.2" });
 
-  test("it is told HOW to post the link, with its own token", () => {
+  test("it is told HOW to post the link, through the Slack helper", () => {
     // it was told to post the link and never told how; the connector's send
     // tools are denied, so it concluded it had no way to post at all
     expect(p).toContain("chat.postMessage");
-    expect(p).toContain("$SLACK_BOT_TOKEN");
-    expect(p).toContain('"channel":"C9"');
-    expect(p).toContain('"thread_ts":"1.2"');
+    expect(p).toContain('"$BOT_SLACK_CALL" chat.postMessage channel=C9 thread_ts=1.2');
+    expect(p).not.toContain("SLACK_BOT_TOKEN");
   });
 
   test("and that a missing connector tool is not the same as no way to post", () => {

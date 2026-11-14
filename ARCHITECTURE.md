@@ -42,13 +42,14 @@ no classes.
   |    stuckSweeper (dead Orca workers, quiet own PRs -> owner DM, 15 min)  |
   |                                                                         |
   |  dashboard + JSON API (Bun.serve, loopback), /api/commands/run,         |
-  |    /api/github-app/comment                                              |
+  |    /api/github-app/comment, /api/slack/proxy + /api/slack/file          |
+  |    (the only door from a turn to the bot's Slack token, ticketed)       |
   |  GitHub App webhook listener (loopback, own port) -> githubApp          |
   +-------------------------------------------------------------------------+
             |                                   |
             v                                   v
    DATABASE_PATH, TOKEN_DATABASE_PATH    bin/ helpers the brain calls
-   (outside the checkout, ~/.jarvis),   (slack-read, slack-react, run, ...)
+   (outside the checkout, ~/.jarvis),   (slack-api, slack-read, run, ...)
    data/adapter-mirror/ (from DB),      bin/db-backup.ts -> DATABASE_BACKUP_DIR
    data/prompt-guides/ (from code)
 ```
@@ -70,8 +71,28 @@ no classes.
   gateway is needed.
 - **One turn per thread, one session per thread.** `threadQueue` serialises
   turns in a thread; `threadSession` keeps one CLI session id per thread and
-  resumes it, so the model keeps its context and files between turns.
+  resumes it, so the model keeps its context and files between turns. Sessions
+  never mix: what one thread needs another to know crosses as a `brief` (a
+  short note written for the target, stored in `thread_briefs` by migration
+  v34, handed to that thread's next turn inside the turn's MESSAGE so it stays
+  in the resumed session's transcript, as untrusted background and never as
+  instructions; read state is per access tier and set only once the turn ran).
   `runRegistry` holds a handle on each running turn so it can be stopped.
+- **A turn holds no secret.** The CLI is spawned with the bot's environment
+  minus every credential-shaped variable (`domain/turnEnv.ts`: by name -
+  `*_TOKEN`, `*_SECRET`, `*_API_KEY`... - except the CLI's own
+  `CLAUDE_CODE_OAUTH_TOKEN` and what `TURN_ENV_PASSTHROUGH` names), because a
+  turn's Bash is driven by a model that reads untrusted text. What a turn needs
+  from Slack goes through `bin/slack-api.sh`: it presents the turn's
+  `JARVIS_SLACK_TICKET` (`slackTickets`, minted when the process starts and
+  revoked when it exits, no actor and no role) to `POST /api/slack/proxy`, where
+  `slackProxy` checks the ticket, applies the method allowlist
+  (`domain/slackProxy.ts`: a fixed set of reads, and writes only into the
+  turn's own channel; a new post from a turn in a thread defaults to that
+  thread, `thread_ts=none` posts at the top level) and calls Slack with the
+  token it holds. Files go through
+  `/api/slack/file`. `slack-read`, `slack-react`, `slack-file` and `slack-upload`
+  are built on it.
 - **Commands from the brain.** The brain runs real commands through
   `bin/jarvis-run.sh` -> `/api/commands/run`. `commandTickets` mints a one-turn
   ticket bound to the person being answered, so the brain never names the actor
@@ -81,11 +102,11 @@ no classes.
 - **Timers.** `watcher` polls each due watch's predicate and hands the thread a
   fresh turn when it is ready (`watch worker <dispatchId>` polls an Orca worker
   through `bin/orca-worker-wait.ts` and says whether it finished, died - also
-  when it stopped without reporting - or waits for input - a finished or dead worker's hand-back also names the tokens
+  when it stopped without reporting - or waits for input, or sits idle at its prompt for 15 minutes with no report - a finished or dead worker's hand-back also names the tokens
   and list-price cost its Claude transcript used, stored in
   `orca_worker_usage`, read later with `worker-cost <ctx_...|run_...>`);
   `reminders` posts at the time with no model;
-  `loops` (`application/loops.ts`, `db/loopRepo.ts`, `domain/loop.ts`, `loop` command) fires a recurring schedule: a prompt loop hands a turn through the watcher's own `runTurn` (so there is one way to wake a thread), in a fresh top-level DM message to the loop's creator each time, as the creator, on the `loop` model (Sonnet) rather than the creator's role model (`loop: true` on the request -> `model` on the inbound message -> the policy's model); a script loop (`-- <shell>`) is never typed: only the owner's own turn can write one, it is stored pending and DMed to the owner with Approve / Reject `jv:loop:` buttons (`loopApproval.ts`, decided in code like `jv:cloudwatch:`), and only Approve activates it (Reject or 24h of silence deletes it); once active it runs through the watcher's shell runner with no turn, and only a failure posts, to the same DM. A loop is always moved on from now before it fires, so a run missed while down happens once on startup, never as a backlog; a creator who lost the role stops the loop;
+  `loops` (`application/loops.ts`, `db/loopRepo.ts`, `domain/loop.ts`, `loop` command) fires a recurring schedule (every loop carries a name - `--name`, else the first words of its prompt, `loop rename` later - and every message about it reads `<name> - loop #<id>`, with a ` · created here` link back to the Slack message that created it, from `origin_ts`): a prompt loop hands a turn through the watcher's own `runTurn` (so there is one way to wake a thread), in a fresh top-level DM message to the loop's creator each time, as the creator, on the `loop` model (Sonnet) rather than the creator's role model (`loop: true` on the request -> `model` on the inbound message -> the policy's model); a script loop (`-- <shell>`) is never typed: only the owner's own turn can write one, it is stored pending and DMed to the owner with Approve / Reject `jv:loop:` buttons (`loopApproval.ts`, decided in code like `jv:cloudwatch:`), and only Approve activates it (Reject or 24h of silence deletes it); once active it runs through the watcher's shell runner with no turn, and only a failure posts, to the same DM. A loop is always moved on from now before it fires, so a run missed while down happens once on startup, never as a backlog; a creator who lost the role stops the loop;
   a `watches` row whose check is `ci-gate:{...}` is not shell and hands back no
   turn: `watcher` calls `application/ciGate.ts` instead, which polls the PR's
   checks once a minute and approves or requests changes itself (the CI gate of
@@ -141,10 +162,11 @@ no classes.
   token + `<slug>[bot]` identity) and gives that one git process the token in its
   environment (`GIT_CONFIG_*` `http.extraheader`), never in a url or a file.
   An Orca worker outlives the turn's 20-minute ticket, so a turn mints it a
-  **worker ticket** (`worker-ticket`, `workerTickets.ts`, rows in
+  **worker ticket** (`worker-ticket`, `workerTickets.ts`; its token file also carries the bot's base URL on line 2 for the helper scripts, rows in
   `worker_tickets` holding only the token's sha-256): one repo, a short action
-  list (no `git`/`push` by default: a worker pushes with the one-shot human
-  credential), bound to its dispatch id, 3h (max 6h), ended when the
+  list (the app's commit identity by default, so commits go out as the app with
+  no token; `push` is the opt-in that adds a push-capable `git-auth` token,
+  otherwise a worker pushes with the one-shot human credential), bound to its dispatch id, 3h (max 6h), ended when the
   `watch worker` sees it finish or die, on `revoke`, or by the expiry sweep. A
   long worker extends it (`ticket-renew` through `bin/github-app.sh`, or an
   admin's `worker-ticket renew`, which also revives one that lapsed unrevoked):
@@ -157,7 +179,7 @@ no classes.
   when the ticket ends. It is a separate store from `commandTickets`, so it can
   never run a command, and only the brain's run bridge can mint one.
 - **Self-update.** A fix lands through a PR that CI (`.github/workflows/ci.yml`)
-  passes (typecheck, tests, the real-Slack e2e on non-fork runs, and a `gitleaks` secret scan whose known false positives are allowlisted by value in `.gitleaks.toml`), merged only by `bin/merge-when-green.sh` (exit 4 at once on a PR that
+  passes (typecheck, tests, the real-Slack e2e in its own workflow `e2e.yml` on a push to main only, its token held by the main-only `e2e` environment, and a `gitleaks` secret scan whose known false positives are allowlisted by value in `.gitleaks.toml`), merged only by `bin/merge-when-green.sh` (exit 4 at once on a PR that
   conflicts with its base, which GitHub never runs CI on). When it touches runtime code
   (logic, commands, adapters, `bin/` scripts, or a mixed PR) a reviewer Orca worker
   reads it first, up to 5 rounds (each round is a real GitHub review, request changes or approve; fixes are pushes answered by a `[fix round N]` comment); docs,
@@ -200,6 +222,7 @@ No I/O, no frameworks. Just data shapes and functions of their inputs.
 - `slackNames.ts` - how a person or conversation is shown: always name and id
 - `personality.ts`, `promptGuides.ts`, `conversation.ts`, `mentions.ts` - the system prompt from generic defaults + injected identity (procedure blocks as on-demand guide files for turns that can read them), context windowing, `<@ID>` annotation
 - `threadSession.ts`, `agentSession.ts` - one CLI session per thread and when it may be resumed
+- `threadBrief.ts` - briefs between threads: the opaque source reference (an HMAC), the nonce-delimited, escaped block a turn's message carries, its caps, the prompt rule
 - `adapter.ts`, `adapterCheck.ts` - memory as a checked, versioned directory (facts + skills) instead of an ever-growing list
 - `ciGate.ts` (domain) - CI verdict of a PR from its check rollup, what a CI-gate poll should do, the spec of a gate's watch row
 - `threadFollow.ts`, `followGate.ts` - which untagged thread messages the bot answers, and the pure rules of the gate in front of a followed thread (settings, bypass, batch windows, verdict parsing, the gate's prompt)
@@ -223,7 +246,9 @@ Orchestrates the domain and depends on **ports**, not concrete adapters.
 - `respond.ts` - routes an inbound message to command or chat
 - `handleMessage.ts` - the chat flow (access -> remember -> ask model -> remember), applying the role's tool policy
 - `cloudwatch.ts` (application) + `domain/cloudwatch.ts` + `infrastructure/aws/cloudwatchCli.ts` + `db/cloudwatchRepo.ts` - the `cloudwatch` command: Logs Insights run by the bot's own `aws` CLI (a turn's `aws logs` stays denied), a scan estimate from the log group's stored size, owner runs after a warning, executer/admin park a `cloudwatch_requests` row behind `jv:cloudwatch:confirm|cancel` buttons decided in code (never a model turn), every request audited
+- `slackTickets.ts`, `slackProxy.ts` (application) + `domain/slackProxy.ts` + `domain/turnEnv.ts` - a turn's Slack access: the per-turn ticket, the allowlisted call made with the bot's token, and the environment scrub
 - `commands.ts`, `commandTickets.ts`, `workerTickets.ts`, `commandLimits.ts`, `brainRun.ts` - the command registry (configurable prefix + slash, role gates, help), the brain's tickets, allowances and result delivery. The command definitions live in `commands/`, one file per group (`chat`, `schedule`, `people`, `adapter`, `learnings`, `errands`, `review`, `runtime`, `slack`, `cloudwatch`), with `commands/shared.ts` for the deps, the `CommandDef` type and the helpers more than one group uses
+- `learningApproval.ts` (+ `domain/learning.ts`) - learnings need the owner's approval: only the owner's own typed `learn` is saved active; a member's `learn`, the agent's `learn` and every `POST /api/learnings` are stored pending (`learnings.status`, migration v35), kept out of every prompt (`injectedLearnings` is the one place the injection reads, active only) and put to the owner as a DM with `jv:learning:approve|reject` buttons, decided in code in `slack/app.ts` like `jv:loop:` and never handed to the model
 - `threadQueue.ts`, `runRegistry.ts` - one turn per thread, and stopping one
 - `followGate.ts` (application), `followGateModel.ts` - the per-thread buffer for a followed thread (a quiet window, a hard cap, injectable timers) and the cheap pal-model call that says reply, skip or wait
 - `ciGate.ts` (application) - the CI gate of `quick-review`: idempotent request-changes and approve against GitHub's own state, the watcher row for a running CI, and its poll
@@ -253,7 +278,7 @@ Concrete implementations of the seams and the transports.
 - `inbox/inboxRepo.ts` - the inbox queue shared by both processes
 - `llm/claudeCli.ts` - the default `LlmPort`, wraps the local `claude` CLI (`--resume`, `stream-json`, per-call policy -> `--allowedTools`/cwd/timeout, the timeout stopping the whole process tree, `turnEnv` for per-turn environment such as the Orca handle and the subagent/worker models, `agents` for the `--agents` definitions that pin Explore and Plan); `killTree.ts`, `toolTraceLog.ts` support it; `backgroundAgents.ts` finds a thread's `claude --bg` sessions and Orca workers in its trace and stops them through their own CLIs for `stop`
 - `llm/anthropic.ts` - alternative `LlmPort` backed by the Anthropic API
-- `db/` - `bun:sqlite` client, schema + migrations, one repo per table (users, roles, messages, sessions, watches, reminders, loops, workflows, usage, turn and command logs, Orca worker threads and questions, ...), `secretBox.ts` for encrypted tokens, `tokenKeyStore.ts` for where its key lives (file, or a macOS Keychain item via the `security` CLI, `TOKEN_KEY_SOURCE`)
+- `db/` - `bun:sqlite` client, schema + migrations, one repo per table (users, roles, messages, sessions, thread briefs, watches, reminders, loops, workflows, usage, turn and command logs, Orca worker threads and questions, ...), `secretBox.ts` for encrypted tokens, `tokenKeyStore.ts` for where its key lives (file, or a macOS Keychain item via the `security` CLI, `TOKEN_KEY_SOURCE`)
 - `adapter/adapterStore.ts` - the memory adapter in the `adapter_files` table, mirrored to `data/adapter-mirror` so skills can be read by path
 - `github/` - `gh` CLI wrapper and review-request polling; the GitHub App's fetch client (`appClient.ts`, RS256 JWT -> cached installation token), credentials from files (`appCredentials.ts`) and webhook listener (`webhookServer.ts`)
 - `system/` - host probes (system load, Accessibility access, shell checks for watches, `orcaProbe.ts` reading Orca's status, newest Runs and their tasks for `sys` under one deadline), `guideWriter.ts`, which writes the prompt's how-to guides to `data/prompt-guides`, and `orcaTerminal.ts`, the bot's own Orca terminal (created once, checked against Orca at most once a minute, re-created when gone) whose handle every spawned turn gets as `ORCA_TERMINAL_HANDLE` so it can open Orca Runs and start workers, and `workerTranscript.ts`, which finds an Orca worker's Claude Code session (one message id from `worker-read --source transcript`, matched to the `uuid` in a `~/.claude/projects` jsonl) and sums what it used
@@ -292,8 +317,11 @@ Concrete implementations of the seams and the transports.
   `roles` - a name, a rank and the permissions it grants - and every role check
   asks `can(book, role, permission)`: a command (`command:<name>`), a GitHub App
   action (`github:<action>`), an MCP server (`mcp:<server>`), a tool tier or a
-  guarded sub-action. `tools:full-access` runs the CLI with full access; without
-  it the role is sandboxed (allow-list + fixed cwd, no permission bypass), with
+  guarded sub-action. `tools:full-access` runs the CLI with full access (the
+  owner alone, as seeded: `isFullAccess` asks the book, so a role it does not
+  know holds nothing); without it the role is sandboxed (allow-list + fixed
+  cwd, no permission bypass, `--permission-mode dontAsk` so an off-list command
+  is refused at once, `SANDBOX_TOOLS` sets the default list), with
   `tools:code` adding the code tools and the Agent tool, and every MCP server it
   holds no grant for denied by name. Orca is `tools:orca` (`ORCA_DENY` in
   `--disallowedTools` otherwise, since an Orca worker runs with full host

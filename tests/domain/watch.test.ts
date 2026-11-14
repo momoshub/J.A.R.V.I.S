@@ -12,6 +12,9 @@ import {
   builtinCheck,
   shellQuote,
   orcaWorkerEvent,
+  WORKER_IDLE_MS,
+  IDLE_DETAIL_PREFIX,
+  SHELL_IDLE_MS,
   workerEventLine,
   WORKER_EVERY_MS,
   WORKER_DEADLINE_MS,
@@ -244,6 +247,8 @@ describe("watch worker", () => {
     expect(a.ok && a.note).toBe("merge it");
     const r = builtinCheck("worker", "ctx_1", { orcaWorkerWait: WAIT, pastWait: true });
     expect("check" in r && r.check).toEndWith("'ctx_1' '--past-wait'");
+    const armed = builtinCheck("worker", "ctx_1", { orcaWorkerWait: WAIT, pastWait: true, armedAt: 1_800_000_000_000 });
+    expect("check" in armed && armed.check).toEndWith("'ctx_1' '--past-wait=1800000000000'");
     // only a worker knows the flag
     const p = parseWatchArgs("pr https://github.com/o/r/pull/1 --past-wait go");
     expect(p.ok && p.pastWait).toBeUndefined();
@@ -359,6 +364,149 @@ describe("orcaWorkerEvent", () => {
       kind: "unknown",
       detail: "down",
     });
+  });
+});
+
+describe("an idle worker that never reported", () => {
+  const NOW = 1_800_000_000_000;
+  const idle = (
+    terminal: Record<string, unknown>,
+    attention: string[] = [],
+    projection: Record<string, unknown> = {},
+  ): string =>
+    JSON.stringify({
+      ok: true,
+      result: {
+        dispatch: { runId: "run_1" },
+        projection: { outcome: "in_progress", liveness: { verdict: "live" }, attention: { categories: attention }, ...projection },
+        observation: { agentWait: null },
+        terminal,
+      },
+    });
+
+  test("silent past the threshold is waiting, with how long", () => {
+    const ev = orcaWorkerEvent(idle({ lastOutputAt: NOW - 23 * 60_000, preview: "❯ " }), NOW);
+    expect(ev).toEqual({ kind: "waiting", detail: "idle at its prompt for 23m with no report, run run_1" });
+  });
+
+  test("fresh output is still running", () => {
+    expect(orcaWorkerEvent(idle({ lastOutputAt: NOW - 30_000, preview: "✻ Thinking…" }), NOW).kind).toBe("running");
+    expect(orcaWorkerEvent(idle({ lastOutputAt: NOW - WORKER_IDLE_MS + 1 }), NOW).kind).toBe("running");
+    expect(orcaWorkerEvent(idle({ lastOutputAt: NOW - WORKER_IDLE_MS }), NOW).kind).toBe("waiting");
+  });
+
+  test("idle with a background shell running is deferred, but only for SHELL_IDLE_MS", () => {
+    const preview = "❯ \n  ⏵⏵ bypass permissions on · 1 shell · esc to interrupt";
+    expect(orcaWorkerEvent(idle({ lastOutputAt: NOW - WORKER_IDLE_MS * 2, preview }), NOW).kind).toBe("running");
+    expect(orcaWorkerEvent(idle({ lastOutputAt: NOW - SHELL_IDLE_MS + 1, preview }), NOW).kind).toBe("running");
+    const long = orcaWorkerEvent(idle({ lastOutputAt: NOW - SHELL_IDLE_MS - 60_000, preview }), NOW);
+    expect(long).toEqual({ kind: "waiting", detail: "idle at its prompt for 1h01m with no report, run run_1" });
+  });
+
+  test("a shell does not cancel Orca's stale mark", () => {
+    const preview = "❯ \n  ⏵⏵ bypass permissions on · 1 shell · esc to interrupt";
+    const ev = orcaWorkerEvent(
+      idle({ lastOutputAt: NOW - 33 * 60_000, preview }, ["stale"], { liveness: { verdict: "unverifiable" } }),
+      NOW,
+    );
+    expect(ev.kind).toBe("waiting");
+    expect("detail" in ev && ev.detail).toStartWith(IDLE_DETAIL_PREFIX);
+  });
+
+  test("the stale attention category is waiting on its own", () => {
+    const ev = orcaWorkerEvent(idle({}, ["stale"], { liveness: { verdict: "unverifiable" } }), NOW);
+    expect(ev.kind).toBe("waiting");
+    expect(orcaWorkerEvent(idle({}, ["stale"])).kind).toBe("waiting");
+  });
+
+  test("no clock or no timestamp never reads as idle", () => {
+    expect(orcaWorkerEvent(idle({ lastOutputAt: 1 })).kind).toBe("running");
+    expect(orcaWorkerEvent(idle({ preview: "❯ " }), NOW).kind).toBe("running");
+  });
+
+  test("finished, a real wait and death all still win over idle", () => {
+    const old = { lastOutputAt: NOW - 3_600_000 };
+    expect(orcaWorkerEvent(idle(old, [], { outcome: "succeeded", liveness: { verdict: "exited" } }), NOW).kind).toBe("finished");
+    expect(orcaWorkerEvent(idle(old, ["stale", "input_required"]), NOW)).toEqual({ kind: "waiting", detail: "attention stale, input_required, run run_1" });
+    expect(orcaWorkerEvent(idle(old, [], { liveness: { verdict: "exited" } }), NOW).kind).toBe("died");
+  });
+
+  describe("--past-wait", () => {
+    const ARMED = NOW - 2 * 3_600_000;
+    const parked = (terminal: Record<string, unknown>, attention: string[] = ["input_required"]): string =>
+      JSON.stringify({
+        ok: true,
+        result: {
+          projection: { outcome: "in_progress", liveness: { verdict: "live" }, attention: { categories: attention } },
+          observation: { agentWait: { kind: "input", prompt: "which db?" } },
+          terminal,
+        },
+      });
+
+    test("the wait it was set for stays quiet, however long the worker has been silent", () => {
+      expect(orcaWorkerEvent(parked({ lastOutputAt: ARMED - 60_000 }), NOW, ARMED).kind).toBe("running");
+      expect(orcaWorkerEvent(parked({ lastOutputAt: ARMED }), NOW, ARMED).kind).toBe("running");
+      expect(orcaWorkerEvent(parked({}, ["input_required", "stale"]), NOW, ARMED).kind).toBe("running");
+    });
+
+    test("output after the arm time that then goes silent fires idle, never as a wait for input", () => {
+      const ev = orcaWorkerEvent(parked({ lastOutputAt: NOW - 20 * 60_000 }), NOW, ARMED);
+      expect(ev).toEqual({ kind: "waiting", detail: "idle at its prompt for 20m with no report" });
+      expect(orcaWorkerEvent(parked({ lastOutputAt: NOW - 60_000 }), NOW, ARMED).kind).toBe("running");
+    });
+
+    test("an unblocked worker that stopped without waiting is idle by the normal rule", () => {
+      const resumed = JSON.stringify({
+        ok: true,
+        result: { projection: { outcome: "in_progress", liveness: { verdict: "live" } }, terminal: { lastOutputAt: NOW - 30 * 60_000 } },
+      });
+      expect(orcaWorkerEvent(resumed, NOW, ARMED).kind).toBe("waiting");
+    });
+
+    test("an idle worker re-armed with --past-wait stays quiet until its output moves past the arm time", () => {
+      const live = (terminal: Record<string, unknown>, attention: string[] = []): string =>
+        JSON.stringify({
+          ok: true,
+          result: { projection: { outcome: "in_progress", liveness: { verdict: "live" }, attention: { categories: attention } }, terminal },
+        });
+      const armed = NOW;
+      const later = NOW + 3 * 60_000;
+      const silent = { lastOutputAt: NOW - 20 * 60_000 };
+      // idle at once without the arm time, which is what the hand-back re-arms from
+      expect(orcaWorkerEvent(live(silent), NOW).kind).toBe("waiting");
+      expect(orcaWorkerEvent(live(silent), later, armed).kind).toBe("running");
+      expect(orcaWorkerEvent(live({}, ["stale"]), later, armed).kind).toBe("running");
+      expect(orcaWorkerEvent(live(silent, ["stale"]), later, armed).kind).toBe("running");
+      // new output, then silence: caught again
+      const resumed = { lastOutputAt: NOW + 60_000 };
+      expect(orcaWorkerEvent(live(resumed), NOW + 20 * 60_000, armed)).toEqual({ kind: "waiting", detail: "idle at its prompt for 19m with no report" });
+      expect(orcaWorkerEvent(live(resumed), NOW + 2 * 60_000, armed).kind).toBe("running");
+    });
+
+    test("a bare --past-wait (an arm time no output can pass) never fires idle, wait open or not", () => {
+      const never = Number.MAX_SAFE_INTEGER;
+      expect(orcaWorkerEvent(parked({ lastOutputAt: NOW - 20 * 60_000 }), NOW, never).kind).toBe("running");
+      const noWait = JSON.stringify({
+        ok: true,
+        result: { projection: { outcome: "in_progress", liveness: { verdict: "live" } }, terminal: { lastOutputAt: NOW - 20 * 60_000 } },
+      });
+      expect(orcaWorkerEvent(noWait, NOW, never).kind).toBe("running");
+    });
+
+    test("finished and died are untouched", () => {
+      const done = JSON.stringify({ ok: true, result: { projection: { outcome: "succeeded" } } });
+      expect(orcaWorkerEvent(done, NOW, ARMED).kind).toBe("finished");
+    });
+  });
+
+  test("the hand-back tells the turn to read the terminal and finish or steer, not just wait", () => {
+    const m = readyMessage("merge its PR", 23 * 60_000, workerEventLine("ctx_abc", { kind: "waiting", detail: "idle at its prompt for 23m with no report" }));
+    expect(m).toStartWith("Orca worker ctx_abc is IDLE after 23m");
+    expect(m).not.toContain("WAITING FOR INPUT");
+    expect(m).toContain("Read its terminal first");
+    expect(m).toContain("finish the job yourself");
+    expect(m).toContain("`watch worker ctx_abc --past-wait`");
+    expect(m).toContain("Do not do the planned part above until the worker has finished");
   });
 });
 

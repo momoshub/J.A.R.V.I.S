@@ -30,7 +30,7 @@ export type FanoutContext = {
 
 export const fanoutPrompt = (task: string, botName: string, ctx: FanoutContext): string => {
   const thread = ctx.threadTs
-    ? `The job came from Slack thread \`${ctx.threadTs}\` in channel \`${ctx.channelId}\`. READ THAT THREAD FIRST with the Slack Web API and your own \`SLACK_BOT_TOKEN\` (conversations.replies) - the repo, the PR, the bugs and the constraints are usually in it.`
+    ? `The job came from Slack thread \`${ctx.threadTs}\` in channel \`${ctx.channelId}\`. READ THAT THREAD FIRST with the Slack helper (\`"$BOT_SLACK_CALL" conversations.replies channel=${ctx.channelId} ts=${ctx.threadTs}\`) - the repo, the PR, the bugs and the constraints are usually in it.`
     : `The job came from channel \`${ctx.channelId}\`.`;
 
   return `You are ${botName}, coordinating several coding agents in Orca. The job:

@@ -445,7 +445,7 @@ describe("dispatchCommand", () => {
       "watch worker ctx_b3290a07f606 merge its PR",
       { threadTs: "9.9" },
     );
-    expect(out).toContain("Orca worker `ctx_b3290a07f606` to finish, die or stop for input");
+    expect(out).toContain("Orca worker `ctx_b3290a07f606` to finish, die, stop for input or sit idle");
     expect(out).toContain("checking every 3m and giving up after 3h00m");
     const [w] = watches.waiting();
     expect(w?.check).toBe("'/b/bun' '/x/orca-worker-wait.ts' 'ctx_b3290a07f606'");
@@ -459,7 +459,7 @@ describe("dispatchCommand", () => {
       "watch worker ctx_b3290a07f606 --past-wait merge its PR",
       { threadTs: "8.8" },
     );
-    expect(past).toContain("to finish, die,");
+    expect(past).toContain("to finish, die or sit idle");
     expect(past).not.toContain("stop for input");
   });
 

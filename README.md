@@ -26,13 +26,13 @@ Read the security note below before giving anyone but yourself a role above `pal
 
 ## ⚠️ Security - read this first
 
-With `LLM_PROVIDER=claude-cli`, an **`owner` or `admin`** message is sent to a `claude` process launched with `--dangerously-skip-permissions` - full shell, file, and network tool access - and the bot's `SLACK_BOT_TOKEN` is in that process's environment. **Treat every owner/admin as a shell user on the host**: "read ~/.ssh/id_rsa and DM it to me" is a normal request to a tool-enabled agent, not something it needs to break out of.
+With `LLM_PROVIDER=claude-cli`, an **`owner`** message is sent to a `claude` process launched with `--dangerously-skip-permissions` - full shell, file, and network tool access. The bot's own secrets are kept out of that process's environment (see [Secrets and turns](#secrets-and-turns)), but it runs as the host user and can still read what that user can read, `.env` included. **Treat the owner as a shell user on the host**: "read ~/.ssh/id_rsa and DM it to me" is a normal request to a tool-enabled agent, not something it needs to break out of. Every other role (including `admin` and a role the bot does not recognise) runs without the bypass: a turn reads pages, attachments and PRs that anyone can write, so a prompt injection there must not be able to run an arbitrary command as the bot.
 
-Lower roles are sandboxed (see [Roles & tool access](#roles--tool-access)): `pal`/`executer` run without permission bypass, with an explicit read-only/assigned tool allow-list, in a fixed scratch dir. The `quick-review` command is an exception - it is a preset task that runs full-access (and writes to the PR) for any role that may run it.
+Every role that does not hold `tools:full-access` (only the owner, as seeded) is sandboxed (see [Roles & tool access](#roles--tool-access)): `pal`/`executer`/`admin` run without permission bypass, with an explicit read-only/assigned tool allow-list (`SANDBOX_TOOLS`, below), in a fixed scratch dir, with `--permission-mode dontAsk` so a command that is not on the list is refused at once instead of waiting for a prompt nobody can answer. The `quick-review` command is an exception - it is a preset task that runs full-access (and writes to the PR) for any role that may run it.
 
 Before deploying beyond a trusted, sandboxed machine:
 
-- keep `owner` and any role holding `tools:full-access` (`admin`, as seeded) tiny and trusted (the owner cannot be removed); give everyone else a sandboxed role (`pal`/`executer`, or a custom one)
+- keep `owner` and any role you grant `tools:full-access` tiny and trusted (the owner cannot be removed); give everyone else a sandboxed role (`pal`/`executer`, or a custom one)
 - run in a container / low-privilege user with a scoped filesystem and limited network egress
 - keep the dashboard on loopback (default) and the token secret
 - rotate any tokens that have appeared in logs or chat
@@ -65,7 +65,8 @@ Required / notable env (see `.env.example`):
 | `CLAUDE_CODE_OAUTH_TOKEN` | long-lived CLI auth from `claude setup-token`; without it the bot borrows the machine's interactive login and dies when that expires |
 | `CLAUDE_BIN` / `CLAUDE_MODEL` | claude binary + model alias (claude-cli) |
 | `CLAUDE_MODEL_PAL` | model for `pal` chat (default `haiku`) - see [Model per role](#model-per-role) |
-| `CLAUDE_SKIP_PERMISSIONS` | `true` grants full tool access - see the security note (claude-cli) |
+| `CLAUDE_SKIP_PERMISSIONS` | the default for a call that carries no role policy (`true` grants full tool access - see the security note). A turn always has one: only the owner gets the bypass, whatever this says (claude-cli) |
+| `SANDBOX_TOOLS` | comma list of CLI tool names/patterns (`Read`, `Bash(cat:*)`, `mcp__notion`) that REPLACES the default allow-list of `pal`, of an `executer` or `admin` with no dashboard list and of a role the bot does not recognise. Empty: the built-in read-only default (`PAL_TOOLS` in `src/domain/toolPolicy.ts`: `Read`/`Grep`/`Glob`, web search + fetch, `git` and `gh` read commands, read-only Notion/GitHub MCP; no shell reader is listed on purpose, see below). The bot's own helpers in `bin/` and every denial (writes, `sed -i`, `find -exec`, `rg --pre`, `jq` reading the environment, redirects for the read-only role, secrets, databases, `orca`) are added on top, so a custom list cannot lift one. The owner is never affected |
 | `CLAUDE_CWD` | working dir for the CLI; blank = neutral temp dir outside this repo |
 | `ORCA_TERMINAL_WORKTREE` | Orca worktree selector the bot opens its own terminal in, handed to every turn as `ORCA_TERMINAL_HANDLE` so it can run `orca orchestration` (default `path:~/Workspaces`; `off` disables). Orca not running = no handle, turns fall back to the Agent tool. A question one of those workers asks (`orca orchestration ask`) is put to the Slack thread that started it as a turn, which answers it with `orca orchestration reply` - see [Orca workers' questions](#orca-workers-questions) |
 | `ANTHROPIC_API_KEY` / `ANTHROPIC_MODEL` | required only when `LLM_PROVIDER=anthropic` |
@@ -87,6 +88,7 @@ Required / notable env (see `.env.example`):
 | `GITHUB_APP_LABEL` | label that calls it on an issue/PR (default `jarvis`) |
 | `SELF_PR_AUTHOR` / `SELF_PR_REVIEWER` | gh logins for the bot's own PRs: the author opens the PR and answers reviews, the reviewer posts its reviews (request changes or approve) and merges. Both or neither, and not the same login (otherwise: one account) |
 | `REVIEW_EXTENDED_OWNERS` | GitHub owners, comma list (case-insensitive), whose PRs `quick-review` also posts non-blocking findings for. Default empty: blockers only everywhere |
+| `TURN_ENV_PASSTHROUGH` | secret-shaped variable names (`*_TOKEN`, `*_SECRET`, `*_API_KEY`...) an agent turn may still inherit, comma list; default none. A turn's environment is the bot's **minus every credential-shaped variable** (`SLACK_BOT_TOKEN`, `SLACK_APP_TOKEN`, `ANTHROPIC_API_KEY`, the webhook secret, ...): a turn reads untrusted text, so anything in its environment is one `curl` from leaving. `CLAUDE_CODE_OAUTH_TOKEN` is always kept (the CLI needs it). Slack goes through a per-turn ticket instead, see "Secrets and turns". Name a variable here only when a tool a turn runs genuinely needs it |
 | `DB_MCP_SERVERS` | names of the local database MCP servers on this host (as `claude mcp list` shows them, e.g. `pg-prod,clickhouse-ro`), comma list. **Security setting:** each is denied by name to every role that may not use databases (pal, executer, side questions), and a denial has to name the server, so a server missing here is reachable by EVERY role. Default empty denies nothing - list every database server you configure (at boot the activity log warns about local servers in `~/.claude.json` that are not listed) |
 | `EXECUTER_DB_MCP_SERVERS` | the subset of `DB_MCP_SERVERS` the executer role may query; list only servers whose credential is read-only on the server side. Default empty: executers get none |
 | `DASHBOARD_PORT` | dashboard port (local, loopback-only, no auth) |
@@ -125,7 +127,7 @@ The **Console** tab additionally needs read scopes to list and open conversation
 - It only answers allowlisted users; the owner is always allowed
 - Someone it does not know is not turned away: the owner **and every admin** get a DM with who spoke and what they said, and whichever of them gets there first decides with a reaction - ✅ adds them as `pal`, ❌ declines. Either way the person is answered where they asked, and the other copies settle so nobody decides twice. They are answered **once**: tagging again while the request is open says nothing, and someone who was declined cannot re-raise it by asking - there is a 24h cooldown before their asking counts again
 - It tags people with their Slack `<@id>` when they are in the conversation
-- For workspace questions it uses its own bot token and the Slack Web API, never a third-party connector
+- For workspace questions it calls the Slack Web API through the bot (a helper that presents a per-turn ticket; the bot token itself is never in a turn's environment), never a third-party connector
 - **It opens what you share.** Links in a message (or earlier in the thread) are fetched before it answers, and attachments - screenshots, logs, documents - are downloaded and read. It will not ask you to paste something it could have opened, and if something genuinely cannot be read it says so rather than answering around it
 
 ### Commands
@@ -151,8 +153,9 @@ Every command has two interfaces - use whichever you like. Both triggers are con
 | `worker-cost <ctx_...\|run_...>` (alias `wcost`) | admins | tokens and list-price cost of an Orca worker, or every worker in a Run - see [What an Orca worker cost](#what-an-orca-worker-cost) |
 | `add @user [role]` | `command:add` (admin as seeded); only roles ranking below your own | grant access under any role, custom ones included; no role given means the default one (`pal`); an unknown role name is refused |
 | `remove @user` | admins (admins: owner only) | revoke access |
-| `learn <fact>` | admins | teach a durable fact |
-| `learnings` / `relearn <id> <text>` / `unlearn <id>` | admins | list, reword or delete learnings |
+| `learn <fact>` | executers | teach a durable fact: the owner's own typing is saved at once, anyone else's (and any `learn` the agent runs for itself) waits as *pending* for the owner's approval and is not part of any reply until then |
+| `learn pending` / `learn approve <id>` / `learn reject <id>` | owner | list what waits, approve it (it is carried into every reply from then on) or reject it (never). Typed by the owner only: the agent cannot run these for itself. The owner also gets each pending learning as a DM with Approve / Reject buttons |
+| `learnings` / `relearn <id> <text>` / `unlearn <id>` | executers | list, reword or delete learnings. Rewording by anyone but the owner sends the learning back to pending |
 | `review-policy [owner/repo] [first\|after\|default]` (alias `rvpolicy`) | anyone (setting: admins) | how a repo gets approved - see [Review policy per repo](#review-policy-per-repo) |
 | `review-agents [n\|default]` (alias `rvagents`) | anyone (setting: admins) | how many child agents one review may fan out to - see [How wide a review fans out](#how-wide-a-review-fans-out) |
 | `token [remove\|who]` (alias `claude-token`) | anyone | add, replace or forget your own Claude Code token - see [Your own Claude token](#your-own-claude-token) |
@@ -160,12 +163,13 @@ Every command has two interfaces - use whichever you like. Both triggers are con
 | `ticket <what is wrong>` (aliases `bug`, `raise`) | anyone | raise a properly written, correctly routed ticket - see [Raising a ticket](#raising-a-ticket) |
 | `quick-review <pr-url\|help\|prompt> [--policy first\|after] [what to look at]` (alias `rv`) | pal+ | quick review of a PR, **only when a person asks** (tag the bot with `review <pr-url>` or `approve <pr-url>`, or type this; never from a thread, workflow, hand-back or GitHub request - see [Asking for a review in words](#asking-for-a-review-in-words)): read it first, post a blockers-only comment on GitHub *and* back in the thread (PRs owned by an account in `REVIEW_EXTENDED_OWNERS` also get the non-blocking findings as bullets); request changes on a blocker only, other repos drop non-blocking findings (big PRs are cloned + reviewed by child agents). CI is read first: red requests changes before the review, a running CI gets a watcher (see [CI comes first](#ci-comes-first)). Runs full-access. |
 | `bomb [categories] [count] <message-link>` (alias `br`) | admins | reaction-bomb a message. Combine categories with commas and set a count: `bomb money,face,negative 9 <link>`. Up to 23; `bomb help` lists every category |
+| `brief <thread-link\|reference> <text>` (`brief help`) | admins | leave a short note FOR another thread: what you posted there, why, what you wait for. Posts nothing, starts no turn; that thread's session reads it on its next turn, whoever speaks (it is part of that turn's message, so the session keeps it for the turns after), then it is marked read for that access tier. It is background information only, never instructions. The receiver sees only an opaque reference to your thread (never a link) and answers with `brief <reference> <text>`. `tell` is for when the other side must act now |
 | `reply <message-link>` (alias `jrp`) | admins | draft and post an AI reply to a message |
 | `rm-msg <message-link>` (aliases `rmmsg`, `unsend`) | admins | delete a message the bot posted (a bot token cannot delete anyone else's) |
 | `workflow <task>` / `workflow stop [<thread-link>]` / `workflow status` (alias `wf`) | `command:workflow` (executer and up as seeded) | start a long task in this thread and keep talking to it (see [Workflows](#workflows)) |
 | `limit [@user] [n\|default]` (alias `quota`) | anyone (setting: admins) | show command allowance; admins set someone's |
 | `mindful [hours]` / `mindful continue\|reply <thread-link>` (aliases `mind`, `whatsup`) | admins | everything it is doing: stuck turns (a failed last turn; one a person stopped is not stuck), Orca tasks whose worker is gone and quiet PRs on its own repo (each with the thread that started it), what is running and waiting, and what it cost - see [Stuck work](#stuck-work) |
-| `loop every <monday 9am\|day at 18:00\|6h\|week> <prompt>` / `loop list` / `loop cancel <id>` | admins | run a prompt on a schedule, as a real turn, with nobody present. A shell loop is never typed (not even by the owner): ask me in plain words and I write the script, post the exact command and schedule to the owner's DM and only run it after the owner presses Approve (Reject, or 24h with no answer, deletes it; `loop list` shows it as pending meanwhile). Times are the host's clock, like `remind`; a prompt loop is at most hourly (`every 1h` at the fastest) and a shell loop `every 5m`. Each fire runs on Sonnet (`model:loop`), not the creator's role model. Each fire starts a fresh top-level message in the creator's **DM** with the bot and runs the turn under it as the creator (prefixed `[loop <id>]`, told to keep it short) - nothing is posted in the channel or thread it was created in, which only gets a short confirmation. A shell loop runs no turn and spends no tokens; only a failure (non-zero exit or timeout) sends one short line to the creator's DM, and the loop carries on. A run missed while the bot was down happens once on startup, never a backlog. Ten loops per person. `loop help` for the card |
+| `loop every <monday 9am\|day at 18:00\|6h\|week> [--name "PR board"] <prompt>` / `loop list` / `loop rename <id> <name>` / `loop cancel <id>` | admins | run a prompt on a schedule, as a real turn, with nobody present. Every loop has a name: `--name "PR board"` (or `--name board`, `--name=board`) between the schedule and the prompt, else the first four words of the prompt (the command, for a shell loop); `loop rename <id> <name>` changes it later (yours, or the owner's), so `loop rename 3 PR board` fixes a loop that was only ever `loop #3`. A name is plain words: Slack's escapes and links are read first (`&amp;` is `&`, `<url|label>` is `label`), then markup, `<>`, `&` and `|` are stripped and it is clipped to 40 characters; an apostrophe inside a single-quoted name is fine (`--name 'Kai's board'`). The name shows wherever the loop is mentioned: the fire header (`🔁 PR board - loop #3, every 1h · created here`, where `created here` links to the message that created the loop - a thread reply links into its thread; loops made before that was kept link to their thread, or show no link), `loop list` (the same link per loop), the confirmation, cancel and rename replies, the failure / stopped notices and the settled approval text; the approval DM shows the turn-chosen name on its own line, never in the headline. A shell loop is never typed (not even by the owner): ask me in plain words and I write the script, post the exact command and schedule to the owner's DM and only run it after the owner presses Approve (Reject, or 24h with no answer, deletes it; `loop list` shows it as pending meanwhile). Times are the host's clock, like `remind`; a prompt loop is at most hourly (`every 1h` at the fastest) and a shell loop `every 5m`. Each fire runs on Sonnet (`model:loop`), not the creator's role model. Each fire starts a fresh top-level message in the creator's **DM** with the bot and runs the turn under it as the creator (prefixed `[loop <id>]`, told to keep it short) - nothing is posted in the channel or thread it was created in, which only gets a short confirmation. A shell loop runs no turn and spends no tokens; only a failure (non-zero exit or timeout) sends one short line to the creator's DM, and the loop carries on. A run missed while the bot was down happens once on startup, never a backlog. Ten loops per person. `loop help` for the card |
 | `promote @user [role]` / `demote @user [role]` | owner | change role: to the named one, else to the highest role below owner / the least-privileged one |
 | `role list` / `show <role>` / `perms [filter]` / `create <name> [from <role>] [description]` / `grant <role> <perm...>` / `revoke <role> <perm...>` / `delete <role>` / `rename <old> <new>` / `rank <role> <n>` / `describe <role> <text>` / `on\|off <role>` / `default <role>` / `denytools <role> <pattern...\|none>` (alias `roles`) | owner only, never grantable | see and edit roles and the permissions they grant - see [Roles & tool access](#roles--tool-access) |
 
@@ -676,6 +680,67 @@ person directly asked for the command ("bomb that message"), the brain runs it a
 The bridge refuses `quick-review` outright, whoever asked: that command runs only from a person's own message. Commands that post by themselves outside this bridge (pickers, GitHub reviews)
 are not affected.
 
+## Secrets and turns
+
+A turn is a `claude -p` process whose shell a model drives while it reads text
+nobody vetted: messages, web pages, files. Anything in that process's
+environment is one `env` or one `curl` away from leaving the host, and the bot
+used to hand every turn a copy of its own environment - `SLACK_BOT_TOKEN`
+included - and tell it to `curl` Slack with it.
+
+**The environment.** A turn gets the bot's environment minus every
+credential-shaped variable: any name with a `TOKEN`, `SECRET`, `PASSWORD`,
+`API_KEY`, `ACCESS_KEY`, `PRIVATE_KEY` or `CREDENTIAL` word in it, a password glued to a
+prefix (`PGPASSWORD`), or a `_KEY`, `_PAT`, `_PWD` or `_AUTH` ending. That is a rule
+by name, so a `*_TOKEN` you add to `.env` later is withheld without a code
+change. Two things stay: `CLAUDE_CODE_OAUTH_TOKEN` (the CLI cannot authenticate
+without it) and whatever you list in `TURN_ENV_PASSTHROUGH`. The boot log says
+how many variables were withheld and their **names**, never their values.
+
+Withheld from every turn: `SLACK_BOT_TOKEN`, `SLACK_APP_TOKEN`,
+`ANTHROPIC_API_KEY`, `GITHUB_APP_WEBHOOK_SECRET`, and the variables that only
+name where a secret lives (`TOKEN_KEY_PATH`, `TOKEN_DATABASE_PATH`,
+`GITHUB_APP_PRIVATE_KEY_PATH`, `GITHUB_APP_WEBHOOK_SECRET_PATH`, ...), plus any
+other credential-shaped variable in the environment the bot was started with.
+If `LLM_PROVIDER=claude-cli` is authenticated by `ANTHROPIC_API_KEY` instead of
+the recommended `CLAUDE_CODE_OAUTH_TOKEN`, add it to `TURN_ENV_PASSTHROUGH`.
+
+**Slack.** A turn calls Slack through `bin/slack-api.sh <method> key=value...`.
+The helper presents `JARVIS_SLACK_TICKET`, a ticket minted for that one process
+when it starts and revoked when it exits, to the bot's loopback endpoint
+(`POST /api/slack/proxy`). The bot checks the ticket, checks the method against
+an allowlist and calls Slack with the token it holds; Slack's own answer comes
+back unchanged. The ticket names no person and carries no role: it cannot run a
+command or act on GitHub, and a command ticket cannot call Slack.
+
+| | methods |
+|---|---|
+| read, any channel | `conversations.history`, `conversations.replies`, `conversations.info`, `conversations.list` (public channels), `conversations.join` (public channels), `users.info` |
+| write, only the channel the turn runs in | `chat.postMessage`, `chat.update`, `reactions.add`, `files.getUploadURLExternal`, `files.completeUploadExternal` |
+| files | a private file is `bin/slack-file.sh`, through `POST /api/slack/file`: Slack file urls only, and the token never follows a redirect off Slack |
+
+A `chat.postMessage` or `files.completeUploadExternal` from a turn that runs in a
+thread and names no `thread_ts` is posted into that thread; pass `thread_ts=none`
+for a deliberate top-level post (the bot removes it before calling Slack), and an
+explicit `thread_ts` is used as given.
+
+Anything else is refused (`method_not_allowed`), a write to another channel is
+`channel_not_allowed`, and a missing, revoked or expired ticket is refused before
+anything else. `slack-read.sh`, `slack-react.sh`, `slack-file.sh` and
+`slack-upload.sh` are built on the same helper, so a sandboxed role has no more
+power than before (reacting and uploading now only work in the turn's own channel). A watch predicate and a loop script are admin-written shell
+that runs **as the bot**, so they keep the bot's own environment; `watch reply`
+gets a read-only ticket for the length of each check.
+
+**What this does not do.** It takes the token out of the turn's environment.
+Reads are not channel-scoped, so a turn in a public channel can still read a
+private conversation the bot is in and write it into that channel (the token
+allowed the same before). A full-access turn is still the host user: it can read `.env` and the token files
+off disk, and the dashboard's loopback API has no authentication, so it can reach
+the console routes (`/api/slack/post`, ...) with `curl` and act as the bot in any
+channel. Closing those is a separate decision about what a full-access turn may
+read and call.
+
 ## Stopping a turn
 
 A chat turn can run for the better part of an hour, so there is a way to end one
@@ -841,7 +906,7 @@ own SQLite memory still records every turn - it is the fallback when a session
 is gone, and what the dashboard reads.
 
 Sessions are keyed by **thread and access tier**, not thread alone. Full-access
-(owner/admin) and sandboxed (pal/executer) roles run the CLI in different
+(`tools:full-access`, the owner as seeded) and sandboxed roles run the CLI in different
 working directories, and the CLI files a session under the directory it ran in -
 so they could not share one in any case, and sharing would hand a sandboxed user
 whatever a full-access session had read.
@@ -924,7 +989,7 @@ brain's own run bridge, so a typed line, a schedule, an errand or the menu never
 mint one):
 
 ```
-worker-ticket <owner/repo> pending [pr-create|comment|pr-edit|git|push|labels-add|reviewers-request ...] [--ttl 3h]
+worker-ticket <owner/repo> pending [pr-create|comment|pr-edit|push|labels-add|reviewers-request ...] [--ttl 3h]
 worker-ticket bind <id> <ctx_...>      # after worker-start prints the dispatch id
 worker-ticket revoke <id|ctx_...>
 worker-ticket renew <id|ctx_...> [--ttl 3h]   # admin; also revives one that lapsed but was never revoked
@@ -936,12 +1001,23 @@ is written once to a mode-0600 file in a 0700 folder
 path, to `export` before `bin/github-app.sh` (the helper reads the first line of
 that file; the brain never reads, prints or posts it, and the file is deleted
 when the ticket ends). The ticket works for that one repo and those actions only
-(default `pr-create`, `comment`, `pr-edit`; never review, merge or close), cannot
+(default `pr-create`, `comment`, `pr-edit` and the app's commit identity; never review, merge or close), cannot
 run any command, is checked against the minting person's role on every call,
 expires in 3 hours (max 6) and ends when the worker finishes or dies (the turn's
 `watch worker`), on `worker-ticket revoke`, or at expiry. Tickets are rows in
 `worker_tickets` (only the sha-256 of the token), so they survive a restart; a
 sweep at boot and every 5 minutes ends the expired ones. No new setting.
+
+**The worker finds the bot through its ticket file.** The file holds the token on
+line 1 and the bot's loopback URL (`http://127.0.0.1:<DASHBOARD_PORT>`) on line 2,
+because a worker's shell has no `DASHBOARD_PORT`. `bin/github-app.sh` and
+`bin/github-app-comment.sh` use, in order: `GITHUB_APP_ACTION_URL` /
+`GITHUB_APP_COMMENT_URL`, `DASHBOARD_PORT`, line 2 of `JARVIS_RUN_TICKET_FILE`,
+then 2001. A ticket file written before this has one line and keeps that default.
+Line 2 is followed only if it is `http://127.0.0.1:` plus digits and nothing else
+(anything like `http://127.0.0.1:1@evil.example` is ignored, since the ticket is sent
+there). A call the bot does not answer prints the endpoint it tried;
+`GITHUB_APP_PRINT_ENDPOINT=1` prints it and exits without sending anything.
 
 **Long workers renew.** A worker that outlasts its TTL extends its own live ticket
 with `bin/github-app.sh ticket-renew <owner/repo> [--ttl 3h]` (default 3h, at most
@@ -952,11 +1028,17 @@ file until the limit instead of being deleted at its expiry. Nothing lives past
 24 hours from the bind however often it is renewed, and every renewal is
 audited like a mint.
 
-**Pushing is not part of the default grant.** A worker pushes with the
+**Commits come as the app by default; pushing does not.** Every worker ticket
+carries the app's commit identity (`git-commit`: name and email, an empty
+token), so `bin/github-app.sh git <owner/repo> <dir> -- commit ...` works as the
+app for a worker minted with no extra words (the helper runs git with that
+identity and no credential, exactly like an executer). A worker pushes with the
 org's own one-shot human credential (the `kai-at-acme` of the rule above; where
-the app has Contents read-only it cannot push anyway); only the PR, comment and
-edit actions go through the app. `git` / `push` (the `git-auth` action) stay an
-explicit opt-in for an org where the app has Contents write. Its token is minted
+the app has Contents read-only it cannot push anyway). `push` (the same as
+`git` / `git-auth`, the `git-auth` action) stays an explicit opt-in for an org
+where the app has Contents write: only then does the ticket get a token. A
+ticket row stored before this change keeps what it was minted with (one without
+`git-commit` still cannot run `git`; one with `git-auth` still gets its token). Its token is minted
 per ticket, never cached or shared, limited to that one repository and to
 `metadata: read` plus `contents` at the level the installation itself holds
 (asking for more than the installation has is a 422), so it cannot approve,
@@ -1214,7 +1296,7 @@ A permission is an id; `role perms [filter]` and the Roles page list them all:
 | `command:<name>` | running that command (a command's `minRole` in code is only where its grant is seeded) |
 | `github:<action>` | acting on GitHub as the App: `pr-create`, `comment`, `review`, `pr-edit`, `pr-close`, `pr-reopen`, `pr-merge`, `labels-add`, `labels-remove`, `reviewers-request`, `git` (commit as the App), `push` (push a branch with its token) |
 | `mcp:<server>` | using an MCP server in a chat turn: `notion`, `datadog`, each `DB_MCP_SERVERS` entry, plus any server named on the Roles page. A server a role lacks the grant for is denied by name |
-| `tools:full-access` | chat turns run the CLI with full access (real shell, writes, the normal cwd). Without it the role is sandboxed: an explicit `--allowedTools` allow-list in a fixed scratch dir |
+| `tools:full-access` | chat turns run the CLI with full access (real shell, writes, the normal cwd) - the owner alone as seeded. Without it the role is sandboxed: an explicit `--allowedTools` allow-list in a fixed scratch dir, with no permission bypass and `--permission-mode dontAsk` |
 | `tools:code` | the sandboxed code tools: clone into the scratch dir, edit, commit, push a branch, open a PR, the `Agent`/`Task` tool for parallel or long work, and the browser tools (the dashboard's code-tier tool list replaces the read-only base) |
 | `tools:orca` | starting Orca workers, which run with full host permissions - only the owner as seeded |
 | `chat:self-update`, `chat:desktop` | the self-update flow, learn url and watches offered in chat; driving the screen |
@@ -1223,13 +1305,13 @@ A permission is an id; `role perms [filter]` and the Roles page list them all:
 | `settings:manage` | the configuration sub-actions of commands: model, review-agents, review policy overrides, logsource, review-inbox moves, ticket config, cloudwatch default group, someone's allowance, `token who`, `note parent` |
 | `review:policy`, `runs:stop-any`, `secrets:2fa-manage`, `watch:shell`, `reminders:manage-all`, `cloudwatch:direct` | choosing a review policy; stopping someone else's turn or session; adding and removing 2FA setup keys; shell-check watches (and seeing everyone's watches); everyone's reminders; CloudWatch without the Confirm step |
 
-As seeded: `owner` holds everything. `admin` has `tools:full-access` (no `tools:orca`: `Bash(orca:*)` is denied by name), every command at or below admin, all twelve `github:` actions and the admin sub-actions. `executer` is sandboxed with `tools:code`, the read-only database servers (`EXECUTER_DB_MCP_SERVERS`) and executer-level commands, and no GitHub App. `pal` is sandboxed read-only (GitHub read, Notion read, web, read-only git and aws), may use `quick-review` and react, and is held to the per-window command allowance.
+As seeded: `owner` holds everything. `admin` is sandboxed like an `executer` (never fewer tools than one): `tools:code`, the read-only database servers (`EXECUTER_DB_MCP_SERVERS`), Notion and Datadog, with no arbitrary shell and no permission bypass; on top of that every command at or below admin, all twelve `github:` actions and the admin sub-actions (no `tools:orca`: `Bash(orca:*)` is denied by name). `executer` is sandboxed with `tools:code`, the read-only database servers (`EXECUTER_DB_MCP_SERVERS`) and executer-level commands, the `git`/`pr-create`/`pr-edit`/`comment`/`labels-add`/`reviewers-request` App actions (commit identity only: no `github:push`, so no token). `pal` is sandboxed read-only (GitHub read, Notion read, web, read-only git and aws), may use `quick-review` and react, and is held to the per-window command allowance.
 
 **What cannot be granted** (guardrails, not role ceilings): *managing roles* is the owner's alone - `role` and the Roles page never work for anyone else, and even a hand-edited grant for it does nothing. A role only adds, changes or removes people whose role **ranks below its own** (`role rank`), so an admin still cannot hand out or take away admin, and nobody can be given `owner`. A role cannot grant what its editor does not hold. Everything else that used to be a ceiling is a grant now, including worker-ticket minting (`command:worker-ticket`; the minter's own `github:` grants are re-checked on every call, so demoting them stops their workers) and the Notion, database and Orca limits.
 
 **Switching a role off** treats its members as not on the allowlist for every check in the bot (chat, commands, buttons, GitHub calls), and they are told so rather than raised as an access request. **Deleting** a role is refused while anyone holds it (they are named: move them with `add @user <role>` first) and for the role an approved access request lands on (`role default`, else the least-privileged one). **Renaming** moves everyone who holds it, and its `model:<role>` override, along. A permission added by a later release is seeded into the built-in roles only, never into a custom one, and a revoke you made is never undone.
 
-Sandboxed roles run the Claude CLI without `--dangerously-skip-permissions`, with an explicit `--allowedTools` allow-list; the code-tier list is edited on the Roles page. `quick-review` is a preset that always runs full-access (and writes to the PR) for whoever may run it.
+Only the owner runs the Claude CLI with `--dangerously-skip-permissions`. Every other role runs with `--permission-mode dontAsk` and an explicit `--allowedTools` allow-list; the code-tier list is edited on the Roles page; `SANDBOX_TOOLS` sets the default for the rest. `quick-review` is a preset that always runs full-access (and writes to the PR) for whoever may run it.
 
 **Orca is a grant, and the owner's as seeded.** An Orca worker runs with full permissions on the host Mac, so a role that could start one would step out of its own sandbox. `Bash(orca:*)` (and the installed paths, `ORCA_DENY` in `src/domain/toolPolicy.ts`) is in `--disallowedTools` for every role without `tools:orca`, because an allow-list never refuses - only a denial does. An `executer` still gets a code job done inside its own sandboxed process (clone, edit, commit, push a branch, open the PR) and fans out with the `Agent`/`Task` tool, which is in its tool list in code so the dashboard list cannot drop it. The prompt is role-aware: a role without `tools:orca` is told to use the Agent tool for background work, and to use an Agent for the self-fix reviewer. The denial matches the command as typed, so `bash -c "orca ..."` is not caught.
 
@@ -1252,13 +1334,15 @@ The sidebar collapses to a slim rail of icons, with each page's full name as the
 - **Overview** - counts for users, conversations, stored turns, learnings, then an Activity section over the last 7/30/90 days (`GET /api/stats?days=`): messages per day, brain runs per day (chat and workflow turns, failures in the tooltip), list-price spend per day, the most-run commands, the most active people (turns plus commands) and how many threads were live today and this week. Hand-drawn SVG charts (no chart library), one series and one axis per chart, a hover tooltip on each, coloured only through the theme variables so dark mode just works. Days are the host's local days, and quiet days are drawn as zeros rather than skipped. Read from `messages`, `turn_log`, `llm_usage`, `command_log` and `thread_sessions` (`db/statsRepo.ts`); stored turns are cleared before a DB commit, so the messages chart only covers what is still stored
 - **Users** - manage the allowlist: add someone by searching the workspace (name, @handle or Slack id - email too once `users:read.email` is granted) and picking them from a dropdown with avatar, name, display name and title, then a role; someone already on the list is marked and adding changes their role. The search is `GET /api/slack/members?q=`, filtered server-side over a `users.list` copy held in memory (every cursor page, deleted accounts and bots left out, refreshed at most every 10 minutes, the last good copy kept when a refresh fails). Pasting a raw `U…` id still works when the directory is unavailable. Then edit each person's Slack id, Slack name, GitHub logins (the `github_login:` links the review inbox and GitHub App use) and role inline. The owner's id and role are protected; their name and GitHub logins are editable
 - **Roles** - the owner's page: tick the permissions each role grants (commands, GitHub App actions, tool tiers, MCP servers), set its rank and description, switch it on or off, create a role (optionally copying one), rename or delete one, choose the default role, name an MCP server, assign people to it, and edit the code-tier tool allow-list (see [Roles & tool access](#roles--tool-access)). The owner role is shown but locked
-- **Memory** - with a memory adapter: teach one fact, edit any adapter file by hand (one whole file per save, checked by the same gate as `adapter refine` and kept as a revision; blank a file to remove it), or revert to an earlier revision. Without an adapter it is the flat **Learnings** list: edit one in place and save, or delete it
+- **Memory** - with a memory adapter: propose one fact (it waits for the owner's approval like every learning written through the API, see below), edit any adapter file by hand (one whole file per save, checked by the same gate as `adapter refine` and kept as a revision; blank a file to remove it), or revert to an earlier revision. Without an adapter it is the flat **Learnings** list: edit one in place and save, or delete it
 - **Identity** - edit the bot name, "thinking" label, and system prompt (persona), or reset the persona to default
 - **Conversations** - browse the bot's own stored memory (SQLite), read turns, clear a channel. Both lists scroll instead of paging: the channel list loads the next page as you reach the bottom (`GET /api/conversations?cursor=`, cursor `<lastAt>:<channelId>`), and a conversation opens scrolled to its newest turn in reading order, loading older turns as you scroll up while keeping your place (`GET /api/conversation?channel=&before=<message id>`, 50 a page, `nextBefore` until the first turn). Every channel is shown as name and id (`#team-chat (C0TEAM00001)`, a DM as the person), and every person as name and id - never a bare Slack id, here, in the command log or on Spend. Names come from `conversations.info` / `users.info`, cached in the dashboard process (6 h, failures 10 min) so a page render does not call Slack per row; `conversations.info` needs the `*:read` scopes below
 - **Architecture** - how the bot is built, as a system design walkthrough: an interactive diagram of every process, module and store, request flows you can play step by step (the diagram takes the full page width; play/back/next sit in a dock pinned to the bottom of the screen while the diagram is in view, with the current step as a caption - Space plays or pauses, the arrow keys step - and the step list and box inspector are under it) (a mention, a typed command, the brain running a command, a call from GitHub, a polled review run as the `review` command, a watch coming good, a restart that loses nothing), the layers, and the design decisions with their trade-offs. Under it, a static System design section in interview order: requirements, limits and numbers, the data model, the mention as a sequence diagram, deployment, and failure modes. Drawn from `web/src/systemModel.ts` and `web/src/systemDesign.ts`
 - **Console** - a live Slack message manager (the web port of a terminal TUI): pick a channel/DM, read messages and threads, edit or delete the bot's own messages, reply, and generate an AI draft to review before posting. Requires extra Slack scopes (below); missing scopes surface as an in-app error.
 
 Identity and learnings are stored in the DB and applied on the next reply - no restart.
+
+**Learnings need the owner's approval.** A learning is injected into every future reply, in every channel, so only the owner typing `learn <fact>` saves one active. A `learn` from anyone else, a `learn` the agent runs for itself, and every `POST /api/learnings` (the endpoint the agent curls, and the dashboard's teach box - the loopback API cannot tell the two apart) is stored *pending*: it never reaches a prompt, the API answers `{"status":"pending", "id":N, "message":...}` so the agent does not claim it saved one, and the owner gets a DM with Approve / Reject buttons (or `learn pending`, `learn approve <id>`, `learn reject <id>`). Existing learnings stay active. Up to 20 can wait at once, and `POST /api/learnings/update` (new wording) sends the learning back to pending.
 
 ## Testing
 
@@ -1279,11 +1363,11 @@ bun run test:e2e   # opt-in, real Slack: every e2e/*.e2e.ts (see below)
 | `slackUpload.e2e.ts` | `bin/slack-upload.sh` (`files.getUploadURLExternal` + `files.completeUploadExternal` with `thread_ts`) lands the file in the thread, not at the channel root; the file is deleted afterwards |
 | `slackWatch.e2e.ts` | a real `createWatcher` + `createShellCheck` + `watchRepo`: a watch stays quiet while its shell check exits non-zero, then fires once on exit 0 and hands back into the watched thread |
 
-A new e2e file goes in `e2e/`, imports `./support.ts` (env gate, root message, cleanup) and is added to the `test:e2e` script; `*.e2e.ts` is not picked up by `bun test`, only by `test:e2e`, which CI runs as its own step.
+A new e2e file goes in `e2e/`, imports `./support.ts` (env gate, root message, cleanup) and is added to the `test:e2e` script; `*.e2e.ts` is not picked up by `bun test`, only by `test:e2e`, which CI runs in its own workflow (`e2e.yml`) on a push to `main` only.
 
 `e2e/slackBlockKit.e2e.ts` drives a reply with Block Kit through the real stream code path (`createHandler` -> `createSlackStream` -> `chat.startStream`/`appendStream`/`stopStream`, the tidy-up rewrite and the plain-post fallbacks; only the model is scripted) and reads the thread back with `conversations.replies`. Per reply it asserts exactly one bot message, a `table` block where the reply had one, and no literal ```` ```blockkit ```` in the text or blocks. The cases: a table with an empty header cell (the bug that split a reply in two and lost the table), a plain-text reply, and a block Slack refuses (`alert`), which must degrade to its words.
 
-It is not part of `bun test`: the file is not a `*.test.ts`, and it skips itself unless `JARVIS_E2E=1`, `SLACK_BOT_TOKEN` and `JARVIS_E2E_CHANNEL` are set. CI runs it as its own step with the bot token from the `JARVIS_E2E_SLACK_BOT_TOKEN` repo secret on pushes and same-repo PRs (fork PRs skip the step), and fails that step when the secret is missing rather than letting the suite skip itself green. Run it locally with the bot's token in the environment:
+It is not part of `bun test`: the file is not a `*.test.ts`, and it skips itself unless `JARVIS_E2E=1`, `SLACK_BOT_TOKEN` and `JARVIS_E2E_CHANNEL` are set. CI runs it in its own workflow (`.github/workflows/e2e.yml`) on a push to `main` only, with the bot token from the `JARVIS_E2E_SLACK_BOT_TOKEN` secret of the `e2e` GitHub environment, and fails when the secret is missing rather than letting the suite skip itself green. The token is an environment secret, never a repository secret: a repository secret reaches any workflow run from any branch, so anyone (or any app) that can push a branch could edit `ci.yml` there and send the token out. Set the environment's deployment branches to `main` only, and GitHub refuses the token to a run from any other branch or PR. Run it locally with the bot's token in the environment:
 
 ```bash
 SLACK_BOT_TOKEN=xoxb-... JARVIS_E2E_CHANNEL=<channel id> bun run test:e2e
@@ -1298,7 +1382,7 @@ SLACK_BOT_TOKEN=xoxb-... JARVIS_E2E_CHANNEL=<channel id> bun run test:e2e
 
 A run posts ONE root message (`jarvis e2e run <time>`) and every reply under it in the thread, then `chat.delete`s all of them, so the channel is left as it was. A run that is killed mid-way can leave its root behind: delete it by hand.
 
-CI (`.github/workflows/ci.yml`) runs both, the e2e suite (secret `JARVIS_E2E_SLACK_BOT_TOKEN` plus repository variable `JARVIS_E2E_CHANNEL`), plus the dashboard's typecheck and build (`web/`), on every PR and every push to `main`. The e2e step only runs in a repo that sets the `JARVIS_E2E_CHANNEL` variable, so forks and copies without a Slack workspace skip it, and fork PRs skip it too (GitHub passes them no secrets); everything else still runs. A second job, `gitleaks`, scans the history on every push and the added commits on every PR, diffs plus commit messages, file paths and tag messages; known false positives (the RFC 6238 test vectors and a few fake tokens in tests) are allowlisted by value in `.gitleaks.toml`. To gate merges locally use `bin/merge-when-green.sh <pr>`, which waits for the checks, refuses unless they are all green, refuses at once (exit 4) when the PR conflicts with its base - GitHub runs no CI on it, so merge the base in and resolve first - and approves the PR as the merging account right before it merges (skipped when that account opened the PR, since GitHub forbids self-approval; a failed approval is no merge). With `SELF_PR_REVIEWER` set, run it as that account: `GH_TOKEN=$(gh auth token -u <reviewer>) bin/merge-when-green.sh <pr>`.
+CI (`.github/workflows/ci.yml`) runs typecheck, tests and the dashboard's typecheck and build (`web/`) on every PR and every push to `main`, and the e2e suite (secret `JARVIS_E2E_SLACK_BOT_TOKEN` on the `e2e` environment, deployment branches `main` only, plus repository variable `JARVIS_E2E_CHANNEL`) in its own workflow, `.github/workflows/e2e.yml`, on a push to `main` only. So a PR's e2e result shows after the merge, not before it, and a PR's checks have no e2e row at all (a cancelled one would read as red to `merge-when-green.sh`). The e2e workflow only runs in a repo that sets the `JARVIS_E2E_CHANNEL` variable, so forks and copies without a Slack workspace skip it; everything else still runs. A second job, `gitleaks`, scans the history on every push and the added commits on every PR, diffs plus commit messages, file paths and tag messages; known false positives (the RFC 6238 test vectors and a few fake tokens in tests) are allowlisted by value in `.gitleaks.toml`. To gate merges locally use `bin/merge-when-green.sh <pr>`, which waits for the checks, refuses unless they are all green, refuses at once (exit 4) when the PR conflicts with its base - GitHub runs no CI on it, so merge the base in and resolve first - and approves the PR as the merging account right before it merges (skipped when that account opened the PR, since GitHub forbids self-approval; a failed approval is no merge). With `SELF_PR_REVIEWER` set, run it as that account: `GH_TOKEN=$(gh auth token -u <reviewer>) bin/merge-when-green.sh <pr>`.
 
 ## Keeping private data out of the repo
 

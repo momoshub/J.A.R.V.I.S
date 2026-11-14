@@ -19,7 +19,7 @@
  * limit, refused meanwhile but renewable; its GitHub token is revoked at the
  * lapse. The rows live in `worker_tickets` and survive a restart;
  * only the sha-256 of the token is stored. The token itself is written once to a
- * 0600 file (`WorkerTicketFiles`) that the brief names by path, so it is never in
+ * 0600 file (`WorkerTicketFiles`, with the bot's base URL on a second line) that the brief names by path, so it is never in
  * the brain's context, a command result, a spec or a Slack message, and the file
  * is deleted when the ticket ends. `sweep` (boot, and on a timer) ends what
  * is over for good; every end (revoke, lapse, or the limit) also notifies `onEnd`
@@ -30,21 +30,23 @@
  * the secret appearing in a command line.
  */
 import { createHash } from "node:crypto";
-import type { ActionName } from "../domain/githubAppAction.ts";
 import {
+  COMMIT_IDENTITY,
   endedWorkerOf,
   HOUR_MS,
+  mayPush,
   normRepo,
   PENDING_TTL_MS,
   RENEW_ACTION,
   WORKER_LIFETIME_MAX_MS,
   WORKER_TOKEN_PREFIX,
   WORKER_TTL_MAX_MS,
+  type WorkerGrant,
 } from "../domain/workerTicket.ts";
 import type { WorkerTicketRepo, WorkerTicketRow } from "../infrastructure/db/workerTicketRepo.ts";
 import type { Clock } from "./ports.ts";
 
-/** Where a ticket's token is handed to the worker: a file only the bot's user can read. */
+/** Where a ticket's token is handed to the worker: a file only the bot's user can read (token on line 1, the bot's action base URL on line 2). */
 export type WorkerTicketFiles = {
   /** Write the token (mode 0600) and return the absolute path the worker is told. */
   write: (id: string, token: string) => string;
@@ -58,7 +60,7 @@ export type WorkerTicketGrant = {
   channel: string;
   threadTs?: string;
   repo: string;
-  actions: readonly ActionName[];
+  actions: readonly WorkerGrant[];
   ttlMs: number;
 };
 
@@ -66,7 +68,7 @@ export type WorkerRefusal = "unknown" | "expired" | "revoked" | "pending" | "act
 
 /** What a redeem says; a refusal still names the ticket's owner when it is known, for the audit row. */
 export type WorkerRedeem =
-  | { readonly ok: true; readonly actor: string; readonly channel: string; readonly dispatchId: string; readonly id: string; readonly threadTs?: string }
+  | { readonly ok: true; readonly actor: string; readonly channel: string; readonly dispatchId: string; readonly id: string; readonly threadTs?: string; readonly push: boolean }
   | {
       readonly ok: false;
       readonly reason: WorkerRefusal;
@@ -300,7 +302,9 @@ export const createWorkerTickets = (
       const out = standing(e);
       if (out) return { ok: false, ...out, ...who };
       // Renewing one's own ticket is not a grant: every live ticket may, on its own repo.
-      if (call.action !== RENEW_ACTION && !e.actions.includes(call.action)) {
+      // `git-auth` is also what the commit identity is fetched with: allowed when either grant is held (`push` says which).
+      const granted = call.action === "git-auth" ? e.actions.includes("git-auth") || e.actions.includes(COMMIT_IDENTITY) : e.actions.includes(call.action);
+      if (call.action !== RENEW_ACTION && !granted) {
         return {
           ok: false,
           reason: "action",
@@ -311,7 +315,7 @@ export const createWorkerTickets = (
       if (normRepo(call.repo) !== e.repo) {
         return { ok: false, reason: "repo", message: `a worker ticket is for ${e.repo} only, not ${call.repo}`, ...who };
       }
-      return { ok: true, actor: e.actor, channel: e.channel, dispatchId: e.dispatchId, id: e.id, ...(e.threadTs ? { threadTs: e.threadTs } : {}) };
+      return { ok: true, actor: e.actor, channel: e.channel, dispatchId: e.dispatchId, id: e.id, push: mayPush(e.actions), ...(e.threadTs ? { threadTs: e.threadTs } : {}) };
     },
 
     renew: (target, ttlMs) => {

@@ -18,7 +18,7 @@ export const BUILTIN_RANK: Readonly<Record<string, number>> = { pal: 0, executer
 const DESCRIPTION: Readonly<Record<string, string>> = {
   pal: "Sandboxed, read-only tools in a fixed scratch directory. Limited command allowance.",
   executer: "Sandboxed, plus code edits, commits, pushing a branch and opening a PR, subagents, browser tests.",
-  admin: "Full tool access and the configuration commands. Cannot start Orca workers or manage roles.",
+  admin: "Sandboxed like an executer (code tools, the read-only databases, Notion), plus the configuration commands and managing users. Cannot start Orca workers or manage roles.",
 };
 
 export type SeedInput = {
@@ -72,18 +72,17 @@ export const defaultGrants = (seed: string, input: SeedInput): readonly string[]
     if (s === DATADOG_SERVER) return true;
     // Notion writes as the host: the `note` floor (admin) - see `note_min_role` in the migration.
     if (s === NOTION_SERVER) return rank >= (COMMAND_RANK[input.floors?.note ?? "admin"] ?? 3);
-    // Full access reaches every database server; an executer only the read-only subset.
-    return rank >= BUILTIN_RANK.admin! || (rank >= BUILTIN_RANK.executer! && executerDb.has(s));
+    // Only the owner has full access, so a database server is the read-only subset an executer (and admin) may query.
+    return rank >= BUILTIN_RANK.executer! && executerDb.has(s);
   });
   const grants: string[] = [...commands, ...mcp.map(mcpPerm)];
   if (rank >= BUILTIN_RANK.executer!) grants.push(PERM.code, PERM.shellWatch, PERM.unlimited, PERM.desktop);
   // An executer acts as the app for commits (identity only: no `github:push`, so no token), PRs, comments, labels and reviewer requests.
   if (rank === BUILTIN_RANK.executer!) grants.push(...EXECUTER_GITHUB.map(githubPerm));
   if (rank >= BUILTIN_RANK.admin!) {
-    // `code` is the sandbox tier; full access replaces it.
-    grants.splice(grants.indexOf(PERM.code), 1);
+    // Admin stays on the `code` sandbox tier like an executer: `tools:full-access` is the owner's alone.
     grants.push(
-      PERM.fullAccess, PERM.selfUpdate, PERM.approveCommands, PERM.decideAccess, PERM.manageSettings,
+      PERM.selfUpdate, PERM.approveCommands, PERM.decideAccess, PERM.manageSettings,
       PERM.reviewPolicy, PERM.stopAny, PERM.twoFa, PERM.manageReminders, ...GITHUB_ALL,
     );
   }

@@ -14,6 +14,7 @@
  *   forwards text deltas and tool-call progress to a sink as they arrive.
  */
 import type {
+  BillingContext,
   LlmCompleteParams,
   LlmPort,
   LlmSession,
@@ -29,6 +30,7 @@ import type { PromptMessage } from "../../domain/types.ts";
 import type { ToolPolicy } from "../../domain/toolPolicy.ts";
 import { runsOrcaWorkerStart } from "../../domain/threadBackground.ts";
 import { isNoiseTool, redactPaths, redactSecrets } from "../../domain/toolVisibility.ts";
+import { scrubSecretEnv } from "../../domain/turnEnv.ts";
 import { stopProcess } from "./killTree.ts";
 import { ignoreQuietly } from "../../application/ignoredError.ts";
 import { NO_CLAUDEAI_CONNECTORS_ENV, createClaudeJsonReader, mcpConfigFor } from "./mcpConfig.ts";
@@ -59,6 +61,18 @@ export type ClaudeCliConfig = {
    * bot's own Orca terminal handle; an undefined value removes an inherited one.
    */
   turnEnv?: () => Promise<Record<string, string | undefined>>;
+  /**
+   * Secret-shaped variable names a turn may still inherit (`TURN_ENV_PASSTHROUGH`).
+   * Everything else credential-shaped is withheld from the spawn; see `domain/turnEnv.ts`.
+   */
+  envPassthrough?: readonly string[];
+  /**
+   * Mint the per-turn Slack ticket for a run. The ticket goes into the spawned
+   * process's environment as `JARVIS_SLACK_TICKET` (the bot's Slack token does
+   * not), and `end` runs when that process exits, so the ticket dies with the
+   * turn. Nothing is minted when it returns undefined.
+   */
+  slackTicket?: (bill: BillingContext | undefined) => { token: string; end: () => void } | undefined;
   /**
    * Agent definitions passed as `--agents`, asked fresh each turn. Replaces
    * built-in agents of the same name, e.g. to pin Explore and Plan's models.
@@ -308,8 +322,13 @@ const buildArgs = (
   const skip = policy ? policy.skipPermissions : config.skipPermissions !== false;
   if (skip) {
     args.push("--dangerously-skip-permissions");
-  } else if (policy?.allowedTools && policy.allowedTools.length > 0) {
-    args.push("--allowedTools", ...policy.allowedTools);
+  } else {
+    // `dontAsk` refuses whatever is not on the allow-list straight away. A turn
+    // has no one to answer a prompt, so the alternative to a refusal is a hang.
+    args.push("--permission-mode", "dontAsk");
+    if (policy?.allowedTools && policy.allowedTools.length > 0) {
+      args.push("--allowedTools", ...policy.allowedTools);
+    }
   }
   // Denials apply either way. `--disallowedTools` is honoured alongside
   // `--dangerously-skip-permissions` (verified), so a full-access role can still
@@ -331,15 +350,18 @@ const spawnClaude = (
   runTicket?: string,
   session?: LlmSession,
   extraEnv: Record<string, string | undefined> = {},
+  bill?: BillingContext,
 ) => {
+  const slackTicket = config.slackTicket?.(bill);
   const proc = Bun.spawn({
     cmd: [config.binPath ?? "claude", ...args, ...connectorArgs(config, policy, useHostLogin)],
     stdin: Buffer.from(prompt),
     stdout: "pipe",
     stderr: "pipe",
     cwd: policy?.cwd ?? config.cwd,
-    // Non-interactive hint. process.env carries the bot's SLACK_BOT_TOKEN etc so the
-    // CLI's Bash tool can call the Slack Web API with her own credentials.
+    // The environment is the bot's MINUS its secrets (`hostLoginEnv`): the turn's
+    // Bash tool is driven by a model that reads untrusted text, so a token in
+    // here is one curl from leaving. Slack goes through the ticket below instead.
     // A caller's own token replaces the bot's for this spawn only: the CLI honours
     // CLAUDE_CODE_OAUTH_TOKEN over any login on the host, so the turn is billed to
     // them and runs with their account's access.
@@ -348,9 +370,11 @@ const spawnClaude = (
     // repo and reports itself as a second writer. A one-shot run has no
     // session, and an inherited id from a parent turn must not leak into it.
     env: {
-      ...hostLoginEnv(oauthToken, useHostLogin),
+      ...hostLoginEnv(oauthToken, useHostLogin, config.envPassthrough),
       ...extraEnv,
       ...(runTicket ? { JARVIS_RUN_TICKET: runTicket } : {}),
+      // undefined removes one inherited from a parent turn: a ticket is never borrowed
+      JARVIS_SLACK_TICKET: slackTicket?.token,
       BOT_SESSION_ID: session?.id,
     },
   });
@@ -370,6 +394,8 @@ const spawnClaude = (
   const limit = setTimeout(() => stopProcess(proc), policy?.timeoutMs ?? config.timeoutMs ?? 120_000);
   limit.unref?.();
   void proc.exited.then(() => clearTimeout(limit));
+  // The Slack ticket belongs to this process alone.
+  if (slackTicket) void proc.exited.then(() => slackTicket.end());
   return proc;
 };
 
@@ -396,15 +422,24 @@ const connectorArgs = (config: ClaudeCliConfig, policy?: ToolPolicy, useHostLogi
 };
 
 /**
- * The environment the CLI is spawned with.
+ * The environment the CLI is spawned with: the bot's, without its secrets
+ * (`scrubSecretEnv`), apart from the CLI's own login and whatever
+ * `TURN_ENV_PASSTHROUGH` names.
  *
  * `useHostLogin` REMOVES the token rather than merely omitting it: the bot's own
  * credential is in `process.env`, so leaving it there would win and the run
  * would once again have no connectors. The same goes for an inherited
  * `ENABLE_CLAUDEAI_MCP_SERVERS=false`.
  */
-const hostLoginEnv = (oauthToken?: string, useHostLogin?: boolean): Record<string, string | undefined> => {
-  const env: Record<string, string | undefined> = { ...process.env, IS_SANDBOX: "1" };
+const hostLoginEnv = (
+  oauthToken?: string,
+  useHostLogin?: boolean,
+  passthrough: readonly string[] = [],
+): Record<string, string | undefined> => {
+  const env: Record<string, string | undefined> = {
+    ...scrubSecretEnv(process.env, new Set(passthrough)).env,
+    IS_SANDBOX: "1",
+  };
   if (useHostLogin) {
     delete env.CLAUDE_CODE_OAUTH_TOKEN;
     // a parent that is itself a bot turn carries the connector switch-off; drop it too
@@ -455,7 +490,7 @@ export const createClaudeCliLlm = (config: ClaudeCliConfig = {}): LlmPort => {
   };
 
   const completeOneShot = async ({ system, messages, assistantName, policy, session, oauthToken, useHostLogin, signal, runTicket, bill, onUsage }: LlmCompleteParams) => {
-    const proc = spawnClaude(config, [...buildArgs(config, false, policy, session), "--append-system-prompt", system], renderPrompt(messages, assistantName), policy, oauthToken, useHostLogin, signal, runTicket, session, await turnEnv());
+    const proc = spawnClaude(config, [...buildArgs(config, false, policy, session), "--append-system-prompt", system], renderPrompt(messages, assistantName), policy, oauthToken, useHostLogin, signal, runTicket, session, await turnEnv(), bill);
     const [stdout, stderr, exitCode] = await Promise.all([
       new Response(proc.stdout).text(),
       new Response(proc.stderr).text(),
@@ -485,7 +520,7 @@ export const createClaudeCliLlm = (config: ClaudeCliConfig = {}): LlmPort => {
    * record of what it ran.
    */
   const runStreaming = async ({ system, messages, assistantName, policy, session, oauthToken, useHostLogin, signal, runTicket, bill, onUsage }: LlmCompleteParams, sink: LlmStreamSink) => {
-    const proc = spawnClaude(config, [...buildArgs(config, true, policy, session), "--append-system-prompt", system], renderPrompt(messages, assistantName), policy, oauthToken, useHostLogin, signal, runTicket, session, await turnEnv());
+    const proc = spawnClaude(config, [...buildArgs(config, true, policy, session), "--append-system-prompt", system], renderPrompt(messages, assistantName), policy, oauthToken, useHostLogin, signal, runTicket, session, await turnEnv(), bill);
     const stderrPromise = new Response(proc.stderr).text();
 
     /**

@@ -19,12 +19,14 @@ import type { UsageRepo } from "../db/usageRepo.ts";
 import type { MessageRepo } from "../db/messageRepo.ts";
 import type { UserRepo } from "../db/userRepo.ts";
 import type { LearningsRepo } from "../db/learningsRepo.ts";
+import type { LearningApprovalDeps } from "../../application/learningApproval.ts";
 import type { KitViewRepo } from "../db/kitViewRepo.ts";
 import type { SettingsRepo } from "../db/settingsRepo.ts";
 import type { RoleRepo } from "../db/roleRepo.ts";
 import type { StatsRepo } from "../db/statsRepo.ts";
 import { createSlackDirectory } from "../../application/slackDirectory.ts";
 import { createNameResolver } from "../../application/nameResolver.ts";
+import type { SlackProxy } from "../../application/slackProxy.ts";
 import { ignoreQuietly } from "../../application/ignoredError.ts";
 
 export type DashboardConfig = {
@@ -53,12 +55,13 @@ export type DashboardDeps = {
   /**
    * The memory adapter, when one is configured.
    *
-   * `remember` is what the brain's own save endpoint writes through, so a fact
-   * it decides to keep mid-conversation lands in the adapter rather than the
-   * old table. `status`, `view` and `files` back the memory page, and `edit`
-   * is its hand editor.
+   * `status`, `view` and `files` back the memory page, and `edit` is its hand
+   * editor. A fact the brain POSTs does not land here: it waits for the owner
+   * (`learningApproval`), which files it into the adapter once approved.
    */
   adapter?: MemoryAdapterPort;
+  /** Owner approval of every learning written through the API; without it the learnings endpoints refuse. */
+  learningApproval?: LearningApprovalDeps;
   settings: SettingsRepo;
   clock: Clock;
   /** Current bot identity, for the header and identity editor. */
@@ -104,6 +107,12 @@ export type DashboardDeps = {
    * the ticket resolves to. Returns GitHub's JSON.
    */
   githubAction?: (req: { ticket: string } & Record<string, unknown>) => Promise<Record<string, unknown>>;
+  /**
+   * The bot's side of the turn's Slack helpers: a ticketed, allowlisted call to
+   * the Slack Web API, and a ticketed download of a private file. The turn never
+   * holds the bot token; it only ever holds the ticket.
+   */
+  slackProxy?: SlackProxy;
   /** Modals the brain stores for a `jv:modal:<id>` button to open on click. */
   kitViews?: KitViewRepo;
   /**
@@ -220,6 +229,7 @@ export const createDashboard = (config: DashboardConfig, deps: DashboardDeps) =>
     users: deps.users,
     messages: deps.messages,
     learnings: deps.learnings,
+    learningApproval: deps.learningApproval,
     settings: deps.settings,
     adapter: deps.adapter,
     commandLog: deps.commandLog,
@@ -364,9 +374,9 @@ export const createDashboard = (config: DashboardConfig, deps: DashboardDeps) =>
         case "/api/kit/views":
           return reply(app.saveKitView(body.view));
         case "/api/learnings":
-          return reply(app.teach(body.content));
+          return reply(await app.teach(body.content));
         case "/api/learnings/update":
-          return reply(app.updateLearning(body.id, body.content));
+          return reply(await app.updateLearning(body.id, body.content));
         case "/api/learnings/remove":
           return reply(app.removeLearning(body.id));
         case "/api/adapter/revert":
@@ -404,6 +414,22 @@ export const createDashboard = (config: DashboardConfig, deps: DashboardDeps) =>
           } catch (e) {
             return jsonError(e instanceof Error ? e.message : String(e), 500);
           }
+        }
+        case "/api/slack/proxy": {
+          if (!deps.slackProxy) return jsonError("The Slack proxy is not configured", 503);
+          const answer = await deps.slackProxy.call({ ticket: body.ticket, method: body.method, params: body.params });
+          return new Response(answer.body, { status: answer.status, headers: { "content-type": "application/json" } });
+        }
+        case "/api/slack/file": {
+          if (!deps.slackProxy) return jsonError("The Slack proxy is not configured", 503);
+          const file = await deps.slackProxy.download({ ticket: body.ticket, url: body.url });
+          if (!file.ok) return jsonError(file.error, file.status);
+          return new Response(file.body, {
+            headers: {
+              "content-type": file.contentType,
+              ...(file.contentLength ? { "content-length": file.contentLength } : {}),
+            },
+          });
         }
         case "/api/github-app/comment": {
           if (!deps.githubComment) return jsonError("The GitHub App is not configured", 503);

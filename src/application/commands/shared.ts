@@ -19,6 +19,7 @@ import { type TotpPort } from "../totp.ts";
 import type { RunRegistry } from "../runRegistry.ts";
 import type { ThreadQueue } from "../threadQueue.ts";
 import type { ThreadSessionRepo } from "../../infrastructure/db/threadSessionRepo.ts";
+import type { ThreadBriefRepo } from "../../infrastructure/db/threadBriefRepo.ts";
 import type { AllowedUser, PromptContext, UserRole } from "../../domain/types.ts";
 import type { RoleBook } from "../../domain/roles.ts";
 import type { PermissionInfo } from "../../domain/permissions.ts";
@@ -39,6 +40,7 @@ import type { WatchRepo } from "../../infrastructure/db/watchRepo.ts";
 import type { ReminderRepo } from "../../infrastructure/db/reminderRepo.ts";
 import type { LoopRepo } from "../../infrastructure/db/loopRepo.ts";
 import type { LoopApprovalDeps } from "../loopApproval.ts";
+import type { LearningApprovalDeps } from "../learningApproval.ts";
 import type { StuckWork } from "../../domain/stuckWork.ts";
 import type { FollowRepo } from "../../infrastructure/db/followRepo.ts";
 import type { WorkflowRepo } from "../../infrastructure/db/workflowRepo.ts";
@@ -55,6 +57,8 @@ export type CommandDeps = {
   users: UserRepo;
   messages: MessageRepo;
   learnings?: LearningsRepo;
+  /** Who may save a learning active and the owner's approval of the rest: `learn`, `relearn`. */
+  learningApproval?: LearningApprovalDeps;
   /** The memory adapter directory; when set, it replaces the learnings list. */
   adapterStore?: AdapterStore;
   adapterRevisions?: AdapterRevisionRepo;
@@ -185,6 +189,8 @@ export type CommandDeps = {
   /** One CLI session per thread, for the `session` command to inspect and reset. */
   threadSessions?: ThreadSessionRepo;
   threadSessionsOn?: () => boolean;
+  /** Notes one thread leaves for another, for `brief`. */
+  briefs?: ThreadBriefRepo;
   clock: Clock;
   ownerSlackId: string;
 };
@@ -206,6 +212,8 @@ export type Context = {
   channelId: string;
   /** Thread the command was typed in; absent when invoked by slash command. */
   threadTs?: string;
+  /** The message the command was typed in (or the turn that ran it began with); absent for a slash command. */
+  messageTs?: string;
   args: string[];
   rest: string;
   /** configured message prefix + slash, for help/hint text */

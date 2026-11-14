@@ -17,6 +17,7 @@ import { isSilenceNote } from "./domain/silence.ts";
 import { openDatabase } from "./infrastructure/db/client.ts";
 import { adoptDatabase } from "./infrastructure/db/location.ts";
 import { createThreadSessionRepo } from "./infrastructure/db/threadSessionRepo.ts";
+import { createThreadBriefRepo } from "./infrastructure/db/threadBriefRepo.ts";
 import { createThreadQueue } from "./application/threadQueue.ts";
 import { RESTART_DELAY_MS, RESTART_HOLD_NOTICE, RESTART_MAX_WAIT_MS, restartWhenIdle } from "./domain/selfUpdate.ts";
 import { isDbFileSwapped } from "./domain/dbHealth.ts";
@@ -37,7 +38,6 @@ import {
   adapterStatus,
   createAdapterReader,
   editAdapterFile,
-  rememberFact,
   revertAdapter,
 } from "./application/adapterMemory.ts";
 import { createAdapterRevisionRepo } from "./infrastructure/db/adapterRevisionRepo.ts";
@@ -72,6 +72,7 @@ import { createClaudeJsonReader, unlistedLocalMcpServers } from "./infrastructur
 import { createReminderSender } from "./application/reminders.ts";
 import { createLoopRunner } from "./application/loops.ts";
 import { expirePendingLoops, type LoopApprovalDeps } from "./application/loopApproval.ts";
+import { injectedLearnings, type LearningApprovalDeps } from "./application/learningApproval.ts";
 import { createShellCheck } from "./infrastructure/system/shellCheck.ts";
 import { createOrcaCli, createOrcaTerminal } from "./infrastructure/system/orcaTerminal.ts";
 import { createOrcaProbe } from "./infrastructure/system/orcaProbe.ts";
@@ -95,7 +96,7 @@ import { agentModelEnv, agentModelsOf, builtinAgentOverrides } from "./domain/ag
 import { loadBotProfile } from "./application/botProfile.ts";
 import { seedOwner } from "./infrastructure/db/seed.ts";
 import { createAnthropicLlm } from "./infrastructure/llm/anthropic.ts";
-import { createClaudeCliLlm } from "./infrastructure/llm/claudeCli.ts";
+import { createClaudeCliLlm, type ClaudeCliConfig } from "./infrastructure/llm/claudeCli.ts";
 import { WebClient } from "@slack/web-api";
 import { createSlackApp } from "./infrastructure/slack/app.ts";
 import { createInboxReceiver, tidyInterrupted } from "./infrastructure/slack/inboxReceiver.ts";
@@ -127,6 +128,9 @@ import { createDashboard } from "./infrastructure/dashboard/server.ts";
 import { runForBrain } from "./application/brainRun.ts";
 import { dispatchCommand, isQuietCommand, listCommandInfo } from "./application/commands.ts";
 import { createCommandTickets, refusalMessage } from "./application/commandTickets.ts";
+import { createSlackTickets } from "./application/slackTickets.ts";
+import { createSlackProxy } from "./application/slackProxy.ts";
+import { scrubSecretEnv } from "./domain/turnEnv.ts";
 import { createWorkerTickets, revokeOnWorkerEnd } from "./application/workerTickets.ts";
 import { createWorkerTicketRepo } from "./infrastructure/db/workerTicketRepo.ts";
 import { createWorkerTicketFiles } from "./infrastructure/system/workerTicketFiles.ts";
@@ -162,6 +166,7 @@ const buildLlm = (
   onToolTrace?: ToolTraceSink,
   turnEnv?: () => Promise<Record<string, string | undefined>>,
   agents?: () => Record<string, Record<string, unknown>>,
+  slackTicket?: ClaudeCliConfig["slackTicket"],
 ): LlmPort =>
   config.llmProvider === "claude-cli"
     ? createClaudeCliLlm({
@@ -174,6 +179,8 @@ const buildLlm = (
         onToolTrace,
         turnEnv,
         agents,
+        slackTicket,
+        envPassthrough: config.turnEnvPassthrough,
       })
     : createAnthropicLlm({
         // guaranteed present for this provider by config validation
@@ -288,17 +295,25 @@ const main = async () => {
   // One CLI session per Slack thread, so a follow-up keeps the context the last
   // turn built instead of starting the conversation over.
   const threadSessions = createThreadSessionRepo(db);
+  const briefs = createThreadBriefRepo(db);
   const accessRequests = createAccessRequestRepo(db);
   const commandApprovals = createCommandApprovalRepo(db);
   const cloudwatchRepo = createCloudwatchRepo(db);
   // A query still `running` lost its process in the last restart.
   cloudwatchRepo.failRunning(Date.now());
   const commandTickets = createCommandTickets(() => Date.now(), undefined, config.commandTicketUses);
+  // A turn's Slack access: the bot's token stays here, a turn only ever holds a ticket for it.
+  const slackTickets = createSlackTickets(() => Date.now());
+  const slackProxy = createSlackProxy({
+    tickets: slackTickets,
+    botToken: config.slackBotToken,
+    log: (line) => console.error(`[slack-proxy] ${line}`),
+  });
   // Scoped GitHub App tickets for Orca workers; revoked when `watch worker` sees the worker end.
   // Persisted by hash; the token itself is only ever in a 0600 file the brief names by path.
   const workerTickets = createWorkerTickets(() => Date.now(), {
     repo: createWorkerTicketRepo(db),
-    files: createWorkerTicketFiles(WORKER_TICKET_DIR),
+    files: createWorkerTicketFiles(WORKER_TICKET_DIR, `http://127.0.0.1:${config.dashboardPort}`),
   });
   // Tickets that expired while the bot was down: delete their files and rows now, and on a timer.
   workerTickets.sweep();
@@ -350,6 +365,8 @@ const main = async () => {
   const fileScript = join(import.meta.dir, "..", "bin", "slack-file.sh");
   const grafanaGetScript = join(import.meta.dir, "..", "bin", "grafana-get.sh");
   const slackReadScript = join(import.meta.dir, "..", "bin", "slack-read.sh");
+  // The generic door for every other Slack call; reads and writes through the bot's allowlist.
+  const slackCallScript = join(import.meta.dir, "..", "bin", "slack-api.sh");
   // How `watch reply` asks whether anybody has answered yet.
   const slackWaitScript = join(import.meta.dir, "..", "bin", "slack-wait.sh");
   // How `watch worker` asks whether an Orca worker finished, died or waits for
@@ -414,6 +431,7 @@ const main = async () => {
       protectedPaths: [repoPath],
       dbServers: config.dbMcpServers,
       executerDbServers: config.executerDbMcpServers,
+      sandboxTools: config.sandboxTools,
       executerTools: (settings.get(SETTING_KEYS.executerTools) ?? "")
         .split(/[,\n]/)
         .map((s) => s.trim())
@@ -473,10 +491,32 @@ const main = async () => {
   const turnEnv = async () => ({
     ORCA_TERMINAL_HANDLE: await orcaTerminal?.handle(),
     ...agentModelEnv(agentModels()),
+    // Where a turn finds the Slack helper and the bot's local endpoint for it. Paths and a
+    // loopback URL, no secret: the credential is the per-turn ticket.
+    BOT_SLACK_CALL: slackCallScript,
+    JARVIS_SLACK_API_URL: `http://127.0.0.1:${config.dashboardPort}/api/slack`,
   });
+  // A turn's environment is the bot's without its secrets. Names only, never values.
+  const withheld = scrubSecretEnv(process.env, new Set(config.turnEnvPassthrough)).removed;
+  console.log(
+    `[llm] turns run without ${withheld.length} secret variable${withheld.length === 1 ? "" : "s"}${withheld.length ? ` (${withheld.join(", ")})` : ""}; Slack goes through a per-turn ticket`,
+  );
   // Checked once at boot, so the first turn does not pay for it.
   void orcaTerminal?.handle();
-  const llm = buildLlm(config, fullCwd, recordUsage, toolTrace, turnEnv, () => builtinAgentOverrides(agentModels()));
+  const llm = buildLlm(
+    config,
+    fullCwd,
+    recordUsage,
+    toolTrace,
+    turnEnv,
+    () => builtinAgentOverrides(agentModels()),
+    // One ticket per spawned turn, only when the run belongs to a channel; it ends with the process.
+    (bill) => {
+      if (!bill?.channel) return undefined;
+      const token = slackTickets.issue({ channel: bill.channel, ...(bill.threadTs ? { threadTs: bill.threadTs } : {}) });
+      return { token, end: () => slackTickets.revoke(token) };
+    },
+  );
   console.log(`[llm] ${profile().name}'s brain: ${modelLabel(config)}`);
 
   // Slack Web API + AI drafting, shared by the console and the power-tool commands.
@@ -495,7 +535,8 @@ const main = async () => {
   const promptContext = () => ({
     botName: profile().name,
     base: settings.get(SETTING_KEYS.systemPrompt),
-    learnings: learnings.list().map((l) => l.content),
+    // Active learnings only: a pending one is the owner's to approve first.
+    learnings: injectedLearnings(learnings),
     adapter: adapterReader.read(),
   });
   const draft = createDraftReply({ llm, promptContext, ownerSlackId: config.ownerSlackId });
@@ -541,6 +582,15 @@ const main = async () => {
     offsetMinutes: () => hostOffsetMin(clock()),
     log: (l) => activity.line(`loop approval: ${l}`),
   };
+  // A learning from anyone but the owner's own typing waits here for the owner's Approve; the same object backs `learn`, the learnings API and the button handler.
+  const learningApproval: LearningApprovalDeps = {
+    learnings,
+    adapter: () => (adapterStore.exists() ? adapterDeps() : undefined),
+    slack: slackAdmin,
+    clock,
+    ownerSlackId: config.ownerSlackId,
+    log: (l) => activity.line(`learning approval: ${l}`),
+  };
   const deps: RespondDeps = {
     users,
     messages,
@@ -563,6 +613,7 @@ const main = async () => {
     reminders,
     loops,
     loopApproval,
+    learningApproval,
     slackWaitScript,
     orcaWorkerWait,
     workerTickets,
@@ -647,6 +698,7 @@ const main = async () => {
     workerCalls: (channelId: string, threadTs: string, limit: number) =>
       readTraceCalls(join(config.logDir, "threads"), channelId, threadTs, WORKER_BILL_KIND, limit),
     threadSessions,
+    briefs,
     // One turn at a time per thread. Two messages a few minutes apart used to
     // run at once, doing the same work twice - two branches, two PRs - and
     // resuming the same CLI session from two processes while they did it.
@@ -817,6 +869,7 @@ const main = async () => {
       roleRepo,
       messages,
       learnings,
+      learningApproval,
       kitViews,
       stats: createStatsRepo(db),
       adapter: adapterStore.exists()
@@ -834,12 +887,6 @@ const main = async () => {
                 revisions: adapterRevisions.list(20),
                 items: bullets(a.policy) + bullets(a.notes) + a.people.size + a.channels.size + a.skills.length,
               };
-            },
-            remember: (content, by) => {
-              const r = rememberFact(adapterDeps(), content, { kind: "global" }, by);
-              return r.ok
-                ? { ok: true, warnings: r.warnings }
-                : { ok: false, violations: r.violations };
             },
             revert: (id, by) => {
               const r = revertAdapter(adapterDeps(), id, by);
@@ -871,7 +918,7 @@ const main = async () => {
         if (!user) throw new Error("whoever asked is not on the access list");
 
         // `fromBrainRun` is what lets `worker-ticket` mint: it exists only on this path, after a turn ticket redeemed.
-        const opts = { prefix: config.commandPrefix, slash: config.slashCommand, threadTs: ctx.threadTs, fromBrainRun: true };
+        const opts = { prefix: config.commandPrefix, slash: config.slashCommand, threadTs: ctx.threadTs, messageTs: ctx.messageTs, fromBrainRun: true };
         return runForBrain({
           quiet: isQuietCommand(line),
           show: show === true,
@@ -902,6 +949,7 @@ const main = async () => {
         if (!githubActions) throw new Error("the GitHub App is not configured");
         return { ...(await githubActions.run(req)) };
       },
+      slackProxy,
     },
   );
   dashboard.start();
@@ -998,6 +1046,19 @@ const main = async () => {
     console.log(`[ui] ${line}`);
   });
 
+  // A watch predicate or loop script runs as the bot (its own environment, authored by an admin),
+  // and `watch reply` reads Slack through the same helper a turn uses, so each run gets a read-only
+  // Slack ticket for the length of the check.
+  const readOnlySlackEnv = () => {
+    const token = slackTickets.issue({});
+    return {
+      env: {
+        JARVIS_SLACK_TICKET: token,
+        JARVIS_SLACK_API_URL: `http://127.0.0.1:${config.dashboardPort}/api/slack`,
+      },
+      done: () => slackTickets.revoke(token),
+    };
+  };
   // TODO(split): move watcher, orca bridge and reminder sender wiring to src/application/watchWiring.ts
   // The thing that actually waits. It polls outside every turn and session, so
   // a thread waiting on a build is not a thread that has stopped working - and
@@ -1005,7 +1066,7 @@ const main = async () => {
   const watcher = createWatcher({
     watches,
     clock,
-    check: createShellCheck(fullCwd),
+    check: createShellCheck(fullCwd, readOnlySlackEnv),
     runTurn: deps.runTurn!,
     gate: { step: ciGate.step, stop: ciGate.stop },
     say: async (channel, text, thread) => void (await slackAdmin.post(channel, text, thread, SIGNATURES.watch)),
@@ -1053,8 +1114,9 @@ const main = async () => {
     runTurn: deps.runTurn!,
     offsetMinutes: () => hostOffsetMin(clock()),
     dm: async (userId, text) => slackAdmin.postDm(userId, text, SIGNATURES.loop),
+    permalink: (channel, ts) => slackAdmin.permalink?.(channel, ts) ?? Promise.resolve(undefined),
     // Unattended spend needs a role that can still start a loop: a demoted or removed creator's loops stop.
-    check: createShellCheck(fullCwd),
+    check: createShellCheck(fullCwd, readOnlySlackEnv),
     // Pending script loops nobody answered in 24h are deleted, restart or not.
     sweep: () => expirePendingLoops(loopApproval),
     mayRun: (id, script) => {

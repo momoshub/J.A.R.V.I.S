@@ -28,26 +28,43 @@ export const RENEW_ACTION = "ticket-renew";
 export const PENDING_TTL_MS = 10 * 60_000;
 
 /**
- * What a worker gets when the brain names no actions: open the PR, talk on it,
- * edit it. Not `git-auth` (git and push): a worker pushes with the one-shot
- * human credential of the org's own rule (where the app has contents:read it
- * cannot push anyway). `git`/`push` stay an explicit opt-in.
+ * Not an app action but a grant: the app's commit IDENTITY (name + email, no
+ * token), what an executer already gets from `git-auth`. Every worker ticket
+ * carries it, so `bin/github-app.sh git ... -- commit` always works as the app
+ * (the org rule: every commit goes out as the app); without it a worker could
+ * open a PR but not make the commit the PR needs. It cannot push or touch
+ * GitHub. On the wire it is still a `git-auth` call; the ticket decides whether
+ * that call comes back with a token (`git-auth` granted) or without (this only).
  */
-export const DEFAULT_WORKER_ACTIONS: readonly ActionName[] = ["pr-create", "comment", "pr-edit"];
+export const COMMIT_IDENTITY = "git-commit";
+/** What a worker ticket may list: an app action, or the commit identity. */
+export type WorkerGrant = ActionName | typeof COMMIT_IDENTITY;
+
+/**
+ * What a worker gets when the brain names no actions: open the PR, talk on it,
+ * edit it, and commit as the app (identity only). Not `git-auth` (a push-capable
+ * token): a worker pushes with the one-shot human credential of the org's own
+ * rule (where the app has contents:read it cannot push anyway). `push` (or
+ * `git`/`git-auth`) stays an explicit opt-in.
+ */
+export const DEFAULT_WORKER_ACTIONS: readonly WorkerGrant[] = ["pr-create", "comment", "pr-edit", COMMIT_IDENTITY];
 /**
  * The most a worker ticket can ever grant. No review (a worker approving its own
  * PR), no merge, no close/reopen, no label removal: those stay with a turn.
  */
-export const WORKER_ACTION_CEILING: readonly ActionName[] = [...DEFAULT_WORKER_ACTIONS, "git-auth", "labels-add", "reviewers-request"];
+export const WORKER_ACTION_CEILING: readonly WorkerGrant[] = [...DEFAULT_WORKER_ACTIONS, "git-auth", "labels-add", "reviewers-request"];
 
-/** The brain says `git` / `push`; on the wire both are the `git-auth` action. */
-const ALIASES: Readonly<Record<string, ActionName>> = { git: "git-auth", push: "git-auth" };
+/** The brain says `git` / `push`; on the wire both are the `git-auth` action (a push-capable token). */
+const ALIASES: Readonly<Record<string, WorkerGrant>> = { git: "git-auth", push: "git-auth" };
+
+/** Whether a ticket's grants include a push-capable token, not just the commit identity. */
+export const mayPush = (actions: readonly string[]): boolean => actions.includes("git-auth");
 
 export type WorkerTicketRequest = {
   repo: string;
   /** `pending` = bind later with `worker-ticket bind`. */
   dispatchId: string | "pending";
-  actions: readonly ActionName[];
+  actions: readonly WorkerGrant[];
   ttlMs: number;
 };
 
@@ -88,13 +105,13 @@ export const parseWorkerTicketArgs = (
   if (dispatch !== "pending" && !DISPATCH.test(dispatch)) {
     return { ok: false, error: "the second argument must be a ctx_... dispatch id, or `pending` to bind it after worker-start" };
   }
-  const actions: ActionName[] = [];
+  const actions: WorkerGrant[] = [];
   for (const raw of rest) {
     const name = ALIASES[raw] ?? raw;
     if (!(WORKER_ACTION_CEILING as readonly string[]).includes(name)) {
       return { ok: false, error: `a worker may not get \`${raw}\`; the most a worker ticket grants is ${WORKER_ACTION_CEILING.join(", ")}` };
     }
-    if (!actions.includes(name as ActionName)) actions.push(name as ActionName);
+    if (!actions.includes(name as WorkerGrant)) actions.push(name as WorkerGrant);
   }
   let ttlMs = WORKER_TTL_DEFAULT_MS;
   if (ttl !== undefined) {
@@ -109,7 +126,8 @@ export const parseWorkerTicketArgs = (
     req: {
       repo: normRepo(repo),
       dispatchId: dispatch,
-      actions: actions.length > 0 ? actions : DEFAULT_WORKER_ACTIONS,
+      // The commit identity rides on every ticket, named or not.
+      actions: actions.length > 0 ? (actions.includes(COMMIT_IDENTITY) ? actions : [...actions, COMMIT_IDENTITY]) : DEFAULT_WORKER_ACTIONS,
       ttlMs: Math.min(ttlMs, WORKER_TTL_MAX_MS),
     },
   };

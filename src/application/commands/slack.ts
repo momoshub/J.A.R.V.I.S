@@ -1,4 +1,4 @@
-/** Acting in Slack and on threads: bomb, limit, workflow, rm-msg, tell, reply. */
+/** Acting in Slack and on threads: bomb, limit, workflow, rm-msg, tell, brief, reply. */
 
 import { BOMB_SIZE, DEFAULT_CATEGORY, parseCategories, pickBomb, renderCategories } from "../../domain/emoji.ts";
 import { parseMessageLink } from "../../domain/slackLinks.ts";
@@ -7,6 +7,7 @@ import { afterWorkflowTurn, steerWorker } from "../workflowContinue.ts";
 import { allowanceFor, limitFor, PAL_WINDOW_MS, setLimit, type CommandLimitDeps } from "../commandLimits.ts";
 import { forHowLong } from "../../domain/runControl.ts";
 import { tellPrompt } from "../../domain/tellPrompt.ts";
+import { BRIEF_MAX_STORED_CHARS, cleanBriefText } from "../../domain/threadBrief.ts";
 import { frontKeyOf } from "../../domain/workflowFront.ts";
 import { workerStateOf } from "../workflowFront.ts";
 import { PERM } from "../../domain/permissions.ts";
@@ -293,6 +294,49 @@ Up to ${BOMB_SIZE} reactions; no category means *${DEFAULT_CATEGORY}*.`;
         })
         .catch(logAndIgnore("slack command run turn"));
       return "sent - that thread is on it, nothing posted there 📨";
+    },
+  },
+  {
+    name: "brief",
+    // It writes into a session in a room the sender may not be watching.
+    minRole: "admin",
+    // Like `tell`, the confirmation goes to the caller and nowhere else.
+    quiet: true,
+    ownHelp: true,
+    usage: "<thread-link|reference> <text> | help",
+    summary: "leave a note for another thread's next turn; posts nothing, starts no turn",
+    run: async ({ deps, actor, args, prefix, channelId, threadTs }) => {
+      const usage = `\`${prefix} brief <thread-link|reference> <text>\``;
+      if (args.length === 0 || /^(help|\?)$/i.test(args[0] ?? "")) {
+        return `${usage}
+Leaves a short note FOR another thread: what you posted there, why, the facts it needs, what you are waiting for. It is shown to that thread's session the next time anyone speaks there, then marked read.
+- Posts nothing in Slack and starts no turn, so it costs nothing until someone speaks there. Use \`${prefix} tell\` when the other side must act now.
+- Write it for THAT thread: its language and its audience. Never put the private conversation in it - no quotes, no names that thread does not know.
+- The thread that receives it sees an opaque reference to this one, never a link. To answer, it runs \`${prefix} brief <reference> <text>\`; a reference works only for threads that already wrote to each other.`;
+      }
+      if (!deps.briefs) return "Briefs are not available right now.";
+      if (!threadTs) return `Run it from inside a thread - a brief is filed under the thread it comes from. ${usage}`;
+      const raw = (args[0] ?? "").replace(/^<|>$/g, "").replace(/&amp;/g, "&");
+      let target: { channelId: string; threadTs: string } | undefined;
+      if (/^[0-9a-f]{10}$/.test(raw)) {
+        target = deps.briefs.peer(channelId, threadTs, raw);
+        if (!target) return "No thread by that reference has written to this one. Paste its thread link instead.";
+      } else {
+        const ref = parseMessageLink(raw);
+        if (!ref) return `Paste a Slack thread link: ${usage}`;
+        target = { channelId: ref.channel, threadTs: raw.match(/[?&]thread_ts=(\d+\.\d+)/)?.[1] ?? ref.ts };
+      }
+      if (target.channelId === channelId && target.threadTs === threadTs) return "That is this thread - a brief is for another one.";
+      const text = cleanBriefText(args.slice(1).join(" "));
+      if (!text) return `And what is the brief? ${usage}`;
+      if (text.length > BRIEF_MAX_STORED_CHARS) {
+        return `That is ${text.length} characters; a brief is a short note, at most ${BRIEF_MAX_STORED_CHARS}. Cut it to what that thread needs.`;
+      }
+      deps.briefs.add(
+        { fromChannel: channelId, fromThread: threadTs, toChannel: target.channelId, toThread: target.threadTs, author: actor.slackId, text },
+        deps.clock(),
+      );
+      return "filed - that thread reads it the next time anyone speaks there, nothing posted 📝";
     },
   },
   {

@@ -529,6 +529,19 @@ describe("a turn started by a watch can actually DO things", () => {
     expect(seen[0]?.runTicket).toBe("TICKET");
   });
 
+  test("the ticket carries the message the turn started from, so a loop it creates can point back", async () => {
+    const { deps } = build2();
+    const issued: (string | undefined)[] = [];
+    const tickets = createCommandTickets(() => 1, () => "TICKET");
+    await respond(
+      { ...deps, commandTickets: { ...tickets, issue: (ctx) => (issued.push(ctx.messageTs), tickets.issue(ctx)) } },
+      { ...fired, threadTs: "9.0", messageTs: "9.9" },
+    );
+    expect(issued).toEqual(["9.9"]);
+    const redeemed = tickets.redeem("TICKET");
+    expect(redeemed.ok && redeemed.ctx.messageTs).toBe("9.9");
+  });
+
   test("and it is told how, so it does not hand the job back", async () => {
     const { deps, seen } = build2();
     await respond(deps, fired);

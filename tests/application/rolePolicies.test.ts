@@ -54,7 +54,7 @@ describe("roles, persisted and enforced", () => {
     const opts = { roles: roles.book, dbServers: ["acme-pg-prod"] };
     expect(toolPolicyFor("admin", opts).disallowedTools).toContain("WebFetch");
     expect(toolPolicyFor("admin", opts).disallowedTools).toContain("mcp__acme-pg-prod");
-    expect(toolPolicyFor("admin", opts).skipPermissions).toBe(true);
+    expect(toolPolicyFor("admin", opts).skipPermissions).toBe(false); // only the owner runs unsandboxed
     expect(toolPolicyFor("pal", opts).disallowedTools).not.toContain("WebFetch");
   });
 

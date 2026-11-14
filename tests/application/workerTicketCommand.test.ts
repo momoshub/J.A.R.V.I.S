@@ -29,14 +29,14 @@ describe("the worker-ticket command", () => {
     expect(rig.tickets.redeem(token, { action: "pr-create", repo: "o/r" })).toMatchObject({ ok: false, reason: "pending" });
   });
 
-  test("the default grant has no git or push: the worker pushes with the one-shot human credential", async () => {
+  test("the default grant commits as the app (identity, no push token); push is the opt-in for a token", async () => {
     const { rig, deps } = setup();
     const out = await dispatchCommand(deps, admin(), "C1", "worker-ticket o/r ctx_w1", brain);
     const token = rig.tokenOf(idOfFile(fileOf(out)));
-    expect(out).toContain("pr-create, comment, pr-edit");
-    expect(rig.tickets.redeem(token, { action: "git-auth", repo: "o/r" })).toMatchObject({ ok: false, reason: "action" });
+    expect(out).toContain("pr-create, comment, pr-edit, git-commit (commit as the app, no push token)");
+    expect(rig.tickets.redeem(token, { action: "git-auth", repo: "o/r" })).toMatchObject({ ok: true, push: false });
     const opt = await dispatchCommand(deps, admin(), "C1", "worker-ticket o/r ctx_w2 push", brain);
-    expect(rig.tickets.redeem(rig.tokenOf(idOfFile(fileOf(opt))), { action: "git-auth", repo: "o/r" }).ok).toBe(true);
+    expect(rig.tickets.redeem(rig.tokenOf(idOfFile(fileOf(opt))), { action: "git-auth", repo: "o/r" })).toMatchObject({ ok: true, push: true });
   });
 
   test("bind makes it usable, for the minter only", async () => {

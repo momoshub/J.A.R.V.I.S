@@ -64,6 +64,8 @@ const schema = z
     // Ordinary chat for the lowest role does not need the expensive model.
     CLAUDE_MODEL_PAL: z.string().default("haiku"),
     CLAUDE_SKIP_PERMISSIONS: boolFromString(true),
+    // Allow-list of every role but the owner (comma list). Empty: the built-in read-only default.
+    SANDBOX_TOOLS: z.string().optional(),
     CLAUDE_CWD: z.string().optional(),
     CLAUDE_TIMEOUT_MS: z.coerce.number().int().positive().default(120_000),
     // Orca worktree (selector) the bot opens its own terminal in, the sender its
@@ -187,6 +189,11 @@ const schema = z
     // The subset of DB_MCP_SERVERS the executer role may query. Only list
     // servers whose credential is read only on the server side. Empty: none.
     EXECUTER_DB_MCP_SERVERS: z.string().optional(),
+    // Secret-shaped variable names (`*_TOKEN`, `*_SECRET`, `*_API_KEY`...) an agent turn may still
+    // inherit. Every other credential-shaped variable is withheld from the spawned CLI, so a
+    // prompt-injected turn has nothing to read out of its environment; Slack goes through a
+    // ticketed local proxy instead. Empty (the default) passes none.
+    TURN_ENV_PASSTHROUGH: z.string().optional(),
   })
   .refine((env) => env.LLM_PROVIDER !== "anthropic" || !!env.ANTHROPIC_API_KEY, {
     message: "ANTHROPIC_API_KEY is required when LLM_PROVIDER=anthropic",
@@ -211,6 +218,8 @@ export type AppConfig = {
   claudeModel: string;
   claudeModelPal: string;
   claudeSkipPermissions: boolean;
+  /** `SANDBOX_TOOLS`: replaces the default read-only allow-list of non-owner roles. */
+  sandboxTools: string[];
   claudeCwd?: string;
   claudeTimeoutMs: number;
   /** Where the bot's own Orca terminal is created; undefined is off. */
@@ -260,6 +269,8 @@ export type AppConfig = {
   reviewExtendedOwners: string[];
   /** Local database MCP servers denied by name to roles that may not use databases; empty denies none. */
   dbMcpServers: string[];
+  /** Secret-shaped variable names a turn may still inherit; empty is none. */
+  turnEnvPassthrough: string[];
   /** The subset of `dbMcpServers` the executer role may query; empty is none. */
   executerDbMcpServers: string[];
 };
@@ -294,6 +305,7 @@ export const loadConfig = (source: Record<string, string | undefined> = process.
     claudeModel: env.CLAUDE_MODEL,
     claudeModelPal: env.CLAUDE_MODEL_PAL,
     claudeSkipPermissions: env.CLAUDE_SKIP_PERMISSIONS,
+    sandboxTools: parseList(env.SANDBOX_TOOLS),
     claudeCwd: env.CLAUDE_CWD,
     claudeTimeoutMs: env.CLAUDE_TIMEOUT_MS,
     ...(env.ORCA_TERMINAL_WORKTREE?.trim() === "off"
@@ -339,6 +351,7 @@ export const loadConfig = (source: Record<string, string | undefined> = process.
     ),
     reviewExtendedOwners: parseList(env.REVIEW_EXTENDED_OWNERS),
     dbMcpServers: parseList(env.DB_MCP_SERVERS),
+    turnEnvPassthrough: parseList(env.TURN_ENV_PASSTHROUGH),
     executerDbMcpServers: parseList(env.EXECUTER_DB_MCP_SERVERS),
   };
 };

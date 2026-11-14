@@ -3,10 +3,13 @@ import { openDatabase, type DbClient } from "../../src/infrastructure/db/client.
 import { createLoopRepo, type LoopRepo } from "../../src/infrastructure/db/loopRepo.ts";
 import { createLoopRunner, type LoopTurnRequest } from "../../src/application/loops.ts";
 import { dispatchCommand } from "../../src/application/commands.ts";
+import { respond, type RespondDeps } from "../../src/application/respond.ts";
+import type { CommandDeps } from "../../src/application/commands/shared.ts";
 import type { CheckResult } from "../../src/application/watcher.ts";
 import { createCommandLogRepo } from "../../src/infrastructure/db/commandLogRepo.ts";
 import { decideLoop, expirePendingLoops, type LoopApprovalDeps } from "../../src/application/loopApproval.ts";
-import { approvalText, LOOP_APPROVE_ACTION, LOOP_REJECT_ACTION, PENDING_TTL_MS } from "../../src/domain/loop.ts";
+import { migrate } from "../../src/infrastructure/db/schema.ts";
+import { approvalText, loopRef, LOOP_APPROVE_ACTION, LOOP_REJECT_ACTION, PENDING_TTL_MS } from "../../src/domain/loop.ts";
 import { actor, build, db as fixtureDb, OWNER, slackCalls } from "./commandsFixture.ts";
 
 let db: DbClient;
@@ -20,7 +23,13 @@ let check: CheckResult = { code: 0, output: "" };
 
 const HOUR = 3_600_000;
 
-const runner = (over: { repo?: LoopRepo; mayRun?: (id: string, script: boolean) => boolean; noCheck?: boolean; turnFails?: boolean } = {}) =>
+/** Stands in for `chat.getPermalink`, which also adds `thread_ts` for a thread reply. */
+const link = async (channel: string, ts: string): Promise<string | undefined> =>
+  `https://team.slack.com/archives/${channel}/p${ts.replace(".", "")}`;
+
+const runner = (
+  over: { repo?: LoopRepo; mayRun?: (id: string, script: boolean) => boolean; noCheck?: boolean; turnFails?: boolean; permalink?: typeof link } = {},
+) =>
   createLoopRunner({
     loops: over.repo ?? loops,
     clock: () => now,
@@ -41,6 +50,7 @@ const runner = (over: { repo?: LoopRepo; mayRun?: (id: string, script: boolean) 
           return check;
         },
     mayRun: over.mayRun,
+    permalink: over.permalink,
   });
 
 const add = (over: Partial<Parameters<LoopRepo["add"]>[0]> = {}) =>
@@ -98,6 +108,37 @@ describe("loop runner: prompt mode", () => {
     ]);
     expect(turns[0]?.text).toContain("search for slang");
     expect(turns[0]?.channelId).not.toBe("C1");
+  });
+
+  test("the fire header and the turn carry the name", async () => {
+    const l = add({ name: "PR board" });
+    now += HOUR;
+    await runner().tick();
+    expect(dms[0]?.text).toBe(`🔁 PR board - loop #${l.id}, every 1h`);
+    expect(turns[0]?.text).toContain('Scheduled run of "PR board"');
+  });
+
+  test("a loop nobody named reads as the first words of its prompt", async () => {
+    const l = add({ prompt: "search for slang and update my learning" });
+    expect(l.name).toBe("search for slang and");
+    now += HOUR;
+    await runner().tick();
+    expect(dms[0]?.text).toBe(`🔁 search for slang and - loop #${l.id}, every 1h`);
+  });
+
+  test("a stopped loop says which loop", async () => {
+    const stopped = add({ name: "Old one" });
+    now += HOUR;
+    await runner({ mayRun: () => false }).tick();
+    expect(dms.at(-1)?.text).toBe(`Stopped Old one - loop #${stopped.id}: whoever set it is no longer allowed to run it.`);
+  });
+
+  test("a turn that fails to start says which loop", async () => {
+    const l = add({ name: "PR board" });
+    now += HOUR;
+    await runner({ turnFails: true }).tick();
+    await flush();
+    expect(dms.at(-1)?.text).toBe(`PR board - loop #${l.id}: could not start its turn: queue closed`);
   });
 
   test("every fire opens a new DM thread, so runs do not pile up", async () => {
@@ -175,6 +216,54 @@ describe("loop runner: prompt mode", () => {
   });
 });
 
+describe("loop runner: origin link", () => {
+  test("the announcement links back to the message that created the loop", async () => {
+    const l = add({ threadTs: "", originTs: "5.250" });
+    now += HOUR;
+    await runner({ permalink: link }).tick();
+    expect(dms[0]?.text).toBe(`🔁 search for slang - loop #${l.id}, every 1h · <https://team.slack.com/archives/C1/p5250|created here>`);
+  });
+
+  test("a loop made in a thread links to its own message there, not the thread root", async () => {
+    const seen: string[] = [];
+    add({ threadTs: "4.100", originTs: "5.250" });
+    now += HOUR;
+    await runner({ permalink: async (c, ts) => (seen.push(`${c} ${ts}`), link(c, ts)) }).tick();
+    expect(seen).toEqual(["C1 5.250"]);
+  });
+
+  test("a loop with no origin message falls back to its thread, and with neither says nothing extra", async () => {
+    add({ threadTs: "4.100" });
+    add({ threadTs: "" });
+    now += HOUR;
+    await runner({ permalink: link }).tick();
+    expect(dms[0]?.text).toContain("<https://team.slack.com/archives/C1/p4100|created here>");
+    expect(dms[1]?.text).not.toContain("created here");
+  });
+
+  test("no link is no reason to skip a run: a failing or missing permalink leaves the plain header", async () => {
+    const l = add({ originTs: "5.250" });
+    add({ originTs: "5.251" });
+    now += HOUR;
+    await runner({ permalink: async () => { throw new Error("ratelimited"); } }).tick();
+    expect(dms[0]?.text).toBe(`🔁 search for slang - loop #${l.id}, every 1h`);
+    expect(turns).toHaveLength(2);
+    now += HOUR;
+    dms = [];
+    await runner().tick();
+    expect(dms[0]?.text).not.toContain("created here");
+  });
+
+  test("a script loop's failure line carries the same link", async () => {
+    const l = add({ prompt: "", command: "./sync.sh", originTs: "5.250" });
+    check = { code: 2, output: "boom" };
+    now += HOUR;
+    await runner({ permalink: link }).tick();
+    await flush();
+    expect(dms[0]?.text).toBe(`${loopRef(l.id, l.name)}: script failed: exit 2 - boom · <https://team.slack.com/archives/C1/p5250|created here>`);
+  });
+});
+
 describe("loop runner: script mode", () => {
   test("runs the command with no turn and no message on success", async () => {
     add({ prompt: "", command: "./sync.sh", schedule: "every 5m", nextAt: now + 5 * 60_000 });
@@ -194,7 +283,7 @@ describe("loop runner: script mode", () => {
     await flush();
     expect(dms).toHaveLength(1);
     expect(dms[0]?.userId).toBe("U1");
-    expect(dms[0]?.text).toContain(`Loop #${l.id} script failed: exit 3 - last line`);
+    expect(dms[0]?.text).toContain(`./sync.sh - loop #${l.id}: script failed: exit 3 - last line`);
     const after = loops.get(l.id);
     expect(after?.state).toBe("active");
     expect(after?.nextAt).toBe(now + 5 * 60_000);
@@ -351,6 +440,55 @@ describe("loop command", () => {
     expect(await dispatchCommand(deps, ADMIN, "C1", `loop cancel ${row?.id}`)).toContain("no active loop");
   });
 
+  test("a loop remembers the message that created it, and the thread it sat in", async () => {
+    const { deps, l } = mk();
+    await dispatchCommand(deps, ADMIN, "C1", "loop every 6h check the queue", { threadTs: "7.100", messageTs: "7.250" });
+    await dispatchCommand(deps, ADMIN, "C1", "loop every 6h top level one", { messageTs: "8.300" });
+    await dispatchCommand(deps, ADMIN, "C1", "loop every 6h from a slash command");
+    const [inThread, topLevel, slash] = l.active().sort((a, b) => a.id - b.id);
+    expect([inThread?.channelId, inThread?.threadTs, inThread?.originTs]).toEqual(["C1", "7.100", "7.250"]);
+    expect([topLevel?.threadTs, topLevel?.originTs]).toEqual(["", "8.300"]);
+    expect(slash?.originTs).toBe("");
+  });
+
+  test("through respond, a typed loop stores its message's ts and a slash command stores none", async () => {
+    const m = mk();
+    const deps = { ...m.deps, commandPrefix: "X/jv", slashCommand: "/jv" } as CommandDeps & RespondDeps;
+    deps.users.upsert({ slackId: ADMIN.slackId, role: "admin", displayName: "Adm", addedBy: "x", createdAt: 1 });
+    await respond(deps, { channelId: "C1", slackUserId: ADMIN.slackId, text: "X/jv loop every 6h typed one", threadTs: "7.100", messageTs: "7.250", viaSlash: false });
+    await respond(deps, { channelId: "C1", slackUserId: ADMIN.slackId, text: "X/jv loop every 6h slash one", threadTs: "7.100", messageTs: "7.300", viaSlash: true });
+    const [typed, slash] = m.l.active().sort((a, b) => a.id - b.id);
+    expect([typed?.threadTs, typed?.originTs]).toEqual(["7.100", "7.250"]);
+    expect([slash?.threadTs, slash?.originTs]).toEqual(["", ""]);
+  });
+
+  test("a script loop from a turn is stored with its origin too", async () => {
+    const m = mk();
+    await dispatchCommand(m.deps, OWNER_ACTOR, "C1", "loop every 15m -- ./sync.sh", { fromBrainRun: true, messageTs: "7.250" });
+    expect(m.l.pending()[0]?.originTs).toBe("7.250");
+  });
+
+  test("list shows the origin link per loop, and nothing for one without an origin", async () => {
+    const { deps, l } = mk();
+    const withLink = { ...deps, slack: { ...deps.slack!, permalink: link } };
+    await dispatchCommand(withLink, ADMIN, "C1", "loop every 6h linked one", { threadTs: "7.100", messageTs: "7.250" });
+    await dispatchCommand(withLink, ADMIN, "C1", "loop every 6h bare one");
+    const lines = (await dispatchCommand(withLink, ADMIN, "C1", "loop list")).split("\n");
+    expect(lines[0]).toEndWith(" · <https://team.slack.com/archives/C1/p7250|created here>");
+    expect(lines[1]).not.toContain("created here");
+    expect(l.active()).toHaveLength(2);
+    // Without a way to build a link the list is just as before.
+    expect(await dispatchCommand(deps, ADMIN, "C1", "loop list")).not.toContain("created here");
+  });
+
+  test("a pending script loop in the list shows its origin too", async () => {
+    const m = mk();
+    await dispatchCommand(m.deps, OWNER_ACTOR, "C1", "loop every 15m -- ./sync.sh", { fromBrainRun: true, messageTs: "7.250" });
+    const out = await dispatchCommand({ ...m.deps, slack: { ...m.deps.slack!, permalink: link } }, OWNER_ACTOR, "C1", "loop list");
+    expect(out).toContain("pending");
+    expect(out).toEndWith("<https://team.slack.com/archives/C1/p7250|created here>");
+  });
+
   test("list shows a pending script loop as pending, then as a script once approved", async () => {
     const m = mk();
     const row = await propose(m);
@@ -365,6 +503,93 @@ describe("loop command", () => {
     expect(await dispatchCommand(m.deps, OWNER_ACTOR, "C1", `loop cancel ${row.id}`)).toContain("cancelled");
     expect(m.l.get(row.id)).toBeUndefined();
     expect(await decideLoop(m.loopApproval, { slackUserId: OWNER, actionId: LOOP_APPROVE_ACTION, value: String(row.id), channel: row.noticeChannel, messageTs: row.noticeTs, shown: shownOf(row) })).toEqual({ kind: "unknown" });
+  });
+
+  test("--name names a loop; the confirmation, list and cancel all show it", async () => {
+    const { deps, l } = mk();
+    const out = await dispatchCommand(deps, ADMIN, "C1", 'loop every 6h --name "PR board" check open PRs');
+    const [row] = l.active();
+    expect(row?.name).toBe("PR board");
+    expect(row?.prompt).toBe("check open PRs");
+    expect(out).toContain(`PR board - loop #${row?.id}`);
+    expect(out).toContain("loop rename");
+    expect(await dispatchCommand(deps, ADMIN, "C1", "loop list")).toContain(`#${row?.id} *PR board* prompt`);
+    expect(await dispatchCommand(deps, ADMIN, "C1", `loop cancel ${row?.id}`)).toBe(`cancelled PR board - loop #${row?.id}`);
+  });
+
+  test("with no name the loop gets the first words of its prompt", async () => {
+    const { deps, l } = mk();
+    await dispatchCommand(deps, ADMIN, "C1", "loop every 6h check the queue and report");
+    expect(l.active()[0]?.name).toBe("check the queue and");
+  });
+
+  test("a name typed in Slack's escaped form is stored as the words, for create and rename", async () => {
+    const { deps, l } = mk();
+    await dispatchCommand(deps, ADMIN, "C1", 'loop every 6h --name "Q&amp;A board" check');
+    const row = l.active()[0]!;
+    expect(row.name).toBe("Q A board");
+    await dispatchCommand(deps, ADMIN, "C1", `loop rename ${row.id} R&lt;D&gt; team`);
+    expect(l.get(row.id)?.name).toBe("R D team");
+  });
+
+  test("a prompt with a Slack link is named by the link's label", async () => {
+    const { deps, l } = mk();
+    await dispatchCommand(deps, ADMIN, "C1", "loop every 6h check <https://github.com/o/r/pulls|open PRs> today");
+    expect(l.active()[0]?.name).toBe("check open PRs today");
+  });
+
+  test("a bad --name stores nothing", async () => {
+    const { deps, l } = mk();
+    expect(await dispatchCommand(deps, ADMIN, "C1", 'loop every 6h --name "oops check')).toContain("close the quote");
+    expect(l.active()).toHaveLength(0);
+  });
+
+  test("rename changes the name of your loop, with or without quotes, and the next fire uses it", async () => {
+    const { deps, l } = mk();
+    await dispatchCommand(deps, ADMIN, "C1", "loop every 6h check the queue");
+    const id = l.active()[0]!.id;
+    expect(await dispatchCommand(deps, ADMIN, "C1", `loop rename ${id} PR board`)).toBe(
+      `renamed check the queue - loop #${id} to PR board - loop #${id}`,
+    );
+    expect(l.get(id)?.name).toBe("PR board");
+    expect(await dispatchCommand(deps, ADMIN, "C1", `loop rename #${id} "Review queue"`)).toContain("Review queue - loop #");
+    expect(l.get(id)?.name).toBe("Review queue");
+    expect(await dispatchCommand(deps, ADMIN, "C1", "loop list")).toContain("*Review queue*");
+    // Slack-safe, like a name given at creation.
+    await dispatchCommand(deps, ADMIN, "C1", `loop rename ${id} <!channel> *x*`);
+    expect(l.get(id)?.name).not.toMatch(/[<>*]/);
+  });
+
+  test("rename refuses: someone else's loop, a missing name, a missing or settled loop", async () => {
+    const { deps, l } = mk();
+    await dispatchCommand(deps, ADMIN, "C1", "loop every 6h check the queue");
+    const id = l.active()[0]!.id;
+    const other = actor({ slackId: "U0ADMIN0002", role: "admin" });
+    expect(await dispatchCommand(deps, other, "C1", `loop rename ${id} Mine`)).toContain("not yours to rename");
+    expect(l.get(id)?.name).toBe("check the queue");
+    expect(await dispatchCommand(deps, ADMIN, "C1", `loop rename ${id}`)).toContain("loop rename <id> <name>");
+    expect(await dispatchCommand(deps, ADMIN, "C1", `loop rename ${id} ***`)).toContain("Say the new name");
+    expect(await dispatchCommand(deps, ADMIN, "C1", "loop rename 999 x")).toContain("no active loop");
+    // The owner may rename anyone's.
+    expect(await dispatchCommand(deps, OWNER_ACTOR, "C1", `loop rename ${id} Owned`)).toContain("renamed");
+    await dispatchCommand(deps, ADMIN, "C1", `loop cancel ${id}`);
+    expect(await dispatchCommand(deps, ADMIN, "C1", `loop rename ${id} x`)).toContain("no active loop");
+  });
+
+  test("pal and executer cannot rename (the command is admin+)", async () => {
+    const { deps } = mk();
+    expect(await dispatchCommand(deps, actor({ slackId: "U0TEST00001", role: "pal" }), "C1", "loop rename 1 x")).toContain("needs *admin* access");
+  });
+
+  test("a named script loop from a turn shows its name in the pending reply and the approval DM", async () => {
+    const m = mk();
+    const out = await dispatchCommand(m.deps, OWNER_ACTOR, "C1", 'loop every 15m --name "Sync" -- ./sync.sh --all', { fromBrainRun: true });
+    const row = m.l.pending()[0]!;
+    expect(row.name).toBe("Sync");
+    expect(row.command).toBe("./sync.sh --all");
+    expect(out).toContain(`Sync - loop #${row.id}`);
+    expect(slackCalls.posts.at(-1)?.text).toContain("name (chosen by the turn, not checked): Sync");
+    expect(await dispatchCommand(m.deps, OWNER_ACTOR, "C1", "loop list")).toContain("*Sync* script");
   });
 
   describe("approval", () => {
@@ -426,6 +651,33 @@ describe("loop command", () => {
       await runner({ repo: m.l }).tick();
       await flush();
       expect(ran).toEqual(["./sync.sh"]);
+    });
+
+    describe("a named script loop's notices carry the name", () => {
+      const named = (m: ReturnType<typeof mk>) => propose(m, "loop every 15m --name Sync -- ./sync.sh");
+
+      test("approve", async () => {
+        const m = mk();
+        const row = await named(m);
+        expect(row.name).toBe("Sync");
+        await press(m, row.id, LOOP_APPROVE_ACTION);
+        expect(slackCalls.settled.at(-1)?.text).toContain(`Sync - script loop #${row.id} approved`);
+      });
+
+      test("reject", async () => {
+        const m = mk();
+        const row = await named(m);
+        await press(m, row.id, LOOP_REJECT_ACTION);
+        expect(slackCalls.settled.at(-1)?.text).toContain(`Sync - script loop #${row.id} rejected`);
+      });
+
+      test("expiry", async () => {
+        const m = mk();
+        const row = await named(m);
+        m.clock.now = 42 + PENDING_TTL_MS;
+        await expirePendingLoops(m.loopApproval);
+        expect(slackCalls.settled.at(-1)?.text).toContain(`Sync - script loop #${row.id} expired`);
+      });
     });
 
     test("anyone but the owner pressing Approve or Reject changes nothing", async () => {
@@ -522,5 +774,68 @@ describe("loop command", () => {
     for (let i = 0; i < 10; i++) await dispatchCommand(deps, ADMIN, "C1", `loop every 2h task ${i}`);
     expect(await dispatchCommand(deps, ADMIN, "C1", "loop every 2h one more")).toContain("already have 10");
     expect(l.active()).toHaveLength(10);
+  });
+});
+
+describe("loop names in storage", () => {
+  test("an old database gets the column with nothing rewritten, and its loops read by their prompt", () => {
+    const old = openDatabase(":memory:");
+    // Back to the v32 shape: a loops table with no `name`, holding rows people already made.
+    old.exec("ALTER TABLE loops DROP COLUMN name");
+    old.exec(
+      `INSERT INTO loops (channel_id, thread_ts, created_by, schedule, prompt, command, next_at, created_at, updated_at)
+       VALUES ('C1', '1.1', 'U1', 'every 1h', 'summarise the open pull requests for the team', '', 5, 1, 1),
+              ('C1', '1.2', 'U1', 'every 5m', '', './sync.sh --all', 5, 1, 1)`,
+    );
+    old.exec("PRAGMA user_version = 32");
+    migrate(old);
+    migrate(old); // a rerun is a no-op
+    expect(old.query<{ user_version: number }, []>("PRAGMA user_version").get()?.user_version).toBeGreaterThanOrEqual(33);
+    const repo = createLoopRepo(old);
+    expect(repo.get(1)?.name).toBe("summarise the open pull");
+    expect(repo.get(2)?.name).toBe("./sync.sh --all");
+    // The stored value stays empty until somebody names it.
+    expect(old.query<{ name: string }, []>("SELECT name FROM loops WHERE id = 1").get()?.name).toBe("");
+    expect(repo.rename(1, "PR board", 9)).toBe(true);
+    expect(repo.get(1)?.name).toBe("PR board");
+  });
+
+  test("rename only touches a live loop and refuses a blank name", () => {
+    const repo = createLoopRepo(openDatabase(":memory:"));
+    const l = repo.add({ channelId: "C", threadTs: "", createdBy: "U1", schedule: "every 1h", prompt: "a b c d e", command: "", nextAt: 1 }, 1);
+    expect(l.name).toBe("a b c d");
+    expect(repo.rename(l.id, " * ", 2)).toBe(false);
+    expect(repo.get(l.id)?.name).toBe("a b c d");
+    repo.settle(l.id, "cancelled", 3);
+    expect(repo.rename(l.id, "late", 4)).toBe(false);
+    expect(repo.rename(404, "x", 4)).toBe(false);
+  });
+});
+
+describe("loop origin in storage", () => {
+  test("an old database gets the column with no origin, its loops read the same, and new ones store theirs", () => {
+    const old = openDatabase(":memory:");
+    old.exec("ALTER TABLE loops DROP COLUMN origin_ts");
+    old.exec(
+      `INSERT INTO loops (channel_id, thread_ts, created_by, name, schedule, prompt, command, next_at, created_at, updated_at)
+       VALUES ('C1', '1.1', 'U1', 'PR board', 'every 1h', 'summarise', '', 5, 1, 1)`,
+    );
+    old.exec("PRAGMA user_version = 35");
+    migrate(old);
+    migrate(old); // a rerun is a no-op
+    expect(old.query<{ user_version: number }, []>("PRAGMA user_version").get()?.user_version).toBeGreaterThanOrEqual(36);
+    const repo = createLoopRepo(old);
+    expect(repo.get(1)?.originTs).toBe("");
+    expect(repo.get(1)?.threadTs).toBe("1.1");
+    const l = repo.add({ channelId: "C1", threadTs: "", createdBy: "U1", schedule: "every 1h", prompt: "x", command: "", nextAt: 9, originTs: "2.5" }, 1);
+    expect(repo.get(l.id)?.originTs).toBe("2.5");
+  });
+
+  test("an old loop with no origin and no thread still fires, with the plain header", async () => {
+    const l = add({ threadTs: "" });
+    expect(l.originTs).toBe("");
+    now += HOUR;
+    await runner({ permalink: link }).tick();
+    expect(dms[0]?.text).toBe(`🔁 search for slang - loop #${l.id}, every 1h`);
   });
 });

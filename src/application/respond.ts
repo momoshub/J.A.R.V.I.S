@@ -335,6 +335,7 @@ export const respond = async (
     slash: deps.slashCommand,
     // A slash command has no thread to bind a workflow to.
     threadTs: inbound.viaSlash ? undefined : inbound.threadTs,
+    messageTs: inbound.viaSlash ? undefined : inbound.messageTs,
     reply,
   });
   // Commands that returned their result rather than posting it still get copied.

@@ -234,11 +234,14 @@ export const createGithubActions = (deps: GithubActionDeps): GithubActions => {
         if (plan.action === "git-auth") {
           // The token goes back to the helper only; the audit row never has it.
           // A worker's token is its own: one repo, git's permissions only, revoked with the ticket.
-          // Only a role holding `github:push` is handed the token: without it a role gets the bot identity, so it commits as the app but cannot push with it.
-          // A worker's token can push too, so it follows the same rule: its minter must hold `github:push`.
-          const auth = worker?.ok && user && can(book, user.role, githubPerm("push"))
-            ? await workerGitAuth(installation, plan.repo, worker.id)
-            : user && !can(book, user.role, githubPerm("push"))
+          // Only a role holding `github:push` is handed a token: without it a role gets the bot identity, so it commits as the app but cannot push with it.
+          // A worker ticket follows the same rule (its minter must hold `github:push`) and also needs the `git-auth`/`push` word on the mint; without either it gets the identity only.
+          const mayPush = !!user && can(book, user.role, githubPerm("push"));
+          const auth = worker?.ok
+            ? worker.push && mayPush
+              ? await workerGitAuth(installation, plan.repo, worker.id)
+              : { token: "", ...(await botIdentity(installation)) }
+            : user && !mayPush
               ? { token: "", ...(await botIdentity(installation)) }
               : await gitAuth(installation);
           log(true, `git-auth ${plan.repo}`);

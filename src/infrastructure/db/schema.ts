@@ -104,11 +104,119 @@ export const migrate = (db: Database): void => {
   migrateWorkerTickets(db);
   migrateLoops(db);
   migrateWorkerTicketBoundAt(db);
-  migrateRoles33(db);
+  migrateLoopNames(db);
+  migrateThreadBriefs(db);
+  migrateLearningStatus(db);
+  migrateLoopOrigin(db);
+  migrateRoles37(db);
 };
 
 /**
- * Migration v33: roles as data.
+ * Migration v36: a loop remembers the message that created it.
+ *
+ * `channel_id` and `thread_ts` were always stored; what a thread link needs
+ * besides them is the ts of the creating message itself. The column defaults to
+ * `''` (no origin), so every existing row survives untouched and renders with
+ * no link; nothing is rewritten here, so a rerun is a no-op.
+ */
+const migrateLoopOrigin = (db: Database): void => {
+  const cols = db.query<{ name: string }, []>("PRAGMA table_info(loops)").all().map((c) => c.name);
+  if (!cols.includes("origin_ts")) db.exec("ALTER TABLE loops ADD COLUMN origin_ts TEXT NOT NULL DEFAULT ''");
+  const { user_version } = db.query<{ user_version: number }, []>("PRAGMA user_version").get() ?? {
+    user_version: 0,
+  };
+  if (user_version < 36) db.exec("PRAGMA user_version = 36;");
+};
+
+/**
+ * Migration v35: a learning has a status, and only `active` ones are injected.
+ *
+ * Every row that exists was taught before approval existed and is carried
+ * into every reply today, so the column defaults to `active`: the migration
+ * keeps them all. New rows from a member or from the agent arrive `pending`
+ * and stay out of every prompt until the owner approves them
+ * (`domain/learning.ts`). The notice columns hold the owner's Approve / Reject
+ * message, so a press is only honoured on the message that was posted for it.
+ */
+const migrateLearningStatus = (db: Database): void => {
+  const cols = db.query<{ name: string }, []>("PRAGMA table_info(learnings)").all().map((c) => c.name);
+  if (!cols.includes("status")) db.exec("ALTER TABLE learnings ADD COLUMN status TEXT NOT NULL DEFAULT 'active'");
+  if (!cols.includes("notice_channel")) db.exec("ALTER TABLE learnings ADD COLUMN notice_channel TEXT NOT NULL DEFAULT ''");
+  if (!cols.includes("notice_ts")) db.exec("ALTER TABLE learnings ADD COLUMN notice_ts TEXT NOT NULL DEFAULT ''");
+  if (!cols.includes("decided_by")) db.exec("ALTER TABLE learnings ADD COLUMN decided_by TEXT NOT NULL DEFAULT ''");
+  if (!cols.includes("decided_at")) db.exec("ALTER TABLE learnings ADD COLUMN decided_at INTEGER NOT NULL DEFAULT 0");
+  const { user_version } = db.query<{ user_version: number }, []>("PRAGMA user_version").get() ?? {
+    user_version: 0,
+  };
+  if (user_version < 35) db.exec("PRAGMA user_version = 35;");
+};
+
+/**
+ * Migration v33: a name on every loop.
+ *
+ * `loop #3` told nobody what it was. The column defaults to `''`, so every
+ * existing row survives untouched and the repo derives its name from the
+ * prompt on read; nothing is rewritten here, so a rerun is a no-op.
+ */
+const migrateLoopNames = (db: Database): void => {
+  const cols = db.query<{ name: string }, []>("PRAGMA table_info(loops)").all().map((c) => c.name);
+  if (!cols.includes("name")) db.exec("ALTER TABLE loops ADD COLUMN name TEXT NOT NULL DEFAULT ''");
+};
+
+/**
+ * Migration v34: briefs between threads.
+ *
+ * A brief is a note one thread's session writes for another's (see
+ * `domain/threadBrief.ts`). Read state is per access tier (`thread_brief_reads`):
+ * a thread has one CLI session per tier, and a session only knows a brief once a
+ * turn on THAT session carried it, so a read by one tier must not hide it from
+ * another. `thread_brief_links` records which threads have written to each
+ * other, so the receiver can answer an opaque reference without ever being
+ * handed the source's channel or timestamp, and `thread_brief_secret` is the one
+ * random key those references are an HMAC under.
+ */
+const migrateThreadBriefs = (db: Database): void => {
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS thread_briefs (
+      id           INTEGER PRIMARY KEY AUTOINCREMENT,
+      from_channel TEXT NOT NULL,
+      from_thread  TEXT NOT NULL,
+      to_channel   TEXT NOT NULL,
+      to_thread    TEXT NOT NULL,
+      author       TEXT NOT NULL DEFAULT '',
+      text         TEXT NOT NULL,
+      created_at   INTEGER NOT NULL
+    );
+    CREATE INDEX IF NOT EXISTS idx_thread_briefs_to ON thread_briefs (to_channel, to_thread, id);
+    CREATE TABLE IF NOT EXISTS thread_brief_reads (
+      brief_id INTEGER NOT NULL,
+      tier     TEXT NOT NULL,
+      read_at  INTEGER NOT NULL,
+      PRIMARY KEY (brief_id, tier)
+    );
+    CREATE TABLE IF NOT EXISTS thread_brief_secret (
+      id     INTEGER PRIMARY KEY CHECK (id = 1),
+      secret TEXT NOT NULL
+    );
+    CREATE TABLE IF NOT EXISTS thread_brief_links (
+      channel_id   TEXT NOT NULL,
+      thread_ts    TEXT NOT NULL,
+      peer_channel TEXT NOT NULL,
+      peer_thread  TEXT NOT NULL,
+      ref          TEXT NOT NULL,
+      created_at   INTEGER NOT NULL,
+      PRIMARY KEY (channel_id, thread_ts, peer_channel, peer_thread)
+    );
+    CREATE INDEX IF NOT EXISTS idx_thread_brief_links_ref ON thread_brief_links (channel_id, thread_ts, ref);
+  `);
+  const { user_version } = db.query<{ user_version: number }, []>("PRAGMA user_version").get() ?? {
+    user_version: 0,
+  };
+  if (user_version < 34) db.exec("PRAGMA user_version = 34;");
+};
+
+/**
+ * Migration v37: roles as data.
  *
  * One row per role except `owner`, which is code. `grants` is a JSON array of
  * permission ids (`domain/permissions.ts`), `denied_tools` extra CLI deny patterns,
@@ -117,7 +225,7 @@ export const migrate = (db: Database): void => {
  * once at boot by `seedRoles` (application/roles.ts), which also folds the old
  * `role_policies` deny lists in; that table stays only as the source of that fold.
  */
-const migrateRoles33 = (db: Database): void => {
+const migrateRoles37 = (db: Database): void => {
   db.exec(`
     CREATE TABLE IF NOT EXISTS roles (
       name         TEXT PRIMARY KEY,
@@ -134,7 +242,7 @@ const migrateRoles33 = (db: Database): void => {
   const { user_version } = db.query<{ user_version: number }, []>("PRAGMA user_version").get() ?? {
     user_version: 0,
   };
-  if (user_version < 33) db.exec("PRAGMA user_version = 33;");
+  if (user_version < 37) db.exec("PRAGMA user_version = 37;");
 };
 
 /**

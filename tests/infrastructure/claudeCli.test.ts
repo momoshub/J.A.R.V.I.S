@@ -164,6 +164,23 @@ describe("createClaudeCliLlm", () => {
     expect(out).toBe("both");
   });
 
+  test("a sandboxed policy is non-interactive: dontAsk + its allow-list, no bypass", async () => {
+    // an off-list tool must be refused at once, never prompted for (nobody can answer)
+    const bin = fakeBin(
+      `#!/usr/bin/env bash\ncat > /dev/null\nR=$(printf %s "$*" | base64 | tr -d '\\n')\necho "{\\"type\\":\\"result\\",\\"subtype\\":\\"success\\",\\"is_error\\":false,\\"result\\":\\"$R\\"}"`,
+    );
+    const llm = createClaudeCliLlm({ binPath: bin, skipPermissions: true });
+    const argv = async (policy: { skipPermissions: boolean; allowedTools?: string[] }) =>
+      Buffer.from(await llm.complete({ system: "s", messages: [{ role: "user", content: "hi" }], policy }), "base64").toString();
+    const sandboxed = await argv({ skipPermissions: false, allowedTools: ["Read", "Bash(cat:*)"] });
+    expect(sandboxed).toContain("--permission-mode dontAsk");
+    expect(sandboxed).toContain("--allowedTools Read Bash(cat:*)");
+    expect(sandboxed).not.toContain("--dangerously-skip-permissions");
+    const full = await argv({ skipPermissions: true });
+    expect(full).toContain("--dangerously-skip-permissions");
+    expect(full).not.toContain("--permission-mode");
+  });
+
   test("a caller's own token replaces the bot's in the spawned CLI", async () => {
     // the whole point of per-user tokens: the CLI honours CLAUDE_CODE_OAUTH_TOKEN
     // over whatever login the host holds, so the turn is billed to the caller
@@ -311,6 +328,104 @@ describe("createClaudeCliLlm", () => {
     // and a turn that may not run commands hands down nothing at all
     const without = await llm.complete({ system: "s", messages: [{ role: "user", content: "hi" }] });
     expect(without).toBe("[]");
+  });
+
+  describe("secrets stay out of the turn's environment", () => {
+    // what a turn could read out of its own environment: how many secret values it holds, plus the few it should
+    const probe = () =>
+      fakeBin(
+        `#!/usr/bin/env bash\ncat > /dev/null\nHITS=$(env | grep -c 'xoxb-test-bot-token\\|xapp-test-app-token\\|sk-ant-api-test-key\\|hook-secret-test\\|aws-secret-test' || true)\necho "{\\"type\\":\\"result\\",\\"subtype\\":\\"success\\",\\"is_error\\":false,\\"result\\":\\"hits=$HITS oauth=[$CLAUDE_CODE_OAUTH_TOKEN] slack=[$JARVIS_SLACK_TICKET] dash=[$DASHBOARD_PORT] grafana=[$GRAFANA_TOKEN]\\"}"`,
+      );
+    const withEnv = async (vars: Record<string, string | undefined>, fn: () => Promise<void>) => {
+      const before: Record<string, string | undefined> = {};
+      for (const [k, v] of Object.entries(vars)) {
+        before[k] = process.env[k];
+        if (v === undefined) delete process.env[k];
+        else process.env[k] = v;
+      }
+      try {
+        await fn();
+      } finally {
+        for (const [k, v] of Object.entries(before)) {
+          if (v === undefined) delete process.env[k];
+          else process.env[k] = v;
+        }
+      }
+    };
+    const BOT_ENV = {
+      SLACK_BOT_TOKEN: "xoxb-test-bot-token",
+      SLACK_APP_TOKEN: "xapp-test-app-token",
+      ANTHROPIC_API_KEY: "sk-ant-api-test-key",
+      GITHUB_APP_WEBHOOK_SECRET: "hook-secret-test",
+      AWS_SECRET_ACCESS_KEY: "aws-secret-test",
+      CLAUDE_CODE_OAUTH_TOKEN: "sk-ant-oat01-the-cli-login",
+      DASHBOARD_PORT: "2002",
+      GRAFANA_TOKEN: "glsa-needed-in-turns",
+      JARVIS_SLACK_TICKET: undefined,
+    };
+
+    test("the spawned turn holds none of the bot's secret values, only the CLI's own login", async () => {
+      await withEnv(BOT_ENV, async () => {
+        const llm = createClaudeCliLlm({ binPath: probe() });
+        const out = await llm.complete({ system: "s", messages: [{ role: "user", content: "hi" }] });
+        // GRAFANA_TOKEN is secret-shaped and not named in the passthrough: withheld as well
+        expect(out).toBe("hits=0 oauth=[sk-ant-oat01-the-cli-login] slack=[] dash=[2002] grafana=[]");
+      });
+    });
+
+    test("the same holds for a host-login spawn and a streamed one", async () => {
+      await withEnv(BOT_ENV, async () => {
+        const llm = createClaudeCliLlm({ binPath: probe() });
+        const host = await llm.complete({ system: "s", messages: [{ role: "user", content: "hi" }], useHostLogin: true });
+        expect(host).toBe("hits=0 oauth=[] slack=[] dash=[2002] grafana=[]");
+      });
+    });
+
+    test("a caller's own token replaces the CLI login, and the bot's secrets are still not there", async () => {
+      await withEnv(BOT_ENV, async () => {
+        const llm = createClaudeCliLlm({ binPath: probe() });
+        const out = await llm.complete({ system: "s", messages: [{ role: "user", content: "hi" }], oauthToken: "sk-ant-oat01-theirs" });
+        expect(out).toStartWith("hits=0 oauth=[sk-ant-oat01-theirs]");
+      });
+    });
+
+    test("an instance can keep a named secret-shaped variable", async () => {
+      await withEnv(BOT_ENV, async () => {
+        const llm = createClaudeCliLlm({ binPath: probe(), envPassthrough: ["GRAFANA_TOKEN"] });
+        const out = await llm.complete({ system: "s", messages: [{ role: "user", content: "hi" }] });
+        expect(out).toBe("hits=0 oauth=[sk-ant-oat01-the-cli-login] slack=[] dash=[2002] grafana=[glsa-needed-in-turns]");
+      });
+    });
+
+    test("the turn gets a Slack ticket minted for its run, which ends with the process", async () => {
+      await withEnv(BOT_ENV, async () => {
+        const asked: (BillingContext | undefined)[] = [];
+        const ended: string[] = [];
+        const llm = createClaudeCliLlm({
+          binPath: probe(),
+          slackTicket: (bill) => {
+            asked.push(bill);
+            return { token: "jvsl_this-turn", end: () => void ended.push("jvsl_this-turn") };
+          },
+        });
+        const bill: BillingContext = { actor: "U0OWNER0001", kind: "chat", channel: "C0TEST00001", threadTs: "1.1" };
+        const out = await llm.complete({ system: "s", messages: [{ role: "user", content: "hi" }], bill });
+        expect(out).toContain("slack=[jvsl_this-turn]");
+        expect(out).toStartWith("hits=0");
+        expect(asked).toEqual([bill]);
+        // the process has exited by the time complete() returns; its ticket ends right behind it
+        await Bun.sleep(50);
+        expect(ended).toEqual(["jvsl_this-turn"]);
+      });
+    });
+
+    test("no ticket is minted when the run has no channel, and an inherited one is never borrowed", async () => {
+      await withEnv({ ...BOT_ENV, JARVIS_SLACK_TICKET: "jvsl_from-a-parent-turn" }, async () => {
+        const llm = createClaudeCliLlm({ binPath: probe(), slackTicket: () => undefined });
+        const out = await llm.complete({ system: "s", messages: [{ role: "user", content: "hi" }] });
+        expect(out).toContain("slack=[]");
+      });
+    });
   });
 
   test("every turn carries the bot's own Orca handle, never an inherited one", async () => {

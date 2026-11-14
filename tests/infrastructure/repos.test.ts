@@ -165,16 +165,16 @@ describe("settingsRepo", () => {
 describe("learningsRepo", () => {
   test("add returns a row and list is ordered", () => {
     const repo = createLearningsRepo(db);
-    const a = repo.add("first", "kai", 1);
-    repo.add("second", "kai", 2);
+    const a = repo.add("first", "kai", 1, "active");
+    repo.add("second", "kai", 2, "active");
     expect(a.id).toBeGreaterThan(0);
     expect(repo.list().map((l) => l.content)).toEqual(["first", "second"]);
   });
 
   test("update and remove", () => {
     const repo = createLearningsRepo(db);
-    const l = repo.add("typo", "kai", 1);
-    repo.update(l.id, "fixed");
+    const l = repo.add("typo", "kai", 1, "active");
+    repo.update(l.id, "fixed", "active");
     expect(repo.list()[0]?.content).toBe("fixed");
     repo.remove(l.id);
     expect(repo.list()).toHaveLength(0);
