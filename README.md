@@ -93,6 +93,7 @@ Required / notable env (see `.env.example`):
 | `DB_MCP_SERVERS` | names of the local database MCP servers on this host (as `claude mcp list` shows them, e.g. `pg-prod,clickhouse-ro`), comma list. **Security setting:** each is denied by name to every role that may not use databases (pal, executer, side questions), and a denial has to name the server, so a server missing here is reachable by EVERY role. Default empty denies nothing - list every database server you configure (at boot the activity log warns about local servers in `~/.claude.json` that are not listed) |
 | `EXECUTER_DB_MCP_SERVERS` | the subset of `DB_MCP_SERVERS` the executer role may query; list only servers whose credential is read-only on the server side. Default empty: executers get none |
 | `WORKER_MCP_DENY` | user-scope MCP servers (names as `claude mcp list` shows them) kept out of the Orca workers the bot starts, comma list. Default empty: every worker loads every server, as before. See "Keeping MCP servers out of workers" |
+| `WORKER_HOME_DIR` | the one folder every Orca worker starts in (`--worktree path:<it>`); the MCP exclusion is written there and never into a folder you work in. Default `~/.jarvis/worker-home`, created at boot and registered with Orca (as a plain folder) the first time a worker is about to start. See "Keeping MCP servers out of workers" |
 | `DASHBOARD_PORT` | dashboard port (local, loopback-only, no auth) |
 | `DASHBOARD_ALLOWED_ORIGINS` | extra browser origins allowed to POST (proxy/tunnel access) |
 | `DATABASE_PATH` | the live sqlite file (default `data/bot.db`). Put it **outside the git checkout**, `~/` works, e.g. `~/.jarvis/data/bot.db` - see [Where the database lives](#where-the-database-lives) |
@@ -361,21 +362,30 @@ project settings of its working directory, and `deniedMcpServers` in
 (checked on Claude Code 2.1.285: the file written before the launch removes
 the stdio servers, the same file written after the session started changes
 nothing). So the bot's prompts for starting a worker (the owner's Orca rules,
-the reviewer worker, `fanout`) say to run `bin/worker-mcp-trim.ts <folder>`
-first, which merges the names into that file (other settings in it stay, a file
-it cannot parse is left alone, running it twice is the same as once) and keeps
-it out of git. It does nothing when the list is empty. The helper and the names
-reach a turn as `BOT_WORKER_MCP_TRIM` and `BOT_WORKER_MCP_DENY`.
+the reviewer worker) say to run `bin/worker-mcp-trim.ts` first, which
+merges the names into that file (other settings in it stay, a file it cannot
+parse is left alone, running it twice is the same as once). It does nothing to
+the file when the list is empty. The helper, the names and the folder reach a
+turn as `BOT_WORKER_MCP_TRIM`, `BOT_WORKER_MCP_DENY` and `BOT_WORKER_HOME`.
 
-- A worker started on a folder Orca already knows (`--worktree path:<folder>`)
-  is trimmed in that folder. That folder keeps the file: a session you open
-  there yourself loses the same servers, so delete the file (or its
-  `deniedMcpServers` entries) to get them back.
-- A new checkout is created first without an agent (`orca worktree create`, no
-  `--agent`), trimmed, then launched with `orca agent launch --worktree
-  path:<path>`; `fanout` works this way now. The one-step launches (`worktree
-  create --agent`, `worker-start --worktree new-child`) would start the agent
-  before the file exists, so the prompts forbid them.
+That file belongs to the folder, so workers do not start in a folder you work
+in: trimming `~/Workspaces` would take the same servers away from your own
+Claude sessions there. They start in a dedicated worker home instead,
+`WORKER_HOME_DIR` (default `~/.jarvis/worker-home`). Boot creates it; the helper,
+run with no argument, registers it with Orca as a plain folder when `orca repo
+list` does not know it (`--worktree path:` only takes folders Orca knows), trims
+it, and the prompts then start the worker with `--worktree path:$BOT_WORKER_HOME`.
+The bot never writes `.claude/settings.local.json` anywhere you work. A worker
+that has to change code cuts its own `git worktree add <absolute path>` from the
+real repository, so its brief uses absolute paths.
+
+- `fanout` gives each worker a checkout of its own instead: the checkout is
+  created first without an agent (`orca worktree create`, no `--agent`),
+  trimmed (`worker-mcp-trim.ts <worktree path>`, the file stays out of git in
+  that checkout), then launched with `orca agent launch --worktree path:<path>`.
+  The one-step launches (`worktree create --agent`, `worker-start --worktree
+  new-child`) would start the agent before the file exists, so the prompts
+  forbid them.
 - Only user-scope servers by name are excluded. The `claude.ai` connectors are
   remote and start no process, and the bot's own turns have their own list
   (`UNAUTHENTICATED_MCP_SERVERS`).

@@ -32,7 +32,7 @@ describe("fanoutPrompt", () => {
   test("each checkout is made without an agent, trimmed, and only then launched", () => {
     const p = fanoutPrompt("q", "Bot", ctx);
     const create = p.indexOf("orca worktree create --repo id:<repoId> --name <short-slug> --setup run --no-parent --json");
-    const trim = p.indexOf('"$BOT_WORKER_MCP_TRIM" <folder>');
+    const trim = p.indexOf('"$BOT_WORKER_MCP_TRIM" <worktree path>');
     const launch = p.indexOf("orca agent launch --worktree path:<worktree path> --agent claude");
     expect(create).toBeGreaterThan(-1);
     expect(trim).toBeGreaterThan(create);

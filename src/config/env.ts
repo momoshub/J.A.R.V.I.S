@@ -212,6 +212,11 @@ const schema = z
     // the worker folder's .claude/settings.local.json (deniedMcpServers). Empty
     // keeps every server, as before. The bot's own turns are not affected.
     WORKER_MCP_DENY: z.string().optional(),
+    // The one folder every Orca worker starts in (`--worktree path:<it>`), so the
+    // exclusion above is written into a folder only workers use and never into one
+    // a person works in (~/Workspaces). bin/worker-mcp-trim.ts creates it, registers
+    // it with Orca as a plain folder and trims it. Blank = ~/.jarvis/worker-home.
+    WORKER_HOME_DIR: z.string().optional(),
     // Secret-shaped variable names (`*_TOKEN`, `*_SECRET`, `*_API_KEY`...) an agent turn may still
     // inherit. Every other credential-shaped variable is withheld from the spawned CLI, so a
     // prompt-injected turn has nothing to read out of its environment; Slack goes through a
@@ -300,6 +305,8 @@ export type AppConfig = {
   executerDbMcpServers: string[];
   /** User-scope MCP servers kept out of Orca workers; empty keeps every server. */
   workerMcpDeny: string[];
+  /** Absolute folder every Orca worker starts in. */
+  workerHomeDir: string;
 };
 
 /** A short human label for the active model, shown on the dashboard. */
@@ -382,5 +389,6 @@ export const loadConfig = (source: Record<string, string | undefined> = process.
     turnEnvPassthrough: parseList(env.TURN_ENV_PASSTHROUGH),
     executerDbMcpServers: parseList(env.EXECUTER_DB_MCP_SERVERS),
     workerMcpDeny: parseDenyList(env.WORKER_MCP_DENY),
+    workerHomeDir: expandHome(env.WORKER_HOME_DIR?.trim() || join(homedir(), ".jarvis", "worker-home")),
   };
 };

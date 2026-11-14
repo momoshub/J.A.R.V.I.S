@@ -376,6 +376,8 @@ const main = async () => {
   const slackCallScript = join(import.meta.dir, "..", "bin", "slack-api.sh");
   // Writes WORKER_MCP_DENY into a folder's project settings before an Orca worker starts in it.
   const workerMcpTrimScript = join(import.meta.dir, "..", "bin", "worker-mcp-trim.ts");
+  // The one folder Orca workers start in; the helper registers it with Orca and trims it when a worker is about to start.
+  const workerHome = ensureDir(config.workerHomeDir);
   // How `watch reply` asks whether anybody has answered yet.
   const slackWaitScript = join(import.meta.dir, "..", "bin", "slack-wait.sh");
   // How `watch worker` asks whether an Orca worker finished, died or waits for
@@ -505,7 +507,7 @@ const main = async () => {
     BOT_SLACK_CALL: slackCallScript,
     JARVIS_SLACK_API_URL: `http://127.0.0.1:${config.dashboardPort}/api/slack`,
     // The servers kept out of Orca workers and the helper the worker-start prompts run first.
-    ...workerMcpEnv(config.workerMcpDeny, workerMcpTrimScript),
+    ...workerMcpEnv(config.workerMcpDeny, workerMcpTrimScript, workerHome),
   });
   // A turn's environment is the bot's without its secrets. Names only, never values.
   const withheld = scrubSecretEnv(process.env, new Set(config.turnEnvPassthrough)).removed;

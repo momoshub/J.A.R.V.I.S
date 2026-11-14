@@ -1,7 +1,10 @@
 import { describe, expect, test } from "bun:test";
 import {
   mergeDeniedServers,
+  orcaRepoPaths,
   parseDenyList,
+  WORKER_CHECKOUT_TRIM_RULE,
+  WORKER_HOME_ENV,
   WORKER_MCP_DENY_ENV,
   WORKER_MCP_TRIM_ENV,
   WORKER_MCP_TRIM_RULE,
@@ -23,9 +26,20 @@ describe("parseDenyList", () => {
 });
 
 describe("workerMcpEnv", () => {
-  test("carries the names comma separated (empty for none) and the helper path", () => {
-    expect(workerMcpEnv(["a", "b"], "/x/trim.ts")).toEqual({ [WORKER_MCP_DENY_ENV]: "a,b", [WORKER_MCP_TRIM_ENV]: "/x/trim.ts" });
-    expect(workerMcpEnv([], "/x/trim.ts")[WORKER_MCP_DENY_ENV]).toBe("");
+  test("carries the names comma separated (empty for none), the helper path and the worker home", () => {
+    expect(workerMcpEnv(["a", "b"], "/x/trim.ts", "/w/home")).toEqual({
+      [WORKER_MCP_DENY_ENV]: "a,b",
+      [WORKER_MCP_TRIM_ENV]: "/x/trim.ts",
+      [WORKER_HOME_ENV]: "/w/home",
+    });
+    expect(workerMcpEnv([], "/x/trim.ts", "/w/home")[WORKER_MCP_DENY_ENV]).toBe("");
+  });
+});
+
+describe("orcaRepoPaths", () => {
+  test("reads the paths out of `orca repo list --json` and tolerates any other shape", () => {
+    expect(orcaRepoPaths({ ok: true, result: { repos: [{ path: "/a" }, { id: "x" }, { path: "/b" }] } })).toEqual(["/a", "/b"]);
+    for (const bad of [null, "x", {}, { result: {} }, { result: { repos: "no" } }]) expect(orcaRepoPaths(bad)).toEqual([]);
   });
 });
 
@@ -76,11 +90,25 @@ describe("mergeDeniedServers", () => {
 });
 
 describe("WORKER_MCP_TRIM_RULE", () => {
-  test("says to trim before the launch, names the helper variable and bans the one-step new worktree", () => {
-    expect(WORKER_MCP_TRIM_RULE).toContain(`"$${WORKER_MCP_TRIM_ENV}" <folder>`);
+  test("starts workers in the worker home, trimmed before the launch, never in a folder a person works in", () => {
+    expect(WORKER_MCP_TRIM_RULE).toContain(`"$${WORKER_MCP_TRIM_ENV}"\` with no argument`);
+    expect(WORKER_MCP_TRIM_RULE).toContain(`--worktree path:$${WORKER_HOME_ENV}`);
+    expect(WORKER_MCP_TRIM_RULE).toContain("never in `~/Workspaces`");
     expect(WORKER_MCP_TRIM_RULE).toContain(WORKER_SETTINGS_PATH);
     expect(WORKER_MCP_TRIM_RULE).toContain("before the launch, never after");
-    expect(WORKER_MCP_TRIM_RULE).toContain("`--worktree new-child`");
-    expect(WORKER_MCP_TRIM_RULE).toContain("`worktree create --agent`");
+  });
+
+  test("a worker that is not inside the repository gets absolute paths and cuts its own worktree", () => {
+    expect(WORKER_MCP_TRIM_RULE).toContain("absolute paths in its brief");
+    expect(WORKER_MCP_TRIM_RULE).toContain("git worktree add <abs path>");
+  });
+});
+
+describe("WORKER_CHECKOUT_TRIM_RULE", () => {
+  test("trims the checkout before the launch and bans the one-step new worktree", () => {
+    expect(WORKER_CHECKOUT_TRIM_RULE).toContain(`"$${WORKER_MCP_TRIM_ENV}" <worktree path>`);
+    expect(WORKER_CHECKOUT_TRIM_RULE).toContain("before the launch, never after");
+    expect(WORKER_CHECKOUT_TRIM_RULE).toContain("`--worktree new-child`");
+    expect(WORKER_CHECKOUT_TRIM_RULE).toContain("`worktree create --agent`");
   });
 });

@@ -1,4 +1,6 @@
 import { describe, expect, test } from "bun:test";
+import { homedir } from "node:os";
+import { join } from "node:path";
 import { loadConfig } from "../../src/config/env.ts";
 
 const base = {
@@ -9,6 +11,13 @@ const base = {
 };
 
 describe("loadConfig", () => {
+  test("workers start in their own folder: ~/.jarvis/worker-home by default, blank included, ~ expanded", () => {
+    expect(loadConfig(base).workerHomeDir).toBe(join(homedir(), ".jarvis", "worker-home"));
+    expect(loadConfig({ ...base, WORKER_HOME_DIR: " " }).workerHomeDir).toBe(join(homedir(), ".jarvis", "worker-home"));
+    expect(loadConfig({ ...base, WORKER_HOME_DIR: "/srv/workers" }).workerHomeDir).toBe("/srv/workers");
+    expect(loadConfig({ ...base, WORKER_HOME_DIR: "~/w" }).workerHomeDir).toBe(join(homedir(), "w"));
+  });
+
   test("the bot's own Orca terminal defaults to ~/Workspaces, blank included, and can be switched off", () => {
     expect(loadConfig(base).orcaTerminalWorktree).toMatch(/^path:.*\/Workspaces$/);
     expect(loadConfig({ ...base, ORCA_TERMINAL_WORKTREE: "path:/srv/work" }).orcaTerminalWorktree).toBe("path:/srv/work");

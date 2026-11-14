@@ -16,6 +16,14 @@
  * the folder just before a worker starts in it, by `bin/worker-mcp-trim.ts`,
  * and the prompts that start workers say to run it first.
  *
+ * That file is the folder's, so it must be a folder only workers use: trimming
+ * the owner's own `~/Workspaces` would strip the same servers from their own
+ * sessions there. Workers therefore start in a dedicated folder, the worker home
+ * (`WORKER_HOME_DIR`, default `~/.jarvis/worker-home`), which the helper creates,
+ * registers with Orca as a plain folder (`--worktree path:` only takes folders
+ * Orca knows) and trims. A worker that changes code cuts its own
+ * `git worktree add` from the real repository, by absolute path.
+ *
  * The names come from `WORKER_MCP_DENY`; empty keeps every server, as before.
  */
 
@@ -23,15 +31,24 @@
 export const WORKER_MCP_DENY_ENV = "BOT_WORKER_MCP_DENY";
 /** Env var a turn carries with the path of the helper that writes the exclusion. */
 export const WORKER_MCP_TRIM_ENV = "BOT_WORKER_MCP_TRIM";
+/** Env var a turn carries with the worker home, the folder every Orca worker starts in. */
+export const WORKER_HOME_ENV = "BOT_WORKER_HOME";
 /** The project settings file a session reads from its working directory, never committed. */
 export const WORKER_SETTINGS_PATH = ".claude/settings.local.json";
 
 /**
  * The sentence every prompt that starts an Orca worker carries. The order is the
  * point: the file is read when the session starts, so a worker started first and
- * trimmed after keeps every server.
+ * trimmed after keeps every server. The folder is the worker home, never a folder
+ * the owner works in, because the trim leaves its file there.
  */
-export const WORKER_MCP_TRIM_RULE = `Before the worker starts, run \`"$${WORKER_MCP_TRIM_ENV}" <folder>\` on the folder it will run in (the one named after \`path:\`; with a new checkout, \`orca worktree create\` it without \`--agent\` first and use the path it prints): it writes the host's MCP exclusions into that folder's \`${WORKER_SETTINGS_PATH}\`, which a session reads only when it starts, so it must come before the launch, never after. It does nothing when the host excludes none. Never start a worker in a new worktree in one step (\`--worktree new-child\`, \`worktree create --agent\`): the agent would be running before the file exists`;
+export const WORKER_MCP_TRIM_RULE = `Workers run in their own folder, never in \`~/Workspaces\` or any folder a person works in (the MCP exclusion below is written into the folder and would strip those servers from the person's own sessions there). Before the worker starts, run \`"$${WORKER_MCP_TRIM_ENV}"\` with no argument: it creates the worker home (\`$${WORKER_HOME_ENV}\`), registers it with Orca if missing and writes the host's MCP exclusions into its \`${WORKER_SETTINGS_PATH}\`, which a session reads only when it starts, so it must come before the launch, never after. Then start the worker with \`--worktree path:$${WORKER_HOME_ENV}\`, and put absolute paths in its brief: it is not inside the repository, so a worker that changes code cuts its own \`git worktree add <abs path> -b <branch> origin/<base>\` from the real repository`;
+
+/**
+ * Fanout gives each worker its own checkout of the repository instead, so the exclusion goes
+ * into that checkout (excluded from git there) rather than into the worker home.
+ */
+export const WORKER_CHECKOUT_TRIM_RULE = `Before the worker starts, run \`"$${WORKER_MCP_TRIM_ENV}" <worktree path>\`: it writes the host's MCP exclusions into that checkout's \`${WORKER_SETTINGS_PATH}\` (kept out of git), which a session reads only when it starts, so it must come before the launch, never after. It does nothing when the host excludes none. Never start a worker in a new worktree in one step (\`--worktree new-child\`, \`worktree create --agent\`): the agent would be running before the file exists`;
 
 /** Server names from a comma list, trimmed, without blanks or repeats. */
 export const parseDenyList = (raw: string | undefined): string[] => [
@@ -43,11 +60,19 @@ export const parseDenyList = (raw: string | undefined): string[] => [
   ),
 ];
 
-/** The environment a turn gets: the names to exclude and the helper that applies them. */
-export const workerMcpEnv = (deny: readonly string[], trimScript: string): Record<string, string> => ({
+/** The environment a turn gets: the names to exclude, the helper that applies them and the worker home. */
+export const workerMcpEnv = (deny: readonly string[], trimScript: string, workerHome: string): Record<string, string> => ({
   [WORKER_MCP_DENY_ENV]: deny.join(","),
   [WORKER_MCP_TRIM_ENV]: trimScript,
+  [WORKER_HOME_ENV]: workerHome,
 });
+
+/** The paths `orca repo list --json` reports, or none when the output is not that shape. */
+export const orcaRepoPaths = (listJson: unknown): string[] => {
+  const repos = asRecord(asRecord(listJson)?.result)?.repos;
+  if (!Array.isArray(repos)) return [];
+  return repos.map((r) => asRecord(r)?.path).filter((p): p is string => typeof p === "string");
+};
 
 export type MergeResult =
   | { ok: true; text: string; added: string[]; changed: boolean }

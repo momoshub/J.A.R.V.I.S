@@ -25,9 +25,10 @@ const sh = (cwd: string, ...cmd: string[]) => {
   return { code: p.exitCode, out: new TextDecoder().decode(p.stdout).trim() };
 };
 
-const run = async (args: string[], deny: string | undefined) => {
-  const env = hermetic();
+const run = async (args: string[], deny: string | undefined, extra: Record<string, string> = {}) => {
+  const env = { ...hermetic(), ...extra };
   delete env.BOT_WORKER_MCP_DENY;
+  if (!extra.BOT_WORKER_HOME) delete env.BOT_WORKER_HOME;
   if (deny !== undefined) env.BOT_WORKER_MCP_DENY = deny;
   const proc = Bun.spawn({ cmd: [process.execPath, SCRIPT, ...args], stdout: "pipe", stderr: "pipe", env });
   const [stdout, stderr, code] = await Promise.all([
@@ -67,7 +68,7 @@ describe("bin/worker-mcp-trim.ts", () => {
     for (const deny of [undefined, "", " , "]) {
       const r = await run([dir], deny);
       expect(r.code).toBe(0);
-      expect(r.stdout).toContain("nothing to do");
+      expect(r.stdout).toContain("nothing to trim");
     }
     expect(existsSync(join(dir, ".claude"))).toBe(false);
   });
@@ -126,11 +127,85 @@ describe("bin/worker-mcp-trim.ts", () => {
     expect(readFileSync(join(repo, ".git", "info", "exclude"), "utf8")).toBe(".claude/settings.local.json\n");
   });
 
-  test("a missing folder or no argument is refused", async () => {
+  test("a missing folder is refused, and so are extra arguments", async () => {
     const missing = await run([join(root, "nope")], "pg-prod");
     expect(missing.code).toBe(1);
     expect(missing.stderr).toContain("is not a folder");
-    expect((await run([], "pg-prod")).code).toBe(2);
     expect((await run([root, "extra"], "pg-prod")).code).toBe(2);
+  });
+
+  describe("with no argument: the worker home", () => {
+    /** A stand-in `orca` that answers `repo list` from a file and records `repo add`. */
+    const fakeOrca = (known: string[]) => {
+      const bin = join(root, "bin");
+      mkdirSync(bin);
+      const log = join(root, "orca.log");
+      writeFileSync(
+        join(bin, "orca"),
+        `#!/bin/sh
+echo "$@" >> "${log}"
+case "$1 $2" in
+  "repo list") printf '%s' '${JSON.stringify({ ok: true, result: { repos: known.map((path) => ({ path })) } })}' ;;
+  "repo add") printf '{"ok":true}' ;;
+  *) exit 3 ;;
+esac
+`,
+        { mode: 0o755 },
+      );
+      return { path: `${bin}:${process.env.PATH ?? ""}`, calls: () => (existsSync(log) ? readFileSync(log, "utf8").trim().split("\n") : []) };
+    };
+
+    test("creates the home, registers it as a plain folder and trims it, never touching another folder", async () => {
+      const home = join(root, "jarvis", "worker-home");
+      const person = join(root, "person-folder");
+      mkdirSync(person);
+      const orca = fakeOrca([person]);
+      const r = await run([], "pg-prod", { BOT_WORKER_HOME: home, PATH: orca.path });
+      expect(r.code).toBe(0);
+      expect(settingsOf(home)).toEqual({ deniedMcpServers: [{ serverName: "pg-prod" }] });
+      expect(orca.calls()).toEqual(["repo list --json", `repo add --path ${home} --kind folder --json`]);
+      expect(r.stdout).toContain("start the worker now");
+      // the folder a person works in, even though Orca knows it, is never written
+      expect(existsSync(join(person, ".claude"))).toBe(false);
+    });
+
+    test("a home Orca already knows is not added again, and a second run changes nothing", async () => {
+      const home = join(root, "worker-home");
+      mkdirSync(home);
+      const orca = fakeOrca([home]);
+      const env = { BOT_WORKER_HOME: home, PATH: orca.path };
+      expect((await run([], "pg-prod", env)).code).toBe(0);
+      const once = readFileSync(join(home, ".claude", "settings.local.json"), "utf8");
+      expect((await run([], "pg-prod", env)).code).toBe(0);
+      expect(readFileSync(join(home, ".claude", "settings.local.json"), "utf8")).toBe(once);
+      expect(orca.calls().filter((c) => c.startsWith("repo add"))).toEqual([]);
+    });
+
+    test("with nothing excluded the home is still created and registered, and no settings file is written", async () => {
+      const home = join(root, "worker-home");
+      const orca = fakeOrca([]);
+      const r = await run([], undefined, { BOT_WORKER_HOME: home, PATH: orca.path });
+      expect(r.code).toBe(0);
+      expect(r.stdout).toContain(`--worktree path:${home}`);
+      expect(existsSync(join(home, ".claude"))).toBe(false);
+      expect(orca.calls()).toContain(`repo add --path ${home} --kind folder --json`);
+    });
+
+    test("when Orca cannot be reached it says so (exit 1) but the home is already trimmed", async () => {
+      const home = join(root, "worker-home");
+      const bin = join(root, "bin");
+      mkdirSync(bin);
+      writeFileSync(join(bin, "orca"), "#!/bin/sh\necho 'not running' >&2\nexit 1\n", { mode: 0o755 });
+      const r = await run([], "pg-prod", { BOT_WORKER_HOME: home, PATH: `${bin}:${process.env.PATH ?? ""}` });
+      expect(r.code).toBe(1);
+      expect(r.stderr).toContain("orca repo list failed");
+      expect(settingsOf(home)).toEqual({ deniedMcpServers: [{ serverName: "pg-prod" }] });
+    });
+
+    test("without BOT_WORKER_HOME it is a usage error", async () => {
+      const r = await run([], "pg-prod");
+      expect(r.code).toBe(2);
+      expect(r.stderr).toContain("BOT_WORKER_HOME");
+    });
   });
 });
