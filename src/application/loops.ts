@@ -1,10 +1,14 @@
 /**
  * The thing that fires loops.
  *
- * Everything a loop says lands in its creator's DM, never in the channel or
- * thread it was created in: a scheduled turn with nobody present should not
- * speak in a shared room. Each fire opens a fresh top-level DM message and the
- * turn runs under it, so runs do not pile into one thread.
+ * A loop is silent unless it has something to say (Kai, 2026-11-14): a run
+ * that finds nothing leaves NOTHING in Slack, not even a header. So the turn
+ * runs first, under a thread key made up for it in the creator's DM (the DM is
+ * opened, nothing is posted), and only when its final reply is a real answer
+ * is ONE top-level DM posted: the `🔁 <name> - loop #id` header line, then the
+ * reply. The session is then moved onto that message's thread, so a person
+ * replying under it talks to the same session. Everything a loop says lands in
+ * its creator's DM, never in the channel or thread it was created in.
  *
  * Same shape as the watcher and for the same reason - it runs outside every
  * turn, polling a table, and costs nothing until something is due. When a loop
@@ -15,11 +19,13 @@
  * the whole catch-up policy: a bot that was down over three slots runs the loop
  * once on startup and carries on from there, never a burst.
  */
-import { loopRef, loopTurnText, nextRun, originLinkText, parseSchedule } from "../domain/loop.ts";
+import { loopRef, loopThreadTs, loopTurnText, nextRun, originLinkText, parseSchedule } from "../domain/loop.ts";
 import type { Loop, LoopRepo } from "../infrastructure/db/loopRepo.ts";
 import type { Clock } from "./ports.ts";
 import { logAndIgnore } from "./ignoredError.ts";
 import { CHECK_TIMEOUT_MS, type CheckResult } from "./watcher.ts";
+import { EMPTY_REPLY_FALLBACK } from "./handleMessage.ts";
+import { isSilenceNote } from "../domain/silence.ts";
 
 /** Same hand-back as the watcher's, so both wake a thread the same way. */
 export type LoopTurnRequest = {
@@ -31,6 +37,26 @@ export type LoopTurnRequest = {
   unprompted?: boolean;
   /** The scheduled fire itself: the turn runs on the `loop` model, not the creator's role model. */
   loop?: boolean;
+  /** Hand the final reply back instead of posting it: the runner decides whether it is worth a message. */
+  hold?: boolean;
+};
+
+/** A held turn's final reply when it is a real answer; nothing for a silent run. */
+export type LoopTurnReply = { text: string } | undefined | void;
+
+/** A trailing NO_REPLY line, with or without a summary written before it. */
+const TRAILING_NO_REPLY = /(?:^|\n|[.!?:]\s)[\s`*_~"'(]*no[_ ]reply[\s`*_~"').!]*$/i;
+
+/**
+ * What a loop's final reply is worth posting: nothing for an empty reply, the
+ * "nothing useful to add" fallback an empty reply becomes, a silence note, or a
+ * reply that ENDS in NO_REPLY (a model told to say nothing often writes a line
+ * first; the last word is the decision).
+ */
+export const loopReplyOf = (text: string): { text: string } | undefined => {
+  const t = text.trim();
+  if (!t || t === EMPTY_REPLY_FALLBACK || isSilenceNote(t) || TRAILING_NO_REPLY.test(t)) return undefined;
+  return { text: t };
 };
 
 /**
@@ -51,15 +77,32 @@ export const loopOriginText = async (
 export type LoopRunnerDeps = {
   loops: LoopRepo;
   clock: Clock;
-  runTurn: (req: LoopTurnRequest) => Promise<void>;
+  runTurn: (req: LoopTurnRequest) => Promise<LoopTurnReply>;
   /** Minutes east of UTC that schedules are read in. */
   offsetMinutes: () => number;
+  /** The id of the user's DM with the bot, opened when needed. Posts nothing. A run without a DM is not started. */
+  openDm: (slackUserId: string) => Promise<string | undefined>;
   /**
    * Post a new top-level message in the user's DM with the bot (opening the DM
    * when needed) and say where it landed, resolved at fire time from the
    * creator's id. Nothing posts without it.
    */
   dm: (slackUserId: string, text: string) => Promise<{ channel: string; ts: string } | undefined>;
+  /**
+   * Called once a run is over, with the made-up thread the turn used and the
+   * message posted for it (none for a silent run): move what was bound to that
+   * thread - the session, and any watch or reminder the turn set - onto the
+   * message, or for a silent run onto the DM's top level. Not everything keyed
+   * by a thread follows (workflows, follows and worker questions do not).
+   * The CLI session keeps its name from the made-up ts.
+   */
+  adopt?: (from: { channel: string; ts: string }, to?: { channel: string; ts: string }) => void;
+  /**
+   * Whether the turn left thread-bound work waiting on that made-up thread (a
+   * watch reports back into its thread). That run cannot stay silent: the
+   * thread has to exist, so the header is posted as its anchor.
+   */
+  anchored?: (from: { channel: string; ts: string }) => boolean;
   /** A link to one Slack message, for the origin line of a run's announcement. Without it there is no link. */
   permalink?: (channel: string, ts: string) => Promise<string | undefined>;
   /** The watcher's shell runner: same cwd, env and timeout. Without it a script loop is stopped. */
@@ -138,38 +181,63 @@ export const createLoopRunner = (deps: LoopRunnerDeps): LoopRunner => {
       return;
     }
 
-    // One fresh top-level DM message per fire; the turn runs in its thread.
-    let ref: { channel: string; ts: string } | undefined;
+    // No header up front: a run with nothing to say must leave nothing in Slack.
+    // The turn runs under a made-up thread in the DM and is posted only if it answers.
+    let channel: string | undefined;
     try {
-      ref = await deps.dm(l.createdBy, `🔁 ${l.name} - loop #${l.id}, ${l.schedule}${await loopOriginText(l, deps.permalink)}`);
+      channel = await deps.openDm(l.createdBy);
     } catch (e) {
-      ref = undefined;
       log(`loop ${l.id}: could not open the DM: ${e instanceof Error ? e.message : String(e)}`);
     }
-    if (!ref) {
+    if (!channel) {
       deps.loops.reschedule(l.id, next, deps.clock(), "could not open the creator's DM");
       return;
     }
+    const dmChannel = channel;
+    const threadTs = loopThreadTs(now, l.id);
     const lost = (e: unknown): void => {
       const msg = e instanceof Error ? e.message : String(e);
       log(`loop ${l.id} could not start its turn: ${msg}`);
       deps.loops.reschedule(l.id, next, deps.clock(), msg);
       void say(l, `${loopRef(l.id, l.name)}: could not start its turn: ${msg}`, "loop start-failed notice");
     };
+    // Over: the reply (if any) goes out as one top-level DM, header first, and
+    // what the turn bound to its made-up thread follows. A run that left a
+    // watch behind is anchored by the header even with nothing to say.
+    const from = { channel: dmChannel, ts: threadTs };
+    const deliver = async (reply: LoopTurnReply): Promise<void> => {
+      const text = reply?.text.trim();
+      let to: { channel: string; ts: string } | undefined;
+      try {
+        if (text || deps.anchored?.(from)) {
+          const header = `🔁 ${l.name} - loop #${l.id}, ${l.schedule}${await loopOriginText(l, deps.permalink)}`;
+          to = await deps.dm(l.createdBy, text ? `${header}\n\n${text}` : header);
+          if (!to) log(`loop ${l.id}: its reply could not be posted`);
+        }
+      } catch (e) {
+        log(`loop ${l.id}: its reply could not be posted: ${e instanceof Error ? e.message : String(e)}`);
+      }
+      try {
+        deps.adopt?.(from, to);
+      } catch (e) {
+        log(`loop ${l.id}: could not move its thread state: ${e instanceof Error ? e.message : String(e)}`);
+      }
+    };
     try {
       // Not awaited: a turn can run for half an hour and must not hold the
       // other due loops.
       void deps
         .runTurn({
-          channelId: ref.channel,
-          threadTs: ref.ts,
+          channelId: dmChannel,
+          threadTs,
           slackUserId: l.createdBy,
           text: loopTurnText(l.id, l.schedule, l.prompt, l.name),
           // The bot's own scheduled note, not a message anyone sent.
           unprompted: true,
           loop: true,
+          hold: true,
         })
-        .catch(lost);
+        .then(deliver, lost);
     } catch (e) {
       lost(e);
     }

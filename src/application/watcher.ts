@@ -61,7 +61,7 @@ export type WatcherDeps = {
     keepSession?: boolean;
     /** Nobody typed it: the bot started this turn itself. */
     unprompted?: boolean;
-  }) => Promise<void>;
+  }) => Promise<unknown>;
   /** Runs the rows that guard a PR's CI; without it such a row is settled failed. */
   gate?: WatchGate;
   /** Say something in the thread without spending a turn. */

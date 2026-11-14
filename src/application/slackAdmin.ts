@@ -136,6 +136,8 @@ export type SlackAdminPort = {
    * so a message can later be found again - matching a reaction to it, say.
    */
   postDm: (userId: string, text: string, by?: string) => Promise<PostedRef | undefined>;
+  /** The id of the DM with a user, opened when needed, posting nothing. */
+  openDm?: (userId: string) => Promise<string | undefined>;
   /**
    * DM a message with buttons on it. The transport owns how they are rendered;
    * callers only say what the buttons are and what they carry.
