@@ -31,16 +31,20 @@ const git = (dir: string, ...args: string[]): { ok: boolean; out: string } => {
 /**
  * The file is host config, never something a worker should commit with `git add -A`.
  * The exclude list is the repository's own and shared by its worktrees, so it is one
- * line per repository; a folder that is not in a repository has nothing to exclude.
+ * line per folder; a folder that is not in a repository has nothing to exclude.
  */
 const keepOutOfGit = (dir: string): void => {
   if (git(dir, "check-ignore", "-q", WORKER_SETTINGS_PATH).ok) return;
   const where = git(dir, "rev-parse", "--path-format=absolute", "--git-path", "info/exclude");
   if (!where.ok || !where.out) return;
+  // The folder may be a subfolder of the repository, and the exclude list is anchored at its root.
+  const prefix = git(dir, "rev-parse", "--show-prefix");
+  if (!prefix.ok) return;
+  const line = `/${prefix.out}${WORKER_SETTINGS_PATH}`;
   try {
     mkdirSync(dirname(where.out), { recursive: true });
     const have = existsSync(where.out) ? readFileSync(where.out, "utf8") : "";
-    writeFileSync(where.out, `${have}${have === "" || have.endsWith("\n") ? "" : "\n"}/${WORKER_SETTINGS_PATH}\n`);
+    writeFileSync(where.out, `${have}${have === "" || have.endsWith("\n") ? "" : "\n"}${line}\n`);
   } catch (e) {
     logAndIgnore("add the worker settings file to the git exclude list")(e);
   }

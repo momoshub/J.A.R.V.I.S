@@ -108,6 +108,17 @@ describe("bin/worker-mcp-trim.ts", () => {
     expect(exclude.split("\n").filter((l) => l === "/.claude/settings.local.json")).toHaveLength(1);
   });
 
+  test("a subfolder of a repository is excluded at its own path, once", async () => {
+    const { repo } = repoWithWorktree();
+    const sub = join(repo, "packages", "app");
+    mkdirSync(sub, { recursive: true });
+    expect((await run([sub], "pg-prod")).code).toBe(0);
+    expect((await run([sub], "pg-prod")).code).toBe(0);
+    expect(sh(repo, "git", "status", "--porcelain").out).toBe("");
+    const lines = readFileSync(join(repo, ".git", "info", "exclude"), "utf8").split("\n").filter((l) => l.includes("settings.local.json"));
+    expect(lines).toEqual(["/packages/app/.claude/settings.local.json"]);
+  });
+
   test("a file the repository already ignores adds no second exclude line", async () => {
     const { repo, wt } = repoWithWorktree();
     writeFileSync(join(repo, ".git", "info", "exclude"), ".claude/settings.local.json\n");

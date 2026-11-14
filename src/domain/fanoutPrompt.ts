@@ -57,7 +57,7 @@ Splitting:
 Running:
 - make each checkout first, with no agent: \`orca worktree create --repo id:<repoId> --name <short-slug> --setup run --no-parent --json\` - the result's \`worktree.path\` is where it lives
 - ${WORKER_MCP_TRIM_RULE}
-- then start the worker in it: \`orca agent launch --worktree path:<worktree path> --agent claude --model "$BOT_WORKER_MODEL" --prompt "<prompt>" --json\`; its result carries the terminal under \`outcome.handle\`
+- then start the worker in it: \`orca agent launch --worktree path:<worktree path> --agent claude --model "$BOT_WORKER_MODEL" --prompt "<prompt>" --surface terminal --json\`; its result carries the terminal under \`outcome.handle\`
 - if the launch result has no handle, get it with \`orca terminal list --worktree path:<worktree path> --json\`. \`orca terminal wait\` and \`orca terminal read\` take \`--terminal <handle>\`, not \`--worktree\`
 - about 20 seconds after starting, \`orca terminal read --terminal <handle> --json\` and confirm the agent actually launched. A shell prompt can eat the launch line and leave a bare shell; if so, \`orca terminal send --terminal <handle> --text "claude --model $BOT_WORKER_MODEL --dangerously-skip-permissions '<prompt>'" --enter --json\`
 - then \`orca terminal wait --terminal <handle> --for tui-idle --timeout-ms 600000 --json\` for each, and read the tail. A worker that stopped to ask something gets a short answer through \`orca terminal send\` if the answer is in the job; otherwise note the question and move on
