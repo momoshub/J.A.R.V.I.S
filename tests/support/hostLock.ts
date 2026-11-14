@@ -92,8 +92,12 @@ export const niceValue = (env: LockEnv): number => {
   return env.JARVIS_TEST_NICE?.trim() && Number.isInteger(n) && n >= 0 && n <= 19 ? n : DEFAULT_NICE;
 };
 
+// `ps` prints local time in the caller's locale: pin both, or two runs started from a terminal, launchd and a
+// worker (different TZ/LANG) would read the same holder's start differently and reap a live lock.
+const PS_ENV = { ...process.env, TZ: "UTC", LC_ALL: "C" };
+
 export const processStart = (pid: number): string | null => {
-  const r = Bun.spawnSync(["ps", "-o", "lstart=", "-p", String(pid)], { stdout: "pipe", stderr: "ignore" });
+  const r = Bun.spawnSync(["ps", "-o", "lstart=", "-p", String(pid)], { stdout: "pipe", stderr: "ignore", env: PS_ENV });
   const out = r.stdout.toString().trim();
   return r.exitCode === 0 && out ? out : null;
 };
@@ -103,6 +107,13 @@ export const processStart = (pid: number): string | null => {
  * inside a `bun test` preload it holds the bun binary and the first test file, not what was typed.
  */
 export const commandLine = (pid: number): readonly string[] | null => {
+  try {
+    // Linux keeps the exact argv, NUL separated, so a quoted `-t "foo bar"` stays one word
+    const raw = readFileSync(`/proc/${pid}/cmdline`, "utf8");
+    if (raw) return raw.split("\0").filter((a) => a !== "");
+  } catch {
+    /* no procfs (macOS): fall back on ps */
+  }
   const r = Bun.spawnSync(["ps", "-o", "args=", "-p", String(pid)], { stdout: "pipe", stderr: "ignore" });
   const out = r.stdout.toString().trim();
   return r.exitCode === 0 && out ? out.split(/\s+/) : null;

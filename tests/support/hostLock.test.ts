@@ -86,6 +86,27 @@ describe("env knobs", () => {
   });
 });
 
+describe("processStart", () => {
+  const startUnder = (env: Record<string, string>) => {
+    const r = Bun.spawnSync(["ps", "-o", "lstart=", "-p", String(process.pid)], { env: { ...process.env, ...env } });
+    return r.stdout.toString().trim();
+  };
+  test("is the same string whatever TZ and locale the caller runs in", () => {
+    const here = processStart(process.pid);
+    expect(here).toBeTruthy();
+    // sanity: a raw `ps` does differ by TZ, which is what the pin guards against
+    expect(startUnder({ TZ: "UTC" })).not.toBe(startUnder({ TZ: "Pacific/Kiritimati" }));
+    const other = Bun.spawnSync(
+      ["bun", "-e", `import { processStart } from "${join(import.meta.dir, "hostLock.ts")}"; console.log(processStart(${process.pid}))`],
+      { env: { ...process.env, TZ: "Pacific/Kiritimati", LC_ALL: "fr_FR.UTF-8" } },
+    );
+    expect(other.stdout.toString().trim()).toBe(here as string);
+  });
+  test("a dead pid has none", () => {
+    expect(processStart(deadPid())).toBeNull();
+  });
+});
+
 describe("acquire", () => {
   test("takes a free lock, records the holder, releases it", async () => {
     const lock = await acquire(opts());
@@ -209,6 +230,18 @@ describe("the preload, end to end", () => {
     expect(bare({ JARVIS_TEST_LOCK_TIMEOUT_MS: "300", JARVIS_TEST_LOCK: "0" }).exitCode).toBe(0);
     expect(bare({ JARVIS_TEST_LOCK_TIMEOUT_MS: "300", CI: "true" }).exitCode).toBe(0);
     held.release();
+  });
+
+  test("a holder started under another TZ is still seen as alive: the waiter queues", async () => {
+    const hold = Bun.spawn(
+      ["bun", "-e", `import { acquire, processStart } from "${join(import.meta.dir, "hostLock.ts")}"; await acquire({ dir: "${join(dir, "locks")}", timeoutMs: 1000, pollMs: 5, pid: process.pid, cwd: "/h", startOf: processStart, now: Date.now, sleep: (m) => new Promise((r) => setTimeout(r, m)) }); console.log("held"); await new Promise((r) => setTimeout(r, 6000));`],
+      { env: { ...process.env, TZ: "Pacific/Kiritimati", LC_ALL: "fr_FR.UTF-8" }, stdout: "pipe" },
+    );
+    await hold.stdout.getReader().read(); // "held"
+    const r = bare({ JARVIS_TEST_LOCK_TIMEOUT_MS: "1500" });
+    hold.kill();
+    expect(r.exitCode).toBe(1);
+    expect(r.stderr.toString()).toContain("[test-lock] gave up");
   });
 
   test("a plain `bun test` takes the lock, runs, and leaves none behind", () => {
