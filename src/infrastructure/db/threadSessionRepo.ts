@@ -36,6 +36,8 @@ export type ThreadSessionRepo = {
   ) => void;
   /** Record a turn taken on the session, and how far it has now been shown. */
   touch: (channelId: string, threadTs: string, tier: SessionTier, lastTs: string, now: number) => void;
+  /** Rebind every tier's session of one thread to another thread (same channel or not), e.g. a made-up key onto the message later posted. */
+  move: (fromChannel: string, fromTs: string, toChannel: string, toTs: string, lastTs: string) => void;
   /** Forget it - the CLI no longer has it, or someone asked for a fresh start. */
   drop: (channelId: string, threadTs: string, tier?: SessionTier) => void;
 };
@@ -64,7 +66,14 @@ export const createThreadSessionRepo = (db: DbClient): ThreadSessionRepo => {
     "DELETE FROM thread_sessions WHERE channel_id = $channel AND thread_ts = $thread",
   );
 
+  const moveStmt = db.query(
+    "UPDATE thread_sessions SET channel_id = $toChannel, thread_ts = $toTs, last_ts = $lastTs WHERE channel_id = $channel AND thread_ts = $thread",
+  );
+
   return {
+    move: (fromChannel, fromTs, toChannel, toTs, lastTs) => {
+      moveStmt.run({ $toChannel: toChannel, $toTs: toTs, $lastTs: lastTs, $channel: fromChannel, $thread: fromTs });
+    },
     find: (channelId, threadTs, tier) => {
       const row = findStmt.get(channelId, threadTs, tier);
       return row

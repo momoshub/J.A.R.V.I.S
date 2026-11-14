@@ -19,6 +19,9 @@ let turns: LoopTurnRequest[];
 let dms: { userId: string; text: string }[];
 let ran: string[];
 let failDm = false;
+/** What a held turn answers; undefined = a silent run. */
+let reply: string | undefined;
+let adopted: { from: { channel: string; ts: string }; to: { channel: string; ts: string } }[];
 let check: CheckResult = { code: 0, output: "" };
 
 const HOUR = 3_600_000;
@@ -37,7 +40,10 @@ const runner = (
     runTurn: async (req) => {
       if (over.turnFails) throw new Error("queue closed");
       turns.push(req);
+      return reply === undefined ? undefined : { text: reply };
     },
+    openDm: async (userId) => (failDm ? undefined : `D-${userId}`),
+    adopt: (from, to) => adopted.push({ from, to }),
     dm: async (userId, text) => {
       if (failDm) return undefined;
       dms.push({ userId, text });
@@ -78,6 +84,8 @@ beforeEach(() => {
   dms = [];
   ran = [];
   failDm = false;
+  reply = "found 3 new words";
+  adopted = [];
   check = { code: 0, output: "" };
 });
 
@@ -90,31 +98,86 @@ describe("loop runner: prompt mode", () => {
     expect(turns).toHaveLength(0);
   });
 
-  test("fires in the creator's DM as a fresh top-level message, not in its origin thread", async () => {
+  test("fires in the creator's DM under a made-up thread, not in its origin thread", async () => {
     const l = add();
     now += HOUR;
     await runner().tick();
-    expect(dms).toHaveLength(1);
-    expect(dms[0]?.userId).toBe("U1");
+    await flush();
     expect(turns).toEqual([
       {
         channelId: "D-U1",
-        threadTs: "1.000",
+        threadTs: expect.stringMatching(/^\d+\.\d{6}$/),
         slackUserId: "U1",
         text: expect.stringContaining(`[loop ${l.id}]`),
         unprompted: true,
         loop: true,
+        hold: true,
       },
     ]);
     expect(turns[0]?.text).toContain("search for slang");
     expect(turns[0]?.channelId).not.toBe("C1");
   });
 
+  test("a silent run leaves nothing in Slack: no header, no reply, nothing adopted", async () => {
+    reply = undefined;
+    const l = add();
+    now += HOUR;
+    await runner().tick();
+    await flush();
+    expect(turns).toHaveLength(1);
+    expect(dms).toHaveLength(0);
+    expect(adopted).toHaveLength(0);
+    expect(loops.get(l.id)?.state).toBe("active");
+  });
+
+  test("a blank reply is silent too", async () => {
+    reply = "  \n";
+    add();
+    now += HOUR;
+    await runner().tick();
+    await flush();
+    expect(dms).toHaveLength(0);
+  });
+
+  test("a run that answers posts ONE top-level DM, header then reply, and its session follows", async () => {
+    reply = "found 3 new words: a, b, c";
+    const l = add({ name: "Slang" });
+    now += HOUR;
+    await runner().tick();
+    await flush();
+    expect(dms).toEqual([{ userId: "U1", text: `🔁 Slang - loop #${l.id}, every 1h\n\nfound 3 new words: a, b, c` }]);
+    expect(adopted).toEqual([
+      { from: { channel: "D-U1", ts: turns[0]!.threadTs }, to: { channel: "D-U1", ts: "1.000" } },
+    ]);
+  });
+
+  test("a reply that cannot be posted is logged and does not fail the loop", async () => {
+    const l = add();
+    now += HOUR;
+    const r = createLoopRunner({
+      loops,
+      clock: () => now,
+      offsetMinutes: () => 0,
+      runTurn: async () => ({ text: "hello" }),
+      openDm: async () => "D-U1",
+      dm: async () => {
+        throw new Error("slack down");
+      },
+      adopt: (from, to) => adopted.push({ from, to }),
+    });
+    await r.tick();
+    await flush();
+    expect(adopted).toHaveLength(0);
+    expect(loops.get(l.id)?.state).toBe("active");
+    expect(loops.get(l.id)?.lastError ?? "").not.toContain("could not start");
+  });
+
   test("the fire header and the turn carry the name", async () => {
     const l = add({ name: "PR board" });
     now += HOUR;
     await runner().tick();
-    expect(dms[0]?.text).toBe(`🔁 PR board - loop #${l.id}, every 1h`);
+    await flush();
+    expect(dms[0]?.text).toBe(`🔁 PR board - loop #${l.id}, every 1h\n\nfound 3 new words`);
     expect(turns[0]?.text).toContain('Scheduled run of "PR board"');
   });
 
@@ -123,7 +186,8 @@ describe("loop runner: prompt mode", () => {
     expect(l.name).toBe("search for slang and");
     now += HOUR;
     await runner().tick();
-    expect(dms[0]?.text).toBe(`🔁 search for slang and - loop #${l.id}, every 1h`);
+    await flush();
+    expect(dms[0]?.text).toContain(`🔁 search for slang and - loop #${l.id}, every 1h`);
   });
 
   test("a stopped loop says which loop", async () => {
@@ -148,7 +212,8 @@ describe("loop runner: prompt mode", () => {
     await r.tick();
     now += HOUR;
     await r.tick();
-    expect(turns.map((t) => t.threadTs)).toEqual(["1.000", "2.000"]);
+    await flush();
+    expect(new Set(turns.map((t) => t.threadTs)).size).toBe(2);
   });
 
   test("is moved on from now, and counted", async () => {
@@ -221,7 +286,8 @@ describe("loop runner: origin link", () => {
     const l = add({ threadTs: "", originTs: "5.250" });
     now += HOUR;
     await runner({ permalink: link }).tick();
-    expect(dms[0]?.text).toBe(`🔁 search for slang - loop #${l.id}, every 1h · <https://team.slack.com/archives/C1/p5250|created here>`);
+    await flush();
+    expect(dms[0]?.text).toContain(`🔁 search for slang - loop #${l.id}, every 1h · <https://team.slack.com/archives/C1/p5250|created here>\n\n`);
   });
 
   test("a loop made in a thread links to its own message there, not the thread root", async () => {
@@ -237,6 +303,7 @@ describe("loop runner: origin link", () => {
     add({ threadTs: "" });
     now += HOUR;
     await runner({ permalink: link }).tick();
+    await flush();
     expect(dms[0]?.text).toContain("<https://team.slack.com/archives/C1/p4100|created here>");
     expect(dms[1]?.text).not.toContain("created here");
   });
@@ -246,11 +313,13 @@ describe("loop runner: origin link", () => {
     add({ originTs: "5.251" });
     now += HOUR;
     await runner({ permalink: async () => { throw new Error("ratelimited"); } }).tick();
-    expect(dms[0]?.text).toBe(`🔁 search for slang - loop #${l.id}, every 1h`);
+    await flush();
+    expect(dms[0]?.text).toContain(`🔁 search for slang - loop #${l.id}, every 1h\n\n`);
     expect(turns).toHaveLength(2);
     now += HOUR;
     dms = [];
     await runner().tick();
+    await flush();
     expect(dms[0]?.text).not.toContain("created here");
   });
 
@@ -729,6 +798,7 @@ describe("loop command", () => {
         clock: () => m.clock.now,
         offsetMinutes: () => 0,
         runTurn: async () => {},
+        openDm: async () => undefined,
         dm: async () => undefined,
         sweep: () => expirePendingLoops(m.loopApproval),
       }).tick();
@@ -836,6 +906,7 @@ describe("loop origin in storage", () => {
     expect(l.originTs).toBe("");
     now += HOUR;
     await runner({ permalink: link }).tick();
-    expect(dms[0]?.text).toBe(`🔁 search for slang - loop #${l.id}, every 1h`);
+    await flush();
+    expect(dms[0]?.text).toBe(`🔁 search for slang - loop #${l.id}, every 1h\n\nfound 3 new words`);
   });
 });

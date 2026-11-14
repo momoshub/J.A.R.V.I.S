@@ -139,7 +139,7 @@ export type CommandDeps = {
     autoContinue?: boolean;
     /** Started by the bot, nobody typed it. */
     unprompted?: boolean;
-  }) => Promise<void>;
+  }) => Promise<unknown>;
   /** Timer for a workflow's next step; injected so tests need not wait. */
   continueTimer?: (fn: () => void, ms: number) => void;
   /** Failed workflow steps in a row, per workflow id, so a failure is retried once. */

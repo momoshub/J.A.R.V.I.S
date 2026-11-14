@@ -223,7 +223,7 @@ export const SCHEDULE_COMMANDS: readonly CommandDef[] = [
     // unattended - a standing decision, not a one-off request.
     minRole: "admin",
     usage: "every <monday 9am | day at 18:00 | 6h | week> [--name \"PR board\"] <prompt> | every <schedule> [--name <name>] -- <shell command> (my own turn only, at the owner's ask, then the owner approves) | list | rename <id> <name> | cancel <id>",
-    summary: "on a schedule, run a prompt as a real turn; runs report to your DM under its name (--name, else the first words of the prompt; rename later). A script loop is never typed: ask me in plain words and I write it, the owner approves it",
+    summary: "on a schedule, run a prompt as a real turn; silent unless the prompt asks for a post or a person is needed, then it DMs you under its name (--name, else the first words of the prompt; rename later). A script loop is never typed: ask me in plain words and I write it, the owner approves it",
     run: async ({ deps, actor, args, rest, prefix, threadTs, messageTs, channelId, fromBrainRun }) => {
       if (!deps.loops) return "I have nowhere to keep a loop right now.";
       const now = deps.clock();

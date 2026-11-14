@@ -653,6 +653,7 @@ const main = async () => {
       unprompted,
       workerLane,
       loop,
+      hold,
     }: {
       channelId: string;
       threadTs: string;
@@ -663,6 +664,7 @@ const main = async () => {
       unprompted?: boolean;
       workerLane?: boolean;
       loop?: boolean;
+      hold?: boolean;
     }) => {
       const result = await respond(deps, {
         channelId,
@@ -682,6 +684,8 @@ const main = async () => {
       // A turn nobody watched live can still answer with a note about not
       // answering; posted, it reads as the whole reply.
       if (result.kind !== "ignored" && result.text.trim() && !isSilenceNote(result.text)) {
+        // A loop's fire: the runner posts it (with its header) or not at all.
+        if (hold) return { text: result.text };
         // Signed with what the turn cost, as a reply streamed live would be.
         await slackAdmin.post(
           channelId,
@@ -1127,7 +1131,10 @@ const main = async () => {
     clock,
     runTurn: deps.runTurn!,
     offsetMinutes: () => hostOffsetMin(clock()),
+    openDm: async (userId) => slackAdmin.openDm?.(userId),
     dm: async (userId, text) => slackAdmin.postDm(userId, text, SIGNATURES.loop),
+    // A silent run's turn lived under a made-up thread; a reply under the posted message resumes its session.
+    adopt: (from, to) => threadSessions.move(from.channel, from.ts, to.channel, to.ts, to.ts),
     permalink: (channel, ts) => slackAdmin.permalink?.(channel, ts) ?? Promise.resolve(undefined),
     // Unattended spend needs a role that can still start a loop: a demoted or removed creator's loops stop.
     check: createShellCheck(fullCwd, readOnlySlackEnv),

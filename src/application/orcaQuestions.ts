@@ -60,7 +60,7 @@ export type OrcaQuestionDeps = {
     unprompted?: boolean;
     /** In a workflow thread, the worker's session answers, not the front. */
     workerLane?: boolean;
-  }) => Promise<void>;
+  }) => Promise<unknown>;
   /** Whether whoever started the worker may still run turns. */
   mayRun: (slackUserId: string) => boolean;
   log?: (msg: string) => void;

@@ -11,6 +11,7 @@ import {
   deriveName,
   loopRef,
   loopTurnText,
+  loopThreadTs,
   nextRun,
   parseLoopArgs,
   parseSchedule,
@@ -152,8 +153,26 @@ describe("loopTurnText", () => {
   test("is prefixed so the turn knows it is scheduled", () => {
     const t = loopTurnText(7, "every day at 18:00", "do it");
     expect(t.startsWith("[loop 7] ")).toBe(true);
-    expect(t).toContain("short");
     expect(t.endsWith("do it")).toBe(true);
+  });
+
+  test("tells the turn to stay silent unless the task asks or a person is needed, else NO_REPLY", () => {
+    const t = loopTurnText(7, "every 1h", "do it");
+    expect(t).toContain("nobody is watching");
+    expect(t).toContain("post nothing anywhere in Slack");
+    expect(t).toContain("explicitly asks you to send, post or report");
+    expect(t).toContain("needs a person");
+    expect(t).toContain("end with exactly NO_REPLY");
+  });
+});
+
+describe("loopThreadTs", () => {
+  test("is a Slack-shaped ts, unique per loop within one tick, stable for one loop and moment", () => {
+    const now = Date.UTC(2026, 10, 14, 9, 0, 0, 123);
+    expect(loopThreadTs(now, 7)).toMatch(/^\d{10}\.\d{6}$/);
+    expect(loopThreadTs(now, 7)).not.toBe(loopThreadTs(now, 8));
+    expect(loopThreadTs(now, 7)).toBe(loopThreadTs(now, 7));
+    expect(Number(loopThreadTs(now, 7))).toBeGreaterThan(Math.floor(now / 1000) - 1);
   });
 });
 

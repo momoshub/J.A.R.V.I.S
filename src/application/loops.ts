@@ -1,10 +1,14 @@
 /**
  * The thing that fires loops.
  *
- * Everything a loop says lands in its creator's DM, never in the channel or
- * thread it was created in: a scheduled turn with nobody present should not
- * speak in a shared room. Each fire opens a fresh top-level DM message and the
- * turn runs under it, so runs do not pile into one thread.
+ * A loop is silent unless it has something to say (Kai, 2026-11-14): a run
+ * that finds nothing leaves NOTHING in Slack, not even a header. So the turn
+ * runs first, under a thread key made up for it in the creator's DM (the DM is
+ * opened, nothing is posted), and only when its final reply is a real answer
+ * is ONE top-level DM posted: the `🔁 <name> - loop #id` header line, then the
+ * reply. The session is then moved onto that message's thread, so a person
+ * replying under it talks to the same session. Everything a loop says lands in
+ * its creator's DM, never in the channel or thread it was created in.
  *
  * Same shape as the watcher and for the same reason - it runs outside every
  * turn, polling a table, and costs nothing until something is due. When a loop
@@ -15,7 +19,7 @@
  * the whole catch-up policy: a bot that was down over three slots runs the loop
  * once on startup and carries on from there, never a burst.
  */
-import { loopRef, loopTurnText, nextRun, originLinkText, parseSchedule } from "../domain/loop.ts";
+import { loopRef, loopThreadTs, loopTurnText, nextRun, originLinkText, parseSchedule } from "../domain/loop.ts";
 import type { Loop, LoopRepo } from "../infrastructure/db/loopRepo.ts";
 import type { Clock } from "./ports.ts";
 import { logAndIgnore } from "./ignoredError.ts";
@@ -31,7 +35,12 @@ export type LoopTurnRequest = {
   unprompted?: boolean;
   /** The scheduled fire itself: the turn runs on the `loop` model, not the creator's role model. */
   loop?: boolean;
+  /** Hand the final reply back instead of posting it: the runner decides whether it is worth a message. */
+  hold?: boolean;
 };
+
+/** A held turn's final reply when it is a real answer; nothing for a silent run. */
+export type LoopTurnReply = { text: string } | undefined | void;
 
 /**
  * ` · <link|created here>` for the message that created `l`, or nothing: an
@@ -51,15 +60,22 @@ export const loopOriginText = async (
 export type LoopRunnerDeps = {
   loops: LoopRepo;
   clock: Clock;
-  runTurn: (req: LoopTurnRequest) => Promise<void>;
+  runTurn: (req: LoopTurnRequest) => Promise<LoopTurnReply>;
   /** Minutes east of UTC that schedules are read in. */
   offsetMinutes: () => number;
+  /** The id of the user's DM with the bot, opened when needed. Posts nothing. A run without a DM is not started. */
+  openDm: (slackUserId: string) => Promise<string | undefined>;
   /**
    * Post a new top-level message in the user's DM with the bot (opening the DM
    * when needed) and say where it landed, resolved at fire time from the
    * creator's id. Nothing posts without it.
    */
   dm: (slackUserId: string, text: string) => Promise<{ channel: string; ts: string } | undefined>;
+  /**
+   * Move the session of the thread a silent run's turn used onto the message
+   * that was then posted, so a reply under it resumes the same conversation.
+   */
+  adopt?: (from: { channel: string; ts: string }, to: { channel: string; ts: string }) => void;
   /** A link to one Slack message, for the origin line of a run's announcement. Without it there is no link. */
   permalink?: (channel: string, ts: string) => Promise<string | undefined>;
   /** The watcher's shell runner: same cwd, env and timeout. Without it a script loop is stopped. */
@@ -138,38 +154,54 @@ export const createLoopRunner = (deps: LoopRunnerDeps): LoopRunner => {
       return;
     }
 
-    // One fresh top-level DM message per fire; the turn runs in its thread.
-    let ref: { channel: string; ts: string } | undefined;
+    // No header up front: a run with nothing to say must leave nothing in Slack.
+    // The turn runs under a made-up thread in the DM and is posted only if it answers.
+    let channel: string | undefined;
     try {
-      ref = await deps.dm(l.createdBy, `🔁 ${l.name} - loop #${l.id}, ${l.schedule}${await loopOriginText(l, deps.permalink)}`);
+      channel = await deps.openDm(l.createdBy);
     } catch (e) {
-      ref = undefined;
       log(`loop ${l.id}: could not open the DM: ${e instanceof Error ? e.message : String(e)}`);
     }
-    if (!ref) {
+    if (!channel) {
       deps.loops.reschedule(l.id, next, deps.clock(), "could not open the creator's DM");
       return;
     }
+    const dmChannel = channel;
+    const threadTs = loopThreadTs(now, l.id);
     const lost = (e: unknown): void => {
       const msg = e instanceof Error ? e.message : String(e);
       log(`loop ${l.id} could not start its turn: ${msg}`);
       deps.loops.reschedule(l.id, next, deps.clock(), msg);
       void say(l, `${loopRef(l.id, l.name)}: could not start its turn: ${msg}`, "loop start-failed notice");
     };
+    // The turn answered: header + reply as one top-level DM, session moved onto it.
+    const deliver = async (reply: LoopTurnReply): Promise<void> => {
+      const text = reply?.text.trim();
+      if (!text) return;
+      try {
+        const header = `🔁 ${l.name} - loop #${l.id}, ${l.schedule}${await loopOriginText(l, deps.permalink)}`;
+        const ref = await deps.dm(l.createdBy, `${header}\n\n${text}`);
+        if (ref) deps.adopt?.({ channel: dmChannel, ts: threadTs }, ref);
+        else log(`loop ${l.id}: its reply could not be posted`);
+      } catch (e) {
+        log(`loop ${l.id}: its reply could not be posted: ${e instanceof Error ? e.message : String(e)}`);
+      }
+    };
     try {
       // Not awaited: a turn can run for half an hour and must not hold the
       // other due loops.
       void deps
         .runTurn({
-          channelId: ref.channel,
-          threadTs: ref.ts,
+          channelId: dmChannel,
+          threadTs,
           slackUserId: l.createdBy,
           text: loopTurnText(l.id, l.schedule, l.prompt, l.name),
           // The bot's own scheduled note, not a message anyone sent.
           unprompted: true,
           loop: true,
+          hold: true,
         })
-        .catch(lost);
+        .then(deliver, lost);
     } catch (e) {
       lost(e);
     }
