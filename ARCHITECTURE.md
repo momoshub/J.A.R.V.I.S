@@ -40,6 +40,7 @@ no classes.
   |    orcaQuestions (worker questions -> the thread that started it)      |
   |    offlineAlarm (keeps an "I'm offline" Slack scheduled msg armed)     |
   |    stuckSweeper (dead Orca workers, quiet own PRs -> owner DM, 15 min)  |
+  |    idleReaper (closes finished, idle Orca worker sessions, 30 min)      |
   |                                                                         |
   |  dashboard + JSON API (Bun.serve, loopback), /api/commands/run,         |
   |    /api/github-app/comment, /api/slack/proxy + /api/slack/file          |
@@ -130,6 +131,15 @@ no classes.
   commit, comment or review for 30 minutes, and DMs the owner what is new with
   the thread that started each (recorded when the app opened the PR, else found in the traces; an item is not repeated for 4 hours);
   `mindful` shows the same two lists on demand.
+  `idleReaper` (`ORCA_REAP_INTERVAL_MS`, default 30 min, 0 = off) reads
+  `orca orchestration worker-list` and `orca terminal list`, and closes through
+  Orca (`worker-release` when the worker settled, else `worker-stop`) every
+  supervised worker whose terminal has been silent for `ORCA_REAP_IDLE_MS`
+  (3 h) and whose task is finished, failed, blocked with no pending gate, or
+  absent. A worker with a waiting watch on its dispatch, an unanswered question,
+  a kept-open terminal, an attention flag or unproven liveness is skipped, and
+  only supervised workers are candidates, so a user's own session and the bot's
+  `claude -p` turns are out of reach. It never kills a pid.
   None of them hold a session or a queue slot while they wait.
 - **Followed threads: debounce and gate.** An untagged message in a thread the bot
   follows (the `asked` and `own-thread` routes; tagged messages, DMs, one-on-one
@@ -252,7 +262,7 @@ Orchestrates the domain and depends on **ports**, not concrete adapters.
 - `threadQueue.ts`, `runRegistry.ts` - one turn per thread, and stopping one
 - `followGate.ts` (application), `followGateModel.ts` - the per-thread buffer for a followed thread (a quiet window, a hard cap, injectable timers) and the cheap pal-model call that says reply, skip or wait
 - `ciGate.ts` (application) - the CI gate of `quick-review`: idempotent request-changes and approve against GitHub's own state, the watcher row for a running CI, and its poll
-- `watcher.ts`, `reminders.ts`, `loops.ts`, `reviewInbox.ts`, `reviewGuard.ts`, `innerChild.ts`, `offlineAlarm.ts`, `orcaQuestions.ts`, `stuckSweeper.ts` - the timers (`orcaQuestions` also sits on the tool-trace sink, linking each Orca worker to the thread that started it)
+- `watcher.ts`, `reminders.ts`, `loops.ts`, `reviewInbox.ts`, `reviewGuard.ts`, `innerChild.ts`, `offlineAlarm.ts`, `orcaQuestions.ts`, `idleReaper.ts`, `stuckSweeper.ts` - the timers (`orcaQuestions` also sits on the tool-trace sink, linking each Orca worker to the thread that started it)
 - `githubApp.ts` - calls from the GitHub App: dedupe/queue, identity mapping, the turn, the answer back
 - `workflow.ts`, `workflowFront.ts`, `workflowContinue.ts` - long tasks driven from one thread on a durable session
 - `accessRequests.ts` - unknown people ask the owner and admins, who decide with a reaction; on ✅ the person's original message (stored whole, with its Slack ts) is answered as a normal turn through the Slack intake, falling back to a short "you are in" line if the replay fails

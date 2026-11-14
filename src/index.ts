@@ -142,6 +142,7 @@ import { createBackgroundAgents, defaultRunner } from "./infrastructure/llm/back
 import { recordedOwners, recordPrThread } from "./domain/stuckWork.ts";
 import { createStuckWorkProbe } from "./infrastructure/system/stuckWorkProbe.ts";
 import { createStuckSweeper } from "./application/stuckSweeper.ts";
+import { createIdleReaper } from "./application/idleReaper.ts";
 import { SWEEP_TICK_MS } from "./domain/stuckWork.ts";
 import { teamFromPermalink } from "./domain/mindful.ts";
 import type { RespondDeps } from "./application/respond.ts";
@@ -1085,9 +1086,10 @@ const main = async () => {
   // A worker's `orca orchestration ask` lands in the bot's own Orca terminal,
   // which nobody reads. This puts each one to the thread that started the
   // worker, as a turn that answers it with `orca orchestration reply`.
+  const orcaQuestionRepo = createOrcaQuestionRepo(db);
   const orcaBridge = orcaTerminal
     ? createOrcaQuestionBridge({
-        repo: createOrcaQuestionRepo(db),
+        repo: orcaQuestionRepo,
         clock,
         orca: createOrcaCli(),
         ready: async () => !!(await orcaTerminal.handle()),
@@ -1362,6 +1364,27 @@ const main = async () => {
   (firstSweep as { unref?: () => void }).unref?.();
   (sweepTimer as { unref?: () => void }).unref?.();
 
+  // Orca worker sessions left open at their prompt after the work ended (each
+  // ~250MB plus MCP children) are closed through Orca once idle for hours,
+  // unless a watch or a question still needs them. ORCA_REAP_INTERVAL_MS=0 is off.
+  const reapEveryMs = config.orcaReap.intervalMs;
+  const idleReaper =
+    reapEveryMs > 0
+      ? createIdleReaper({
+          clock,
+          orca: createOrcaCli("orca", WORKER_USAGE_ORCA_TIMEOUT_MS),
+          watchChecks: () => watches.waiting(1000).map((w) => w.check),
+          askingDispatches: () => orcaQuestionRepo.askingDispatches(),
+          idleMs: config.orcaReap.idleMs,
+          dryRun: config.orcaReap.dryRun,
+          log: (msg) => console.error(`[orca-reaper] ${msg}`),
+        })
+      : undefined;
+  const firstReap = idleReaper ? setTimeout(() => void idleReaper.tick(), 120_000) : undefined;
+  const reapTimer = idleReaper ? setInterval(() => void idleReaper.tick(), reapEveryMs) : undefined;
+  (firstReap as { unref?: () => void } | undefined)?.unref?.();
+  (reapTimer as { unref?: () => void } | undefined)?.unref?.();
+
   // Dead man's switch for the host's flaky connection: keeps an "I'm offline"
   // notice armed on Slack's side, so an outage gets reported even though the
   // host cannot reach Slack to say so. Runs while draining too - a restart is
@@ -1391,6 +1414,8 @@ const main = async () => {
     clearInterval(watchTimer);
     clearTimeout(firstSweep);
     clearInterval(sweepTimer);
+    clearTimeout(firstReap);
+    clearInterval(reapTimer);
     clearInterval(alarmTimer);
     // A deliberate stop is not an outage. This covers `launchctl kickstart -k`
     // and a Mac shutting down or logging out too (all SIGTERM): a few unarmed
