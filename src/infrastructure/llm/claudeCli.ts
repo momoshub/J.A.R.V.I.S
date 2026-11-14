@@ -181,6 +181,68 @@ const describedStep = (input: Record<string, unknown>): string | undefined => {
 
 const str = (v: unknown): string => (typeof v === "string" ? v : "");
 
+/** Programs whose name says the step: [program, plain-English step]. */
+const PROGRAM_STEPS: Record<string, string> = {
+  git: "Running git",
+  gh: "Using the GitHub CLI",
+  curl: "Calling a URL",
+  wget: "Calling a URL",
+  grep: "Searching files",
+  rg: "Searching files",
+  find: "Searching files",
+  fd: "Searching files",
+  cat: "Reading a file",
+  head: "Reading a file",
+  tail: "Reading a file",
+  ls: "Listing files",
+  tsc: "Checking types",
+};
+
+const ENV_ASSIGNMENT = /^\w+=(?:"[^"]*"|'[^']*'|\S*)\s+/;
+const SCRIPT_NAME = /^[\w.+-]{1,40}$/;
+
+/**
+ * A plain-English label for a Bash call that came without a description, from
+ * the PROGRAM it runs and never its arguments (those carry paths and secrets).
+ * Skips `cd X &&`, env assignments and `bash`/`sudo`-style wrappers. A script
+ * is named by its basename without extension, `"$BOT_SLACK_CALL"` by its
+ * variable. Undefined when nothing sensible can be read.
+ */
+const bashStep = (command: string): string | undefined => {
+  const segments = command
+    .split(/&&|\|\||;|\||\n/)
+    .map((x) => x.trim())
+    .filter(Boolean);
+  for (const segment of segments) {
+    let rest = segment;
+    while (ENV_ASSIGNMENT.test(rest)) rest = rest.replace(ENV_ASSIGNMENT, "");
+    let [program = "", ...args] = rest.split(/\s+/);
+    if (!program || program === "cd" || /^\w+=/.test(program)) continue;
+    // `bash script.sh`, `sudo git ...`: the program is the next word.
+    while (["bash", "sh", "zsh", "sudo", "env", "time", "nohup", "exec"].includes(program) && args.length > 0) {
+      const next = args.findIndex((a) => !a.startsWith("-"));
+      if (next < 0) break;
+      [program = "", ...args] = args.slice(next);
+    }
+    const variable = /^"?\$\{?(\w+)\}?"?$/.exec(program)?.[1];
+    if (variable !== undefined) return /SLACK/i.test(variable) ? "Calling Slack" : undefined;
+    const name = program.replace(/^["']|["']$/g, "").split("/").pop() ?? "";
+    const bare = name.replace(/\.(sh|bash|zsh|py|js|ts|rb)$/, "");
+    if (bare in PROGRAM_STEPS) return PROGRAM_STEPS[bare];
+    if (bare === "sed") return args.includes("-n") ? "Reading a file" : "Running sed";
+    if (bare === "bun" || bare === "npm" || bare === "pnpm" || bare === "yarn") {
+      const [sub = "", script = ""] = args;
+      const target = sub === "run" || sub === "x" ? script : sub;
+      if (target === "test") return "Running tests";
+      if (target === "typecheck") return "Checking types";
+      return `Running ${bare}`;
+    }
+    if (!SCRIPT_NAME.test(bare)) return undefined;
+    return redactPaths(redactSecrets(`Running ${bare}`));
+  }
+  return undefined;
+};
+
 /** A memory write or read: the notes folder of the adapter, or the learnings API. */
 const touchesMemory = (name: string, input: Record<string, unknown>): boolean =>
   name === "Bash"
@@ -221,7 +283,7 @@ export const summarizeTool = (
   } else if (touchesMemory(name, input)) {
     label = `Memory: 🧠 ${described ?? (name === "Read" ? "Reading a memory note" : "Updating memory")}`;
   } else if (name === "Bash") {
-    label = `Run: 🏃 ${described ?? "Running a command"}`;
+    label = `Run: 🏃 ${described ?? (command !== undefined ? bashStep(command) : undefined) ?? "Running a command"}`;
   } else if (name === "Agent" || name === "Task") {
     // Foreground (run_in_background: false) is an FAgent; background, the default, a plain Agent.
     label =
