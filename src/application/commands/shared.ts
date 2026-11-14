@@ -256,6 +256,14 @@ export type CommandDef = {
    */
   trivial?: boolean;
   /**
+   * Runs only from the brain's own turn (`fromBrainRun`), never from a typed
+   * line, a schedule, a menu or the dashboard, whoever the caller is. It has
+   * no grant to hold (the brain runs it as whoever the turn talks to, so a
+   * role gate would break it in a pal's thread) and is left out of `help`, the
+   * command menu, the dashboard list and the permission catalogue.
+   */
+  internal?: boolean;
+  /**
    * A command the brain uses as a TOOL rather than an errand: it hands the
    * result back to the caller instead of posting it, and the caller waits for
    * it. Typed by a person it still answers in the thread as usual - the
