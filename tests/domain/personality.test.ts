@@ -235,6 +235,16 @@ describe("buildSystemPrompt", () => {
     expect(p).not.toContain("That tag is YOU");
   });
 
+  test("real work is opened, updated and closed as a journey", () => {
+    const opts = { commandPrefix: "X/jarvis", runScript: "/bin/jarvis-run.sh", runUrl: "http://127.0.0.1:2002/api/commands/run", runTicket: "tkt" };
+    const p = buildSystemPrompt(opts);
+    expect(p).toContain("open a journey");
+    expect(p).toContain("X/jarvis journey add <title>");
+    expect(p).toContain("journey done <id>");
+    // no way to run commands, no line about them
+    expect(buildSystemPrompt({ ...opts, runScript: undefined })).not.toContain("open a journey");
+  });
+
   test("a named command is run, never reimplemented by hand", () => {
     const p = buildSystemPrompt({
       commandPrefix: "X/jarvis",

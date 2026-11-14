@@ -33,7 +33,7 @@ const DERIVED_NAME_WORDS = 4;
  * it as the words a person sees: a link is its label, a mention its name, then
  * the entities are undone. Links go first, since an escaped `&lt;` is text.
  */
-const plainSlack = (text: string): string =>
+export const plainSlack = (text: string): string =>
   unescapeSlack(
     text
       .replace(/<([^<>|]*)\|([^<>]*)>/g, "$2")
