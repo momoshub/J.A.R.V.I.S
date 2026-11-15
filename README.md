@@ -1045,7 +1045,7 @@ or PR. It puts 👀 on the comment, posts the request into a Slack channel
 (`github-app channel #channel`, else the review inbox channel) and runs a turn
 in that post's thread **as the person who called**, matched like the review
 inbox does (`review-inbox link <github-login>`, else exactly one display-name
-match), so their role and their own Claude token apply. Someone it cannot
+match), so their role applies and the turn runs on the bot's credential. Someone it cannot
 place gets one comment explaining how to link, and nothing runs.
 
 The turn posts its answer back on the issue/PR, as the app, through

@@ -28,6 +28,7 @@ import type {
 } from "../../application/ports.ts";
 import type { PromptMessage } from "../../domain/types.ts";
 import type { ToolPolicy } from "../../domain/toolPolicy.ts";
+import { isAuthFailure } from "../../domain/threadSession.ts";
 import { runsOrcaWorkerStart } from "../../domain/threadBackground.ts";
 import { isNoiseTool, redactPaths, redactSecrets } from "../../domain/toolVisibility.ts";
 import { scrubSecretEnv } from "../../domain/turnEnv.ts";
@@ -904,7 +905,14 @@ export const createClaudeCliLlm = (config: ClaudeCliConfig = {}): LlmPort => {
   };
 
   const stream = async (params: LlmCompleteParams, sink: LlmStreamSink) => {
-    const { exitCode, finished: answer, stderr, emit, backgroundTasks } = await runStreaming(params, sink);
+    const { exitCode, finished: answer, resultEvent, stderr, emit, backgroundTasks } = await runStreaming(params, sink);
+    // A refused token ends as an `is_error` result carrying the 401 text, not as
+    // a failed exit. Returning it would hand the raw CLI error to the caller as
+    // if it were the answer, so throw it the way `complete` does and let the
+    // caller tell the person their token no longer works.
+    if (resultEvent?.is_error === true && isAuthFailure(answer)) {
+      throw new Error(`claude CLI error (${String(resultEvent.subtype ?? "unknown")}): ${answer}`);
+    }
     if (exitCode !== 0 && !answer) {
       throw new Error(`claude CLI exited with code ${exitCode}: ${(await stderr).trim() || "no output"}`);
     }

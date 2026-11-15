@@ -1069,6 +1069,53 @@ describe("a stored Claude token runs quick-review and nothing else", () => {
       expect(out).not.toContain("Failed to authenticate");
     });
 
+    // The real claudeCli stream resolves with the 401 text rather than rejecting.
+    const RAW_TEXT = "Failed to authenticate. API Error: 401 OAuth access token has been revoked.";
+    for (const aborted of [false, true]) {
+      test(`live: a stream that RETURNS the 401 text${aborted ? " after an aborted event" : ""} gets the friendly line and button`, async () => {
+        const deps = build();
+        deps.settings = createSettingsRepo(db);
+        deps.claudeTokens = everyoneHasToken();
+        deps.llm = {
+          complete: async () => RAW_TEXT,
+          stream: async (_p, sink) => {
+            if (aborted) sink({ type: "aborted", reason: "it exited with code 1" });
+            return RAW_TEXT;
+          },
+        };
+        const lines: string[] = [];
+        const out = await dispatchCommand(deps, actor(), "C1", `rv ${PR}`, {
+          reply: async (t: string) => {
+            lines.push(t);
+          },
+          threadTs: "111.1",
+        });
+
+        expect(out).toBe("");
+        expect(slackCalls.posts[slackCalls.posts.length - 1]?.text).toContain("no longer works");
+        expect(slackCalls.buttons[slackCalls.buttons.length - 1] ?? "").toContain("claude_token_add");
+        const everything = [...lines, ...slackCalls.posts.map((p) => p.text)].join("\n");
+        expect(everything).not.toContain("Failed to authenticate");
+        expect(everything).not.toContain("did not finish");
+      });
+    }
+
+    test("a long review that merely discusses authentication is posted as the review", async () => {
+      const deps = build();
+      deps.settings = createSettingsRepo(db);
+      deps.claudeTokens = everyoneHasToken();
+      const review = `${"The handler logs 'failed to authenticate' on a 401 auth error; fine. ".repeat(20)}`;
+      deps.llm = { complete: async () => review, stream: async () => review };
+      const lines: string[] = [];
+      await dispatchCommand(deps, actor(), "C1", `rv ${PR}`, {
+        reply: async (t: string) => {
+          lines.push(t);
+        },
+      });
+      expect(lines.join("\n")).toContain("The handler logs");
+      expect(slackCalls.buttons).toHaveLength(0);
+    });
+
     test("an error that is not an auth failure still surfaces", async () => {
       const deps = build();
       deps.settings = createSettingsRepo(db);

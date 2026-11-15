@@ -689,6 +689,35 @@ const STREAM_EVENTS = [
   { type: "result", subtype: "success", is_error: false, result: "Hello world" },
 ];
 
+describe("createClaudeCliLlm.stream with a refused token", () => {
+  const refused = (exit: number): string => {
+    const events = [
+      { type: "result", subtype: "success", is_error: true, result: "Failed to authenticate. API Error: 401 revoked" },
+    ];
+    const dir = mkdtempSync(join(tmpdir(), "jarvis-claude-401-"));
+    const dataPath = join(dir, "events.ndjson");
+    writeFileSync(dataPath, events.map((e) => JSON.stringify(e)).join("\n") + "\n");
+    const path = join(dir, "claude");
+    writeFileSync(path, `#!/usr/bin/env bash\ncat > /dev/null\ncat ${dataPath}\nexit ${exit}\n`);
+    chmodSync(path, 0o755);
+    return path;
+  };
+
+  for (const exit of [0, 1]) {
+    test(`throws the auth failure instead of returning it (exit ${exit})`, async () => {
+      const llm = createClaudeCliLlm({ binPath: refused(exit) });
+      const run = llm.stream!({ system: "s", messages: [{ role: "user", content: "hi" }] }, () => {});
+      await expect(run).rejects.toThrow("Failed to authenticate");
+    });
+  }
+
+  test("an is_error result that is not an auth failure is still returned", async () => {
+    const bin = fakeStreamBin([{ type: "result", subtype: "success", is_error: true, result: "Something else broke" }]);
+    const out = await createClaudeCliLlm({ binPath: bin }).stream!({ system: "s", messages: [{ role: "user", content: "hi" }] }, () => {});
+    expect(out).toBe("Something else broke");
+  });
+});
+
 describe("isReactCall", () => {
   test("only a Bash call that runs nothing but the react helper counts", () => {
     const cmd = (command: string) => JSON.stringify({ command });
