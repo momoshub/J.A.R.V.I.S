@@ -712,6 +712,7 @@ const main = async () => {
           threadTs,
           result.kind === "reply" ? result.by : undefined,
           result.kind === "reply" ? result.usage : undefined,
+          result.kind === "reply" ? result.trigger : undefined,
         );
       }
     },

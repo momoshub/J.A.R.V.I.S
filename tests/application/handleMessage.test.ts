@@ -8,6 +8,7 @@ import type { PromptMessage } from "../../src/domain/types.ts";
 import type { SlackAdminPort, SlackMessage } from "../../src/application/slackAdmin.ts";
 import { createThreadSessionRepo } from "../../src/infrastructure/db/threadSessionRepo.ts";
 import type { LlmCompleteParams } from "../../src/application/ports.ts";
+import { readyMessage } from "../../src/domain/watch.ts";
 import { syntheticTs } from "../../src/domain/slackLinks.ts";
 import { guideFile } from "../../src/domain/promptGuides.ts";
 import { RESTART_STOPPER } from "../../src/application/runRegistry.ts";
@@ -90,6 +91,19 @@ describe("handleMessage", () => {
     );
     expect(res).toEqual({ kind: "denied", text: expect.stringContaining("pal role is switched off") });
     expect(deps.messages.count()).toBe(0);
+  });
+
+  test("a reply to an internal message names what triggered it; a chat reply carries no trigger", async () => {
+    const deps = build(fakeLlm("On it."));
+    const watch = await handleMessage(deps, {
+      channelId: "C1",
+      slackUserId: OWNER,
+      text: readyMessage("deploy finished", 120_000),
+      displayName: "Kai",
+    });
+    expect(watch).toMatchObject({ kind: "reply", trigger: "watch" });
+    const chat = await handleMessage(deps, { channelId: "C1", slackUserId: OWNER, text: "status?", displayName: "Kai" });
+    expect(chat).toEqual({ kind: "reply", text: "On it." });
   });
 
   test("owner is auto-provisioned and gets a reply", async () => {

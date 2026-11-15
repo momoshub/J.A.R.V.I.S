@@ -522,6 +522,8 @@ export const createHandler =
         (result.kind === "reply" ? result.by : undefined) ?? SIGNATURES.jarvis,
         undefined,
         stream?.usage ? usageFooter(stream.usage) : undefined,
+        undefined,
+        result.kind === "reply" ? result.trigger : undefined,
       );
       const tidy = (text: string, withTail: boolean, asWords = false) => {
         const tailCollapsed = withTail ? collapsed : undefined;

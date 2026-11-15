@@ -1,4 +1,8 @@
 import { describe, expect, test } from "bun:test";
+import { triggerOf } from "../../src/domain/internalMessages.ts";
+import { readyMessage } from "../../src/domain/watch.ts";
+import { loopTurnText } from "../../src/domain/loop.ts";
+import { cleanInboundText } from "../../src/domain/conversation.ts";
 import {
   clockFallback,
   FOOTER_BLOCK_ID,
@@ -6,6 +10,7 @@ import {
   footerLine,
   offsetLabel,
   restamp,
+  triggerLabel,
   MARKDOWN_LIMIT,
   sectionChunks,
   signedSections,
@@ -226,5 +231,34 @@ describe("restamp", () => {
     const copy = JSON.stringify(before);
     restamp(before, "Jarvis", later, ICT);
     expect(JSON.stringify(before)).toBe(copy);
+  });
+});
+
+describe("triggered by", () => {
+  test("an internal kind sits after the signature and before the usage", () => {
+    expect(footerLine("Jarvis", undefined, "1.2k tokens", undefined, "watch")).toBe("Jarvis · triggered by watch · 1.2k tokens");
+    expect(footerLine("Jarvis", undefined, undefined, undefined, "loop")).toBe("Jarvis · triggered by loop");
+    for (const kind of ["nudge", "tell", "orca"] as const) expect(triggerLabel(kind)).toBe(`triggered by ${kind}`);
+  });
+
+  test("a chat turn, and a brief (which starts no turn), say nothing", () => {
+    expect(footerLine("Jarvis", undefined, "1.2k tokens")).toBe("Jarvis · 1.2k tokens");
+    expect(triggerLabel(undefined)).toBeUndefined();
+    expect(triggerLabel("brief")).toBeUndefined();
+    expect(footerLine("Jarvis", undefined, undefined, undefined, "brief")).toBe("Jarvis");
+  });
+
+  test("the classifier feeds the footer: a watch hand-back is labelled, a typed message is not", () => {
+    const watch = cleanInboundText(readyMessage("deploy finished", 120_000));
+    expect(footerLine("Jarvis", undefined, undefined, undefined, triggerOf(watch))).toBe("Jarvis · triggered by watch");
+    expect(footerLine("Jarvis", undefined, undefined, undefined, triggerOf(cleanInboundText(loopTurnText(3, "every 5m", "check the queue"))))).toBe("Jarvis · triggered by loop");
+    expect(footerLine("Jarvis", undefined, undefined, undefined, triggerOf("can you check the deploy?"))).toBe("Jarvis");
+  });
+
+  test("an edit keeps the trigger and only moves the time", () => {
+    const before = withFooter([{ type: "markdown", text: "hi" }], footerLine("Jarvis", undefined, "1.2k tokens", undefined, "watch"));
+    const after = restamp(before, "Jarvis", Date.UTC(2026, 10, 8, 7, 32), 420);
+    const text = (after.at(-1) as unknown as { elements: { text: string }[] }).elements[0]!.text;
+    expect(text.startsWith("Jarvis · triggered by watch · 1.2k tokens · updated ")).toBe(true);
   });
 });

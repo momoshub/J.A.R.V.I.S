@@ -8,9 +8,12 @@
  * a signature, and since Jarvis edits its own messages later (a drain notice
  * counted down, a question settled) it also says when that last happened.
  *
- * One line: `Jarvis · <usage, when a turn reported it>`, plus ` · updated <time>`
+ * One line: `Jarvis · triggered by <kind> · <usage, when a turn reported it>`, plus ` · updated <time>`
  * only once the message has been edited after it was first sent (Kai: a fresh
- * post saying "updated" is noise). Tidying a streamed reply when its turn
+ * post saying "updated" is noise). `triggered by <kind>` (nudge, tell, watch,
+ * loop, orca) appears only when the turn began from an internal message, not
+ * from a person chatting - a chat turn's footer is unchanged. It sits right
+ * after the signature and is part of the line, so a restamp keeps it. Tidying a streamed reply when its turn
  * finishes is still the first send, so it carries no stamp either.
  * The time is a Slack date token, so each reader sees it in their own timezone;
  * the fallback (for clients that cannot render it) is the host clock with its
@@ -21,6 +24,7 @@
  * the usage and any step summary sitting in the same block.
  */
 import { type Block, MAX_BLOCKS } from "./blockKit.ts";
+import type { InternalKind } from "./internalMessages.ts";
 import { SECTION_LIMIT, toSlackMarkdown } from "./slackFormat.ts";
 
 /** Who signs what. Anything not listed here is plain Jarvis. */
@@ -71,12 +75,20 @@ export const updatedStamp = (ms: number, offsetMin: number = hostOffsetMin(ms)):
 const STAMP = /updated <!date\^\d+\^[^|>]*\|[^>]*>/;
 
 /**
- * The whole line: signature, then what the turn reported (model, tokens, cost,
- * time), then - for an edit only, so only when `editedMs` is given - when it
- * was last written.
+ * `triggered by watch`: what started a turn that no person chatted. A brief
+ * starts no turn, and no kind (a chat turn) says nothing.
  */
-export const footerLine = (by: string, editedMs?: number, detail?: string, offsetMin?: number): string =>
-  [by.trim() || SIGNATURES.jarvis, detail?.trim(), editedMs === undefined ? undefined : updatedStamp(editedMs, offsetMin)]
+export const triggerLabel = (kind?: InternalKind): string | undefined =>
+  kind && kind !== "brief" ? `triggered by ${kind}` : undefined;
+
+/**
+ * The whole line: signature, then what triggered the turn when it was not a
+ * person chatting, then what the turn reported (model, tokens, cost, time),
+ * then - for an edit only, so only when `editedMs` is given - when it was last
+ * written.
+ */
+export const footerLine = (by: string, editedMs?: number, detail?: string, offsetMin?: number, trigger?: InternalKind): string =>
+  [by.trim() || SIGNATURES.jarvis, triggerLabel(trigger), detail?.trim(), editedMs === undefined ? undefined : updatedStamp(editedMs, offsetMin)]
     .filter(Boolean)
     .join(" · ");
 

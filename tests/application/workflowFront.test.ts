@@ -240,7 +240,7 @@ describe("workflow front and worker", () => {
       unprompted: true,
       workerLane: true,
     });
-    expect(res).toEqual({ kind: "reply", text: "replied to the worker", by: "workflow worker" });
+    expect(res).toEqual({ kind: "reply", text: "replied to the worker", by: "workflow worker", trigger: "orca" });
     expect(b.frontCalls()).toHaveLength(0);
     const call = b.workerCalls()[before]!;
     // the worker's own session, with the full-access policy that can run `orca`

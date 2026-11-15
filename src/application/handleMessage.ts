@@ -5,6 +5,7 @@
  * All I/O is injected, so this reads as a straight line of business logic and is
  * covered by fast, deterministic tests.
  */
+import { type InternalKind, triggerOf } from "../domain/internalMessages.ts";
 import type { StuckWork } from "../domain/stuckWork.ts";
 import type { WorkerUsagePort } from "./workerCost.ts";
 import type { WorkerTickets } from "./workerTickets.ts";
@@ -332,9 +333,10 @@ export type HandleResult =
    * worker, a command), for the footer signature (domain/messageFooter.ts).
    * `usage` is what the turn cost when the model reported it, so a reply
    * posted after the fact (nobody watched it stream) carries the same usage
-   * line in its footer as a live one.
+   * line in its footer as a live one. `trigger` is what started the turn when
+   * it was an internal message (watch, loop, nudge, ...), for the footer.
    */
-  | { kind: "reply"; text: string; by?: string; usage?: LlmUsage }
+  | { kind: "reply"; text: string; by?: string; usage?: LlmUsage; trigger?: InternalKind }
   | { kind: "denied"; text: string }
   | { kind: "ignored" };
 
@@ -624,7 +626,8 @@ export const handleMessage = async (
     deps.clock(),
   );
 
-  return { kind: "reply", text: safeReply, ...(usage ? { usage } : {}) };
+  const trigger = triggerOf(text);
+  return { kind: "reply", text: safeReply, ...(usage ? { usage } : {}), ...(trigger ? { trigger } : {}) };
 };
 
 /**

@@ -97,6 +97,9 @@ export const classifyTurn = (content: string): { kind: InternalKind; source: str
   return undefined;
 };
 
+/** What started a turn from its prompt: the internal kind, or undefined for a person chatting. */
+export const triggerOf = (content: string): InternalKind | undefined => classifyTurn(content)?.kind;
+
 export type StoredTurn = { readonly id: number; readonly role: string; readonly content: string; readonly createdAt: number; readonly threadTs?: string };
 
 /** A stored turn as a hidden message; undefined when it is an ordinary one. */

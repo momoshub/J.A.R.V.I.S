@@ -223,7 +223,7 @@ describe("respond", () => {
 
     expect(seen).toContain("internal steer"); // the chat brain ran on the steer
     expect(seen).toContain("pull/1");
-    expect(res).toEqual({ kind: "reply", text: "NO_REPLY" });
+    expect(res).toEqual({ kind: "reply", text: "NO_REPLY", trigger: "tell" });
   });
 
   test("talking about a PR is still just talking", async () => {
