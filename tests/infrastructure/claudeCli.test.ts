@@ -716,6 +716,41 @@ describe("createClaudeCliLlm.stream with a refused token", () => {
     const out = await createClaudeCliLlm({ binPath: bin }).stream!({ system: "s", messages: [{ role: "user", content: "hi" }] }, () => {});
     expect(out).toBe("Something else broke");
   });
+
+  const textBlock = (text: string): unknown[] => [
+    { type: "stream_event", event: { type: "message_start" } },
+    { type: "stream_event", event: { type: "content_block_start", index: 0, content_block: { type: "text" } } },
+    { type: "stream_event", event: { type: "content_block_delta", index: 0, delta: { type: "text_delta", text } } },
+    { type: "stream_event", event: { type: "content_block_stop", index: 0 } },
+  ];
+  const authTalk =
+    "I traced it: the webhook handler returns 401 because the auth middleware rejects the signature, so the delivery fails to authenticate. " +
+    "The invalid api key theory does not hold, the secret matches. ".repeat(10);
+
+  for (const subtype of ["error_max_turns", "error_during_execution"]) {
+    test(`a long streamed answer about 401/auth is returned when ${subtype} carries no result text`, async () => {
+      expect(authTalk.length).toBeGreaterThan(600);
+      const bin = fakeStreamBin([...textBlock(authTalk), { type: "result", subtype, is_error: true }]);
+      const out = await createClaudeCliLlm({ binPath: bin }).stream!({ system: "s", messages: [{ role: "user", content: "hi" }] }, () => {});
+      expect(out).toBe(authTalk.trim());
+    });
+  }
+
+  test("a later failed round does not turn an earlier real answer about 401/auth into a refused token", async () => {
+    const bin = fakeStreamBin([
+      ...textBlock(authTalk),
+      { type: "result", subtype: "success", is_error: false, result: authTalk },
+      { type: "result", subtype: "error_max_turns", is_error: true },
+    ]);
+    const out = await createClaudeCliLlm({ binPath: bin }).stream!({ system: "s", messages: [{ role: "user", content: "hi" }] }, () => {});
+    expect(out).toBe(authTalk.trim());
+  });
+
+  test("a long is_error result that merely discusses 401/auth is returned, not thrown", async () => {
+    const bin = fakeStreamBin([{ type: "result", subtype: "success", is_error: true, result: authTalk }]);
+    const out = await createClaudeCliLlm({ binPath: bin }).stream!({ system: "s", messages: [{ role: "user", content: "hi" }] }, () => {});
+    expect(out).toBe(authTalk.trim());
+  });
 });
 
 describe("isReactCall", () => {

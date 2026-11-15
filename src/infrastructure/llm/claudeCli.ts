@@ -29,6 +29,9 @@ import type {
 import type { PromptMessage } from "../../domain/types.ts";
 import type { ToolPolicy } from "../../domain/toolPolicy.ts";
 import { isAuthFailure } from "../../domain/threadSession.ts";
+
+/** A refusal is a line or two; a longer result that mentions 401 is an answer about one. */
+const AUTH_REFUSAL_MAX = 600;
 import { runsOrcaWorkerStart } from "../../domain/threadBackground.ts";
 import { isNoiseTool, redactPaths, redactSecrets } from "../../domain/toolVisibility.ts";
 import { scrubSecretEnv } from "../../domain/turnEnv.ts";
@@ -909,9 +912,13 @@ export const createClaudeCliLlm = (config: ClaudeCliConfig = {}): LlmPort => {
     // A refused token ends as an `is_error` result carrying the 401 text, not as
     // a failed exit. Returning it would hand the raw CLI error to the caller as
     // if it were the answer, so throw it the way `complete` does and let the
-    // caller tell the person their token no longer works.
-    if (resultEvent?.is_error === true && isAuthFailure(answer)) {
-      throw new Error(`claude CLI error (${String(resultEvent.subtype ?? "unknown")}): ${answer}`);
+    // caller tell the person their token no longer works. Only the result's own
+    // text is the refusal: an is_error result with none (error_max_turns,
+    // error_during_execution) leaves `answer` as everything the turn said, and a
+    // turn that merely talks about a 401 is not a refused token.
+    const refusal = resultEvent?.is_error === true && typeof resultEvent.result === "string" ? resultEvent.result : "";
+    if (refusal && refusal.length < AUTH_REFUSAL_MAX && isAuthFailure(refusal)) {
+      throw new Error(`claude CLI error (${String(resultEvent?.subtype ?? "unknown")}): ${refusal}`);
     }
     if (exitCode !== 0 && !answer) {
       throw new Error(`claude CLI exited with code ${exitCode}: ${(await stderr).trim() || "no output"}`);
