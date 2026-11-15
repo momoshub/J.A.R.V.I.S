@@ -64,6 +64,31 @@ export const parseReport = (rest: string): { ok: true; input: BugReportInput } |
 export const fingerprintOf = (i: BugReportInput): string =>
   `${i.thread.split("?")[0]}|${i.issue.toLowerCase().replace(/[^\p{L}\p{N}]+/gu, " ").trim()}`;
 
+/**
+ * The channel and thread root a report's Slack link points at: `thread_ts` when
+ * the link carries one (a reply), else the linked message's own ts. undefined
+ * when it is not a message link.
+ */
+export const linkThread = (link: string): { channelId: string; threadTs: string } | undefined => {
+  const m = /\/archives\/([A-Z0-9]+)\/p(\d{7,})(?:\?([^#]*))?/.exec(link);
+  if (!m?.[1] || !m[2]) return undefined;
+  const fromQuery = new URLSearchParams(m[3] ?? "").get("thread_ts");
+  return { channelId: m[1], threadTs: fromQuery ?? `${m[2].slice(0, -6)}.${m[2].slice(-6)}` };
+};
+
+/** Whether any of these reports' links point at this channel and thread. */
+export const reportsCover = (
+  reports: readonly { readonly threadLink: string }[],
+  channelId: string,
+  threadTs: string,
+): boolean => {
+  if (!threadTs) return false;
+  return reports.some((r) => {
+    const t = linkThread(r.threadLink);
+    return t?.channelId === channelId && t.threadTs === threadTs;
+  });
+};
+
 /** The owner's DM: where, what, why, the plan, and what each button does. */
 export const approvalText = (id: number, i: BugReportInput): string =>
   [

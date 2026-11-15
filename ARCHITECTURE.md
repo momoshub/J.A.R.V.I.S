@@ -123,7 +123,7 @@ no classes.
   thread as a turn that answers it with `orca orchestration reply`, once per
   question (`orca_questions`; in a workflow thread on the worker's lane via
   `workerLane`, since the front cannot run `orca`); `workflowContinue` resumes long workflows after a restart;
-  `innerChild` watches the bot's own conversations (triage on a small model every 30 minutes) and queues fixes to itself - run only when `inner_child_autofix` is on -
+  `innerChild` watches the bot's own conversations (triage on a small model every 30 minutes) and queues fixes to itself - run only when `inner_child_autofix` is on, never files from or fixes a thread whose bug report the owner decided (`bug_reports`: rejected is closed, approved runs its own fix) and holds the autofix while one is still pending -
   and steers a session whose reply drifted from the voice rules (a private
   nudge to re-check that reply, logged in the drift log channel and
   `drift_events`, never an edit and never a code fix);

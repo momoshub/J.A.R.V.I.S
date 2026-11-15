@@ -38,6 +38,7 @@ import {
   afterNotice,
   beforeNotice,
   byUrgency,
+  coveredNotice,
   fixPrompt,
   parseFindings,
   readOutcome,
@@ -61,6 +62,8 @@ import {
   type DriftOutcome,
 } from "../domain/voiceDrift.ts";
 import { isSilenceNote } from "../domain/silence.ts";
+import { reportsCover } from "../domain/bugReport.ts";
+import type { BugReportRepo } from "../infrastructure/db/bugReportRepo.ts";
 import type { DriftEvent, DriftRepo } from "../infrastructure/db/driftRepo.ts";
 import type { MessageRepo } from "../infrastructure/db/messageRepo.ts";
 import type { SelfIssue, SelfIssueRepo } from "../infrastructure/db/selfIssueRepo.ts";
@@ -77,6 +80,13 @@ export type InnerChildDeps = {
   turns: Pick<TurnLogRepo, "since">;
   messages: Pick<MessageRepo, "recentForThread">;
   issues: SelfIssueRepo;
+  /**
+   * The owner's bug reports. A thread with a rejected or approved one is never
+   * filed from (an approved report runs its own fix), the rejected issues are
+   * shown to triage as "do not report", and a thread with a pending one is not
+   * autofixed until the owner decides. Absent = no check.
+   */
+  bugReports?: Pick<BugReportRepo, "byState" | "threadLinks">;
   llm: LlmPort;
   clock: Clock;
   /** Where fixes are announced and run. */
@@ -178,6 +188,8 @@ export const TRIAGE_EVERY_MS = 30 * 60 * 1000;
 export const CURSOR_MAX_AGE_MS = 6 * 60 * 60 * 1000;
 /** Auto-fixes a day, when `autofix` is on. */
 const FIXES_PER_DAY = 2;
+/** Rejected reports listed in the triage prompt: the newest few, the thread check itself has no window. */
+const REJECTED_IN_PROMPT = 15;
 /** Most a single triage reads, and most it may file. */
 const TRIAGE_BATCH = 60;
 const MAX_FILED_PER_TRIAGE = 5;
@@ -227,6 +239,8 @@ export const createInnerChild = (deps: InnerChildDeps): InnerChild => {
   const staleAfter = deps.staleAfterMs ?? STALE_AFTER_MS;
   const fixTimeout = deps.fixTimeoutMs ?? 2 * 60 * 60 * 1000;
   let running = false;
+  // A running fix is warned once per process about a report decided on its thread.
+  const warnedFixes = new Set<number>();
   let lastTriage = 0;
   let booted = false;
 
@@ -408,11 +422,55 @@ export const createInnerChild = (deps: InnerChildDeps): InnerChild => {
     }
   };
 
+  const linksOf = (state: "pending" | "approved" | "rejected") => deps.bugReports?.threadLinks(state) ?? [];
+
+  /**
+   * The owner's decision on a bug report beats this queue. A queued issue on a
+   * thread with a rejected report is closed as `rejected`, one on a thread with
+   * an approved report as `covered` (that report's own fix owns it), so
+   * nothing is fixed twice or against a Reject; this also catches an issue
+   * filed before the decision. A fix already running cannot be stopped from
+   * here: its thread is told, once, so the owner sees it (the running session
+   * will probably not: bot posts are not intake).
+   */
+  const closeDecided = async (now: number): Promise<void> => {
+    const queued = deps.issues.queued();
+    const fixing = deps.issues.fixing();
+    if (queued.length === 0 && fixing.length === 0) return;
+    const rejected = linksOf("rejected");
+    const approved = linksOf("approved");
+    if (rejected.length === 0 && approved.length === 0) return;
+    for (const i of queued) {
+      const by = reportsCover(rejected, i.sourceChannel, i.sourceThread)
+        ? "rejected"
+        : reportsCover(approved, i.sourceChannel, i.sourceThread)
+          ? "covered"
+          : undefined;
+      if (!by) continue;
+      deps.issues.settle(i.id, by, now);
+      log(`issue #${i.id} closed as ${by}: a bug report on its thread was decided by the owner`);
+    }
+    for (const i of fixing) {
+      if (warnedFixes.has(i.id)) continue;
+      const by = reportsCover(rejected, i.sourceChannel, i.sourceThread)
+        ? "rejected"
+        : reportsCover(approved, i.sourceChannel, i.sourceThread)
+          ? "approved"
+          : undefined;
+      if (!by) continue;
+      warnedFixes.add(i.id);
+      log(`issue #${i.id} is being fixed while the owner ${by} a bug report on its thread`);
+      await deps.post(i.fixChannel, coveredNotice(i.id, by), i.fixThread).catch(logAndIgnore("inner child covered notice"));
+    }
+  };
+
   const startNext = async (now: number): Promise<void> => {
     if (!deps.autofix?.()) return;
     if (deps.issues.fixing().length > 0) return;
     if (deps.issues.startedSince(now - DAY_MS) >= maxPerDay) return;
-    const issue = deps.issues.nextQueued();
+    // A pending report on the same thread waits for the owner: not fixed behind their back.
+    const pending = linksOf("pending");
+    const issue = deps.issues.queued().find((i) => !reportsCover(pending, i.sourceChannel, i.sourceThread));
     if (!issue) return;
     // Announce first. If the announcement cannot land the fix does not start:
     // a self-fix nobody was told about is exactly what was ruled out.
@@ -486,12 +544,14 @@ export const createInnerChild = (deps: InnerChildDeps): InnerChild => {
       if (hits.length) hitsByTurn.set(i, hits);
     });
 
+    const decidedLinks = [...linksOf("rejected"), ...linksOf("approved")];
+    const rejectedIssues = (deps.bugReports?.byState("rejected", REJECTED_IN_PROMPT) ?? []).map((r) => r.issue);
     let raw = "";
     try {
       raw = await deps.llm.complete({
         system: triageSystem(deps.botName()),
         messages: [
-          { role: "user", content: triageMessage(observed, deps.issues.recentTitles(30)), speakerId: deps.ownerSlackId },
+          { role: "user", content: triageMessage(observed, deps.issues.recentTitles(30), rejectedIssues), speakerId: deps.ownerSlackId },
         ],
         policy: { skipPermissions: false, disallowedTools: deps.noTools, model: deps.model?.()?.trim() || TRIAGE_MODEL },
         bill: { actor: deps.ownerSlackId, kind: "inner-child", channel: deps.channelId },
@@ -504,7 +564,9 @@ export const createInnerChild = (deps: InnerChildDeps): InnerChild => {
     // no further. Past it the findings are dropped, not parked: they come back
     // if the defect is still there once there is room.
     const room = Math.max(0, maxOpen - deps.issues.openCount());
-    const found = byUrgency(parseFindings(raw));
+    const parsed = byUrgency(parseFindings(raw));
+    const found = parsed.filter((f) => !reportsCover(decidedLinks, f.channelId, f.threadTs));
+    if (found.length < parsed.length) log(`${parsed.length - found.length} finding(s) skipped: a bug report on their thread was decided by the owner`);
     if (room === 0 && found.length) {
       log(`queue full (${maxOpen} open), filing nothing: ${found.length} finding(s) dropped`);
     }
@@ -559,6 +621,7 @@ export const createInnerChild = (deps: InnerChildDeps): InnerChild => {
         const now = deps.clock();
         await writeOffStale(now);
         pruneStale(now);
+        await closeDecided(now);
         if (now - lastTriage >= triageEvery) {
           lastTriage = now;
           await triage(now).catch((e) => log(`triage failed: ${e instanceof Error ? e.message : String(e)}`));
