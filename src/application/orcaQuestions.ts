@@ -27,6 +27,7 @@ import {
   type OrcaQuestion,
 } from "../domain/orcaQuestions.ts";
 import { bashCommand, orcaWorkerLiveness, runsOrcaWorkerStart } from "../domain/threadBackground.ts";
+import type { InternalKind } from "../domain/internalMessages.ts";
 import type { OrcaQuestionRepo } from "../infrastructure/db/orcaQuestionRepo.ts";
 import type { BillingContext, Clock, ToolTrace } from "./ports.ts";
 
@@ -60,6 +61,7 @@ export type OrcaQuestionDeps = {
     unprompted?: boolean;
     /** In a workflow thread, the worker's session answers, not the front. */
     workerLane?: boolean;
+    trigger?: InternalKind;
   }) => Promise<unknown>;
   /** Whether whoever started the worker may still run turns. */
   mayRun: (slackUserId: string) => boolean;
@@ -143,6 +145,7 @@ export const createOrcaQuestionBridge = (deps: OrcaQuestionDeps): OrcaQuestionBr
           // A workflow's worker started it, and only its session (with full
           // tools) can run the reply - the front cannot run `orca`.
           workerLane: true,
+          trigger: "orca",
         })
         .then(() => deps.repo.settle(q.id, "delivered", deps.clock()))
         // Left `delivering`: the next tick tries again while it is still unanswered.

@@ -73,7 +73,8 @@ import { noTools } from "./domain/toolPolicy.ts";
 import { GATE_TIMEOUT_MS } from "./application/followGate.ts";
 import { createClaudeJsonReader, unknownMcpServers, unlistedLocalMcpServers } from "./infrastructure/llm/mcpConfig.ts";
 import { createReminderSender } from "./application/reminders.ts";
-import { createLoopRunner, loopReplyOf } from "./application/loops.ts";
+import { createLoopRunner } from "./application/loops.ts";
+import { createTurnRunner } from "./application/turnRunner.ts";
 import { expirePendingLoops, type LoopApprovalDeps } from "./application/loopApproval.ts";
 import { injectedLearnings, type LearningApprovalDeps } from "./application/learningApproval.ts";
 import { createShellCheck } from "./infrastructure/system/shellCheck.ts";
@@ -662,59 +663,12 @@ const main = async () => {
     // through the ordinary respond path on purpose: same queue, same session,
     // same role checks - a retry that took a shortcut would not be a retry of
     // the thing that failed.
-    runTurn: async ({
-      channelId,
-      threadTs,
-      slackUserId,
-      text,
-      keepSession,
-      autoContinue,
-      unprompted,
-      workerLane,
-      loop,
-      hold,
-    }: {
-      channelId: string;
-      threadTs: string;
-      slackUserId: string;
-      text: string;
-      keepSession?: boolean;
-      autoContinue?: boolean;
-      unprompted?: boolean;
-      workerLane?: boolean;
-      loop?: boolean;
-      hold?: boolean;
-    }) => {
-      const result = await respond(deps, {
-        channelId,
-        slackUserId,
-        text,
-        threadTs,
-        messageTs: syntheticTs(clock()),
-        viaSlash: false,
-        following: false,
-        keepSession,
-        autoContinue,
-        unprompted,
-        workerLane,
-        // A loop's fire runs on Sonnet; replies a person types in its DM thread are ordinary turns.
-        model: loop ? agentModels().loop : undefined,
-      });
-      // A turn nobody watched live can still answer with a note about not
-      // answering; posted, it reads as the whole reply.
-      // A loop's fire: the runner posts it (with its header) or not at all.
-      if (hold) return result.kind === "ignored" ? undefined : loopReplyOf(result.text);
-      if (result.kind !== "ignored" && result.text.trim() && !isSilenceNote(result.text)) {
-        // Signed with what the turn cost, as a reply streamed live would be.
-        await slackAdmin.post(
-          channelId,
-          result.text,
-          threadTs,
-          result.kind === "reply" ? result.by : undefined,
-          result.kind === "reply" ? result.usage : undefined,
-        );
-      }
-    },
+    runTurn: createTurnRunner({
+      respond: (inbound) => respond(deps, inbound),
+      post: (...args) => slackAdmin.post(...args),
+      clock,
+      loopModel: () => agentModels().loop,
+    }),
     disabledCommands,
     roles,
     roleRepo,
@@ -1158,7 +1112,7 @@ const main = async () => {
     runTurn: deps.runTurn!,
     offsetMinutes: () => hostOffsetMin(clock()),
     openDm: async (userId) => slackAdmin.openDm?.(userId),
-    dm: async (userId, text) => slackAdmin.postDm(userId, text, SIGNATURES.loop),
+    dm: async (userId, text, trigger) => slackAdmin.postDm(userId, text, SIGNATURES.loop, trigger),
     // A silent run's turn lived under a made-up thread; a reply under the posted message resumes its session.
     anchored: (from) => watches.waitingAt(from.channel, from.ts) > 0,
     adopt: (from, to) => {
@@ -1363,8 +1317,10 @@ const main = async () => {
             following: false,
             keepSession: true,
             unprompted: true,
+            trigger: "nudge",
           }),
-        post: (channel, text, threadTs) => slackAdmin.post(channel, text, threadTs, SIGNATURES.innerChild),
+        post: (channel, text, threadTs, trigger) =>
+          slackAdmin.post(channel, text, threadTs, SIGNATURES.innerChild, undefined, trigger),
         workflowActive: (channel, threadTs) => !!workflows.activeFor(channel, threadTs),
         allowed: (id) => decideAccess(id, config.ownerSlackId, users.get).allowed,
       }),

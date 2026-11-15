@@ -5,6 +5,7 @@
  * All I/O is injected, so this reads as a straight line of business logic and is
  * covered by fast, deterministic tests.
  */
+import type { InternalKind } from "../domain/internalMessages.ts";
 import type { StuckWork } from "../domain/stuckWork.ts";
 import type { WorkerUsagePort } from "./workerCost.ts";
 import type { WorkerTickets } from "./workerTickets.ts";
@@ -141,7 +142,9 @@ export type HandleMessageDeps = {
     loop?: boolean;
     /** Return the final reply (when it is a real answer) instead of posting it; a loop's fire. */
     hold?: boolean;
-  }) => Promise<{ text: string } | void>;
+    /** What the bot's own sender is, for the reply's footer. */
+    trigger?: InternalKind;
+  }) => Promise<{ text: string; trigger?: InternalKind } | void>;
   /** Timer for a workflow's next step; injected so tests need not wait. */
   continueTimer?: (fn: () => void, ms: number) => void;
   /** Set of disabled command names (managed from the dashboard). */
@@ -321,6 +324,13 @@ export type InboundMessage = {
   workerLane?: boolean;
   /** Forces the turn's model, over the role and channel model (a loop's fire). */
   model?: string;
+  /**
+   * What started the turn when the bot's own sender (watch, loop, tell, ...)
+   * did, named by that sender. Never set from a Slack event, and never read off
+   * the text: a person typing a look-alike opening is still just chatting.
+   * Shown in the reply's footer (domain/messageFooter.ts).
+   */
+  trigger?: InternalKind;
 };
 
 /** What a turn says when the model said nothing. A placeholder, not an answer. */
@@ -332,9 +342,10 @@ export type HandleResult =
    * worker, a command), for the footer signature (domain/messageFooter.ts).
    * `usage` is what the turn cost when the model reported it, so a reply
    * posted after the fact (nobody watched it stream) carries the same usage
-   * line in its footer as a live one.
+   * line in its footer as a live one. `trigger` is what started the turn when
+   * it was an internal message (watch, loop, nudge, ...), for the footer.
    */
-  | { kind: "reply"; text: string; by?: string; usage?: LlmUsage }
+  | { kind: "reply"; text: string; by?: string; usage?: LlmUsage; trigger?: InternalKind }
   | { kind: "denied"; text: string }
   | { kind: "ignored" };
 
@@ -624,7 +635,7 @@ export const handleMessage = async (
     deps.clock(),
   );
 
-  return { kind: "reply", text: safeReply, ...(usage ? { usage } : {}) };
+  return { kind: "reply", text: safeReply, ...(usage ? { usage } : {}), ...(inbound.trigger ? { trigger: inbound.trigger } : {}) };
 };
 
 /**

@@ -24,6 +24,7 @@ import {
 } from "../domain/watch.ts";
 import { decodeGate, type GateSpec } from "../domain/ciGate.ts";
 import type { Watch, WatchRepo } from "../infrastructure/db/watchRepo.ts";
+import type { InternalKind } from "../domain/internalMessages.ts";
 import type { Clock } from "./ports.ts";
 import { logAndIgnore } from "./ignoredError.ts";
 
@@ -61,6 +62,8 @@ export type WatcherDeps = {
     keepSession?: boolean;
     /** Nobody typed it: the bot started this turn itself. */
     unprompted?: boolean;
+    /** What started it, for the reply's footer. */
+    trigger?: InternalKind;
   }) => Promise<unknown>;
   /** Runs the rows that guard a PR's CI; without it such a row is settled failed. */
   gate?: WatchGate;
@@ -127,6 +130,7 @@ export const createWatcher = (deps: WatcherDeps): Watcher => {
           keepSession: true,
           // The bot's own note to itself, not a message anyone sent.
           unprompted: true,
+          trigger: "watch",
         })
         .catch(lost);
     } catch (e) {

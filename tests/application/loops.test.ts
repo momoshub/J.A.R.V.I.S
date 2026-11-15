@@ -17,6 +17,7 @@ let loops: LoopRepo;
 let now: number;
 let turns: LoopTurnRequest[];
 let dms: { userId: string; text: string }[];
+let dmTriggers: (string | undefined)[];
 let ran: string[];
 let failDm = false;
 /** What a held turn answers; undefined = a silent run. */
@@ -46,9 +47,10 @@ const runner = (
     openDm: async (userId) => (failDm ? undefined : `D-${userId}`),
     adopt: (from, to) => adopted.push({ from, to }),
     anchored: () => anchored,
-    dm: async (userId, text) => {
+    dm: async (userId, text, trigger) => {
       if (failDm) return undefined;
       dms.push({ userId, text });
+      dmTriggers.push(trigger);
       return { channel: `D-${userId}`, ts: `${dms.length}.000` };
     },
     check: over.noCheck
@@ -84,6 +86,7 @@ beforeEach(() => {
   now = Date.UTC(2026, 10, 5, 10, 0);
   turns = [];
   dms = [];
+  dmTriggers = [];
   ran = [];
   failDm = false;
   reply = "found 3 new words";
@@ -115,6 +118,7 @@ describe("loop runner: prompt mode", () => {
         unprompted: true,
         loop: true,
         hold: true,
+        trigger: "loop",
       },
     ]);
     expect(turns[0]?.text).toContain("search for slang");
@@ -143,6 +147,24 @@ describe("loop runner: prompt mode", () => {
     await flush();
     expect(dms).toEqual([{ userId: "U1", text: `🔁 Slang - loop #${l.id}, every 1h` }]);
     expect(adopted[0]?.to).toEqual({ channel: "D-U1", ts: "1.000" });
+  });
+
+  test("a fire names itself `loop` to its runTurn, and its DM (reply or header alone) carries it", async () => {
+    reply = "found 3 new words";
+    add({ name: "Slang" });
+    now += HOUR;
+    await runner().tick();
+    await flush();
+    expect(turns[0]?.trigger).toBe("loop");
+    expect(dmTriggers).toEqual(["loop"]);
+
+    reply = undefined;
+    anchored = true;
+    dmTriggers = [];
+    now += HOUR;
+    await runner().tick();
+    await flush();
+    expect(dmTriggers).toEqual(["loop"]);
   });
 
   test("a blank reply is silent too", async () => {
