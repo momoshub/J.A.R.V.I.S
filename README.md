@@ -688,7 +688,11 @@ older than 6 hours jumps to now.
   `inner-child status` shows how many. At most 10 are open (queued or being
   fixed) at once; while the queue is full, triage files nothing new and logs it.
   A queued issue nobody got to in 7 days is closed with state `stale` (the row is
-  kept, its fingerprint still dedupes).
+  kept, its fingerprint still dedupes). The owner's bug reports win over it: a
+  thread whose bug report the owner rejected is never filed from again (an issue
+  already queued there is closed as `rejected`, and triage is told not to report
+  it), and an issue on a thread with a report still waiting for the owner is not
+  fixed until they decide.
 - **Voice drift** - a final reply that starts a paragraph with a capital (`I`
   and acronyms excepted), uses an em/en dash, a semicolon, an arrow, a markdown
   heading or `**bold**`, or answers in a different language from the thread -

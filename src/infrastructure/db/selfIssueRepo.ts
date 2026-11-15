@@ -6,9 +6,10 @@ import type { Finding, Severity } from "../../domain/innerChild.ts";
 
 /**
  * `stale` is an issue closed unfixed by `pruneStale`: it sat queued past the
- * age limit. The row stays (its fingerprint still dedupes), only the state says why.
+ * age limit, `rejected` one the owner turned down through a bug report on the
+ * same thread. The row stays (its fingerprint still dedupes), only the state says why.
  */
-export type SelfIssueState = "queued" | "fixing" | "fixed" | "not_fixed" | "failed" | "stale";
+export type SelfIssueState = "queued" | "fixing" | "fixed" | "not_fixed" | "failed" | "stale" | "rejected";
 
 export type SelfIssue = {
   readonly id: number;
@@ -43,7 +44,7 @@ type Row = {
 };
 
 const asState = (v: string): SelfIssueState =>
-  v === "fixing" || v === "fixed" || v === "not_fixed" || v === "failed" || v === "stale" ? v : "queued";
+  v === "fixing" || v === "fixed" || v === "not_fixed" || v === "failed" || v === "stale" || v === "rejected" ? v : "queued";
 
 const toIssue = (r: Row): SelfIssue => ({
   id: r.id,
@@ -66,6 +67,8 @@ export type SelfIssueRepo = {
   file: (f: Finding, now: number) => SelfIssue | undefined;
   /** The queued issue to fix next: critical first, then oldest. */
   nextQueued: () => SelfIssue | undefined;
+  /** Every queued issue, in fix order. The queue is capped, so this is short. */
+  queued: () => SelfIssue[];
   /** Mark an issue as being fixed, in the thread the fix runs in. */
   startFix: (id: number, channel: string, threadTs: string, now: number) => void;
   settle: (id: number, state: SelfIssueState, now: number) => void;
@@ -98,6 +101,10 @@ export const createSelfIssueRepo = (db: DbClient): SelfIssueRepo => {
   const nextStmt = db.query<Row, []>(
     `SELECT * FROM self_issues WHERE state = 'queued'
       ORDER BY CASE severity WHEN 'critical' THEN 0 ELSE 1 END, id LIMIT 1`,
+  );
+  const queuedAllStmt = db.query<Row, []>(
+    `SELECT * FROM self_issues WHERE state = 'queued'
+      ORDER BY CASE severity WHEN 'critical' THEN 0 ELSE 1 END, id`,
   );
   const startStmt = db.query(
     "UPDATE self_issues SET state = 'fixing', fix_channel = ?, fix_thread = ?, started_at = ?, updated_at = ? WHERE id = ?",
@@ -134,6 +141,7 @@ export const createSelfIssueRepo = (db: DbClient): SelfIssueRepo => {
       const r = nextStmt.get();
       return r ? toIssue(r) : undefined;
     },
+    queued: () => queuedAllStmt.all().map(toIssue),
     startFix: (id, channel, threadTs, now) => void startStmt.run(channel, threadTs, now, now, id),
     settle: (id, state, now) => void settleStmt.run(state, now, id),
     fixing: () => fixingStmt.all().map(toIssue),

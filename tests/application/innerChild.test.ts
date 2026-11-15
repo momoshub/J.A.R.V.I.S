@@ -16,10 +16,12 @@ import {
 import { EMPTY_REPLY_FALLBACK } from "../../src/application/handleMessage.ts";
 import { createDriftRepo, type DriftRepo } from "../../src/infrastructure/db/driftRepo.ts";
 import { driftNudge } from "../../src/domain/voiceDrift.ts";
+import { createBugReportRepo, type BugReportRepo } from "../../src/infrastructure/db/bugReportRepo.ts";
 import type { LlmCompleteParams } from "../../src/application/ports.ts";
 
 let db: DbClient;
 let issues: SelfIssueRepo;
+let bugReports: BugReportRepo;
 let turns: TurnLogRepo;
 let now: number;
 let cursor: number | undefined;
@@ -45,6 +47,7 @@ const build = (over: Partial<InnerChildDeps> = {}) =>
     turns,
     messages: createMessageRepo(db),
     issues,
+    bugReports,
     llm: {
       complete: async (p) => {
         triages.push(p);
@@ -96,6 +99,7 @@ const settle = () => new Promise((r) => setTimeout(r, 0));
 beforeEach(() => {
   db = openDatabase(":memory:");
   issues = createSelfIssueRepo(db);
+  bugReports = createBugReportRepo(db);
   turns = createTurnLogRepo(db);
   now = 1_000_000;
   cursor = undefined;
@@ -231,6 +235,77 @@ describe("inner child", () => {
     expect(issues.openCount()).toBe(2);
     expect(issues.get(3)).toBeUndefined();
     expect(logs.some((l) => l.includes("queue full") && l.includes("filing nothing"))).toBe(true);
+  });
+
+  // finding() sits in C9 thread 5.5
+  const report = (state: "pending" | "rejected", link = "https://acme.slack.com/archives/C9/p5000005?thread_ts=5.5", issue = "bomb crashes") => {
+    const r = bugReports.add({ fingerprint: `${link}|${issue}`, threadLink: link, issue, summary: "", plan: "p", reportedIn: "C9" }, now);
+    if (state === "rejected") bugReports.decide(r.id, "rejected", now);
+    return r;
+  };
+
+  test("a finding from a thread with a rejected bug report is not filed, others are", async () => {
+    cursor = now - 100;
+    addTurn();
+    report("rejected");
+    const logs: string[] = [];
+    const child = build({ maxFixesPerDay: 0, log: (m) => logs.push(m) });
+    triageAnswer = JSON.stringify([finding(), finding({ fingerprint: "other", threadTs: "9.9" })]);
+    await child.tick();
+    expect(issues.get(1)).toMatchObject({ fingerprint: "other" });
+    expect(issues.get(2)).toBeUndefined();
+    expect(logs.some((l) => l.includes("1 finding(s) skipped"))).toBe(true);
+  });
+
+  test("the triage run is shown the rejected reports as do-not-report context", async () => {
+    cursor = now - 100;
+    addTurn();
+    report("rejected", "https://acme.slack.com/archives/C1/p1000001", "tool call dies");
+    await build().tick();
+    const content = triages[0]?.messages[0]?.content ?? "";
+    expect(content).toContain("Rejected by the owner");
+    expect(content).toContain("tool call dies");
+  });
+
+  test("a pending or approved report does not stop filing", async () => {
+    cursor = now - 100;
+    addTurn();
+    report("pending");
+    triageAnswer = JSON.stringify([finding()]);
+    await build({ maxFixesPerDay: 0 }).tick();
+    expect(issues.get(1)).toMatchObject({ state: "queued" });
+  });
+
+  test("a queued issue whose thread got a rejected report is closed and never fixed", async () => {
+    file("x", now);
+    report("rejected");
+    await build().tick();
+    expect(issues.get(1)?.state).toBe("rejected");
+    expect(fixes).toHaveLength(0);
+    expect(issues.openCount()).toBe(0);
+  });
+
+  test("a queued issue on a thread with a pending report waits, the next one is fixed", async () => {
+    file("x", now);
+    issues.file({ ...finding({ fingerprint: "y", threadTs: "9.9" }), severity: "bug" }, now);
+    report("pending");
+    await build().tick();
+    await settle();
+    expect(issues.get(1)?.state).toBe("queued");
+    expect(issues.get(2)?.state).toBe("fixed");
+    expect(fixes).toHaveLength(1);
+  });
+
+  test("a pending report decided later releases the issue", async () => {
+    file("x", now);
+    const r = report("pending");
+    const child = build();
+    await child.tick();
+    expect(fixes).toHaveLength(0);
+    bugReports.decide(r.id, "approved", now);
+    await child.tick();
+    await settle();
+    expect(fixes).toHaveLength(1);
   });
 
   test("an issue being fixed counts as open, a finished one frees its place", async () => {

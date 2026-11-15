@@ -61,6 +61,8 @@ import {
   type DriftOutcome,
 } from "../domain/voiceDrift.ts";
 import { isSilenceNote } from "../domain/silence.ts";
+import { reportsCover } from "../domain/bugReport.ts";
+import type { BugReportRepo } from "../infrastructure/db/bugReportRepo.ts";
 import type { DriftEvent, DriftRepo } from "../infrastructure/db/driftRepo.ts";
 import type { MessageRepo } from "../infrastructure/db/messageRepo.ts";
 import type { SelfIssue, SelfIssueRepo } from "../infrastructure/db/selfIssueRepo.ts";
@@ -77,6 +79,12 @@ export type InnerChildDeps = {
   turns: Pick<TurnLogRepo, "since">;
   messages: Pick<MessageRepo, "recentForThread">;
   issues: SelfIssueRepo;
+  /**
+   * The owner's bug reports. A thread with a rejected one is never filed from
+   * (its issues are shown to triage as "do not report" too), and one with a
+   * pending one is not autofixed until the owner decides. Absent = no check.
+   */
+  bugReports?: Pick<BugReportRepo, "byState">;
   llm: LlmPort;
   clock: Clock;
   /** Where fixes are announced and run. */
@@ -178,6 +186,8 @@ export const TRIAGE_EVERY_MS = 30 * 60 * 1000;
 export const CURSOR_MAX_AGE_MS = 6 * 60 * 60 * 1000;
 /** Auto-fixes a day, when `autofix` is on. */
 const FIXES_PER_DAY = 2;
+/** Most reports of one state looked at: the newest, so an old verdict ages out of the check. */
+const BUG_REPORTS_CHECKED = 50;
 /** Most a single triage reads, and most it may file. */
 const TRIAGE_BATCH = 60;
 const MAX_FILED_PER_TRIAGE = 5;
@@ -408,11 +418,30 @@ export const createInnerChild = (deps: InnerChildDeps): InnerChild => {
     }
   };
 
+  const reportsIn = (state: "pending" | "rejected") => deps.bugReports?.byState(state, BUG_REPORTS_CHECKED) ?? [];
+
+  /**
+   * The owner's Reject on a bug report beats this queue: an issue from that
+   * thread is closed, not fixed. Runs every tick, so it also catches an issue
+   * filed before the report was rejected.
+   */
+  const closeRejected = (now: number): void => {
+    const rejected = reportsIn("rejected");
+    if (rejected.length === 0) return;
+    for (const i of deps.issues.queued()) {
+      if (!reportsCover(rejected, i.sourceChannel, i.sourceThread)) continue;
+      deps.issues.settle(i.id, "rejected", now);
+      log(`issue #${i.id} closed: the owner rejected a bug report on its thread`);
+    }
+  };
+
   const startNext = async (now: number): Promise<void> => {
     if (!deps.autofix?.()) return;
     if (deps.issues.fixing().length > 0) return;
     if (deps.issues.startedSince(now - DAY_MS) >= maxPerDay) return;
-    const issue = deps.issues.nextQueued();
+    // A pending report on the same thread waits for the owner: not fixed behind their back.
+    const pending = reportsIn("pending");
+    const issue = deps.issues.queued().find((i) => !reportsCover(pending, i.sourceChannel, i.sourceThread));
     if (!issue) return;
     // Announce first. If the announcement cannot land the fix does not start:
     // a self-fix nobody was told about is exactly what was ruled out.
@@ -486,12 +515,13 @@ export const createInnerChild = (deps: InnerChildDeps): InnerChild => {
       if (hits.length) hitsByTurn.set(i, hits);
     });
 
+    const rejected = reportsIn("rejected");
     let raw = "";
     try {
       raw = await deps.llm.complete({
         system: triageSystem(deps.botName()),
         messages: [
-          { role: "user", content: triageMessage(observed, deps.issues.recentTitles(30)), speakerId: deps.ownerSlackId },
+          { role: "user", content: triageMessage(observed, deps.issues.recentTitles(30), rejected.map((r) => r.issue)), speakerId: deps.ownerSlackId },
         ],
         policy: { skipPermissions: false, disallowedTools: deps.noTools, model: deps.model?.()?.trim() || TRIAGE_MODEL },
         bill: { actor: deps.ownerSlackId, kind: "inner-child", channel: deps.channelId },
@@ -504,7 +534,9 @@ export const createInnerChild = (deps: InnerChildDeps): InnerChild => {
     // no further. Past it the findings are dropped, not parked: they come back
     // if the defect is still there once there is room.
     const room = Math.max(0, maxOpen - deps.issues.openCount());
-    const found = byUrgency(parseFindings(raw));
+    const parsed = byUrgency(parseFindings(raw));
+    const found = parsed.filter((f) => !reportsCover(rejected, f.channelId, f.threadTs));
+    if (found.length < parsed.length) log(`${parsed.length - found.length} finding(s) skipped: the owner rejected a bug report on their thread`);
     if (room === 0 && found.length) {
       log(`queue full (${maxOpen} open), filing nothing: ${found.length} finding(s) dropped`);
     }
@@ -559,6 +591,7 @@ export const createInnerChild = (deps: InnerChildDeps): InnerChild => {
         const now = deps.clock();
         await writeOffStale(now);
         pruneStale(now);
+        closeRejected(now);
         if (now - lastTriage >= triageEvery) {
           lastTriage = now;
           await triage(now).catch((e) => log(`triage failed: ${e instanceof Error ? e.message : String(e)}`));

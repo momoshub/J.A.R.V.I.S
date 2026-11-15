@@ -1254,6 +1254,7 @@ const main = async () => {
     turns,
     messages,
     issues: selfIssues,
+    bugReports,
     llm,
     clock,
     get channelId() {

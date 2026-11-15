@@ -126,6 +126,12 @@ describe("messages", () => {
   test("the triage is told what is already known", () => {
     expect(triageMessage([], ["a: b"])).toContain("- a: b");
   });
+
+  test("the triage is told which bugs the owner rejected", () => {
+    expect(triageMessage([], [], ["tool call dies"])).toContain("Rejected by the owner");
+    expect(triageMessage([], [], ["tool call dies"])).toContain("- tool call dies");
+    expect(triageMessage([], [])).not.toContain("Rejected");
+  });
 });
 
 describe("triageSystem", () => {

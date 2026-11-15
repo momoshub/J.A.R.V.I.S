@@ -22,6 +22,19 @@ describe("bug report repo", () => {
     expect(repo.countSince(120)).toBe(1);
   });
 
+  test("byState lists the newest reports of one state, newest first, up to the limit", () => {
+    const repo = createBugReportRepo(openDatabase(":memory:"));
+    repo.add(base, 100);
+    repo.add({ ...base, fingerprint: "b" }, 110);
+    repo.add({ ...base, fingerprint: "c" }, 120);
+    repo.decide(1, "rejected", 200);
+    repo.decide(2, "rejected", 210);
+    expect(repo.byState("rejected", 10).map((r) => r.id)).toEqual([2, 1]);
+    expect(repo.byState("rejected", 1).map((r) => r.id)).toEqual([2]);
+    expect(repo.byState("pending", 10).map((r) => r.id)).toEqual([3]);
+    expect(repo.byState("approved", 10)).toEqual([]);
+  });
+
   test("decide moves a pending row once and never back", () => {
     const repo = createBugReportRepo(openDatabase(":memory:"));
     repo.add(base, 100);

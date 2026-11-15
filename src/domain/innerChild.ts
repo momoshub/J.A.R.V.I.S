@@ -89,9 +89,19 @@ where N is the turn's #number. Be strict here too.
 
 Answer [] when there is nothing.`;
 
-export const triageMessage = (turns: readonly ObservedTurn[], known: readonly string[]): string =>
+export const triageMessage = (
+  turns: readonly ObservedTurn[],
+  known: readonly string[],
+  rejected: readonly string[] = [],
+): string =>
   [
     known.length ? `Known, do not report again:\n${known.map((k) => `- ${k}`).join("\n")}` : "Known: none",
+    ...(rejected.length
+      ? [
+          "",
+          `Rejected by the owner, never report these or anything close to them:\n${rejected.map((r) => `- ${clip(r, 200)}`).join("\n")}`,
+        ]
+      : []),
     "",
     "Recent turns:",
     renderTurns(turns),
