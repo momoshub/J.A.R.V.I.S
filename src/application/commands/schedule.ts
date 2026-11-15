@@ -1,6 +1,6 @@
 /** Things that run later or on their own: follow, watch, remind, loop, mindful. */
 
-import { parseMessageLink } from "../../domain/slackLinks.ts";
+import { type MessageRef, parseMessageLink } from "../../domain/slackLinks.ts";
 import { builtinCheck, humanDuration, parseWatchArgs } from "../../domain/watch.ts";
 import { formatWhen, humanLead, parseRemindArgs } from "../../domain/reminder.ts";
 import {
@@ -16,6 +16,20 @@ import { type CommandDef, parseWindow } from "./shared.ts";
 import { PERM } from "../../domain/permissions.ts";
 import { isOwnerRole, roleNamesWith } from "../../domain/roles.ts";
 
+const FOLLOW_FILLER = new Set(["thread", "this", "the", "that"]);
+
+/**
+ * The thread a link points at. Slack wraps a pasted link as `<url|label>`, and
+ * a reply's permalink names the reply itself with the thread in `thread_ts`:
+ * following the reply's ts would follow a thread that does not exist.
+ */
+const followTarget = (arg: string): MessageRef | undefined => {
+  const url = arg.replace(/^<|>$/g, "").split("|")[0] ?? "";
+  const ref = parseMessageLink(url);
+  const threadTs = url.match(/[?&]thread_ts=(\d+\.\d+)/)?.[1];
+  return ref && threadTs ? { channel: ref.channel, ts: threadTs } : ref;
+};
+
 export const SCHEDULE_COMMANDS: readonly CommandDef[] = [
   {
     name: "follow",
@@ -23,7 +37,7 @@ export const SCHEDULE_COMMANDS: readonly CommandDef[] = [
     // It makes the bot speak in a room without being spoken to, which is a
     // standing decision about a shared space rather than a one-off reply.
     minRole: "executer",
-    usage: "[<thread link>] | off [<thread link>] | list",
+    usage: "[thread] [<thread link>] | off [<thread link>] | list",
     summary: "keep up with a thread without being tagged in every message",
     run: ({ deps, actor, args, rest, prefix, threadTs, channelId }) => {
       if (!deps.follows) return "I cannot keep track of followed threads right now.";
@@ -38,8 +52,10 @@ export const SCHEDULE_COMMANDS: readonly CommandDef[] = [
       }
 
       const off = sub === "off" || sub === "stop" || sub === "no";
-      const linkArg = off ? (args[1] ?? "") : (args[0] ?? "");
-      const ref = linkArg ? parseMessageLink(linkArg.replace(/^<|>$/g, "")) : undefined;
+      // "follow thread <link>", "follow this thread" read the way people say it:
+      // the filler words are not the link, so skip them rather than refuse.
+      const linkArg = (off ? args.slice(1) : args).find((a) => !FOLLOW_FILLER.has(a.toLowerCase())) ?? "";
+      const ref = linkArg ? followTarget(linkArg) : undefined;
       if (linkArg && !ref) return `That is not a Slack thread link. \`${prefix} follow <thread link>\``;
       // A link wins; otherwise it is the thread this was typed in.
       const target = ref ?? (threadTs ? { channel: channelId, ts: threadTs } : undefined);
