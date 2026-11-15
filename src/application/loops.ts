@@ -21,6 +21,7 @@
  */
 import { loopRef, loopThreadTs, loopTurnText, nextRun, originLinkText, parseSchedule } from "../domain/loop.ts";
 import type { Loop, LoopRepo } from "../infrastructure/db/loopRepo.ts";
+import type { InternalKind } from "../domain/internalMessages.ts";
 import type { Clock } from "./ports.ts";
 import { logAndIgnore } from "./ignoredError.ts";
 import { CHECK_TIMEOUT_MS, type CheckResult } from "./watcher.ts";
@@ -39,7 +40,12 @@ export type LoopTurnRequest = {
   loop?: boolean;
   /** Hand the final reply back instead of posting it: the runner decides whether it is worth a message. */
   hold?: boolean;
+  /** What the bot's own sender is, for the reply's footer: always `loop` here. */
+  trigger?: InternalKind;
 };
+
+/** A loop fire names itself, so its DM (the reply or just the header) says `triggered by loop`. */
+const LOOP_TRIGGER: InternalKind = "loop";
 
 /** A held turn's final reply when it is a real answer; nothing for a silent run. */
 export type LoopTurnReply = { text: string } | undefined | void;
@@ -87,7 +93,7 @@ export type LoopRunnerDeps = {
    * when needed) and say where it landed, resolved at fire time from the
    * creator's id. Nothing posts without it.
    */
-  dm: (slackUserId: string, text: string) => Promise<{ channel: string; ts: string } | undefined>;
+  dm: (slackUserId: string, text: string, trigger?: InternalKind) => Promise<{ channel: string; ts: string } | undefined>;
   /**
    * Called once a run is over, with the made-up thread the turn used and the
    * message posted for it (none for a silent run): move what was bound to that
@@ -211,7 +217,7 @@ export const createLoopRunner = (deps: LoopRunnerDeps): LoopRunner => {
       try {
         if (text || deps.anchored?.(from)) {
           const header = `🔁 ${l.name} - loop #${l.id}, ${l.schedule}${await loopOriginText(l, deps.permalink)}`;
-          to = await deps.dm(l.createdBy, text ? `${header}\n\n${text}` : header);
+          to = await deps.dm(l.createdBy, text ? `${header}\n\n${text}` : header, LOOP_TRIGGER);
           if (!to) log(`loop ${l.id}: its reply could not be posted`);
         }
       } catch (e) {
@@ -236,6 +242,7 @@ export const createLoopRunner = (deps: LoopRunnerDeps): LoopRunner => {
           unprompted: true,
           loop: true,
           hold: true,
+          trigger: LOOP_TRIGGER,
         })
         .then(deliver, lost);
     } catch (e) {

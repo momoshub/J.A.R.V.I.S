@@ -5,6 +5,7 @@
  * All I/O is injected, so this reads as a straight line of business logic and is
  * covered by fast, deterministic tests.
  */
+import type { InternalKind } from "../domain/internalMessages.ts";
 import type { BackgroundWatch } from "./backgroundWatch.ts";
 import type { StuckWork } from "../domain/stuckWork.ts";
 import type { WorkerUsagePort } from "./workerCost.ts";
@@ -57,7 +58,7 @@ import type { BugReportApprovalDeps } from "./bugReportApproval.ts";
 import type { SettingsRepo } from "../infrastructure/db/settingsRepo.ts";
 import { requestAccess } from "./accessRequests.ts";
 import type { CommandTickets } from "./commandTickets.ts";
-import { tokenFor, type ClaudeTokenPort } from "./claudeTokens.ts";
+import type { ClaudeTokenPort } from "./claudeTokens.ts";
 import type { TotpPort } from "./totp.ts";
 import { isMissingSession, threadSessionName, tierOf, unseenTurns } from "../domain/threadSession.ts";
 import { promptFingerprint } from "../domain/promptFingerprint.ts";
@@ -144,7 +145,9 @@ export type HandleMessageDeps = {
     loop?: boolean;
     /** Return the final reply (when it is a real answer) instead of posting it; a loop's fire. */
     hold?: boolean;
-  }) => Promise<{ text: string } | void>;
+    /** What the bot's own sender is, for the reply's footer. */
+    trigger?: InternalKind;
+  }) => Promise<{ text: string; trigger?: InternalKind } | void>;
   /** Timer for a workflow's next step; injected so tests need not wait. */
   continueTimer?: (fn: () => void, ms: number) => void;
   /** Set of disabled command names (managed from the dashboard). */
@@ -177,7 +180,7 @@ export type HandleMessageDeps = {
   noTools?: readonly string[];
   /** GitHub owners whose PRs `quick-review` posts non-blocking findings for. */
   reviewExtendedOwners?: readonly string[];
-  /** Per-user Claude Code tokens: a speaker's own turns run on their credential. */
+  /** Per-user Claude Code tokens: only `quick-review` runs on one, and `token` manages them. */
   claudeTokens?: ClaudeTokenPort;
   /** Shared 2FA setup keys, for the `2fa` command. */
   totp?: TotpPort;
@@ -324,6 +327,13 @@ export type InboundMessage = {
   workerLane?: boolean;
   /** Forces the turn's model, over the role and channel model (a loop's fire). */
   model?: string;
+  /**
+   * What started the turn when the bot's own sender (watch, loop, tell, ...)
+   * did, named by that sender. Never set from a Slack event, and never read off
+   * the text: a person typing a look-alike opening is still just chatting.
+   * Shown in the reply's footer (domain/messageFooter.ts).
+   */
+  trigger?: InternalKind;
 };
 
 /** What a turn says when the model said nothing. A placeholder, not an answer. */
@@ -335,9 +345,10 @@ export type HandleResult =
    * worker, a command), for the footer signature (domain/messageFooter.ts).
    * `usage` is what the turn cost when the model reported it, so a reply
    * posted after the fact (nobody watched it stream) carries the same usage
-   * line in its footer as a live one.
+   * line in its footer as a live one. `trigger` is what started the turn when
+   * it was an internal message (watch, loop, nudge, ...), for the footer.
    */
-  | { kind: "reply"; text: string; by?: string; usage?: LlmUsage }
+  | { kind: "reply"; text: string; by?: string; usage?: LlmUsage; trigger?: InternalKind }
   | { kind: "denied"; text: string }
   | { kind: "ignored" };
 
@@ -557,9 +568,6 @@ export const handleMessage = async (
     system,
     assistantName: ctx.botName,
     policy,
-    // Their own credential when they have registered one, so the turn is theirs
-    // in every sense; the bot's own when they have not.
-    oauthToken: tokenFor(deps, decision.user),
     signal,
     runTicket,
     // Whose turn this is, so what it consumed lands against them.
@@ -576,7 +584,13 @@ export const handleMessage = async (
     // told when it does, by whoever keeps the list.
     ...(bgWatch && bgThread
       ? {
-          onBackgroundTasks: (tasks: readonly string[]) => bgWatch.track(bgThread, tasks),
+          onBackgroundTasks: (tasks: readonly string[]) => {
+            // A restart's cut kills the CLI and the list empties with it, but the
+            // work died with the restart, not by finishing: the row stays so the
+            // next boot reports it. (A `stop` still clears it.)
+            if (tasks.length === 0 && isRestartCut(signal)) return;
+            bgWatch.track(bgThread, tasks);
+          },
           onBackgroundCutOff: (tasks: readonly string[]) => void bgWatch.cutOff(bgThread, tasks),
         }
       : {}),
@@ -638,7 +652,7 @@ export const handleMessage = async (
     deps.clock(),
   );
 
-  return { kind: "reply", text: safeReply, ...(usage ? { usage } : {}) };
+  return { kind: "reply", text: safeReply, ...(usage ? { usage } : {}), ...(inbound.trigger ? { trigger: inbound.trigger } : {}) };
 };
 
 /**

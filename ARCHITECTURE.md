@@ -159,8 +159,9 @@ no classes.
   has died: the CLI's live task list is kept per thread (`background_jobs`), what
   the CLI takes with it when it exits is posted in the thread at once and the
   thread is handed back a turn, and a row left from a process that died with its
-  work (restart, crash) is reported on the next boot. A death is reported once
-  (the row is claimed). `watch worker` polls every 30s and posts a dead worker's
+  work (restart, drain cut, crash) is claimed at boot before the inbox starts and
+  reported later (a thread already running a turn is told but not handed a second).
+  A death is reported once (the row is claimed), and a cut-off with no row says nothing. `watch worker` polls every 30s and posts a dead worker's
   line before its hand-back turn.
   None of them hold a session or a queue slot while they wait.
 - **Followed threads: debounce and gate.** An untagged message in a thread the bot
@@ -270,7 +271,7 @@ No I/O, no frameworks. Just data shapes and functions of their inputs.
 - `githubApp.ts` - webhook signature, owner allowlist, trigger detection and what the GitHub App says
 - `*Prompt.ts` - prompts for the preset tasks (quick-review, ticket, investigate, read, note, workflow, ...)
 - `blockKit.ts`, `kitEvents.ts`, `slackFormat.ts`, `slackLinks.ts` - Slack formatting, Block Kit (model fences are normalised against Slack's min-length rules and can be rendered as words when Slack refuses them) and links
-- `usageFooter.ts`, `collapseSteps.ts`, `messageFooter.ts` - the one grey line under a message: who wrote it (Jarvis, inner child Jarvis, watch, reminder, ...), what the turn cost, the step summary, and, once edited after its first send, when it was last updated (stamped by every edit, never on the first send); `signedText` posts plain text as one `markdown` block (run through `toSlackMarkdown`, since that block is standard Markdown where mrkdwn `*x*` would be italic; the streaming equivalent is `slack/emphasis.ts`) (never folded behind "Show more", unlike a long section) up to Slack's 12k markdown cap, and `sectionChunks` cuts the rest (and the `signedSections` fallback) into sections Slack accepts, hard-splitting long lines and keeping code fences closed
+- `usageFooter.ts`, `collapseSteps.ts`, `messageFooter.ts` - the one grey line under a message: who wrote it (Jarvis, inner child Jarvis, watch, reminder, ...), what started the turn when it was not a person chatting (`triggered by watch`; the internal sender names it in `runTurn`/`steerViaRespond` -> `InboundMessage.trigger` -> `HandleResult.trigger`, never read off the text), what the turn cost, the step summary, and, once edited after its first send, when it was last updated (stamped by every edit, never on the first send); `signedText` posts plain text as one `markdown` block (run through `toSlackMarkdown`, since that block is standard Markdown where mrkdwn `*x*` would be italic; the streaming equivalent is `slack/emphasis.ts`) (never folded behind "Show more", unlike a long section) up to Slack's 12k markdown cap, and `sectionChunks` cuts the rest (and the `signedSections` fallback) into sections Slack accepts, hard-splitting long lines and keeping code fences closed
 
 Fully unit tested, no mocks needed.
 

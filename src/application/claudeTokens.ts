@@ -2,11 +2,12 @@
  * Per-user Claude Code credentials: the port, the Slack interaction contract,
  * and what happens when someone submits one.
  *
- * Every CLI turn the bot runs on a person's behalf can run on that person's own
- * token. `quick-review` requires one - it is the expensive, long-running job, and the
- * one whose cost should obviously sit with whoever asked for it. Everything else
- * uses a token when the speaker has one on file and the bot's own when they do
- * not, so nobody is locked out of chat by a credential they never set up.
+ * A stored token runs `quick-review` and nothing else. It is the expensive,
+ * long-running job, and the one whose cost should obviously sit with whoever asked
+ * for it, so it requires the caller's token and never falls back to the bot's.
+ * Every other CLI turn - chat, chat commands, workflow sessions - runs on the
+ * bot's own credential even when the speaker has a token on file, so a stale or
+ * revoked token can never break an ordinary turn.
  *
  * A token is never typed into a channel. It arrives through a Slack modal, whose
  * input is not a message: it is not in anyone's history, not in search, and not
@@ -113,8 +114,8 @@ export const submitClaudeToken = (deps: TokenDeps, sub: TokenSubmission): TokenO
 };
 
 /**
- * The token a turn should run under: the speaker's own when they have one.
- * Undefined means "the bot's own credential", which is the CLI's default.
+ * The caller's stored token, for `quick-review` only. Undefined means they have
+ * none on file. No other turn asks for it: they all run on the bot's credential.
  */
 export const tokenFor = (deps: TokenDeps, actor?: Pick<AllowedUser, "slackId">): string | undefined =>
   actor ? deps.claudeTokens?.get(actor.slackId) : undefined;

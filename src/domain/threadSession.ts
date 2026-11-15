@@ -85,19 +85,17 @@ export const isTimeout = (err: unknown): boolean => {
 };
 
 /**
- * Did this run fail because the credential it used will not authenticate?
+ * The error a run throws when the CLI reports that its credential was refused.
  *
- * The one task that runs on the host's interactive login (tickets, which need a
- * connector no setup token carries) fails this way when that session lapses -
- * silently, from the bot's point of view. Telling it apart lets the thread say
- * what to do about it instead of "I could not raise that one".
+ * Decided by the CLI's structured signal alone (`api_error_status: 401` on the
+ * result, or `error: "authentication_failed"` on the assistant event) - never by
+ * reading the answer's text or its length - and recognised by `code`, so no
+ * caller matches message wording. The message is ours, never the CLI's raw text.
  */
-export const isAuthFailure = (err: unknown): boolean => {
-  const msg = (err instanceof Error ? err.message : String(err ?? "")).toLowerCase();
-  return (
-    msg.includes("oauth token is invalid") ||
-    msg.includes("failed to authenticate") ||
-    msg.includes("invalid api key") ||
-    (msg.includes("401") && msg.includes("auth"))
-  );
-};
+export type ClaudeAuthError = Error & { readonly code: "auth_failed" };
+
+export const claudeAuthError = (): ClaudeAuthError =>
+  Object.assign(new Error("claude CLI rejected the credential (401 authentication_failed)"), { code: "auth_failed" as const });
+
+export const isClaudeAuthError = (err: unknown): err is ClaudeAuthError =>
+  err instanceof Error && (err as { code?: unknown }).code === "auth_failed";

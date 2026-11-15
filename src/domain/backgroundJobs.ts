@@ -25,9 +25,13 @@ export const backgroundDiedNotice = (tasks: readonly string[], handedBack: boole
   }_`;
 
 /** The same, for work that died with the bot process itself (restart, crash). */
-export const backgroundLostNotice = (tasks: readonly string[], handedBack: boolean): string =>
+export const backgroundLostNotice = (tasks: readonly string[], handedBack: boolean, turnRunning = false): string =>
   `_heads up: I restarted while ${what(tasks)} still running, so ${tasks.length === 1 ? "it was" : "they were"} cut off: ${names(tasks)}. Its work is not done. ${
-    handedBack ? "I am picking it up in a new turn now." : "ask me to pick it up again."
+    handedBack
+      ? "I am picking it up in a new turn now."
+      : turnRunning
+        ? "This thread already has a turn since the restart, so I did not start another."
+        : "ask me to pick it up again."
   }_`;
 
 /**

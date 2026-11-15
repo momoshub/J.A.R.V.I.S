@@ -89,11 +89,15 @@ describe("background watch", () => {
 
   test("a thread is handed back twice an hour, then only told", async () => {
     const w = build();
-    for (let i = 0; i < 3; i++) await w.cutOff(thread, ["job"]);
+    for (let i = 0; i < 3; i++) {
+      w.track(thread, ["job"]);
+      await w.cutOff(thread, ["job"]);
+    }
     expect(said).toHaveLength(3);
     expect(turns).toHaveLength(2);
     expect(said[2]?.text).toContain("ask me to pick it up again");
     now += 61 * 60_000;
+    w.track(thread, ["job"]);
     await w.cutOff(thread, ["job"]);
     expect(turns).toHaveLength(3);
   });
@@ -104,5 +108,63 @@ describe("background watch", () => {
     await w.cutOff(thread, ["job"]);
     await Promise.resolve();
     expect(said).toHaveLength(1);
+  });
+
+  test("a cut-off with no row says nothing: the row decides, not the argument", async () => {
+    const w = build();
+    expect(await w.cutOff(thread, ["job"])).toBe(false);
+    expect(said).toEqual([]);
+    expect(turns).toEqual([]);
+  });
+
+  test("live work in this process is never reported as lost by recovery, nor twice", async () => {
+    const w = build();
+    w.track(thread, ["live agent"]);
+    expect(await w.recover()).toBe(0);
+    expect(await w.cutOff(thread, ["live agent"])).toBe(true);
+    expect(said).toHaveLength(1);
+    expect(said[0]?.text).not.toContain("restarted");
+    expect(turns).toHaveLength(1);
+  });
+
+  test("a turn that clears the thread between boot and recovery does not lose the death", async () => {
+    build().track(thread, ["dead agent"]);
+    const after = build();
+    // the redelivered turn finished inside the delay and cleared the thread
+    after.track(thread, []);
+    expect(await after.recover()).toBe(1);
+    expect(said).toHaveLength(1);
+    expect(said[0]?.text).toContain("`dead agent`");
+    expect(said[0]?.text).toContain("restarted");
+    // that turn is already in the thread, so no second one is started
+    expect(turns).toEqual([]);
+    expect(said[0]?.text).toContain("already has a turn");
+  });
+
+  test("a turn that tracks new work between boot and recovery: the old work is told once, the new work once", async () => {
+    build().track(thread, ["dead agent"]);
+    const after = build();
+    after.track(thread, ["new agent"]);
+    expect(await after.recover()).toBe(1);
+    expect(said[0]?.text).toContain("`dead agent`");
+    expect(said[0]?.text).not.toContain("new agent");
+    expect(await after.cutOff(thread, ["new agent"])).toBe(true);
+    expect(said).toHaveLength(2);
+    expect(said[1]?.text).toContain("`new agent`");
+    expect(said[1]?.text).not.toContain("restarted");
+    expect(await after.cutOff(thread, ["new agent"])).toBe(false);
+    expect(said).toHaveLength(2);
+  });
+
+  test("the leftovers are taken at boot, not when recovery runs", async () => {
+    build().track(thread, ["dead agent"]);
+    build();
+    expect(jobs.list()).toEqual([]);
+  });
+
+  test("a thread nothing touched since boot is told and handed a turn", async () => {
+    build().track(thread, ["dead agent"]);
+    expect(await build().recover()).toBe(1);
+    expect(turns).toHaveLength(1);
   });
 });

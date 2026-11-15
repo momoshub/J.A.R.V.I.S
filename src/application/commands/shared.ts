@@ -3,6 +3,7 @@
 import type { ReviewGuard } from "../reviewGuard.ts";
 import type { WorkerUsagePort } from "../workerCost.ts";
 import type { WorkerTickets } from "../workerTickets.ts";
+import type { InternalKind } from "../../domain/internalMessages.ts";
 import { DEFAULT_BOT_NAME } from "../../domain/personality.ts";
 import { ALWAYS_ON_BUDGET } from "../../domain/adapterCheck.ts";
 import { type AdapterDeps } from "../adapterMemory.ts";
@@ -148,6 +149,8 @@ export type CommandDeps = {
     autoContinue?: boolean;
     /** Started by the bot, nobody typed it. */
     unprompted?: boolean;
+    /** What the bot's own sender is, for the reply's footer. */
+    trigger?: InternalKind;
   }) => Promise<unknown>;
   /** Timer for a workflow's next step; injected so tests need not wait. */
   continueTimer?: (fn: () => void, ms: number) => void;
@@ -339,13 +342,18 @@ export const parseWindow = (token?: string): number | undefined => {
  * later attempt gets one line pointing back at the box rather than the whole
  * walkthrough again. Answering (or clearing) a token resets that.
  *
+ * `lapsed` is for a token that is on file but was refused (revoked, expired): a
+ * single plain line and the same button, whose submit overwrites the old one.
+ *
  * Returns "" when the ask was posted (the thread has it), or the text to show
  * when there is nowhere to put a button - a slash invocation, or no Slack wired
  * up at all. Either way the user is told exactly how to mint one.
  */
-export const askForToken = async (ctx: Context, line: string, force = false): Promise<string> => {
+export const askForToken = async (ctx: Context, line: string, force = false, lapsed = false): Promise<string> => {
   const { deps, actor, channelId, threadTs, slash } = ctx;
-  const ask = `🔑 <@${actor.slackId}> I need your own Claude Code token before I can run that - ${tokenWhy}\n\n${tokenGuide(slash)}`;
+  const ask = lapsed
+    ? `🔑 <@${actor.slackId}> your Claude Code token no longer works, so I could not run that - add a new one to replace it.\n\n${tokenGuide(slash)}`
+    : `🔑 <@${actor.slackId}> I need your own Claude Code token before I can run that - ${tokenWhy}\n\n${tokenGuide(slash)}`;
   if (!force && deps.claudeTokens?.asked(actor.slackId)) {
     return `🔑 still waiting on your Claude Code token - \`${slash} token\` opens the box, or use the one I sent you earlier`;
   }

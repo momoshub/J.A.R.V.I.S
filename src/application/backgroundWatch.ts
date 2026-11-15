@@ -19,7 +19,7 @@
  * a turn that can finish the work, the way a fired watch does.
  */
 import { backgroundDiedNotice, backgroundHandBack, backgroundLostNotice, MAX_HANDBACKS_PER_HOUR } from "../domain/backgroundJobs.ts";
-import type { BackgroundJobRepo } from "../infrastructure/db/backgroundJobRepo.ts";
+import type { BackgroundJob, BackgroundJobRepo } from "../infrastructure/db/backgroundJobRepo.ts";
 import type { Clock } from "./ports.ts";
 import { logAndIgnore } from "./ignoredError.ts";
 
@@ -47,9 +47,13 @@ export type BackgroundWatchDeps = {
 export type BackgroundWatch = {
   /** The CLI's live task list for a thread's turn changed; an empty list clears it. */
   track: (thread: BackgroundThread, tasks: readonly string[]) => void;
-  /** These tasks died with the run. Reported once. */
+  /** These tasks died with the run. Reported once, and only if a row says they were still unreported. */
   cutOff: (thread: BackgroundThread, tasks: readonly string[]) => Promise<boolean>;
-  /** Boot: every row still there died with the previous process. Returns how many threads were told. */
+  /**
+   * Tells the threads whose work died with the PREVIOUS process: the rows that
+   * were already there when this watch was created (taken then, synchronously,
+   * before any turn could touch them). Returns how many threads were told.
+   */
   recover: () => Promise<number>;
 };
 
@@ -60,6 +64,23 @@ export const createBackgroundWatch = (deps: BackgroundWatchDeps): BackgroundWatc
   // A hand-back turn can start background work that is cut the same way; two
   // an hour per thread is a retry, more is a loop.
   const handBacks = new Map<string, number[]>();
+  const keyOf = (t: { channelId: string; threadTs: string }): string => `${t.channelId}:${t.threadTs}`;
+  // Whatever is in the table now is the previous process's: taken here, at boot,
+  // before the inbox redelivers anything or a turn can replace or clear a row.
+  // Taking them later (`recover` runs 20s on) raced both.
+  const leftovers: BackgroundJob[] = [];
+  try {
+    for (const job of deps.jobs.list()) {
+      const row = deps.jobs.claim(job.channelId, job.threadTs);
+      if (row && row.tasks.length > 0) leftovers.push(row);
+    }
+  } catch (e) {
+    log(`background boot claim failed: ${e instanceof Error ? e.message : String(e)}`);
+  }
+  // Threads a turn of THIS process has tracked or cleared since boot. A redelivered
+  // (or new) turn there already has the thread, so recovery tells it and does
+  // not start a second turn on top.
+  const touched = new Set<string>();
 
   const allowedHandBack = (key: string, now: number, user: string): boolean => {
     if (deps.mayRun && !deps.mayRun(user)) return false;
@@ -73,9 +94,11 @@ export const createBackgroundWatch = (deps: BackgroundWatchDeps): BackgroundWatc
     who: BackgroundThread,
     tasks: readonly string[],
     how: "cut" | "lost",
+    turnRunning = false,
   ): Promise<void> => {
-    const handBack = allowedHandBack(`${who.channelId}:${who.threadTs}`, deps.clock(), who.slackUserId);
-    const notice = how === "cut" ? backgroundDiedNotice(tasks, handBack) : backgroundLostNotice(tasks, handBack);
+    const handBack = !turnRunning && allowedHandBack(keyOf(who), deps.clock(), who.slackUserId);
+    const notice =
+      how === "cut" ? backgroundDiedNotice(tasks, handBack) : backgroundLostNotice(tasks, handBack, turnRunning);
     await deps.say(who.channelId, notice, who.threadTs).catch(logAndIgnore("background death notice"));
     if (!handBack) return;
     try {
@@ -97,25 +120,27 @@ export const createBackgroundWatch = (deps: BackgroundWatchDeps): BackgroundWatc
 
   return {
     track: (thread, tasks) => {
+      touched.add(keyOf(thread));
       try {
         deps.jobs.set({ ...thread, tasks }, deps.clock());
       } catch (e) {
         log(`background track failed: ${e instanceof Error ? e.message : String(e)}`);
       }
     },
-    cutOff: async (thread, tasks) => {
+    cutOff: async (thread) => {
       // The row, not the argument, decides whether this is still unreported.
       const row = deps.jobs.claim(thread.channelId, thread.threadTs);
-      if (!row && tasks.length === 0) return false;
-      await report(thread, row && row.tasks.length > 0 ? row.tasks : tasks, "cut");
+      // No row: boot recovery or an earlier call already reported it, or it was
+      // never tracked. Nothing to say either way.
+      if (!row || row.tasks.length === 0) return false;
+      await report(thread, row.tasks, "cut");
       return true;
     },
     recover: async () => {
+      const jobs = leftovers.splice(0);
       let told = 0;
-      for (const job of deps.jobs.list()) {
-        if (!deps.jobs.claim(job.channelId, job.threadTs)) continue;
-        if (job.tasks.length === 0) continue;
-        await report(job, job.tasks, "lost");
+      for (const job of jobs) {
+        await report(job, job.tasks, "lost", touched.has(keyOf(job)));
         told++;
       }
       return told;

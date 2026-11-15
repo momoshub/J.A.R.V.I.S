@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, test } from "bun:test";
+import type { InternalKind } from "../../src/domain/internalMessages.ts";
 import { openDatabase, type DbClient } from "../../src/infrastructure/db/client.ts";
 import { createSelfIssueRepo, type SelfIssueRepo } from "../../src/infrastructure/db/selfIssueRepo.ts";
 import { createTurnLogRepo, type TurnLogRepo } from "../../src/infrastructure/db/turnLogRepo.ts";
@@ -744,16 +745,16 @@ describe("inner child: voice drift", () => {
 
 describe("steerViaRespond", () => {
   const req = { channelId: "C9", threadTs: "5.5", slackUserId: "U1", text: "inner child drift check: x" };
-  const make = (result: { kind: string; text?: string }, over: { workflow?: boolean; allowed?: boolean } = {}) => {
+  const make = (result: { kind: string; text?: string; trigger?: InternalKind }, over: { workflow?: boolean; allowed?: boolean } = {}) => {
     const runs: unknown[] = [];
-    const posted: { channel: string; text: string; thread: string }[] = [];
+    const posted: { channel: string; text: string; thread: string; trigger?: InternalKind }[] = [];
     const steer = steerViaRespond({
       run: async (r) => {
         runs.push(r);
         return result;
       },
-      post: async (channel, text, thread) => {
-        posted.push({ channel, text, thread });
+      post: async (channel, text, thread, trigger) => {
+        posted.push({ channel, text, thread, ...(trigger ? { trigger } : {}) });
         return { ts: "7.7" };
       },
       workflowActive: () => over.workflow ?? false,
@@ -766,6 +767,12 @@ describe("steerViaRespond", () => {
     const { steer, posted } = make({ kind: "reply", text: "the date was wrong" });
     expect(await steer(req)).toEqual({ text: "the date was wrong", ts: "7.7" });
     expect(posted).toEqual([{ channel: "C9", text: "the date was wrong", thread: "5.5" }]);
+  });
+
+  test("the trigger the turn reported goes on to the post, so the nudge reply is footed `triggered by nudge`", async () => {
+    const { steer, posted } = make({ kind: "reply", text: "the date was wrong", trigger: "nudge" });
+    await steer(req);
+    expect(posted).toEqual([{ channel: "C9", text: "the date was wrong", thread: "5.5", trigger: "nudge" }]);
   });
 
   test("the empty-reply placeholder and a silence note post nothing and read as no change", async () => {

@@ -291,6 +291,7 @@ Up to ${BOMB_SIZE} reactions; no category means *${DEFAULT_CATEGORY}*.`;
           text: tellPrompt(actor.slackId, message),
           keepSession: true,
           unprompted: true,
+          trigger: "tell",
         })
         .catch(logAndIgnore("slack command run turn"));
       return "sent - that thread is on it, nothing posted there 📨";

@@ -13,7 +13,7 @@ import { logSourceOrder } from "../../domain/investigation.ts";
 import { investigatePrompt } from "../../domain/investigatePrompt.ts";
 import { fanoutPrompt } from "../../domain/fanoutPrompt.ts";
 import { readPrompt } from "../../domain/readPrompt.ts";
-import { isAuthFailure } from "../../domain/threadSession.ts";
+import { isClaudeAuthError } from "../../domain/threadSession.ts";
 import { parseNoteArgs } from "../../domain/noteTarget.ts";
 import { SETTING_KEYS } from "../../infrastructure/db/settingsRepo.ts";
 import { type Context, type CommandDef, botNameOf } from "./shared.ts";
@@ -89,7 +89,7 @@ export const ERRANDS_COMMANDS: readonly CommandDef[] = [
       try {
         out = deps.llm.stream ? await deps.llm.stream(params, () => {}) : await deps.llm.complete(params);
       } catch (err) {
-        if (!isAuthFailure(err)) throw err;
+        if (!isClaudeAuthError(err)) throw err;
         await reply(
           "🔑 I could not close it - the login on my host has lapsed, and the tracker comes with it. Someone with access to the machine needs to run `claude` there and sign in again.",
         );
@@ -175,7 +175,7 @@ export const ERRANDS_COMMANDS: readonly CommandDef[] = [
       try {
         out = deps.llm.stream ? await deps.llm.stream(params, () => {}) : await deps.llm.complete(params);
       } catch (err) {
-        if (!isAuthFailure(err)) throw err;
+        if (!isClaudeAuthError(err)) throw err;
         await reply(
           "🔑 I could not publish it - the login on my host has lapsed, and Notion comes with it. Someone with access to the machine needs to run `claude` there and sign in again.",
         );
@@ -233,7 +233,7 @@ export const ERRANDS_COMMANDS: readonly CommandDef[] = [
           ? await deps.llm.stream(params, () => {})
           : await deps.llm.complete(params);
       } catch (err) {
-        if (!isAuthFailure(err)) throw err;
+        if (!isClaudeAuthError(err)) throw err;
         await reply(
           "🔑 I could not read it - the login on my host has lapsed, and the Slack connector comes with it. Someone with access to the machine needs to run `claude` there and sign in again.",
         );
@@ -310,7 +310,7 @@ export const ERRANDS_COMMANDS: readonly CommandDef[] = [
           out = await deps.llm.complete(params);
         }
       } catch (err) {
-        if (!isAuthFailure(err)) throw err;
+        if (!isClaudeAuthError(err)) throw err;
         await reply(
           "🔑 I could not investigate - the login on my host has lapsed, and the connectors come with it. Someone with access to the machine needs to run `claude` there and sign in again.",
         );
@@ -456,7 +456,7 @@ export const ERRANDS_COMMANDS: readonly CommandDef[] = [
       } catch (err) {
         // The known failure mode of running on the host session: it lapsed. Say
         // that, because nothing in the thread would otherwise suggest a login.
-        if (!isAuthFailure(err)) throw err;
+        if (!isClaudeAuthError(err)) throw err;
         await reply(
           "🔑 I could not raise that one - the login on my host has lapsed, and a ticket needs it for Notion. Someone with access to the machine needs to run `claude` there and sign in again.",
         );

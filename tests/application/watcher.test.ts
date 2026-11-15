@@ -377,6 +377,23 @@ describe("watcher: CI gate rows", () => {
     expect(turns).toHaveLength(1);
   });
 
+  test("the watch is settled before the death line is posted, so an exit in between cannot refire it", async () => {
+    add({ check: "bun orca-worker-wait.ts ctx_abc123" });
+    let stateWhenSaid: string | undefined;
+    const w = createWatcher({
+      watches,
+      clock: () => now,
+      check: async () => ({ code: 0, output: "orca worker ctx_abc123 died: stopped without worker_done" }),
+      runTurn: async () => {},
+      say: async () => {
+        stateWhenSaid = watches.get(1)?.state;
+      },
+    });
+    now += EVERY;
+    await w.tick();
+    expect(stateWhenSaid).toBe("fired");
+  });
+
   test("a worker that finished or waits is not announced as dead", async () => {
     add({ check: "bun orca-worker-wait.ts ctx_abc123" });
     const w = build(async () => ({ code: 0, output: "orca worker ctx_abc123 finished: completed" }));

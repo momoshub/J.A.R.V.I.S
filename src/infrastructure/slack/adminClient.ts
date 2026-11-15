@@ -10,6 +10,7 @@ import { type MessageBlock, visibleText } from "../../domain/slackMessageText.ts
 import { noticeFingerprint } from "../../domain/noticeFingerprint.ts";
 import { footerBlock, footerLine, sectionChunks, signedSections, signedText, SIGNATURES, withFooter } from "../../domain/messageFooter.ts";
 import type { SlackMember } from "../../domain/slackMembers.ts";
+import type { InternalKind } from "../../domain/internalMessages.ts";
 import { type FooterUsage, usageFooter } from "../../domain/usageFooter.ts";
 import type {
   SlackAdminPort,
@@ -78,8 +79,8 @@ const mapPool = async <T, R>(items: T[], n: number, fn: (item: T) => Promise<R>)
 export const createSlackAdmin = (client: WebClient, clock: () => number = Date.now): SlackAdminPort => {
   const nameCache = new Map<string, string>();
   /** The grey signature line every post carries. Stamped "updated" only for an edit. */
-  const footer = (by?: string, usage?: FooterUsage, edited = false): string =>
-    footerLine(by ?? SIGNATURES.jarvis, edited ? clock() : undefined, usage ? usageFooter(usage) : undefined);
+  const footer = (by?: string, usage?: FooterUsage, edited = false, trigger?: InternalKind): string =>
+    footerLine(by ?? SIGNATURES.jarvis, edited ? clock() : undefined, usage ? usageFooter(usage) : undefined, undefined, trigger);
   let botUserId: string | undefined;
   let workspace: string | undefined;
 
@@ -312,9 +313,9 @@ export const createSlackAdmin = (client: WebClient, clock: () => number = Date.n
       await client.apiCall("chat.delete", { channel, ts, broadcast_delete: true });
     },
 
-    post: async (channel, text, threadTs, by, usage) => {
+    post: async (channel, text, threadTs, by, usage, trigger) => {
       const thread = threadTs ? { thread_ts: threadTs } : {};
-      const line = footer(by, usage);
+      const line = footer(by, usage, false, trigger);
       const rich = toBlockMessage(text, toMrkdwn);
       // A Block Kit reply that carries its own words falls back to those, not its JSON.
       const body = rich?.plain ?? toMrkdwn(text);
@@ -337,13 +338,13 @@ export const createSlackAdmin = (client: WebClient, clock: () => number = Date.n
       return open.channel?.id;
     },
 
-    postDm: async (userId, text, by) => {
+    postDm: async (userId, text, by, trigger) => {
       const open = (await client.conversations.open({ users: userId })) as { channel?: { id?: string } };
       const channel = open.channel?.id;
       if (!channel) return undefined;
       const body = toMrkdwn(text);
       const posted = (await client.chat
-        .postMessage({ channel, ...signedText(body, footer(by)) })
+        .postMessage({ channel, ...signedText(body, footer(by, undefined, false, trigger)) })
         .catch(() => client.chat.postMessage({ channel, text: body }))) as { ts?: string };
       return posted.ts ? { channel, ts: posted.ts } : undefined;
     },
