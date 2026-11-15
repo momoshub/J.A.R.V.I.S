@@ -36,8 +36,6 @@ const clip = (s: string): string =>
 
 /** review clones + spawns child agents, so allow much longer than a chat reply. */
 const REVIEW_TIMEOUT_MS = 900_000;
-/** A refused-token message is one short line; anything longer is a real review. */
-const AUTH_REFUSAL_MAX = 600;
 
 /** The policy a PR's repository is on, defaulting when nothing is configured. */
 const repoPolicyOf = (deps: CommandDeps, prUrl: string, fallback: ReviewPolicy): ReviewPolicy => {
@@ -324,10 +322,6 @@ export const REVIEW_COMMANDS: readonly CommandDef[] = [
           } else {
             out = await deps.llm.complete(params);
           }
-          // A stream that resolves with the CLI's own refusal text (not a review)
-          // is the same failure as one that throws. A refusal is one short line;
-          // a real review that merely discusses auth is far longer.
-          if (out.length < AUTH_REFUSAL_MAX && isAuthFailure(out)) throw new Error(out);
         } catch (err) {
           // Their token was refused mid-run: say so in one line and offer the box,
           // never the CLI's own error text. Nothing is deleted; the modal overwrites.

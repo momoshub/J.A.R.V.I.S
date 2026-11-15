@@ -1069,18 +1069,20 @@ describe("a stored Claude token runs quick-review and nothing else", () => {
       expect(out).not.toContain("Failed to authenticate");
     });
 
-    // The real claudeCli stream resolves with the 401 text rather than rejecting.
-    const RAW_TEXT = "Failed to authenticate. API Error: 401 OAuth access token has been revoked.";
+    // The real claudeCli stream rejects on the CLI's own refusal.
+    const RAW_TEXT = "claude CLI error (success): Failed to authenticate. API Error: 401 OAuth access token has been revoked.";
     for (const aborted of [false, true]) {
-      test(`live: a stream that RETURNS the 401 text${aborted ? " after an aborted event" : ""} gets the friendly line and button`, async () => {
+      test(`live: a stream that REJECTS with the 401${aborted ? " after an aborted event" : ""} gets the friendly line and button`, async () => {
         const deps = build();
         deps.settings = createSettingsRepo(db);
         deps.claudeTokens = everyoneHasToken();
         deps.llm = {
-          complete: async () => RAW_TEXT,
+          complete: async () => {
+            throw new Error(RAW_TEXT);
+          },
           stream: async (_p, sink) => {
             if (aborted) sink({ type: "aborted", reason: "it exited with code 1" });
-            return RAW_TEXT;
+            throw new Error(RAW_TEXT);
           },
         };
         const lines: string[] = [];
@@ -1099,6 +1101,23 @@ describe("a stored Claude token runs quick-review and nothing else", () => {
         expect(everything).not.toContain("did not finish");
       });
     }
+
+    test("a short review that mentions 401/auth is posted as the review, with no token button", async () => {
+      const deps = build();
+      deps.settings = createSettingsRepo(db);
+      deps.claudeTokens = everyoneHasToken();
+      const review = `✅ approved ${PR} - no blockers. The middleware now returns 401 when the auth header is missing, and the new test covers it.`;
+      deps.llm = { complete: async () => review, stream: async () => review };
+      const lines: string[] = [];
+      await dispatchCommand(deps, actor(), "C1", `rv ${PR}`, {
+        reply: async (t: string) => {
+          lines.push(t);
+        },
+      });
+      expect(lines.join("\n")).toContain("The middleware now returns 401");
+      expect(lines.join("\n")).not.toContain("no longer works");
+      expect(slackCalls.buttons).toHaveLength(0);
+    });
 
     test("a long review that merely discusses authentication is posted as the review", async () => {
       const deps = build();

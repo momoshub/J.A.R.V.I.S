@@ -952,7 +952,11 @@ export const createClaudeCliLlm = (config: ClaudeCliConfig = {}): LlmPort => {
     }
     if (!resultEvent) throw new Error("claude CLI ended without a result");
     if (resultEvent.is_error || resultEvent.subtype !== "success") {
-      throw new Error(`claude CLI error (${String(resultEvent.subtype ?? "unknown")}): ${finalText}`);
+      // Same rule as `stream`: only the result's own short string can be a
+      // refusal. finalText is the turn's whole answer and may merely discuss 401s.
+      const refusal = resultEvent.is_error === true && typeof resultEvent.result === "string" ? resultEvent.result : "";
+      const detail = refusal && refusal.length < AUTH_REFUSAL_MAX ? `: ${refusal}` : "";
+      throw new Error(`claude CLI error (${String(resultEvent.subtype ?? "unknown")})${detail}`);
     }
     return finalText.trim();
   };

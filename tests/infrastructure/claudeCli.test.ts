@@ -11,6 +11,7 @@ import {
   summarizeTool,
   usageOf,
 } from "../../src/infrastructure/llm/claudeCli.ts";
+import { isAuthFailure } from "../../src/domain/threadSession.ts";
 import type { PromptMessage } from "../../src/domain/types.ts";
 import type { BillingContext, LlmStreamEvent, ToolTrace, ToolTraceSink } from "../../src/application/ports.ts";
 
@@ -750,6 +751,43 @@ describe("createClaudeCliLlm.stream with a refused token", () => {
     const bin = fakeStreamBin([{ type: "result", subtype: "success", is_error: true, result: authTalk }]);
     const out = await createClaudeCliLlm({ binPath: bin }).stream!({ system: "s", messages: [{ role: "user", content: "hi" }] }, () => {});
     expect(out).toBe(authTalk.trim());
+  });
+});
+
+describe("createClaudeCliLlm.complete (traced) with a refused token", () => {
+  const params = { system: "s", messages: [{ role: "user" as const, content: "hi" }] };
+  const traced = (events: unknown[]) => createClaudeCliLlm({ binPath: fakeStreamBin(events), onToolTrace: () => {} });
+  const textBlock = (text: string) => [
+    { type: "stream_event", event: { type: "content_block_start", index: 0, content_block: { type: "text" } } },
+    { type: "stream_event", event: { type: "content_block_delta", index: 0, delta: { type: "text_delta", text } } },
+    { type: "stream_event", event: { type: "content_block_stop", index: 0 } },
+  ];
+  const authTalk =
+    "I traced it: the webhook handler returns 401 because the auth middleware rejects the signature, so the delivery fails to authenticate. " +
+    "The invalid api key theory does not hold, the secret matches. ".repeat(10);
+
+  test("an is_error result carrying the 401 throws it", async () => {
+    const llm = traced([{ type: "result", subtype: "success", is_error: true, result: "Failed to authenticate. API Error: 401 revoked" }]);
+    await expect(llm.complete(params)).rejects.toThrow("Failed to authenticate");
+  });
+
+  test("a long answer about 401/auth before an is_error result with no text is not an auth failure", async () => {
+    const llm = traced([...textBlock(authTalk), { type: "result", subtype: "error_max_turns", is_error: true }]);
+    const err = await llm.complete(params).then(
+      () => new Error("resolved"),
+      (e: unknown) => e as Error,
+    );
+    expect(err.message).toContain("error_max_turns");
+    expect(isAuthFailure(err)).toBe(false);
+  });
+
+  test("a long is_error result that merely discusses 401/auth is not an auth failure", async () => {
+    const llm = traced([{ type: "result", subtype: "success", is_error: true, result: authTalk }]);
+    const err = await llm.complete(params).then(
+      () => new Error("resolved"),
+      (e: unknown) => e as Error,
+    );
+    expect(isAuthFailure(err)).toBe(false);
   });
 });
 
