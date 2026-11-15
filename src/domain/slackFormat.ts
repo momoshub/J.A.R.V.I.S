@@ -11,6 +11,8 @@
  * of the format rather than a slightly different one in each.
  */
 
+import { normalizeFences } from "./fences.ts";
+
 export const SLACK_FORMAT = `Writing for Slack (it is mrkdwn, NOT Markdown - these are different):
 - bold is *one asterisk*, never **two**. Italic is _underscores_. Strikethrough is ~tildes~
 - a link is <https://example.com|the label>, never [the label](https://example.com)
@@ -97,9 +99,14 @@ const STRIKE = /(?<![~\\\p{L}\p{N}])~(?![\s~])([^~\n]*?[^\s~])~(?![~\p{L}\p{N}])
  * `<links|mentions>` and Markdown link targets are held out first, and a
  * `* ` bullet, `a * b` and an unpaired marker are left alone. Never use this
  * for `mrkdwn`-typed fields or the plain `text` fallback: there `**x**` is
- * literal asterisks.
+ * literal asterisks. Code fences are put on their own lines first
+ * (`normalizeFences`), the same rewrite the stream makes.
  */
-export const toSlackMarkdown = (text: string): string => {
+export const toSlackMarkdown = (raw: string): string => {
+  // Every ``` on its own line first, as the stream does: in Markdown a fence
+  // written the mrkdwn way (content on the opening line, "...```" closing a
+  // line) swallows that first line as its language and never closes.
+  const text = normalizeFences(raw);
   if (!text || (!text.includes("*") && !text.includes("~"))) return text;
   const held: string[] = [];
   const stash = (s: string): string => {

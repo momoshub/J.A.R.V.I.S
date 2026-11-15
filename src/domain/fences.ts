@@ -118,3 +118,16 @@ export const createFenceNormalizer = (): FenceNormalizer => {
     },
   };
 };
+
+/**
+ * The same rewrite over a whole text at once, for a message that is posted or
+ * edited in one go rather than streamed (the finished turn's `markdown` block,
+ * a plain post). Without it a mrkdwn-style "```-----BEGIN PGP...-----" loses
+ * its first line to the language tag and an inline closing "...```" never
+ * closes, so a pasted key comes back broken.
+ */
+export const normalizeFences = (text: string): string => {
+  if (!text.includes("```")) return text;
+  const n = createFenceNormalizer();
+  return n.push(text) + n.flush();
+};

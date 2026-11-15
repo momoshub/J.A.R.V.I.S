@@ -68,7 +68,7 @@ export const NODES: SysNode[] = [
     files: [] },
   { id: "stream", label: "stream", sub: "chat.startStream", kind: "module", x: 830, y: 150,
     about: "Pipes model text and tool cards onto a live Slack message, falling back to a single post.",
-    files: ["src/infrastructure/slack/stream.ts", "src/infrastructure/slack/fences.ts"] },
+    files: ["src/infrastructure/slack/stream.ts", "src/domain/fences.ts"] },
   { id: "tools", label: "bin/ helpers", sub: "slack-api, jarvis-run, ...", kind: "module", x: 1000, y: 560,
     about: "Shell helpers the brain calls from Bash. The ones that act go through the API with a one-turn ticket, never a raw token.",
     files: ["bin/"] },

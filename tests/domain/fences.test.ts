@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { createFenceNormalizer } from "../../src/infrastructure/slack/fences.ts";
+import { createFenceNormalizer } from "../../src/domain/fences.ts";
 
 /** Stream `src` through the normaliser in fixed-size chunks, like a real delta feed. */
 const stream = (src: string, chunk = src.length): string => {
