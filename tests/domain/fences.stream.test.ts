@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { createFenceNormalizer } from "../../src/infrastructure/slack/fences.ts";
+import { createFenceNormalizer } from "../../src/domain/fences.ts";
 
 /** Feed the text one character at a time - the worst case a stream can hand us. */
 const drip = (text: string): string => {

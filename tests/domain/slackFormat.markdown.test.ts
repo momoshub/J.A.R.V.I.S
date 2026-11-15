@@ -46,3 +46,25 @@ describe("markdown blocks carry bold, text fallbacks stay mrkdwn", () => {
     expect(normalizeBlocks([{ type: "markdown", text: "*x*" }])).toEqual([{ type: "markdown", text: "**x**" }]);
   });
 });
+
+describe("toSlackMarkdown code fences", () => {
+  const KEY = "-----BEGIN PGP PUBLIC KEY BLOCK-----\n\nmDMEau3p\n=ffKl\n-----END PGP PUBLIC KEY BLOCK-----";
+
+  test("a mrkdwn-style fence keeps its first line and closes, line breaks intact", () => {
+    // The model writes fences the mrkdwn way: content on the opening line, the
+    // closer at the end of the last one. In Markdown that made the BEGIN line a
+    // language tag and left the block open over the rest of the message.
+    const out = toSlackMarkdown(`GPG key: \`\`\`${KEY}\`\`\`\n\n*after* the key`);
+    expect(out).toBe(`GPG key: \n\`\`\`\n${KEY}\n\`\`\`\n\n**after** the key`);
+  });
+
+  test("an email inside a fence is left as written", () => {
+    const out = toSlackMarkdown("```ssh-ed25519 AAAA kai@example.com```");
+    expect(out).toBe("```\nssh-ed25519 AAAA kai@example.com\n```\n");
+  });
+
+  test("a well-formed fence with a language tag is unchanged", () => {
+    const text = "```ts\nconst a = 1;\n```\n*done*";
+    expect(toSlackMarkdown(text)).toBe("```ts\nconst a = 1;\n```\n**done**");
+  });
+});

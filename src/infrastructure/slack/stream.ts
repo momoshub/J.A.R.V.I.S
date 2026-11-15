@@ -21,7 +21,7 @@ import { isHiddenAction } from "../../domain/toolVisibility.ts";
 import { MAX_SILENCE_NOTE } from "../../domain/silence.ts";
 import { toSlackMarkdown } from "../../domain/slackFormat.ts";
 import { createEmphasisNormalizer } from "./emphasis.ts";
-import { createFenceNormalizer } from "./fences.ts";
+import { createFenceNormalizer } from "../../domain/fences.ts";
 import type { FinishedStep } from "../../domain/collapseSteps.ts";
 import type { LlmUsage } from "../../application/ports.ts";
 import { blocksToText, createBlockKitExtractor, type Block, type Segment } from "../../domain/blockKit.ts";
