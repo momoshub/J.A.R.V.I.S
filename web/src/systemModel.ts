@@ -188,7 +188,7 @@ export const FLOWS: Flow[] = [
       { from: "receiver", to: "respond", note: "Marked as tagged by a person. A turn the bot started, an untagged reply, a batch, a workflow step or a thread with a workflow running is never read as the ask." },
       { from: "respond", to: "commands", note: "Rewritten to the quick-review command, not a chat turn. The brain's own run bridge refuses it." },
       { at: "commands", note: "Commands are not queued: no wait behind a running turn, and no thread session to resume. Any allowlisted role may run it (pal and up)." },
-      { from: "commands", to: "llm", note: "A preset full-access brain on the asker's own token - none on file, no review." },
+      { from: "commands", to: "llm", note: "A preset full-access brain; a review runs on the asker's own token - none on file, no review." },
       { from: "commands", to: "stream", note: "The verdict lands in the thread, and on the PR." },
       { from: "stream", to: "slack", note: "Done, with nobody pinging anybody." },
     ],

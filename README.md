@@ -182,7 +182,7 @@ Every command is gated by its own `command:<name>` grant, and its sub-actions by
 | `learnings` / `relearn <id> <text>` / `unlearn <id>` | executer, admin | list, reword or delete learnings. Rewording by anyone but the owner sends the learning back to pending |
 | `review-policy [owner/repo] [first\|after\|default]` (alias `rvpolicy`) | pal, executer, admin (setting: `settings:manage`) | how a repo gets approved - see [Review policy per repo](#review-policy-per-repo) |
 | `review-agents [n\|default]` (alias `rvagents`) | pal, executer, admin (setting: `settings:manage`) | how many child agents one review may fan out to - see [How wide a review fans out](#how-wide-a-review-fans-out) |
-| `token [remove\|who]` (alias `claude-token`) | pal, executer, admin | add, replace or forget your own Claude Code token - see [Your own Claude token](#your-own-claude-token) |
+| `token [remove\|who]` (alias `claude-token`) | pal, executer, admin | add, replace or forget your own Claude Code token (used only by `quick-review`) - see [Your own Claude token](#your-own-claude-token) |
 | `session [reset\|on\|off]` (alias `sess`) | pal, executer, admin (on/off: `runs:stop-any`) | the CLI session this thread is talking to - see [One session per thread](#one-session-per-thread) |
 | `ticket <what is wrong>` (aliases `bug`, `raise`) | pal, executer, admin | raise a properly written, correctly routed ticket - see [Raising a ticket](#raising-a-ticket) |
 | `quick-review <pr-url\|help\|prompt> [--policy first\|after] [what to look at]` (alias `rv`) | pal, executer, admin | quick review of a PR, **only when a person asks** (tag the bot with `review <pr-url>` or `approve <pr-url>`, or type this; never from a thread, workflow, hand-back or GitHub request - see [Asking for a review in words](#asking-for-a-review-in-words)): read it first, post a blockers-only comment on GitHub *and* back in the thread (PRs owned by an account in `REVIEW_EXTENDED_OWNERS` also get the non-blocking findings as bullets); request changes on a blocker only, other repos drop non-blocking findings (big PRs are cloned + reviewed by child agents). CI is read first: red requests changes before the review, a running CI gets a watcher (see [CI comes first](#ci-comes-first)). Runs full-access. |
@@ -1250,10 +1250,14 @@ review - and when a caller's token is in play it *replaces* the bot's in the
 child process rather than being added alongside it, so the bot's token is not in
 that environment at all, including for anything the run spawns in turn.
 
-Once a token is on file it is used for **every** CLI turn that person drives:
-their chat, their commands, their workflow sessions. Everyone else keeps running
-on the bot's own credential, so nobody is locked out of chat by a credential they
-never set up. Only `quick-review` insists.
+A token on file runs **`quick-review` and nothing else**. Chat, chat commands and
+workflow sessions always run on the bot's own credential, even for someone who has
+a token stored, so a revoked or expired token can never break an ordinary turn.
+
+If a review hits an authentication failure on your token, the bot does not post
+the CLI's error. It says in one line that your Claude token no longer works and
+offers the same button as the first ask; pasting a new token replaces the old one.
+The stored token is not deleted automatically.
 
 ```
 /<slash> token           add or replace yours (opens the box)

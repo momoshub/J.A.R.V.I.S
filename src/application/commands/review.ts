@@ -23,6 +23,7 @@ import { postedBody } from "../../domain/ghCommand.ts";
 import { failedList } from "../../domain/ciGate.ts";
 import { tokenFor } from "../claudeTokens.ts";
 import { authorReviewPolicyKey, reviewPolicyKey, SETTING_KEYS } from "../../infrastructure/db/settingsRepo.ts";
+import { isAuthFailure } from "../../domain/threadSession.ts";
 import { type CommandDeps, PR_URL, type CommandDef, askForToken, reviewAgentsOf, botNameOf } from "./shared.ts";
 import { logAndIgnore } from "../ignoredError.ts";
 import { PERM } from "../../domain/permissions.ts";
@@ -249,7 +250,13 @@ export const REVIEW_COMMANDS: readonly CommandDef[] = [
 
         // No live destination (tests / slack off): one-shot, return the text.
         if (!reply) {
-          const out = await deps.llm.complete(params);
+          let out: string;
+          try {
+            out = await deps.llm.complete(params);
+          } catch (err) {
+            if (!isAuthFailure(err)) throw err;
+            return askForToken(ctx, `quick-review ${args.join(" ")}`.trim(), true, true);
+          }
           return [...busy, ...ciLines, out.trim() || "I could not put a review together for that one."].join("\n");
         }
 
@@ -269,50 +276,57 @@ export const REVIEW_COMMANDS: readonly CommandDef[] = [
         // Set when the run was killed mid-flight. What streamed is then a fragment
         // of a review, never the review, and must not be presented as one.
         let cutOff = "";
-        if (deps.llm.stream) {
-          const announce = (line: string): void => {
-            if (seen.has(line)) return;
-            seen.add(line);
-            void reply(line);
-          };
-          // Review comments posted so far, so a late follow-up is labelled as one.
-          let comments = 0;
-          // The only PR url we can attribute an action to when the command itself
-          // carries none (e.g. `gh pr review 2149 --repo ...`).
-          const soleUrl = targets.length === 1 ? (targets[0]?.match(PR_URL)?.[0] ?? "") : "";
-          out = await deps.llm.stream(params, (ev) => {
-            if (ev.type === "aborted") {
-              cutOff = ev.reason;
-              return;
-            }
-            if (ev.type !== "tool" || ev.status !== "complete") return;
-            // Match the command in full, never the card title: the title is clipped
-            // at 200 chars, and a `gh pr review` written after a heredoc body sits
-            // well past that - which is how a request-changes went unannounced.
-            const ran = ev.command ?? ev.title;
-            const t = ran.toLowerCase();
-            const url = ran.match(PR_URL)?.[0] ?? soleUrl;
-            const at = url ? ` ${url}` : "";
-            const on = url ? ` on ${url}` : "";
-            // Independent, not else-if: one shell call can approve and then reverse.
-            // `[^\n]*` keeps a match on the gh line itself, so prose inside a heredoc
-            // body ("flipping back to request-changes") cannot trigger a false line.
-            if (/gh pr review[^\n]*--approve/.test(t)) announce(`✅ approved${at}`);
-            // The change request carries a fixed marker, so there is nothing to
-            // relay; the comment is where the review is written, and it comes with
-            // the body that went to GitHub, recovered from the command itself.
-            if (/gh pr review[^\n]*--request-changes/.test(t)) announce(`⚠️ requested changes${on}`);
-            if (/gh pr comment\b/.test(t)) {
-              const body = postedBody(ran, "comment");
-              // A second comment is the late-finding case - an agent reporting back
-              // after the review went up. Say which it is rather than "the review"
-              // twice, which reads as the same thing posted again.
-              const what = comments++ === 0 ? "posted the review" : "posted a follow-up";
-              announce(`📝 ${what}${on}${body ? `\n\n${clip(body)}` : ""}`);
-            }
-          });
-        } else {
-          out = await deps.llm.complete(params);
+        try {
+          if (deps.llm.stream) {
+            const announce = (line: string): void => {
+              if (seen.has(line)) return;
+              seen.add(line);
+              void reply(line);
+            };
+            // Review comments posted so far, so a late follow-up is labelled as one.
+            let comments = 0;
+            // The only PR url we can attribute an action to when the command itself
+            // carries none (e.g. `gh pr review 2149 --repo ...`).
+            const soleUrl = targets.length === 1 ? (targets[0]?.match(PR_URL)?.[0] ?? "") : "";
+            out = await deps.llm.stream(params, (ev) => {
+              if (ev.type === "aborted") {
+                cutOff = ev.reason;
+                return;
+              }
+              if (ev.type !== "tool" || ev.status !== "complete") return;
+              // Match the command in full, never the card title: the title is clipped
+              // at 200 chars, and a `gh pr review` written after a heredoc body sits
+              // well past that - which is how a request-changes went unannounced.
+              const ran = ev.command ?? ev.title;
+              const t = ran.toLowerCase();
+              const url = ran.match(PR_URL)?.[0] ?? soleUrl;
+              const at = url ? ` ${url}` : "";
+              const on = url ? ` on ${url}` : "";
+              // Independent, not else-if: one shell call can approve and then reverse.
+              // `[^\n]*` keeps a match on the gh line itself, so prose inside a heredoc
+              // body ("flipping back to request-changes") cannot trigger a false line.
+              if (/gh pr review[^\n]*--approve/.test(t)) announce(`✅ approved${at}`);
+              // The change request carries a fixed marker, so there is nothing to
+              // relay; the comment is where the review is written, and it comes with
+              // the body that went to GitHub, recovered from the command itself.
+              if (/gh pr review[^\n]*--request-changes/.test(t)) announce(`⚠️ requested changes${on}`);
+              if (/gh pr comment\b/.test(t)) {
+                const body = postedBody(ran, "comment");
+                // A second comment is the late-finding case - an agent reporting back
+                // after the review went up. Say which it is rather than "the review"
+                // twice, which reads as the same thing posted again.
+                const what = comments++ === 0 ? "posted the review" : "posted a follow-up";
+                announce(`📝 ${what}${on}${body ? `\n\n${clip(body)}` : ""}`);
+              }
+            });
+          } else {
+            out = await deps.llm.complete(params);
+          }
+        } catch (err) {
+          // Their token was refused mid-run: say so in one line and offer the box,
+          // never the CLI's own error text. Nothing is deleted; the modal overwrites.
+          if (!isAuthFailure(err)) throw err;
+          return askForToken(ctx, `quick-review ${args.join(" ")}`.trim(), true, true);
         }
 
         if (cutOff) {

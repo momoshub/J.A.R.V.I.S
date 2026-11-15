@@ -5,7 +5,6 @@ import { trendOf } from "../../domain/systemStatus.ts";
 import { systemReport } from "../../domain/systemBlocks.ts";
 import { summarizeOrca } from "../../domain/orcaStatus.ts";
 import { blockKitReply } from "../../domain/blockKit.ts";
-import { tokenFor } from "../claudeTokens.ts";
 import { noTools, type ToolPolicy } from "../../domain/toolPolicy.ts";
 import { btwRules } from "../../domain/btwPrompt.ts";
 import { buildContextWindow } from "../../domain/conversation.ts";
@@ -161,7 +160,6 @@ export const CHAT_COMMANDS: readonly CommandDef[] = [
         messages: [{ role: "user", content: question }],
         assistantName: ctx.botName,
         policy: deps.toolPolicy?.(actor.role, channelId),
-        oauthToken: tokenFor(deps, actor),
         bill: { actor: actor.slackId, kind: "ask", channel: channelId, threadTs },
       });
       return reply.trim() || "I do not have anything useful to add there.";
@@ -204,7 +202,6 @@ export const CHAT_COMMANDS: readonly CommandDef[] = [
         ],
         assistantName: ctx.botName,
         policy,
-        oauthToken: tokenFor(deps, actor),
         bill: { actor: actor.slackId, kind: "btw", channel: channelId, threadTs },
       });
       // Nothing is appended to `messages` on the way out, so the thread's next

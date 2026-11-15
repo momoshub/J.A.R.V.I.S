@@ -706,7 +706,7 @@ describe("handleMessage", () => {
     expect(system).not.toContain("GitHub accounts:");
   });
 
-  test("a speaker's own Claude token runs their chat turn", async () => {
+  test("a stored Claude token is not used for a chat turn - the bot's own credential runs it", async () => {
     let token: string | undefined;
     const deps = build({
       complete: async (p) => {
@@ -728,9 +728,9 @@ describe("handleMessage", () => {
     };
 
     await handleMessage(deps, { channelId: "D1", slackUserId: OWNER, text: "hi" });
-    expect(token).toBe(mine);
+    expect(token).toBeUndefined();
 
-    // someone without one still gets an answer, on the bot's own credential
+    // nobody else's turn picks one up either
     deps.users.upsert({ slackId: "U0NOTOK", role: "pal", displayName: "P", addedBy: OWNER, createdAt: 0 });
     await handleMessage(deps, { channelId: "D1", slackUserId: "U0NOTOK", text: "hi" });
     expect(token).toBeUndefined();

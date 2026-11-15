@@ -5,7 +5,7 @@ import { createSettingsRepo } from "../../src/infrastructure/db/settingsRepo.ts"
 import { createSelfIssueRepo } from "../../src/infrastructure/db/selfIssueRepo.ts";
 import { dispatchCommand, isQuietCommand, listCommandInfo } from "../../src/application/commands.ts";
 import type { LlmPort } from "../../src/application/ports.ts";
-import { OWNER, db, actor, slackCalls, build } from "./commandsFixture.ts";
+import { OWNER, db, actor, slackCalls, build, everyoneHasToken } from "./commandsFixture.ts";
 
 describe("reviews run on the caller's own Claude token", () => {
   const PR = "https://github.com/o/r/pull/1";
@@ -109,15 +109,15 @@ describe("reviews run on the caller's own Claude token", () => {
     expect(out).toContain("token");
   });
 
-  test("a chat turn of theirs uses it too, and someone else's does not", async () => {
+  test("a chat command of theirs does not use it, whoever asks", async () => {
     const { deps, token } = withTokens({ [OWNER]: TOKEN });
     await dispatchCommand(deps, actor(), "C1", "ask hello");
-    expect(token()).toBe(TOKEN);
+    expect(token()).toBeUndefined();
 
     const pal = actor({ slackId: "U0PAL0003", role: "pal" });
     deps.users.upsert(pal);
     await dispatchCommand(deps, pal, "C1", "ask hello");
-    expect(token()).toBeUndefined(); // falls back to the bot's own credential
+    expect(token()).toBeUndefined();
   });
 
   test("read is a tool: no reply wired means the content comes back", async () => {
@@ -994,5 +994,93 @@ describe("inner-child command", () => {
 
   test("an unknown option shows the usage", async () => {
     expect(await run(withRepo(), "inner-child maybe")).toContain("Usage:");
+  });
+});
+
+describe("a stored Claude token runs quick-review and nothing else", () => {
+  test("ask and btw run on the bot's credential even with a token on file", async () => {
+    const deps = build();
+    deps.claudeTokens = everyoneHasToken();
+    const seen: (string | undefined)[] = [];
+    deps.llm = {
+      complete: async (p) => {
+        seen.push(p.oauthToken);
+        return "answer";
+      },
+    };
+    await dispatchCommand(deps, actor(), "C1", "ask what is 2+2");
+    await dispatchCommand(deps, actor(), "C1", "btw what is 3+3", { threadTs: "111.1" });
+    expect(seen).toEqual([undefined, undefined]);
+  });
+
+  describe("an auth failure on the caller's token", () => {
+    const PR = "https://github.com/o/r/pull/1";
+    const RAW = "claude CLI error (success): Failed to authenticate. API Error: 401 OAuth access token has been revoked.";
+    const failing = (): LlmPort => ({
+      complete: async () => {
+        throw new Error(RAW);
+      },
+      stream: async () => {
+        throw new Error(RAW);
+      },
+    });
+
+    test("live: one plain line with the add-token button, never the raw CLI error", async () => {
+      const deps = build();
+      deps.settings = createSettingsRepo(db);
+      deps.claudeTokens = everyoneHasToken();
+      deps.llm = failing();
+      const lines: string[] = [];
+      const out = await dispatchCommand(deps, actor(), "C1", `rv ${PR}`, {
+        reply: async (t: string) => {
+          lines.push(t);
+        },
+        threadTs: "111.1",
+      });
+
+      expect(out).toBe("");
+      const ask = slackCalls.posts[slackCalls.posts.length - 1];
+      expect(ask?.text).toContain("no longer works");
+      expect(ask?.threadTs).toBe("111.1");
+      const button = slackCalls.buttons[slackCalls.buttons.length - 1] ?? "";
+      expect(button).toContain("claude_token_add");
+      expect(button).toContain(PR);
+      const everything = [...lines, ...slackCalls.posts.map((p) => p.text)].join("\n");
+      expect(everything).not.toContain("Failed to authenticate");
+      expect(everything).not.toContain("401");
+    });
+
+    test("it asks again even when the full ask already went out once", async () => {
+      const deps = build();
+      deps.settings = createSettingsRepo(db);
+      deps.claudeTokens = { ...everyoneHasToken(), asked: () => true };
+      deps.llm = failing();
+      await dispatchCommand(deps, actor(), "C1", `rv ${PR}`, { reply: async () => {}, threadTs: "111.1" });
+      expect(slackCalls.buttons[slackCalls.buttons.length - 1] ?? "").toContain("claude_token_add");
+    });
+
+    test("with nowhere to post, the returned text is the friendly line, not the CLI error", async () => {
+      const deps = build();
+      deps.settings = createSettingsRepo(db);
+      deps.claudeTokens = everyoneHasToken();
+      deps.llm = failing();
+      const out = await dispatchCommand(deps, actor(), "C1", `rv ${PR}`);
+      expect(out).toContain("no longer works");
+      expect(out).not.toContain("Failed to authenticate");
+    });
+
+    test("an error that is not an auth failure still surfaces", async () => {
+      const deps = build();
+      deps.settings = createSettingsRepo(db);
+      deps.claudeTokens = everyoneHasToken();
+      deps.llm = {
+        complete: async () => {
+          throw new Error("claude CLI exited with code 1: boom");
+        },
+      };
+      const out = await dispatchCommand(deps, actor(), "C1", `rv ${PR}`);
+      expect(out).not.toContain("no longer works");
+      expect(slackCalls.buttons).toHaveLength(0);
+    });
   });
 });
