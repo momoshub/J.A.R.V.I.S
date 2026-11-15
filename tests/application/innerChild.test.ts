@@ -6,6 +6,9 @@ import { createMessageRepo } from "../../src/infrastructure/db/messageRepo.ts";
 import {
   createInnerChild,
   steerViaRespond,
+  CURSOR_MAX_AGE_MS,
+  TRIAGE_EVERY_MS,
+  TRIAGE_MODEL,
   type DriftDeps,
   type InnerChildDeps,
 } from "../../src/application/innerChild.ts";
@@ -55,6 +58,7 @@ const build = (over: Partial<InnerChildDeps> = {}) =>
     restartScript: "/src/bin/restart.sh",
     noTools: ["Bash"],
     enabled: () => true,
+    autofix: () => true,
     cursor: { get: () => cursor, set: (at) => void (cursor = at) },
     post: async (channel, text, thread) => {
       posts.push({ channel, text, thread });
@@ -317,6 +321,100 @@ describe("inner child", () => {
     expect(issues.get(1)?.state).toBe("queued");
   });
 
+  test("triage runs on the cheap model by default, and on the setting's model when set", async () => {
+    cursor = now - 100;
+    addTurn();
+    await build().tick();
+    expect(triages[0]?.policy?.model).toBe(TRIAGE_MODEL);
+    expect(TRIAGE_MODEL).toBe("claude-haiku-4-5-20251001");
+    let model: string | undefined = "claude-sonnet-x";
+    const child = build({ model: () => model });
+    now += 5000;
+    addTurn();
+    await child.tick();
+    expect(triages[1]?.policy?.model).toBe("claude-sonnet-x");
+    model = "  ";
+    now += 5000;
+    addTurn();
+    await child.tick();
+    expect(triages[2]?.policy?.model).toBe(TRIAGE_MODEL);
+  });
+
+  test("triage defaults to every 30 minutes", async () => {
+    expect(TRIAGE_EVERY_MS).toBe(30 * 60 * 1000);
+    const child = build({ triageEveryMs: undefined });
+    now = 10_000_000;
+    cursor = now - 100;
+    addTurn();
+    await child.tick();
+    now += 29 * 60 * 1000;
+    addTurn();
+    await child.tick();
+    expect(triages).toHaveLength(1);
+    now += 2 * 60 * 1000;
+    addTurn();
+    await child.tick();
+    expect(triages).toHaveLength(2);
+  });
+
+  test("a cursor older than 6h jumps to now instead of reading the backlog", async () => {
+    cursor = now - CURSOR_MAX_AGE_MS - 1;
+    addTurn({ endedAt: now - 1000, startedAt: now - 1010 });
+    const logs: string[] = [];
+    await build({ log: (m) => logs.push(m) }).tick();
+    expect(cursor).toBe(now);
+    expect(triages).toHaveLength(0);
+    expect(logs.some((l) => l.includes("older than 6h"))).toBe(true);
+  });
+
+  test("a cursor just inside 6h is still read", async () => {
+    cursor = now - CURSOR_MAX_AGE_MS + 1000;
+    addTurn();
+    await build().tick();
+    expect(triages).toHaveLength(1);
+  });
+
+  test("autofix off: findings are filed queued and no fix is ever started", async () => {
+    cursor = now - 100;
+    addTurn();
+    triageAnswer = JSON.stringify([finding()]);
+    const child = build({ autofix: () => false });
+    await child.tick();
+    await settle();
+    expect(issues.get(1)?.state).toBe("queued");
+    expect(fixes).toHaveLength(0);
+    expect(posts).toHaveLength(0);
+    expect(issues.queuedCount()).toBe(1);
+  });
+
+  test("autofix absent means off; turning it on starts the queued issue", async () => {
+    cursor = now - 100;
+    addTurn();
+    triageAnswer = JSON.stringify([finding()]);
+    let on = false;
+    const child = build({ autofix: () => on });
+    await child.tick();
+    await settle();
+    expect(fixes).toHaveLength(0);
+    on = true;
+    await child.tick();
+    await settle();
+    expect(fixes).toHaveLength(1);
+  });
+
+  test("the fix daily cap defaults to 2", async () => {
+    cursor = now - 100;
+    addTurn();
+    triageAnswer = JSON.stringify([finding(), finding({ fingerprint: "b" }), finding({ fingerprint: "c" })]);
+    const child = build();
+    for (let i = 0; i < 4; i++) {
+      await child.tick();
+      await settle();
+    }
+    expect(fixes).toHaveLength(2);
+    expect(issues.queuedCount()).toBe(1);
+  });
+
   test("off means off", async () => {
     cursor = now - 100;
     addTurn();
@@ -491,6 +589,40 @@ describe("inner child: voice drift", () => {
     await build({ drift: drift({ maxPerDay: 2 }) }).tick();
     await settle();
     expect(steers).toHaveLength(2);
+  });
+
+  test("a triage starts at most 2 nudges, the rest wait unsteered", async () => {
+    cursor = now - 100;
+    drifted("One", { threadTs: "1.1" });
+    drifted("Two", { threadTs: "2.2" });
+    drifted("Three", { threadTs: "3.3" });
+    drifted("Four", { threadTs: "4.4" });
+    const logs: string[] = [];
+    await build({ drift: drift(), log: (m) => logs.push(m) }).tick();
+    await settle();
+    expect(steers).toHaveLength(2);
+    expect(logs.some((l) => l.includes("2 nudges this run"))).toBe(true);
+  });
+
+  test("the nudge daily cap defaults to 4", async () => {
+    cursor = now - 100;
+    for (let n = 1; n <= 3; n++) {
+      drifted(`Batch one ${n}`, { threadTs: `${n}.1` });
+    }
+    const child = build({ drift: drift() });
+    await child.tick();
+    await settle();
+    now += 2000;
+    for (let n = 4; n <= 6; n++) {
+      drifted(`Batch two ${n}`, { threadTs: `${n}.1`, endedAt: now, startedAt: now - 10 });
+    }
+    await child.tick();
+    await settle();
+    now += 2000;
+    drifted("Batch three", { threadTs: "9.1", endedAt: now, startedAt: now - 10 });
+    await child.tick();
+    await settle();
+    expect(steers).toHaveLength(4);
   });
 
   test("never steers itself: its own channel, the log channel, its fix threads, or a nudge's reply", async () => {

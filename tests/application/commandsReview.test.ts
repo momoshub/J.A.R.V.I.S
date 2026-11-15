@@ -922,6 +922,37 @@ describe("inner-child command", () => {
     expect(out).toContain("1970-01-02T00:00:00.000Z");
   });
 
+  test("status shows autofix (off by default) and the queued count", async () => {
+    const deps = withRepo();
+    deps.settings!.set("inner_child_channel", "C0TEST00001");
+    deps.selfIssues!.file({ fingerprint: "q", title: "q", severity: "bug", evidence: "e", channelId: "C1", threadTs: "1", hint: "" }, 1);
+    const out = await run(deps, "inner-child status");
+    expect(out).toContain("autofix: off");
+    expect(out).toContain("queued, waiting for a fix: 1");
+    deps.settings!.set("inner_child_autofix", "on");
+    expect(await run(deps, "inner-child status")).toContain("autofix: *on*");
+  });
+
+  test("autofix on|off needs settings:manage and writes the setting", async () => {
+    const deps = withRepo();
+    expect(await run(deps, "inner-child autofix on", pal())).toContain("not allowed");
+    expect(deps.settings!.get("inner_child_autofix")).toBeUndefined();
+    expect(await run(deps, "inner-child autofix on")).toContain("autofix on");
+    expect(deps.settings!.get("inner_child_autofix")).toBe("on");
+    expect(await run(deps, "inner-child autofix off")).toContain("autofix off");
+    expect(deps.settings!.get("inner_child_autofix")).toBe("off");
+    expect(await run(deps, "inner-child autofix")).toContain("Usage");
+    expect(await run(deps, "inner-child autofix maybe")).toContain("Usage");
+  });
+
+  test("on moves the cursor to now, so what happened while it was off is not read", async () => {
+    const deps = withRepo();
+    deps.settings!.set("inner_child_cursor", "86400000");
+    const before = Date.now();
+    await run(deps, "inner-child on");
+    expect(Number(deps.settings!.get("inner_child_cursor"))).toBeGreaterThanOrEqual(before);
+  });
+
   test("off pauses and keeps the channel; on resumes", async () => {
     const deps = withRepo();
     deps.settings!.set("inner_child_channel", "C0TEST00001");

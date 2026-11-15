@@ -57,6 +57,10 @@ export const SETTING_KEYS = {
   innerChildChannel: "inner_child_channel",
   /** "off" pauses the inner child without forgetting its channel. */
   innerChild: "inner_child",
+  /** "on" lets the inner child fix queued issues itself. Default off: issues are filed and wait. */
+  innerChildAutofix: "inner_child_autofix",
+  /** Model the inner child's triage runs on. Default `claude-haiku-4-5-20251001`. */
+  innerChildModel: "inner_child_model",
   /** Where its last triage stopped (ms), so a restart neither re-reads nor skips. */
   innerChildCursor: "inner_child_cursor",
   /** Channel each voice-drift nudge is logged in. Empty falls back to `DRAIN_NOTICE_CHANNEL`; "off" stops drift steering. */

@@ -75,6 +75,8 @@ export type SelfIssueRepo = {
   startedSince: (since: number) => number;
   /** Issues still open: queued or being fixed. What the open cap counts. */
   openCount: () => number;
+  /** Issues waiting for a fix: queued only. With autofix off this is the whole queue. */
+  queuedCount: () => number;
   /**
    * Close queued issues whose last activity is before `before` as `stale`,
    * newest state change = `now`. Never touches one being fixed. Returns them.
@@ -108,6 +110,7 @@ export const createSelfIssueRepo = (db: DbClient): SelfIssueRepo => {
   const openStmt = db.query<{ n: number }, []>(
     "SELECT COUNT(*) AS n FROM self_issues WHERE state IN ('queued', 'fixing')",
   );
+  const queuedStmt = db.query<{ n: number }, []>("SELECT COUNT(*) AS n FROM self_issues WHERE state = 'queued'");
   const pruneStmt = db.query<Row, [number, number]>(
     `UPDATE self_issues SET state = 'stale', updated_at = ?
       WHERE state = 'queued' AND updated_at < ? RETURNING *`,
@@ -136,6 +139,7 @@ export const createSelfIssueRepo = (db: DbClient): SelfIssueRepo => {
     fixing: () => fixingStmt.all().map(toIssue),
     startedSince: (since) => sinceStmt.get(since)?.n ?? 0,
     openCount: () => openStmt.get()?.n ?? 0,
+    queuedCount: () => queuedStmt.get()?.n ?? 0,
     pruneStale: (before, now) => pruneStmt.all(now, before).map(toIssue),
     recentTitles: (limit) => titlesStmt.all(Math.max(1, limit)).map((r) => `${r.fingerprint}: ${r.title}`),
     isFixThread: (channel, threadTs) => !!threadTs && (fixThreadStmt.get(channel, threadTs)?.n ?? 0) > 0,
