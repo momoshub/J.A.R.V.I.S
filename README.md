@@ -131,7 +131,7 @@ The **Console** tab additionally needs read scopes to list and open conversation
 - It replies in-thread, streaming the answer live, with tool calls shown as a task timeline
 - Long messages show a configurable "thinking" step first
 - It only answers allowlisted users; the owner is always allowed
-- Someone it does not know is not turned away: the owner **and every admin** get a DM with who spoke and what they said, and whichever of them gets there first decides with a reaction - ✅ adds them as `pal`, ❌ declines. Either way the person is answered where they asked, and the other copies settle so nobody decides twice. They are answered **once**: tagging again while the request is open says nothing, and someone who was declined cannot re-raise it by asking - there is a 24h cooldown before their asking counts again
+- Someone it does not know is not turned away: every holder of `access:decide` (the owner, and `admin` as seeded) gets a DM with who spoke and what they said, and whichever of them gets there first decides with a reaction - ✅ adds them under the default role (`role default`, `pal` as seeded), ❌ declines. Either way the person is answered where they asked, and the other copies settle so nobody decides twice. They are answered **once**: tagging again while the request is open says nothing, and someone who was declined cannot re-raise it by asking - there is a 24h cooldown before their asking counts again
 - It tags people with their Slack `<@id>` when they are in the conversation
 - For workspace questions it calls the Slack Web API through the bot (a helper that presents a per-turn ticket; the bot token itself is never in a turn's environment), never a third-party connector
 - **It opens what you share.** Links in a message (or earlier in the thread) are fetched before it answers, and attachments - screenshots, logs, documents - are downloaded and read. It will not ask you to paste something it could have opened, and if something genuinely cannot be read it says so rather than answering around it
@@ -145,41 +145,43 @@ Every command has two interfaces - use whichever you like. Both triggers are con
 
 A few commands are **internal**: the bot's own tools (today `journey`, its work log, and `bug-report`, which DMs the owner a bug it found in itself with Approve / Reject), run only by the brain in its own turn through the run helper. A typed line, the slash command, the menu, a schedule or the dashboard gets a short refusal whatever the caller's role (the owner included); they are not in `help`, the command menu, the dashboard command list or the role grants, because no role holds them - the brain runs them as whoever its turn serves.
 
-| command | who | effect |
+Every command is gated by its own `command:<name>` grant, and its sub-actions by the permission named in the cell (see [Roles & tool access](#roles--tool-access)). **Only `owner` is hard-coded.** `pal`, `executer` and `admin` are custom roles like any other: the *seeded to* column only says which of them a fresh install starts with the grant, and the owner moves it with `role grant` / `role revoke` or the Roles page. A role you create holds exactly what you grant it. Rows marked *owner* are hard-coded and never grantable.
+
+| command | seeded to | effect |
 | --- | --- | --- |
-| `help` | anyone | list the commands you can run |
-| `ping` | anyone | check the bot is awake |
-| `whoami` | anyone | show your role, its rank and description, and how many permissions it grants |
-| `model` | anyone | show the brain and current model |
-| `ask <question>` | anyone | one-shot question to the brain |
-| `model [role\|subagent\|worker\|plan\|loop\|here\|#channel] [name\|default]` | anyone (setting: admins) | show the brain; admins pin a model per role or channel, or for subagents, Orca workers, planning and loop fires |
-| `logsource [grafana,datadog\|default]` | anyone (setting: admins) | where it looks for logs - see [Investigating](#investigating) |
-| `cloudwatch [--group /log/group] [--last 15m \| --from <t> --to <t>] [--region r] [--limit n] <insights query>` (alias `cw`), `cloudwatch help`, `cloudwatch default <group\|reset>` | executer and up (owner runs it directly, executer and admin confirm first) | query CloudWatch Logs Insights directly - see [CloudWatch](#cloudwatch) |
-| `forget` | anyone | wipe the bot's memory of this channel |
-| `sys` (alias `vitals`) | admins | how the host, the bot and Orca are doing, as Block Kit: a verdict header, cpu/memory/swap/disk/battery/host/bot/turns fields, the last hour's trend, then Orca's runtime, active runs, workers by status and a table of live workers (one "unreachable" line when Orca is down or slow). The message text keeps the plain report as the fallback |
-| `users` | admins | list the allowlist |
-| `worker-cost <ctx_...\|run_...>` (alias `wcost`) | admins | tokens and list-price cost of an Orca worker, or every worker in a Run - see [What an Orca worker cost](#what-an-orca-worker-cost) |
-| `add @user [role]` | `command:add` (admin as seeded); only roles ranking below your own | grant access under any role, custom ones included; no role given means the default one (`pal`); an unknown role name is refused |
-| `remove @user` | admins (admins: owner only) | revoke access |
-| `learn <fact>` | executers | teach a durable fact: the owner's own typing is saved at once, anyone else's (and any `learn` the agent runs for itself) waits as *pending* for the owner's approval and is not part of any reply until then |
-| `learn pending` / `learn approve <id>` / `learn reject <id>` | owner | list what waits, approve it (it is carried into every reply from then on) or reject it (never). Typed by the owner only: the agent cannot run these for itself. The owner also gets each pending learning as a DM with Approve / Reject buttons |
-| `learnings` / `relearn <id> <text>` / `unlearn <id>` | executers | list, reword or delete learnings. Rewording by anyone but the owner sends the learning back to pending |
-| `review-policy [owner/repo] [first\|after\|default]` (alias `rvpolicy`) | anyone (setting: admins) | how a repo gets approved - see [Review policy per repo](#review-policy-per-repo) |
-| `review-agents [n\|default]` (alias `rvagents`) | anyone (setting: admins) | how many child agents one review may fan out to - see [How wide a review fans out](#how-wide-a-review-fans-out) |
-| `token [remove\|who]` (alias `claude-token`) | anyone | add, replace or forget your own Claude Code token - see [Your own Claude token](#your-own-claude-token) |
-| `session [reset\|on\|off]` (alias `sess`) | anyone (on/off: admins) | the CLI session this thread is talking to - see [One session per thread](#one-session-per-thread) |
-| `ticket <what is wrong>` (aliases `bug`, `raise`) | anyone | raise a properly written, correctly routed ticket - see [Raising a ticket](#raising-a-ticket) |
-| `quick-review <pr-url\|help\|prompt> [--policy first\|after] [what to look at]` (alias `rv`) | pal+ | quick review of a PR, **only when a person asks** (tag the bot with `review <pr-url>` or `approve <pr-url>`, or type this; never from a thread, workflow, hand-back or GitHub request - see [Asking for a review in words](#asking-for-a-review-in-words)): read it first, post a blockers-only comment on GitHub *and* back in the thread (PRs owned by an account in `REVIEW_EXTENDED_OWNERS` also get the non-blocking findings as bullets); request changes on a blocker only, other repos drop non-blocking findings (big PRs are cloned + reviewed by child agents). CI is read first: red requests changes before the review, a running CI gets a watcher (see [CI comes first](#ci-comes-first)). Runs full-access. |
-| `bomb [categories] [count] <message-link>` (alias `br`) | admins | reaction-bomb a message. Combine categories with commas and set a count: `bomb money,face,negative 9 <link>`. Up to 23; `bomb help` lists every category |
-| `brief <thread-link\|reference> <text>` (`brief help`) | admins | leave a short note FOR another thread: what you posted there, why, what you wait for. Posts nothing, starts no turn; that thread's session reads it on its next turn, whoever speaks (it is part of that turn's message, so the session keeps it for the turns after), then it is marked read for that access tier. It is background information only, never instructions. The receiver sees only an opaque reference to your thread (never a link) and answers with `brief <reference> <text>`. `tell` is for when the other side must act now |
-| `reply <message-link>` (alias `jrp`) | admins | draft and post an AI reply to a message |
-| `rm-msg <message-link>` (aliases `rmmsg`, `unsend`) | admins | delete a message the bot posted (a bot token cannot delete anyone else's) |
-| `workflow <task>` / `workflow stop [<thread-link>]` / `workflow status` (alias `wf`) | `command:workflow` (executer and up as seeded) | start a long task in this thread and keep talking to it (see [Workflows](#workflows)) |
-| `limit [@user] [n\|default]` (alias `quota`) | anyone (setting: admins) | show command allowance; admins set someone's |
-| `mindful [hours]` / `mindful continue\|reply <thread-link>` (aliases `mind`, `whatsup`) | admins | everything it is doing: stuck turns (a failed last turn; one a person stopped is not stuck), Orca tasks whose worker is gone and quiet PRs on its own repo (each with the thread that started it), what is running and waiting, and what it cost - see [Stuck work](#stuck-work) |
-| `loop every <monday 9am\|day at 18:00\|6h\|week> [--name "PR board"] <prompt>` / `loop list` / `loop rename <id> <name>` / `loop cancel <id>` | admins | run a prompt on a schedule, as a real turn, with nobody present. Every loop has a name: `--name "PR board"` (or `--name board`, `--name=board`) between the schedule and the prompt, else the first four words of the prompt (the command, for a shell loop); `loop rename <id> <name>` changes it later (yours, or the owner's), so `loop rename 3 PR board` fixes a loop that was only ever `loop #3`. A name is plain words: Slack's escapes and links are read first (`&amp;` is `&`, `<url|label>` is `label`), then markup, `<>`, `&` and `|` are stripped and it is clipped to 40 characters; an apostrophe inside a single-quoted name is fine (`--name 'Kai's board'`). The name shows wherever the loop is mentioned: the fire header (`🔁 PR board - loop #3, every 1h · created here`, posted only with a run's reply, where `created here` links to the message that created the loop - a thread reply links into its thread; loops made before that was kept link to their thread, or show no link), `loop list` (the same link per loop), the confirmation, cancel and rename replies, the failure / stopped notices and the settled approval text; the approval DM shows the turn-chosen name on its own line, never in the headline. A shell loop is never typed (not even by the owner): ask me in plain words and I write the script, post the exact command and schedule to the owner's DM and only run it after the owner presses Approve (Reject, or 24h with no answer, deletes it; `loop list` shows it as pending meanwhile). Times are the host's clock, like `remind`; a prompt loop is at most hourly (`every 1h` at the fastest) and a shell loop `every 5m`. Each fire runs on Sonnet (`model:loop`), not the creator's role model. A loop is **silent unless it has something to say**: each fire runs the turn as the creator (prefixed `[loop <id>]`, told nobody is watching and to post nothing in Slack unless the loop's own task asks to send/post/report something or something needs a person, else to reply with exactly `NO_REPLY`), and a run that answers `NO_REPLY` (or ends in it) leaves nothing in Slack, not even a header - except that a run that sets a watch posts its header alone, as the thread the watch reports into. A run that does answer posts one top-level message in the creator's **DM** with the bot - the header line, then the reply - and a reply under it continues the same session; nothing is posted in the channel or thread the loop was created in, which only gets a short confirmation. Want a post every time (`every day send me a fun fact`)? Say so in the prompt. A shell loop runs no turn and spends no tokens; only a failure (non-zero exit or timeout) sends one short line to the creator's DM, and the loop carries on. A run missed while the bot was down happens once on startup, never a backlog. Ten loops per person. `loop help` for the card |
-| `promote @user [role]` / `demote @user [role]` | owner | change role: to the named one, else to the highest role below owner / the least-privileged one |
-| `role list` / `show <role>` / `perms [filter]` / `create <name> [from <role>] [description]` / `grant <role> <perm...>` / `revoke <role> <perm...>` / `delete <role>` / `rename <old> <new>` / `rank <role> <n>` / `describe <role> <text>` / `on\|off <role>` / `default <role>` / `denytools <role> <pattern...\|none>` (alias `roles`) | owner only, never grantable | see and edit roles and the permissions they grant - see [Roles & tool access](#roles--tool-access) |
+| `help` | pal, executer, admin | list the commands you can run |
+| `ping` | pal, executer, admin | check the bot is awake |
+| `whoami` | pal, executer, admin | show your role, its rank and description, and how many permissions it grants |
+| `model` | pal, executer, admin | show the brain and current model |
+| `ask <question>` | pal, executer, admin | one-shot question to the brain |
+| `model [role\|subagent\|worker\|plan\|loop\|here\|#channel] [name\|default]` | pal, executer, admin (setting: `settings:manage`) | show the brain; `settings:manage` pins a model per role or channel, or for subagents, Orca workers, planning and loop fires |
+| `logsource [grafana,datadog\|default]` | pal, executer, admin (setting: `settings:manage`) | where it looks for logs - see [Investigating](#investigating) |
+| `cloudwatch [--group /log/group] [--last 15m \| --from <t> --to <t>] [--region r] [--limit n] <insights query>` (alias `cw`), `cloudwatch help`, `cloudwatch default <group\|reset>` | executer, admin (runs at once with `cloudwatch:direct`, else Confirm first) | query CloudWatch Logs Insights directly - see [CloudWatch](#cloudwatch) |
+| `forget` | pal, executer, admin | wipe the bot's memory of this channel |
+| `sys` (alias `vitals`) | admin | how the host, the bot and Orca are doing, as Block Kit: a verdict header, cpu/memory/swap/disk/battery/host/bot/turns fields, the last hour's trend, then Orca's runtime, active runs, workers by status and a table of live workers (one "unreachable" line when Orca is down or slow). The message text keeps the plain report as the fallback |
+| `users` | admin | list the allowlist |
+| `worker-cost <ctx_...\|run_...>` (alias `wcost`) | admin | tokens and list-price cost of an Orca worker, or every worker in a Run - see [What an Orca worker cost](#what-an-orca-worker-cost) |
+| `add @user [role]` | admin; only roles ranking below your own | grant access under any role, custom ones included; no role given means the default one (`pal`); an unknown role name is refused |
+| `remove @user` | admin (only someone ranking below your own role) | revoke access |
+| `learn <fact>` | executer, admin | teach a durable fact: the owner's own typing is saved at once, anyone else's (and any `learn` the agent runs for itself) waits as *pending* for the owner's approval and is not part of any reply until then |
+| `learn pending` / `learn approve <id>` / `learn reject <id>` | *owner* | list what waits, approve it (it is carried into every reply from then on) or reject it (never). Typed by the owner only: the agent cannot run these for itself. The owner also gets each pending learning as a DM with Approve / Reject buttons |
+| `learnings` / `relearn <id> <text>` / `unlearn <id>` | executer, admin | list, reword or delete learnings. Rewording by anyone but the owner sends the learning back to pending |
+| `review-policy [owner/repo] [first\|after\|default]` (alias `rvpolicy`) | pal, executer, admin (setting: `settings:manage`) | how a repo gets approved - see [Review policy per repo](#review-policy-per-repo) |
+| `review-agents [n\|default]` (alias `rvagents`) | pal, executer, admin (setting: `settings:manage`) | how many child agents one review may fan out to - see [How wide a review fans out](#how-wide-a-review-fans-out) |
+| `token [remove\|who]` (alias `claude-token`) | pal, executer, admin | add, replace or forget your own Claude Code token - see [Your own Claude token](#your-own-claude-token) |
+| `session [reset\|on\|off]` (alias `sess`) | pal, executer, admin (on/off: `runs:stop-any`) | the CLI session this thread is talking to - see [One session per thread](#one-session-per-thread) |
+| `ticket <what is wrong>` (aliases `bug`, `raise`) | pal, executer, admin | raise a properly written, correctly routed ticket - see [Raising a ticket](#raising-a-ticket) |
+| `quick-review <pr-url\|help\|prompt> [--policy first\|after] [what to look at]` (alias `rv`) | pal, executer, admin | quick review of a PR, **only when a person asks** (tag the bot with `review <pr-url>` or `approve <pr-url>`, or type this; never from a thread, workflow, hand-back or GitHub request - see [Asking for a review in words](#asking-for-a-review-in-words)): read it first, post a blockers-only comment on GitHub *and* back in the thread (PRs owned by an account in `REVIEW_EXTENDED_OWNERS` also get the non-blocking findings as bullets); request changes on a blocker only, other repos drop non-blocking findings (big PRs are cloned + reviewed by child agents). CI is read first: red requests changes before the review, a running CI gets a watcher (see [CI comes first](#ci-comes-first)). Runs full-access. |
+| `bomb [categories] [count] <message-link>` (alias `br`) | admin | reaction-bomb a message. Combine categories with commas and set a count: `bomb money,face,negative 9 <link>`. Up to 23; `bomb help` lists every category |
+| `brief <thread-link\|reference> <text>` (`brief help`) | admin | leave a short note FOR another thread: what you posted there, why, what you wait for. Posts nothing, starts no turn; that thread's session reads it on its next turn, whoever speaks (it is part of that turn's message, so the session keeps it for the turns after), then it is marked read for that access tier. It is background information only, never instructions. The receiver sees only an opaque reference to your thread (never a link) and answers with `brief <reference> <text>`. `tell` is for when the other side must act now |
+| `reply <message-link>` (alias `jrp`) | admin | draft and post an AI reply to a message |
+| `rm-msg <message-link>` (aliases `rmmsg`, `unsend`) | admin | delete a message the bot posted (a bot token cannot delete anyone else's) |
+| `workflow <task>` / `workflow stop [<thread-link>]` / `workflow status` (alias `wf`) | executer, admin | start a long task in this thread and keep talking to it (see [Workflows](#workflows)) |
+| `limit [@user] [n\|default]` (alias `quota`) | pal, executer, admin (setting: `settings:manage`) | show command allowance; `settings:manage` sets someone's |
+| `mindful [hours]` / `mindful continue\|reply <thread-link>` (aliases `mind`, `whatsup`) | admin | everything it is doing: stuck turns (a failed last turn; one a person stopped is not stuck), Orca tasks whose worker is gone and quiet PRs on its own repo (each with the thread that started it), what is running and waiting, and what it cost - see [Stuck work](#stuck-work) |
+| `loop every <monday 9am\|day at 18:00\|6h\|week> [--name "PR board"] <prompt>` / `loop list` / `loop rename <id> <name>` / `loop cancel <id>` | admin | run a prompt on a schedule, as a real turn, with nobody present. Every loop has a name: `--name "PR board"` (or `--name board`, `--name=board`) between the schedule and the prompt, else the first four words of the prompt (the command, for a shell loop); `loop rename <id> <name>` changes it later (yours, or the owner's), so `loop rename 3 PR board` fixes a loop that was only ever `loop #3`. A name is plain words: Slack's escapes and links are read first (`&amp;` is `&`, `<url|label>` is `label`), then markup, `<>`, `&` and `|` are stripped and it is clipped to 40 characters; an apostrophe inside a single-quoted name is fine (`--name 'Kai's board'`). The name shows wherever the loop is mentioned: the fire header (`🔁 PR board - loop #3, every 1h · created here`, posted only with a run's reply, where `created here` links to the message that created the loop - a thread reply links into its thread; loops made before that was kept link to their thread, or show no link), `loop list` (the same link per loop), the confirmation, cancel and rename replies, the failure / stopped notices and the settled approval text; the approval DM shows the turn-chosen name on its own line, never in the headline. A shell loop is never typed (not even by the owner): ask me in plain words and I write the script, post the exact command and schedule to the owner's DM and only run it after the owner presses Approve (Reject, or 24h with no answer, deletes it; `loop list` shows it as pending meanwhile). Times are the host's clock, like `remind`; a prompt loop is at most hourly (`every 1h` at the fastest) and a shell loop `every 5m`. Each fire runs on Sonnet (`model:loop`), not the creator's role model. A loop is **silent unless it has something to say**: each fire runs the turn as the creator (prefixed `[loop <id>]`, told nobody is watching and to post nothing in Slack unless the loop's own task asks to send/post/report something or something needs a person, else to reply with exactly `NO_REPLY`), and a run that answers `NO_REPLY` (or ends in it) leaves nothing in Slack, not even a header - except that a run that sets a watch posts its header alone, as the thread the watch reports into. A run that does answer posts one top-level message in the creator's **DM** with the bot - the header line, then the reply - and a reply under it continues the same session; nothing is posted in the channel or thread the loop was created in, which only gets a short confirmation. Want a post every time (`every day send me a fun fact`)? Say so in the prompt. A shell loop runs no turn and spends no tokens; only a failure (non-zero exit or timeout) sends one short line to the creator's DM, and the loop carries on. A run missed while the bot was down happens once on startup, never a backlog. Ten loops per person. `loop help` for the card |
+| `promote @user [role]` / `demote @user [role]` | none (owner only until granted) | change role: to the named one, else to the highest role below owner / the least-privileged one |
+| `role list` / `show <role>` / `perms [filter]` / `create <name> [from <role>] [description]` / `grant <role> <perm...>` / `revoke <role> <perm...>` / `delete <role>` / `rename <old> <new>` / `rank <role> <n>` / `describe <role> <text>` / `on\|off <role>` / `default <role>` / `denytools <role> <pattern...\|none>` (alias `roles`) | *owner* | see and edit roles and the permissions they grant - see [Roles & tool access](#roles--tool-access) |
 
 A slash command is invisible to everyone but its caller, so the **owner gets a copy in their DM** - one thread per run: a header saying who ran what, with the progress and result threaded under it. Trivial commands (`help`, `ping`, `whoami`, `model`) are not copied, and the owner is never copied on their own.
 
@@ -217,8 +219,8 @@ thread goes back to normal chat.
 
 - one live workflow per thread, `workflow status` shows it
 - `workflow stop <thread-link>` stops the workflow in another thread without posting anything there
-- `executer`, `admin` and `owner` may drive one; anyone lower still chats
-  normally in the thread without steering the task
+- whoever holds `command:workflow` (`executer` and `admin` as seeded, plus the owner) may
+  drive one; anyone else still chats normally in the thread without steering the task
 - tools are whatever the driver's role allows - a sandboxed `executer` gets a
   sandboxed workflow, and its parallel work uses the Agent tool (foreground
   only in a workflow: a background agent dies with the step). Only an owner's
@@ -239,15 +241,15 @@ rather than the slash command - a slash command has no thread to bind to.
 X/jv cloudwatch --group /ecs/prod-api --last 15m fields @timestamp, @message | filter @message like /ERROR/ | sort @timestamp desc
 ```
 
-- `--group /log/group[,/other]` one or more log groups (up to 10); optional once `cloudwatch default /log/group` is set (admin). Each must exist in the region, or nothing runs
+- `--group /log/group[,/other]` one or more log groups (up to 10); optional once `cloudwatch default /log/group` is set (`settings:manage`). Each must exist in the region, or nothing runs
 - `--last 15m|2h|3d|1w` (default 1h) or `--from <iso> --to <iso>` in UTC; `--region` (default `us-west-2`, or the `cloudwatch_region` setting); `--limit` rows asked of Insights (default 50, at most 1000)
 - everything after the flags is the Insights query; Slack's `&lt;` `&gt;` `&amp;` are put back
 
-| role | what happens |
+| who | what happens |
 |---|---|
-| owner | the cost warning is posted, then the query runs straight away |
-| executer, admin | nothing runs. A message with the query, log group(s), range, region, the cost warning and **Confirm and run** / **Cancel** buttons is posted. Only the requester or the owner can press either (anyone else is told so privately). Cancel, or no answer for 15 minutes, means nothing ever runs. Confirm runs it and posts the result in the thread |
-| pal | refused, naming the roles that can |
+| owner, or a role with `cloudwatch:direct` | the cost warning is posted, then the query runs straight away |
+| a role with `command:cloudwatch` (`executer`, `admin` as seeded) | nothing runs. A message with the query, log group(s), range, region, the cost warning and **Confirm and run** / **Cancel** buttons is posted. Only the requester or the owner can press either (anyone else is told so privately). Cancel, or no answer for 15 minutes, means nothing ever runs. Confirm runs it and posts the result in the thread |
+| anyone else (`pal` as seeded) | refused, naming the roles that can |
 
 **Cost guard.** Before anything runs the bot reads each log group's stored size and retention (`describe-log-groups`) and estimates the scan as `storedBytes x range / retention` at $0.005 per GB. It is a rough estimate (stored bytes are compressed, a scan reads the original), good for telling 15 minutes from 3 weeks. A range over 3 weeks is flagged **costly**. The warning is shown to the owner and sits on the Confirm message.
 
@@ -1346,18 +1348,18 @@ in the wrap-up. A review runs unattended, so it never ends on a question.
 
 ## Command allowance
 
-A `pal` may run **10 commands per rolling 4 hours**. Past that a command is not
+A role without `commands:unlimited` (`pal` as seeded) may run **10 commands per rolling 4 hours**. Past that a command is not
 refused - it is parked, and the owner gets a DM with **Approve** / **Reject**
 buttons naming who asked and what for. Approving runs it *as the requester*, so
 approving grants that one command and not the approver's authority; rejecting
-says so in the thread they asked in. Only `owner` and `admin` can press the
+says so in the thread they asked in. Only the owner and roles with `commands:approve` (`admin` as seeded) can press the
 buttons, a decided request cannot be clicked again, and the buttons are replaced
 with the outcome once it is settled.
 
-Trivial commands (`help`, `ping`, `whoami`, `model`) never count. Higher roles
-are not counted at all - they already have the shell.
+Trivial commands (`help`, `ping`, `whoami`, `model`) never count. Roles with
+`commands:unlimited` are not counted at all.
 
-Admins can give someone their own allowance:
+A role with `settings:manage` can give someone their own allowance:
 
 ```
 //bot limit @casey 25         25 commands per 4h
