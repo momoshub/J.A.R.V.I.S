@@ -291,6 +291,11 @@ describe("buildSystemPrompt", () => {
     expect(p).toContain("Do not go looking through your own repository to find out what you can do");
   });
 
+  test("but reads its own code and data when the owner names a feature", () => {
+    const p = buildSystemPrompt({ botName: "Jarvis" });
+    expect(p).toContain("The exception is the owner: when the owner names one of your own features");
+  });
+
   test("omits the roster block when there are no participants", () => {
     expect(buildSystemPrompt({ learnings: [], participants: [] })).not.toContain(
       "mention or reply to them with their Slack tag",
