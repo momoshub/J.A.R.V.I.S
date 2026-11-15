@@ -44,6 +44,7 @@ import { JOURNEY_COMMANDS } from "./commands/journeys.ts";
 import { BUG_REPORT_COMMANDS } from "./commands/bugReport.ts";
 import { ERRANDS_COMMANDS } from "./commands/errands.ts";
 import { REVIEW_COMMANDS } from "./commands/review.ts";
+import { INNER_CHILD_COMMANDS } from "./commands/innerChild.ts";
 import { RUNTIME_COMMANDS } from "./commands/runtime.ts";
 import { SLACK_COMMANDS } from "./commands/slack.ts";
 import { CLOUDWATCH_COMMANDS } from "./commands/cloudwatch.ts";
@@ -119,6 +120,7 @@ export const COMMANDS: readonly CommandDef[] = [
   ...BUG_REPORT_COMMANDS,
   ...ERRANDS_COMMANDS,
   ...REVIEW_COMMANDS,
+  ...INNER_CHILD_COMMANDS,
   ...RUNTIME_COMMANDS,
   ...SLACK_COMMANDS,
   ...CLOUDWATCH_COMMANDS,

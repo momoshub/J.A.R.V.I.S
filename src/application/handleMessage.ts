@@ -42,6 +42,7 @@ import type { TurnLogRepo } from "../infrastructure/db/turnLogRepo.ts";
 import type { ReminderRepo } from "../infrastructure/db/reminderRepo.ts";
 import type { JourneyRepo } from "../infrastructure/db/journeyRepo.ts";
 import type { BugReportRepo } from "../infrastructure/db/bugReportRepo.ts";
+import type { SelfIssueRepo } from "../infrastructure/db/selfIssueRepo.ts";
 import type { LoopRepo } from "../infrastructure/db/loopRepo.ts";
 import type { WatchRepo } from "../infrastructure/db/watchRepo.ts";
 import type { FollowRepo } from "../infrastructure/db/followRepo.ts";
@@ -109,6 +110,8 @@ export type HandleMessageDeps = {
   journeys?: JourneyRepo;
   /** The bug reports the bot raised about itself, for the `bug-report` command. */
   bugReports?: BugReportRepo;
+  /** The inner child's issue queue, for the `inner-child` command. */
+  selfIssues?: SelfIssueRepo;
   /** The owner's Approve / Reject on a bug report, decided by the Slack listener in code. */
   bugReportApproval?: BugReportApprovalDeps;
   /** Recurring prompts, for the `loop` command. */
