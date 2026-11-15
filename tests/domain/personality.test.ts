@@ -174,6 +174,14 @@ describe("buildSystemPrompt", () => {
     expect(p).toContain("It already carries who you are talking to");
   });
 
+  test("'follow thread <link>' is named as the follow command, not a look into that thread", () => {
+    // it was read as "follow up on that thread" and started an investigation
+    const p = buildSystemPrompt(runOpts);
+    expect(p).toContain('"follow thread <link>"');
+    expect(p).toContain("is the `follow` command, never a request to go and look into that thread");
+    expect(p).toContain("`X/jarvis follow <thread link>`");
+  });
+
   test("a command that has not reported yet is never re-run without asking", () => {
     // an investigate that went quiet was started again unasked, and the person
     // asked why it was investigating all over the place

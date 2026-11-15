@@ -1384,6 +1384,40 @@ describe("follow", () => {
     expect(follows.isFollowed("C1", "1.1")).toBe(false);
   });
 
+  test("'follow thread <link>' as people type it follows the linked thread", async () => {
+    // "follow thread <url|label>" was refused as not a link, so the ask fell
+    // through to chat and the thread never got followed
+    const deps = build();
+    const follows = createFollowRepo(db);
+    const out = await dispatchCommand(
+      { ...deps, follows },
+      actor(),
+      "C1",
+      "follow thread <https://x.slack.com/archives/C9/p1793972359573329|https://x.slack.com/archives/C9/p1793972359573329>",
+      { threadTs: "1.1" },
+    );
+    expect(out).toContain("following that thread now");
+    expect(follows.isFollowed("C9", "1793972359.573329")).toBe(true);
+    expect(follows.isFollowed("C1", "1.1")).toBe(false);
+
+    await dispatchCommand({ ...deps, follows }, actor(), "C7", "follow this thread", { threadTs: "5.5" });
+    expect(follows.isFollowed("C7", "5.5")).toBe(true);
+    await dispatchCommand({ ...deps, follows }, actor(), "C7", "follow off this thread", { threadTs: "5.5" });
+    expect(follows.isFollowed("C7", "5.5")).toBe(false);
+  });
+
+  test("a reply's permalink follows the thread it sits in, not the reply", async () => {
+    const follows = createFollowRepo(db);
+    await dispatchCommand(
+      { ...build(), follows },
+      actor(),
+      "C1",
+      "follow https://x.slack.com/archives/C9/p1793844399000001?thread_ts=1793844324.845749&cid=C9",
+    );
+    expect(follows.isFollowed("C9", "1793844324.845749")).toBe(true);
+    expect(follows.isFollowed("C9", "1793844399.000001")).toBe(false);
+  });
+
   test("it needs a thread, and says so rather than following nothing", async () => {
     const out = await dispatchCommand({ ...build(), follows: createFollowRepo(db) }, actor(), "C1", "follow");
     expect(out).toContain("Which thread?");
