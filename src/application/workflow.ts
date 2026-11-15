@@ -13,7 +13,6 @@ import { createMarkerFilter, parseContinue } from "../domain/workflowContinue.ts
 import { createSteerFilter, FRONT_TIMEOUT_MS, frontMessage, parseSteers } from "../domain/workflowFront.ts";
 import { FRONT_DENY, mayUseOrca, PAL_TOOLS } from "../domain/toolPolicy.ts";
 import type { RoleBook } from "../domain/roles.ts";
-import { tokenFor, type ClaudeTokenPort } from "./claudeTokens.ts";
 import type { AllowedUser, UserRole, Workflow } from "../domain/types.ts";
 import type { ToolPolicy } from "../domain/toolPolicy.ts";
 import type { Clock, LlmPort, LlmStreamSink, LlmUsage } from "./ports.ts";
@@ -38,8 +37,6 @@ export type WorkflowDeps = {
   botInfo?: () => { botName: string; model: string };
   /** Fresh session id; injected so tests are deterministic. */
   newSessionId?: () => string;
-  /** Per-user Claude Code tokens: the session runs on its driver's credential. */
-  claudeTokens?: ClaudeTokenPort;
 };
 
 const botNameOf = (deps: WorkflowDeps): string => deps.botInfo?.().botName ?? "Assistant";
@@ -98,7 +95,6 @@ export const runWorkflowTurn = async (
     assistantName: name,
     policy: { ...base, timeoutMs: WORKFLOW_TIMEOUT_MS },
     session: { id: workflow.sessionId, resume: !first },
-    oauthToken: tokenFor(deps, actor),
     signal,
     bill: { actor: actor.slackId, kind: WORKER_BILL_KIND, channel: workflow.channelId, threadTs: workflow.threadTs },
     onUsage: (u: LlmUsage) => {
@@ -166,7 +162,6 @@ export const runFrontTurn = async (
       timeoutMs: FRONT_TIMEOUT_MS,
     },
     session: { id: sessionId, resume: workflow.frontSessionId !== undefined },
-    oauthToken: tokenFor(deps, actor),
     signal,
     bill: { actor: actor.slackId, kind: FRONT_BILL_KIND, channel: workflow.channelId, threadTs: workflow.threadTs },
     onUsage: (u: LlmUsage) => {

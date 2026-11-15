@@ -6,6 +6,7 @@ import { createWorkflowRepo } from "../../src/infrastructure/db/workflowRepo.ts"
 import { dispatchCommand, type CommandDeps } from "../../src/application/commands.ts";
 import { respond, type RespondDeps } from "../../src/application/respond.ts";
 import { WORKFLOW_TIMEOUT_MS } from "../../src/application/workflow.ts";
+import { everyoneHasToken } from "./commandsFixture.ts";
 import type { AllowedUser } from "../../src/domain/types.ts";
 import type { LlmCompleteParams, LlmPort } from "../../src/application/ports.ts";
 
@@ -51,6 +52,14 @@ const build = () => {
 };
 
 describe("workflow command", () => {
+  test("a stored Claude token is never handed to a workflow turn", async () => {
+    const { deps, calls } = build();
+    deps.claudeTokens = everyoneHasToken();
+    await dispatchCommand(deps, actor(), "C1", "workflow add a retry to the webhook", { threadTs: "100.1" });
+    expect(calls.length).toBeGreaterThan(0);
+    expect(calls.every((c) => c.oauthToken === undefined)).toBe(true);
+  });
+
   test("starts a session bound to the thread and runs the first turn", async () => {
     const { deps, calls } = build();
     const out = await dispatchCommand(deps, actor(), "C1", "workflow add a retry to the webhook", {

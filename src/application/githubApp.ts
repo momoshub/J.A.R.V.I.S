@@ -9,7 +9,7 @@
  * for the next process. Handling it mirrors the review inbox: eyes on the
  * comment, GitHub login -> Slack person (explicit link, else exactly one name
  * match), a post in the channel, and a turn in that post's thread AS that
- * person, so their role and their own token apply. Nobody known means one
+ * person, so their role applies and the turn runs on the bot's credential. Nobody known means one
  * comment on GitHub saying how to link, and nothing runs.
  *
  * The turn posts its answer itself through the comment helper, which can only

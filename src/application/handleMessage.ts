@@ -57,7 +57,7 @@ import type { BugReportApprovalDeps } from "./bugReportApproval.ts";
 import type { SettingsRepo } from "../infrastructure/db/settingsRepo.ts";
 import { requestAccess } from "./accessRequests.ts";
 import type { CommandTickets } from "./commandTickets.ts";
-import { tokenFor, type ClaudeTokenPort } from "./claudeTokens.ts";
+import type { ClaudeTokenPort } from "./claudeTokens.ts";
 import type { TotpPort } from "./totp.ts";
 import { isMissingSession, threadSessionName, tierOf, unseenTurns } from "../domain/threadSession.ts";
 import { promptFingerprint } from "../domain/promptFingerprint.ts";
@@ -177,7 +177,7 @@ export type HandleMessageDeps = {
   noTools?: readonly string[];
   /** GitHub owners whose PRs `quick-review` posts non-blocking findings for. */
   reviewExtendedOwners?: readonly string[];
-  /** Per-user Claude Code tokens: a speaker's own turns run on their credential. */
+  /** Per-user Claude Code tokens: only `quick-review` runs on one, and `token` manages them. */
   claudeTokens?: ClaudeTokenPort;
   /** Shared 2FA setup keys, for the `2fa` command. */
   totp?: TotpPort;
@@ -562,9 +562,6 @@ export const handleMessage = async (
     system,
     assistantName: ctx.botName,
     policy,
-    // Their own credential when they have registered one, so the turn is theirs
-    // in every sense; the bot's own when they have not.
-    oauthToken: tokenFor(deps, decision.user),
     signal,
     runTicket,
     // Whose turn this is, so what it consumed lands against them.

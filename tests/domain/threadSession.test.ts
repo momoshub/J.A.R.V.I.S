@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { isAuthFailure, isMissingSession, isTimeout, threadSessionName, tierOf, unseenTurns } from "../../src/domain/threadSession.ts";
+import { claudeAuthError, isClaudeAuthError, isMissingSession, isTimeout, threadSessionName, tierOf, unseenTurns } from "../../src/domain/threadSession.ts";
 import type { StoredMessage } from "../../src/domain/types.ts";
 
 const turn = (ts: string, content = ts): StoredMessage => ({
@@ -77,16 +77,15 @@ describe("isTimeout", () => {
   });
 });
 
-describe("isAuthFailure", () => {
-  test("recognises a credential that will not authenticate", () => {
-    expect(isAuthFailure(new Error("Failed to authenticate. API Error: 401 OAuth access token is invalid."))).toBe(true);
-    expect(isAuthFailure(new Error("claude CLI exited with code 1: OAuth token is invalid"))).toBe(true);
+describe("isClaudeAuthError", () => {
+  test("recognises the typed auth error by its code", () => {
+    expect(isClaudeAuthError(claudeAuthError())).toBe(true);
   });
 
-  test("does not excuse an ordinary failure as a lapsed login", () => {
-    expect(isAuthFailure(new Error("claude CLI exited with code 143: no output"))).toBe(false);
-    expect(isAuthFailure(new Error("rate limited"))).toBe(false);
-    expect(isAuthFailure(undefined)).toBe(false);
+  test("never reads message text: wording that looks like a 401 is not one", () => {
+    expect(isClaudeAuthError(new Error("Failed to authenticate. API Error: 401 OAuth access token is invalid."))).toBe(false);
+    expect(isClaudeAuthError(new Error("claude CLI exited with code 143: no output"))).toBe(false);
+    expect(isClaudeAuthError(undefined)).toBe(false);
   });
 });
 
