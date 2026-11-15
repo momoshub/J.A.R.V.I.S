@@ -241,6 +241,7 @@ const main = async () => {
   const reminders = createReminderRepo(db);
   const journeys = createJourneyRepo(db);
   const bugReports = createBugReportRepo(db);
+  const selfIssues = createSelfIssueRepo(db);
   const loops = createLoopRepo(db);
   const follows = createFollowRepo(db);
   const kitViews = createKitViewRepo(db);
@@ -640,6 +641,7 @@ const main = async () => {
     reminders,
     journeys,
     bugReports,
+    selfIssues,
     bugReportApproval: { bugReports, slack: slackAdmin, clock, ownerSlackId: config.ownerSlackId },
     loops,
     loopApproval,
@@ -1297,7 +1299,7 @@ const main = async () => {
   const innerChild = createInnerChild({
     turns,
     messages,
-    issues: createSelfIssueRepo(db),
+    issues: selfIssues,
     llm,
     clock,
     get channelId() {

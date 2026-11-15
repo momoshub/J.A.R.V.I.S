@@ -2,6 +2,7 @@ import { seededBook } from "../../src/domain/roleSeed.ts";
 import { staticBook } from "../../src/domain/roles.ts";
 import { describe, expect, test } from "bun:test";
 import { createSettingsRepo } from "../../src/infrastructure/db/settingsRepo.ts";
+import { createSelfIssueRepo } from "../../src/infrastructure/db/selfIssueRepo.ts";
 import { dispatchCommand, isQuietCommand, listCommandInfo } from "../../src/application/commands.ts";
 import type { LlmPort } from "../../src/application/ports.ts";
 import { OWNER, db, actor, slackCalls, build } from "./commandsFixture.ts";
@@ -884,5 +885,83 @@ describe("review-inbox command", () => {
     await dispatchCommand(deps, actor(), "C1", "review-inbox link Dev-GH <@U0DEV0001>");
     expect(deps.settings.get("github_login:dev-gh")).toBe("U0DEV0001");
     expect(await dispatchCommand(deps, actor(), "C1", "review-inbox")).toContain("`dev-gh` -> <@U0DEV0001>");
+  });
+});
+
+describe("inner-child command", () => {
+  const withRepo = () => {
+    const deps = build();
+    deps.settings = createSettingsRepo(db);
+    deps.selfIssues = createSelfIssueRepo(db);
+    return deps;
+  };
+  const run = (deps: ReturnType<typeof withRepo>, text: string, who = actor()) => dispatchCommand(deps, who, "C1", text);
+  const pal = () => actor({ slackId: "U0PAL0099", role: "pal" });
+
+  test("status with no channel says it is inactive", async () => {
+    const out = await run(withRepo(), "inner-child");
+    expect(out).toContain("inactive");
+    expect(out).toContain("channel: none");
+    expect(out).toContain("open issues (queued or being fixed): 0");
+  });
+
+  test("status shows on, the channel, the open count and the cursor", async () => {
+    const deps = withRepo();
+    deps.settings!.set("inner_child_channel", "C0TEST00001");
+    deps.settings!.set("inner_child_cursor", "86400000");
+    const repo = deps.selfIssues!;
+    const a = repo.file({ fingerprint: "a", title: "a", severity: "bug", evidence: "e", channelId: "C1", threadTs: "1", hint: "" }, 1)!;
+    repo.file({ fingerprint: "b", title: "b", severity: "bug", evidence: "e", channelId: "C1", threadTs: "2", hint: "" }, 2);
+    const c = repo.file({ fingerprint: "c", title: "c", severity: "bug", evidence: "e", channelId: "C1", threadTs: "3", hint: "" }, 3)!;
+    repo.startFix(a.id, "C0TEST00001", "9", 4);
+    repo.settle(c.id, "stale", 5);
+    const out = await run(deps, "inner-child status");
+    expect(out).toContain("*on*");
+    expect(out).toContain("<#C0TEST00001>");
+    expect(out).toContain("open issues (queued or being fixed): 2");
+    expect(out).toContain("1970-01-02T00:00:00.000Z");
+  });
+
+  test("off pauses and keeps the channel; on resumes", async () => {
+    const deps = withRepo();
+    deps.settings!.set("inner_child_channel", "C0TEST00001");
+    expect(await run(deps, "inner-child off")).toContain("inner child off");
+    expect(deps.settings!.get("inner_child")).toBe("off");
+    expect(deps.settings!.get("inner_child_channel")).toBe("C0TEST00001");
+    expect(await run(deps, "inner-child")).toContain("*off*");
+    expect(await run(deps, "inner-child on")).toContain("<#C0TEST00001>");
+    expect(deps.settings!.get("inner_child")).toBe("on");
+    expect(await run(deps, "inner-child")).toContain("*on*");
+  });
+
+  test("on without a channel stays inactive until one is set", async () => {
+    const deps = withRepo();
+    const out = await run(deps, "inner-child on");
+    expect(out).toContain("stays inactive until a channel is set");
+    expect(deps.settings!.get("inner_child")).toBe("on");
+  });
+
+  test("channel sets and clears the channel", async () => {
+    const deps = withRepo();
+    expect(await run(deps, "inner-child channel <#C0TEST00002|self>")).toContain("<#C0TEST00002>");
+    expect(deps.settings!.get("inner_child_channel")).toBe("C0TEST00002");
+    expect(await run(deps, "inner-child channel nonsense")).toContain("Which channel?");
+    expect(deps.settings!.get("inner_child_channel")).toBe("C0TEST00002");
+    await run(deps, "inner-child channel off");
+    expect(deps.settings!.get("inner_child_channel")).toBeUndefined();
+  });
+
+  test("a pal can read the status but not change anything", async () => {
+    const deps = withRepo();
+    expect(await run(deps, "inner-child", pal())).toContain("inactive");
+    expect(await run(deps, "inner-child on", pal())).toContain("You are not allowed");
+    expect(await run(deps, "inner-child off", pal())).toContain("You are not allowed");
+    expect(await run(deps, "inner-child channel <#C0TEST00002>", pal())).toContain("You are not allowed");
+    expect(deps.settings!.get("inner_child")).toBeUndefined();
+    expect(deps.settings!.get("inner_child_channel")).toBeUndefined();
+  });
+
+  test("an unknown option shows the usage", async () => {
+    expect(await run(withRepo(), "inner-child maybe")).toContain("Usage:");
   });
 });

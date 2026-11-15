@@ -40,6 +40,7 @@ import type { WatchRepo } from "../../infrastructure/db/watchRepo.ts";
 import type { ReminderRepo } from "../../infrastructure/db/reminderRepo.ts";
 import type { JourneyRepo } from "../../infrastructure/db/journeyRepo.ts";
 import type { BugReportRepo } from "../../infrastructure/db/bugReportRepo.ts";
+import type { SelfIssueRepo } from "../../infrastructure/db/selfIssueRepo.ts";
 import type { LoopRepo } from "../../infrastructure/db/loopRepo.ts";
 import type { LoopApprovalDeps } from "../loopApproval.ts";
 import type { LearningApprovalDeps } from "../learningApproval.ts";
@@ -118,6 +119,8 @@ export type CommandDeps = {
   journeys?: JourneyRepo;
   /** The bug reports the bot raised about itself, for the `bug-report` command. */
   bugReports?: BugReportRepo;
+  /** The inner child's queue of issues, for the open count in `inner-child`. */
+  selfIssues?: SelfIssueRepo;
   /** Recurring prompts, fired as turns on a timer outside any turn. */
   loops?: LoopRepo;
   /** Owner approval of a script loop a turn wrote: the Approve / Reject DM and the pending row. */
