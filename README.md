@@ -1,5 +1,18 @@
 # J.A.R.V.I.S.
 
+<p>
+  <a href="https://github.com/momoshub/J.A.R.V.I.S./actions/workflows/ci.yml"><img alt="ci" src="https://img.shields.io/github/actions/workflow/status/momoshub/J.A.R.V.I.S./ci.yml?branch=main&label=ci&logo=githubactions&logoColor=white&style=for-the-badge"></a>
+  <a href="https://github.com/momoshub/J.A.R.V.I.S./actions/workflows/e2e.yml"><img alt="e2e" src="https://img.shields.io/github/actions/workflow/status/momoshub/J.A.R.V.I.S./e2e.yml?branch=main&label=e2e%20(real%20slack)&logo=slack&logoColor=white&style=for-the-badge"></a>
+  <a href="./LICENSE"><img alt="license" src="https://img.shields.io/github/license/momoshub/J.A.R.V.I.S.?style=for-the-badge&color=blue"></a>
+  <a href="https://github.com/momoshub/J.A.R.V.I.S./commits/main"><img alt="last commit" src="https://img.shields.io/github/last-commit/momoshub/J.A.R.V.I.S./main?style=for-the-badge&logo=git&logoColor=white"></a>
+  <br>
+  <img alt="bun" src="https://img.shields.io/badge/runtime-bun-fbf0df?style=for-the-badge&logo=bun&logoColor=black">
+  <img alt="typescript" src="https://img.shields.io/badge/typescript-strict-3178c6?style=for-the-badge&logo=typescript&logoColor=white">
+  <img alt="claude code" src="https://img.shields.io/badge/brain-claude%20code-d97757?style=for-the-badge&logo=anthropic&logoColor=white">
+  <img alt="slack" src="https://img.shields.io/badge/front%20end-slack-4a154b?style=for-the-badge&logo=slack&logoColor=white">
+  <img alt="self-updating" src="https://img.shields.io/badge/ships-its%20own%20PRs-8a2be2?style=for-the-badge&logo=github&logoColor=white">
+</p>
+
 Jarvis is a harness of harnesses. Claude Code is already a harness around a model; Jarvis is the harness around Claude Code (or the **Anthropic API**), for now. It keeps the sessions, memory, roles and tool sandbox, schedules work, waits on CI and reviewers, runs background workers, and changes and redeploys its own source. Slack is only where people talk to it: one front end, not what it is. Live streaming replies with a tool-call timeline and an admin dashboard come with it.
 
 The story of how it came to build itself: [J.A.R.V.I.S.](https://thediligentengineer.com/J.A.R.V.I.S.)
