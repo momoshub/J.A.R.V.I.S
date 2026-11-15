@@ -435,7 +435,7 @@ describe("dispatchCommand", () => {
     expect(w?.check).toContain("'U2'");
   });
 
-  test("watch worker waits on an Orca dispatch, every 3m for 3h", async () => {
+  test("watch worker waits on an Orca dispatch, every 30s for 3h", async () => {
     const deps = build();
     const watches = createWatchRepo(db);
     const out = await dispatchCommand(
@@ -446,10 +446,10 @@ describe("dispatchCommand", () => {
       { threadTs: "9.9" },
     );
     expect(out).toContain("Orca worker `ctx_b3290a07f606` to finish, die, stop for input or sit idle");
-    expect(out).toContain("checking every 3m and giving up after 3h00m");
+    expect(out).toContain("checking every 30s and giving up after 3h00m");
     const [w] = watches.waiting();
     expect(w?.check).toBe("'/b/bun' '/x/orca-worker-wait.ts' 'ctx_b3290a07f606'");
-    expect(w?.everyMs).toBe(180_000);
+    expect(w?.everyMs).toBe(30_000);
     expect(w?.note).toBe("merge its PR");
 
     const past = await dispatchCommand(

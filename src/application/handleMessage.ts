@@ -5,6 +5,7 @@
  * All I/O is injected, so this reads as a straight line of business logic and is
  * covered by fast, deterministic tests.
  */
+import type { BackgroundWatch } from "./backgroundWatch.ts";
 import type { StuckWork } from "../domain/stuckWork.ts";
 import type { WorkerUsagePort } from "./workerCost.ts";
 import type { WorkerTickets } from "./workerTickets.ts";
@@ -72,6 +73,8 @@ import { isRestartCut } from "./runRegistry.ts";
 import { logAndIgnore } from "./ignoredError.ts";
 
 export type HandleMessageDeps = {
+  /** Tells a thread when background work its turn started was cut off. */
+  backgroundWatch?: BackgroundWatch;
   users: UserRepo;
   messages: MessageRepo;
   llm: LlmPort;
@@ -547,6 +550,9 @@ export const handleMessage = async (
 
   // The last run's figures win, as they do under a live stream.
   let usage: LlmUsage | undefined;
+  const bgWatch = deps.backgroundWatch;
+  const bgThreadTs = inbound.threadTs ?? inbound.messageTs;
+  const bgThread = bgThreadTs ? { channelId: inbound.channelId, threadTs: bgThreadTs, slackUserId: decision.user.slackId } : undefined;
   const base = {
     system,
     assistantName: ctx.botName,
@@ -566,6 +572,14 @@ export const handleMessage = async (
     onUsage: (u: LlmUsage) => {
       usage = u;
     },
+    // Background work this turn leaves running dies with the CLI; the thread is
+    // told when it does, by whoever keeps the list.
+    ...(bgWatch && bgThread
+      ? {
+          onBackgroundTasks: (tasks: readonly string[]) => bgWatch.track(bgThread, tasks),
+          onBackgroundCutOff: (tasks: readonly string[]) => void bgWatch.cutOff(bgThread, tasks),
+        }
+      : {}),
   };
   const run = (p: Parameters<typeof deps.llm.complete>[0]) =>
     sink && deps.llm.stream ? deps.llm.stream(p, sink) : deps.llm.complete(p);

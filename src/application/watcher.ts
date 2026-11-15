@@ -20,6 +20,8 @@ import {
   gaveUpMessage,
   MAX_CONSECUTIVE_ERRORS,
   readyMessage,
+  workerDeath,
+  workerDiedNotice,
   type WatchState,
 } from "../domain/watch.ts";
 import { decodeGate, type GateSpec } from "../domain/ciGate.ts";
@@ -208,6 +210,12 @@ export const createWatcher = (deps: WatcherDeps): Watcher => {
         deps.onFired?.(w, res.output);
       } catch (e) {
         log(`watch ${w.id}: keeping what it printed failed: ${e instanceof Error ? e.message : String(e)}`);
+      }
+      // A dead worker is said at once, in one line: its hand-back turn queues
+      // behind whatever the thread is doing and may be a long way off.
+      const death = workerDeath(res.output);
+      if (death && deps.say) {
+        await deps.say(w.channelId, workerDiedNotice(death), w.threadTs).catch(logAndIgnore("worker death notice"));
       }
       finish(w, "fired", readyMessage(w.note, waited, res.output));
       return;

@@ -359,4 +359,30 @@ describe("watcher: CI gate rows", () => {
     expect(shell).toBe(0);
     expect(watches.get(1)?.state).toBe("failed");
   });
+
+  test("a worker found dead is told to the thread at once, then handed back once", async () => {
+    add({ check: "bun orca-worker-wait.ts ctx_abc123" });
+    const w = build(async () => ({ code: 0, output: "orca worker ctx_abc123 died: stopped without worker_done" }));
+    now += EVERY;
+    await w.tick();
+    expect(said).toHaveLength(1);
+    expect(said[0]).toContain("Orca worker ctx_abc123 died");
+    expect(said[0]).toContain("not done");
+    expect(turns).toHaveLength(1);
+    expect(turns[0]?.text).toContain("DIED");
+    // The watch is settled: a second tick neither says nor hands back again.
+    now += EVERY;
+    await w.tick();
+    expect(said).toHaveLength(1);
+    expect(turns).toHaveLength(1);
+  });
+
+  test("a worker that finished or waits is not announced as dead", async () => {
+    add({ check: "bun orca-worker-wait.ts ctx_abc123" });
+    const w = build(async () => ({ code: 0, output: "orca worker ctx_abc123 finished: completed" }));
+    now += EVERY;
+    await w.tick();
+    expect(said).toEqual([]);
+    expect(turns).toHaveLength(1);
+  });
 });

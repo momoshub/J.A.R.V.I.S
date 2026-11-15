@@ -218,7 +218,7 @@ describe("watch worker", () => {
     expect(a.ok && a.note).toBe("merge its PR");
     expect(a.ok && a.everyMs).toBe(WORKER_EVERY_MS);
     expect(a.ok && a.deadlineMs).toBe(WORKER_DEADLINE_MS);
-    expect(WORKER_EVERY_MS).toBe(3 * 60_000);
+    expect(WORKER_EVERY_MS).toBe(30_000);
     expect(WORKER_DEADLINE_MS).toBe(3 * 3_600_000);
   });
 
@@ -229,8 +229,11 @@ describe("watch worker", () => {
   });
 
   test("a short --until with no --every looks once at the end instead of refusing", () => {
-    const a = parseWatchArgs("worker ctx_1 --until 2m go");
-    expect(a.ok && a.everyMs).toBe(120_000);
+    const a = parseWatchArgs("worker ctx_1 --until 20s go");
+    expect(a.ok && a.everyMs).toBe(20_000);
+    // a longer one keeps the 30s worker poll
+    const long = parseWatchArgs("worker ctx_1 --until 2m go");
+    expect(long.ok && long.everyMs).toBe(WORKER_EVERY_MS);
     // other kinds keep their minute default
     const b = parseWatchArgs("pr https://github.com/o/r/pull/1 go");
     expect(b.ok && b.everyMs).toBe(DEFAULT_EVERY_MS);

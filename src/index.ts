@@ -53,6 +53,8 @@ import { createLoopRepo } from "./infrastructure/db/loopRepo.ts";
 import { createFollowRepo } from "./infrastructure/db/followRepo.ts";
 import { createKitViewRepo } from "./infrastructure/db/kitViewRepo.ts";
 import { createWatcher } from "./application/watcher.ts";
+import { createBackgroundWatch } from "./application/backgroundWatch.ts";
+import { createBackgroundJobRepo } from "./infrastructure/db/backgroundJobRepo.ts";
 import { createReviewGuard } from "./application/reviewGuard.ts";
 import { createReviewInbox } from "./application/reviewInbox.ts";
 import { createOrcaQuestionBridge } from "./application/orcaQuestions.ts";
@@ -1125,6 +1127,28 @@ const main = async () => {
     },
     onError: onDbError,
   });
+  // Background work a turn started dies with the CLI (ten minutes after the
+  // answer) or with this process (restart, crash). Either way the thread is
+  // told at once and handed a turn; the rows kept here are how a process that
+  // died with the work gets told on its next boot.
+  const backgroundWatch = createBackgroundWatch({
+    jobs: createBackgroundJobRepo(db),
+    clock,
+    say: async (channel, text, thread) => void (await slackAdmin.post(channel, text, thread, SIGNATURES.watch)),
+    runTurn: deps.runTurn!,
+    mayRun: (id) => id === config.ownerSlackId || !!users.get(id),
+    log: (msg) => console.error(`[background] ${msg}`),
+  });
+  deps.backgroundWatch = backgroundWatch;
+  const bootRecover = setTimeout(() => {
+    void backgroundWatch
+      .recover()
+      .then((n) => {
+        if (n > 0) console.error(`[background] told ${n} thread(s) their background work died with the last process`);
+      })
+      .catch(tickFailed("background-recover"));
+  }, 20_000);
+  bootRecover.unref?.();
   // A worker's `orca orchestration ask` lands in the bot's own Orca terminal,
   // which nobody reads. This puts each one to the thread that started the
   // worker, as a turn that answers it with `orca orchestration reply`.
