@@ -3,6 +3,7 @@
 import type { ReviewGuard } from "../reviewGuard.ts";
 import type { WorkerUsagePort } from "../workerCost.ts";
 import type { WorkerTickets } from "../workerTickets.ts";
+import type { InternalKind } from "../../domain/internalMessages.ts";
 import { DEFAULT_BOT_NAME } from "../../domain/personality.ts";
 import { ALWAYS_ON_BUDGET } from "../../domain/adapterCheck.ts";
 import { type AdapterDeps } from "../adapterMemory.ts";
@@ -148,6 +149,8 @@ export type CommandDeps = {
     autoContinue?: boolean;
     /** Started by the bot, nobody typed it. */
     unprompted?: boolean;
+    /** What the bot's own sender is, for the reply's footer. */
+    trigger?: InternalKind;
   }) => Promise<unknown>;
   /** Timer for a workflow's next step; injected so tests need not wait. */
   continueTimer?: (fn: () => void, ms: number) => void;

@@ -219,6 +219,7 @@ describe("respond", () => {
       threadTs: "1.0",
       keepSession: true,
       unprompted: true,
+      trigger: "tell",
     });
 
     expect(seen).toContain("internal steer"); // the chat brain ran on the steer

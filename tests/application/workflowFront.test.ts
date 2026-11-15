@@ -239,6 +239,7 @@ describe("workflow front and worker", () => {
       keepSession: true,
       unprompted: true,
       workerLane: true,
+      trigger: "orca",
     });
     expect(res).toEqual({ kind: "reply", text: "replied to the worker", by: "workflow worker", trigger: "orca" });
     expect(b.frontCalls()).toHaveLength(0);

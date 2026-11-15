@@ -338,13 +338,13 @@ export const createSlackAdmin = (client: WebClient, clock: () => number = Date.n
       return open.channel?.id;
     },
 
-    postDm: async (userId, text, by) => {
+    postDm: async (userId, text, by, trigger) => {
       const open = (await client.conversations.open({ users: userId })) as { channel?: { id?: string } };
       const channel = open.channel?.id;
       if (!channel) return undefined;
       const body = toMrkdwn(text);
       const posted = (await client.chat
-        .postMessage({ channel, ...signedText(body, footer(by)) })
+        .postMessage({ channel, ...signedText(body, footer(by, undefined, false, trigger)) })
         .catch(() => client.chat.postMessage({ channel, text: body }))) as { ts?: string };
       return posted.ts ? { channel, ts: posted.ts } : undefined;
     },

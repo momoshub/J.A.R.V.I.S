@@ -150,7 +150,7 @@ export type SlackAdminPort = {
    * Open (or reuse) a DM with a user and post there. Returns where it landed,
    * so a message can later be found again - matching a reaction to it, say.
    */
-  postDm: (userId: string, text: string, by?: string) => Promise<PostedRef | undefined>;
+  postDm: (userId: string, text: string, by?: string, trigger?: InternalKind) => Promise<PostedRef | undefined>;
   /** The id of the DM with a user, opened when needed, posting nothing. */
   openDm?: (userId: string) => Promise<string | undefined>;
   /**

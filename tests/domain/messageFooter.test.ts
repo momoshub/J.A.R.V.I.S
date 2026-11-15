@@ -1,8 +1,4 @@
 import { describe, expect, test } from "bun:test";
-import { triggerOf } from "../../src/domain/internalMessages.ts";
-import { readyMessage } from "../../src/domain/watch.ts";
-import { loopTurnText } from "../../src/domain/loop.ts";
-import { cleanInboundText } from "../../src/domain/conversation.ts";
 import {
   clockFallback,
   FOOTER_BLOCK_ID,
@@ -246,13 +242,6 @@ describe("triggered by", () => {
     expect(triggerLabel(undefined)).toBeUndefined();
     expect(triggerLabel("brief")).toBeUndefined();
     expect(footerLine("Jarvis", undefined, undefined, undefined, "brief")).toBe("Jarvis");
-  });
-
-  test("the classifier feeds the footer: a watch hand-back is labelled, a typed message is not", () => {
-    const watch = cleanInboundText(readyMessage("deploy finished", 120_000));
-    expect(footerLine("Jarvis", undefined, undefined, undefined, triggerOf(watch))).toBe("Jarvis · triggered by watch");
-    expect(footerLine("Jarvis", undefined, undefined, undefined, triggerOf(cleanInboundText(loopTurnText(3, "every 5m", "check the queue"))))).toBe("Jarvis · triggered by loop");
-    expect(footerLine("Jarvis", undefined, undefined, undefined, triggerOf("can you check the deploy?"))).toBe("Jarvis");
   });
 
   test("an edit keeps the trigger and only moves the time", () => {

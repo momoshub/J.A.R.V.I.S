@@ -11,10 +11,12 @@
  * One line: `Jarvis · triggered by <kind> · <usage, when a turn reported it>`, plus ` · updated <time>`
  * only once the message has been edited after it was first sent (Kai: a fresh
  * post saying "updated" is noise). `triggered by <kind>` (nudge, tell, watch,
- * loop, orca) appears only when the turn began from an internal message, not
- * from a person chatting - a chat turn's footer is unchanged. It sits right
- * after the signature and is part of the line, so a restamp keeps it. Tidying a streamed reply when its turn
- * finishes is still the first send, so it carries no stamp either.
+ * loop, orca) appears only when one of the bot's own senders started the turn
+ * and named itself (`InboundMessage.trigger`, set by `runTurn` / the drift
+ * steer / the loop runner's DM) - never guessed from the text, since a person
+ * can type a look-alike opening. A chat turn's footer is unchanged. It sits
+ * right after the signature and is part of the line, so a restamp keeps it.
+ * Tidying a streamed reply when its turn finishes is still the first send, so it carries no stamp either.
  * The time is a Slack date token, so each reader sees it in their own timezone;
  * the fallback (for clients that cannot render it) is the host clock with its
  * offset.

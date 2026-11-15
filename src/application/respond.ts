@@ -8,7 +8,6 @@ import type { ReviewGuard } from "./reviewGuard.ts";
 import { decideAccess } from "../domain/access.ts";
 import { disabledRoleReason } from "../domain/rolePolicy.ts";
 import { cleanInboundText } from "../domain/conversation.ts";
-import { triggerOf } from "../domain/internalMessages.ts";
 import { bookOf, commandLineOf, dispatchCommand, mayRun, notifiesOwner } from "./commands.ts";
 import { runFrontTurn, runWorkflowTurn } from "./workflow.ts";
 import { afterFailedStep, afterWorkflowTurn, steerWorker } from "./workflowContinue.ts";
@@ -45,11 +44,8 @@ export type RespondDeps = HandleMessageDeps & Pick<FrontDeps, "workerCalls"> & {
   stepFailures?: Map<number, number>;
 };
 
-/** The footer's `trigger` for a reply to `text`, when an internal message (not a person) started the turn. */
-const triggerPart = (text: string) => {
-  const trigger = triggerOf(cleanInboundText(text));
-  return trigger ? { trigger } : {};
-};
+/** The footer's `trigger`, when the bot's own sender (not a person) named one on the inbound. */
+const triggerPart = (inbound: InboundMessage) => (inbound.trigger ? { trigger: inbound.trigger } : {});
 
 export const respond = async (
   deps: RespondDeps,
@@ -185,7 +181,7 @@ export const respond = async (
               if (!tracked?.signal.aborted) {
                 await afterWorkflowTurn(deps, workflow, who.user.slackId, turn.wantsContinue, deps.commandPrefix);
               }
-              return { kind: "reply", text: turn.text, by: SIGNATURES.workflowWorker, ...(turn.usage ? { usage: turn.usage } : {}), ...triggerPart(inbound.text) };
+              return { kind: "reply", text: turn.text, by: SIGNATURES.workflowWorker, ...(turn.usage ? { usage: turn.usage } : {}), ...triggerPart(inbound) };
             }
             if (inbound.workerLane) {
               // Asked of the worker's own session (an Orca worker's question),
@@ -193,7 +189,7 @@ export const respond = async (
               const turn = await runWorkflowTurn(deps, workflow, who.user, cleanInboundText(inbound.text), false, sink, tracked?.signal);
               if (isRestartCut(tracked?.signal)) return restartCut();
               record("ok");
-              return { kind: "reply", text: turn.text, by: SIGNATURES.workflowWorker, ...triggerPart(inbound.text) };
+              return { kind: "reply", text: turn.text, by: SIGNATURES.workflowWorker, ...triggerPart(inbound) };
             }
             if (key !== threadKey) {
               // The front: answer now, from a digest of where the worker is,
@@ -206,7 +202,7 @@ export const respond = async (
               if (turn.steers.length > 0 && !tracked?.signal.aborted) {
                 steerWorker(deps, workflow, who.user.slackId, turn.steers, threadKey);
               }
-              return { kind: "reply", text: turn.text, by: SIGNATURES.workflowFront, ...(turn.usage ? { usage: turn.usage } : {}), ...triggerPart(inbound.text) };
+              return { kind: "reply", text: turn.text, by: SIGNATURES.workflowFront, ...(turn.usage ? { usage: turn.usage } : {}), ...triggerPart(inbound) };
             }
           }
         }

@@ -27,6 +27,7 @@ import {
   tsMs,
   type NudgedMap,
 } from "../domain/stalePromise.ts";
+import type { InternalKind } from "../domain/internalMessages.ts";
 import { steerPrompt } from "../domain/tellPrompt.ts";
 import type { EndedThread } from "../infrastructure/db/messageRepo.ts";
 import { logAndIgnore } from "./ignoredError.ts";
@@ -58,6 +59,7 @@ export type StalePromiseDeps = {
     text: string;
     keepSession?: boolean;
     unprompted?: boolean;
+    trigger?: InternalKind;
   }) => Promise<unknown>;
   readonly settings: { get: (key: string) => string | undefined; set: (key: string, value: string) => void };
   readonly nudgedKey: string;
@@ -189,6 +191,7 @@ export const createStalePromiseSweep = (deps: StalePromiseDeps): StalePromiseSwe
           text: steerPrompt("The stale-promise sweep (a timer in the bot, not a person) sent this", nudgeText(ageMs)),
           keepSession: true,
           unprompted: true,
+          trigger: "nudge",
         })
         .catch(logAndIgnore("stale promise nudge turn"));
     }

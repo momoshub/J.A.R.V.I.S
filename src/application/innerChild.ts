@@ -67,6 +67,7 @@ import type { SelfIssue, SelfIssueRepo } from "../infrastructure/db/selfIssueRep
 import type { TurnLogRepo } from "../infrastructure/db/turnLogRepo.ts";
 import type { Clock, LlmPort } from "./ports.ts";
 import type { SelfPrAccounts } from "../domain/selfUpdate.ts";
+import type { InternalKind } from "../domain/internalMessages.ts";
 import { EMPTY_REPLY_FALLBACK } from "./handleMessage.ts";
 import { logAndIgnore } from "./ignoredError.ts";
 
@@ -150,8 +151,8 @@ type SteerRequest = { channelId: string; threadTs: string; slackUserId: string; 
  */
 export const steerViaRespond =
   (d: {
-    run: (req: SteerRequest) => Promise<{ kind: string; text?: string }>;
-    post: (channel: string, text: string, threadTs: string) => Promise<{ ts: string } | void | undefined>;
+    run: (req: SteerRequest) => Promise<{ kind: string; text?: string; trigger?: InternalKind }>;
+    post: (channel: string, text: string, threadTs: string, trigger?: InternalKind) => Promise<{ ts: string } | void | undefined>;
     workflowActive: (channel: string, threadTs: string) => boolean;
     allowed: (slackUserId: string) => boolean;
   }) =>
@@ -161,7 +162,7 @@ export const steerViaRespond =
     const text = result.kind === "reply" ? (result.text ?? "").trim() : "";
     if (!text) return { text: "" };
     if (isSilenceNote(text) || text === EMPTY_REPLY_FALLBACK) return { text: "nothing to add" };
-    const posted = await d.post(req.channelId, text, req.threadTs);
+    const posted = await d.post(req.channelId, text, req.threadTs, result.trigger);
     return { text, ...(posted ? { ts: posted.ts } : {}) };
   };
 
