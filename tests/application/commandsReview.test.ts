@@ -4,6 +4,7 @@ import { describe, expect, test } from "bun:test";
 import { createSettingsRepo } from "../../src/infrastructure/db/settingsRepo.ts";
 import { createSelfIssueRepo } from "../../src/infrastructure/db/selfIssueRepo.ts";
 import { dispatchCommand, isQuietCommand, listCommandInfo } from "../../src/application/commands.ts";
+import { claudeAuthError } from "../../src/domain/threadSession.ts";
 import type { LlmPort } from "../../src/application/ports.ts";
 import { OWNER, db, actor, slackCalls, build, everyoneHasToken } from "./commandsFixture.ts";
 
@@ -312,7 +313,7 @@ describe("reviews run on the caller's own Claude token", () => {
     deps.settings!.set("ticket_tracker", "https://notion.so/tracker");
     deps.llm = {
       complete: async () => {
-        throw new Error("Failed to authenticate. API Error: 401 OAuth access token is invalid.");
+        throw claudeAuthError();
       },
     };
     const lines: string[] = [];
@@ -1015,13 +1016,13 @@ describe("a stored Claude token runs quick-review and nothing else", () => {
 
   describe("an auth failure on the caller's token", () => {
     const PR = "https://github.com/o/r/pull/1";
-    const RAW = "claude CLI error (success): Failed to authenticate. API Error: 401 OAuth access token has been revoked.";
+    
     const failing = (): LlmPort => ({
       complete: async () => {
-        throw new Error(RAW);
+        throw claudeAuthError();
       },
       stream: async () => {
-        throw new Error(RAW);
+        throw claudeAuthError();
       },
     });
 
@@ -1069,8 +1070,8 @@ describe("a stored Claude token runs quick-review and nothing else", () => {
       expect(out).not.toContain("Failed to authenticate");
     });
 
-    // The real claudeCli stream rejects on the CLI's own refusal.
-    const RAW_TEXT = "claude CLI error (success): Failed to authenticate. API Error: 401 OAuth access token has been revoked.";
+    // The real claudeCli stream rejects with the typed auth error on the CLI's own refusal.
+    
     for (const aborted of [false, true]) {
       test(`live: a stream that REJECTS with the 401${aborted ? " after an aborted event" : ""} gets the friendly line and button`, async () => {
         const deps = build();
@@ -1078,11 +1079,11 @@ describe("a stored Claude token runs quick-review and nothing else", () => {
         deps.claudeTokens = everyoneHasToken();
         deps.llm = {
           complete: async () => {
-            throw new Error(RAW_TEXT);
+            throw claudeAuthError();
           },
           stream: async (_p, sink) => {
             if (aborted) sink({ type: "aborted", reason: "it exited with code 1" });
-            throw new Error(RAW_TEXT);
+            throw claudeAuthError();
           },
         };
         const lines: string[] = [];
@@ -1132,6 +1133,20 @@ describe("a stored Claude token runs quick-review and nothing else", () => {
         },
       });
       expect(lines.join("\n")).toContain("The handler logs");
+      expect(slackCalls.buttons).toHaveLength(0);
+    });
+
+    test("an error whose text merely reads like a 401 is not treated as a refused token", async () => {
+      const deps = build();
+      deps.settings = createSettingsRepo(db);
+      deps.claudeTokens = everyoneHasToken();
+      deps.llm = {
+        complete: async () => {
+          throw new Error("Failed to authenticate. API Error: 401 OAuth access token is invalid.");
+        },
+      };
+      const out = await dispatchCommand(deps, actor(), "C1", `rv ${PR}`);
+      expect(out).not.toContain("no longer works");
       expect(slackCalls.buttons).toHaveLength(0);
     });
 

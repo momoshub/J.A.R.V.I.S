@@ -23,7 +23,7 @@ import { postedBody } from "../../domain/ghCommand.ts";
 import { failedList } from "../../domain/ciGate.ts";
 import { tokenFor } from "../claudeTokens.ts";
 import { authorReviewPolicyKey, reviewPolicyKey, SETTING_KEYS } from "../../infrastructure/db/settingsRepo.ts";
-import { isAuthFailure } from "../../domain/threadSession.ts";
+import { isClaudeAuthError } from "../../domain/threadSession.ts";
 import { type CommandDeps, PR_URL, type CommandDef, askForToken, reviewAgentsOf, botNameOf } from "./shared.ts";
 import { logAndIgnore } from "../ignoredError.ts";
 import { PERM } from "../../domain/permissions.ts";
@@ -254,7 +254,7 @@ export const REVIEW_COMMANDS: readonly CommandDef[] = [
           try {
             out = await deps.llm.complete(params);
           } catch (err) {
-            if (!isAuthFailure(err)) throw err;
+            if (!isClaudeAuthError(err)) throw err;
             return askForToken(ctx, `quick-review ${args.join(" ")}`.trim(), true, true);
           }
           return [...busy, ...ciLines, out.trim() || "I could not put a review together for that one."].join("\n");
@@ -325,7 +325,7 @@ export const REVIEW_COMMANDS: readonly CommandDef[] = [
         } catch (err) {
           // Their token was refused mid-run: say so in one line and offer the box,
           // never the CLI's own error text. Nothing is deleted; the modal overwrites.
-          if (!isAuthFailure(err)) throw err;
+          if (!isClaudeAuthError(err)) throw err;
           return askForToken(ctx, `quick-review ${args.join(" ")}`.trim(), true, true);
         }
 

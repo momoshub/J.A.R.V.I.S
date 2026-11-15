@@ -28,10 +28,7 @@ import type {
 } from "../../application/ports.ts";
 import type { PromptMessage } from "../../domain/types.ts";
 import type { ToolPolicy } from "../../domain/toolPolicy.ts";
-import { isAuthFailure } from "../../domain/threadSession.ts";
-
-/** A refusal is a line or two; a longer result that mentions 401 is an answer about one. */
-const AUTH_REFUSAL_MAX = 600;
+import { claudeAuthError, isClaudeAuthError } from "../../domain/threadSession.ts";
 import { runsOrcaWorkerStart } from "../../domain/threadBackground.ts";
 import { isNoiseTool, redactPaths, redactSecrets } from "../../domain/toolVisibility.ts";
 import { scrubSecretEnv } from "../../domain/turnEnv.ts";
@@ -575,6 +572,10 @@ const hostLoginEnv = (
   return env;
 };
 
+/** A result the CLI itself marks as a 401 - the one structured sign of a refused token. */
+const isRefusedResult = (r: Record<string, unknown> | undefined): boolean =>
+  r?.is_error === true && r.api_error_status === 401;
+
 export const createClaudeCliLlm = (config: ClaudeCliConfig = {}): LlmPort => {
   // Whatever goes wrong asking for it, the turn still runs - just without it.
   const turnEnv = async (): Promise<Record<string, string | undefined>> => {
@@ -619,6 +620,12 @@ export const createClaudeCliLlm = (config: ClaudeCliConfig = {}): LlmPort => {
       new Response(proc.stderr).text(),
       proc.exited,
     ]);
+    // A refused token can arrive on a failing exit, so its structured 401 is read first.
+    try {
+      if (isRefusedResult(JSON.parse(stdout) as Record<string, unknown>)) throw claudeAuthError();
+    } catch (err) {
+      if (isClaudeAuthError(err)) throw err;
+    }
     if (exitCode !== 0) {
       throw new Error(`claude CLI exited with code ${exitCode}: ${stderr.trim() || stdout.trim() || "no output"}`);
     }
@@ -734,12 +741,15 @@ export const createClaudeCliLlm = (config: ClaudeCliConfig = {}): LlmPort => {
       if (text.trim()) held = text;
     };
     let resultEvent: Record<string, unknown> | undefined;
+    // The CLI tags the synthetic assistant message of a refused token.
+    let authRejected = false;
     // The background tasks the CLI says are still running, as of its latest
     // `background_tasks_changed`. Whatever is left here when the process exits
     // was killed with it.
     let backgroundTasks: string[] = [];
 
     const handleEvent = (e: Record<string, unknown>): void => {
+      if (e.type === "assistant" && e.error === "authentication_failed") authRejected = true;
       if (e.type === "stream_event") {
         const ev = (e.event ?? {}) as Record<string, unknown>;
         const index = ev.index as number | undefined;
@@ -904,22 +914,16 @@ export const createClaudeCliLlm = (config: ClaudeCliConfig = {}): LlmPort => {
     // react call belongs in front of it.
     const lead = reactAnswers.map((t) => t.trim()).filter((t) => t && !finalText.includes(t));
     const finished = (finalText ? [...lead, finalText].join("\n\n") : streamedText).trim();
-    return { exitCode, finished, finalText, resultEvent, stderr: stderrPromise, emit, backgroundTasks };
+    const refused = authRejected || isRefusedResult(resultEvent);
+    return { exitCode, finished, finalText, resultEvent, refused, stderr: stderrPromise, emit, backgroundTasks };
   };
 
   const stream = async (params: LlmCompleteParams, sink: LlmStreamSink) => {
-    const { exitCode, finished: answer, resultEvent, stderr, emit, backgroundTasks } = await runStreaming(params, sink);
-    // A refused token ends as an `is_error` result carrying the 401 text, not as
-    // a failed exit. Returning it would hand the raw CLI error to the caller as
-    // if it were the answer, so throw it the way `complete` does and let the
-    // caller tell the person their token no longer works. Only the result's own
-    // text is the refusal: an is_error result with none (error_max_turns,
-    // error_during_execution) leaves `answer` as everything the turn said, and a
-    // turn that merely talks about a 401 is not a refused token.
-    const refusal = resultEvent?.is_error === true && typeof resultEvent.result === "string" ? resultEvent.result : "";
-    if (refusal && refusal.length < AUTH_REFUSAL_MAX && isAuthFailure(refusal)) {
-      throw new Error(`claude CLI error (${String(resultEvent?.subtype ?? "unknown")}): ${refusal}`);
-    }
+    const { exitCode, finished: answer, refused, stderr, emit, backgroundTasks } = await runStreaming(params, sink);
+    // A refused token ends as an `is_error` result (often exit 0), not as a failed
+    // exit. Returning it would hand the raw CLI error to the caller as the answer,
+    // so throw the typed auth error, whatever the text or exit code was.
+    if (refused) throw claudeAuthError();
     if (exitCode !== 0 && !answer) {
       throw new Error(`claude CLI exited with code ${exitCode}: ${(await stderr).trim() || "no output"}`);
     }
@@ -946,16 +950,16 @@ export const createClaudeCliLlm = (config: ClaudeCliConfig = {}): LlmPort => {
 
   /** `complete`'s contract - throw unless it finished cleanly - over a streamed run. */
   const completeTraced = async (params: LlmCompleteParams): Promise<string> => {
-    const { exitCode, finalText, resultEvent, stderr } = await runStreaming(params, () => {});
+    const { exitCode, finalText, resultEvent, refused, stderr } = await runStreaming(params, () => {});
+    // Before the exit check: a refused token on a failing exit is still the auth error.
+    if (refused) throw claudeAuthError();
     if (exitCode !== 0) {
       throw new Error(`claude CLI exited with code ${exitCode}: ${(await stderr).trim() || "no output"}`);
     }
     if (!resultEvent) throw new Error("claude CLI ended without a result");
     if (resultEvent.is_error || resultEvent.subtype !== "success") {
-      // Same rule as `stream`: only the result's own short string can be a
-      // refusal. finalText is the turn's whole answer and may merely discuss 401s.
-      const refusal = resultEvent.is_error === true && typeof resultEvent.result === "string" ? resultEvent.result : "";
-      const detail = refusal && refusal.length < AUTH_REFUSAL_MAX ? `: ${refusal}` : "";
+      // The result's own text only (finalText is the whole answer); it is for the log, never matched.
+      const detail = resultEvent.is_error === true && typeof resultEvent.result === "string" && resultEvent.result ? `: ${resultEvent.result}` : "";
       throw new Error(`claude CLI error (${String(resultEvent.subtype ?? "unknown")})${detail}`);
     }
     return finalText.trim();

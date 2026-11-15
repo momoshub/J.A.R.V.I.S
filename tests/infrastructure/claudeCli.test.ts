@@ -11,7 +11,7 @@ import {
   summarizeTool,
   usageOf,
 } from "../../src/infrastructure/llm/claudeCli.ts";
-import { isAuthFailure } from "../../src/domain/threadSession.ts";
+import { isClaudeAuthError } from "../../src/domain/threadSession.ts";
 import type { PromptMessage } from "../../src/domain/types.ts";
 import type { BillingContext, LlmStreamEvent, ToolTrace, ToolTraceSink } from "../../src/application/ports.ts";
 
@@ -690,104 +690,144 @@ const STREAM_EVENTS = [
   { type: "result", subtype: "success", is_error: false, result: "Hello world" },
 ];
 
-describe("createClaudeCliLlm.stream with a refused token", () => {
-  const refused = (exit: number): string => {
-    const events = [
-      { type: "result", subtype: "success", is_error: true, result: "Failed to authenticate. API Error: 401 revoked" },
-    ];
-    const dir = mkdtempSync(join(tmpdir(), "jarvis-claude-401-"));
-    const dataPath = join(dir, "events.ndjson");
-    writeFileSync(dataPath, events.map((e) => JSON.stringify(e)).join("\n") + "\n");
-    const path = join(dir, "claude");
-    writeFileSync(path, `#!/usr/bin/env bash\ncat > /dev/null\ncat ${dataPath}\nexit ${exit}\n`);
-    chmodSync(path, 0o755);
-    return path;
-  };
+// The shapes the real CLI emits for a bogus CLAUDE_CODE_OAUTH_TOKEN (stream-json).
+const retry401 = { type: "system", subtype: "api_retry", error_status: 401, error: "authentication_failed" };
+const synthetic401 = {
+  type: "assistant",
+  error: "authentication_failed",
+  message: { model: "<synthetic>", content: [{ type: "text", text: "Failed to authenticate. API Error: 401 OAuth access token is invalid." }] },
+};
+const result401 = (text = "Failed to authenticate. API Error: 401 OAuth access token is invalid.") => ({
+  type: "result",
+  subtype: "success",
+  is_error: true,
+  api_error_status: 401,
+  terminal_reason: "api_error",
+  result: text,
+});
+const refusedEvents = [retry401, synthetic401, result401()];
 
+const fakeEventsBin = (events: unknown[], exit: number): string => {
+  const dir = mkdtempSync(join(tmpdir(), "jarvis-claude-401-"));
+  const dataPath = join(dir, "events.ndjson");
+  writeFileSync(dataPath, events.map((e) => JSON.stringify(e)).join("\n") + "\n");
+  const path = join(dir, "claude");
+  writeFileSync(path, `#!/usr/bin/env bash\ncat > /dev/null\ncat ${dataPath}\nexit ${exit}\n`);
+  chmodSync(path, 0o755);
+  return path;
+};
+
+const textBlock = (text: string): unknown[] => [
+  { type: "stream_event", event: { type: "message_start" } },
+  { type: "stream_event", event: { type: "content_block_start", index: 0, content_block: { type: "text" } } },
+  { type: "stream_event", event: { type: "content_block_delta", index: 0, delta: { type: "text_delta", text } } },
+  { type: "stream_event", event: { type: "content_block_stop", index: 0 } },
+];
+const authTalk =
+  "I traced it: the webhook handler returns 401 because the auth middleware rejects the signature, so the delivery fails to authenticate. " +
+  "The invalid api key theory does not hold, the secret matches. ".repeat(10);
+
+const askParams = { system: "s", messages: [{ role: "user" as const, content: "hi" }] };
+const caught = (run: Promise<unknown>): Promise<unknown> =>
+  run.then(
+    () => new Error("resolved"),
+    (e: unknown) => e,
+  );
+
+/** The same cases through each path that reads the CLI's output. */
+const paths: Record<string, (events: unknown[], exit: number) => Promise<unknown>> = {
+  stream: (events, exit) => caught(createClaudeCliLlm({ binPath: fakeEventsBin(events, exit) }).stream!(askParams, () => {})),
+  "complete (traced)": (events, exit) =>
+    caught(createClaudeCliLlm({ binPath: fakeEventsBin(events, exit), onToolTrace: () => {} }).complete(askParams)),
+};
+const settle = (events: unknown[], exit: number) =>
+  Promise.all(
+    Object.entries(paths).map(async ([name, run]) => [name, await run(events, exit)] as const),
+  );
+
+describe("claude CLI refused token (structured signal)", () => {
   for (const exit of [0, 1]) {
-    test(`throws the auth failure instead of returning it (exit ${exit})`, async () => {
-      const llm = createClaudeCliLlm({ binPath: refused(exit) });
-      const run = llm.stream!({ system: "s", messages: [{ role: "user", content: "hi" }] }, () => {});
-      await expect(run).rejects.toThrow("Failed to authenticate");
+    test(`a refused token throws the typed auth error on every path (exit ${exit})`, async () => {
+      for (const [name, err] of await settle(refusedEvents, exit)) {
+        expect([name, isClaudeAuthError(err)]).toEqual([name, true]);
+      }
     });
   }
 
-  test("an is_error result that is not an auth failure is still returned", async () => {
-    const bin = fakeStreamBin([{ type: "result", subtype: "success", is_error: true, result: "Something else broke" }]);
-    const out = await createClaudeCliLlm({ binPath: bin }).stream!({ system: "s", messages: [{ role: "user", content: "hi" }] }, () => {});
-    expect(out).toBe("Something else broke");
+  test("the 401 counts whatever the text or length of the result", async () => {
+    expect(authTalk.length).toBeGreaterThan(600);
+    for (const text of [authTalk, "", "nope"]) {
+      for (const [name, err] of await settle([result401(text)], 0)) {
+        expect([name, isClaudeAuthError(err)]).toEqual([name, true]);
+      }
+    }
   });
 
-  const textBlock = (text: string): unknown[] => [
-    { type: "stream_event", event: { type: "message_start" } },
-    { type: "stream_event", event: { type: "content_block_start", index: 0, content_block: { type: "text" } } },
-    { type: "stream_event", event: { type: "content_block_delta", index: 0, delta: { type: "text_delta", text } } },
-    { type: "stream_event", event: { type: "content_block_stop", index: 0 } },
-  ];
-  const authTalk =
-    "I traced it: the webhook handler returns 401 because the auth middleware rejects the signature, so the delivery fails to authenticate. " +
-    "The invalid api key theory does not hold, the secret matches. ".repeat(10);
+  test("the assistant event's authentication_failed is enough on its own", async () => {
+    for (const [name, err] of await settle([synthetic401, { type: "result", subtype: "success", is_error: true, result: "x" }], 1)) {
+      expect([name, isClaudeAuthError(err)]).toEqual([name, true]);
+    }
+  });
+
+  test("the error never carries the CLI's own text", async () => {
+    for (const [, err] of await settle(refusedEvents, 1)) {
+      expect((err as Error).message).not.toContain("OAuth access token");
+    }
+  });
+
+  test("one-shot json: a refused token is the auth error on exit 0 and on exit 1", async () => {
+    for (const exit of [0, 1]) {
+      const bin = fakeBin(`#!/usr/bin/env bash\ncat > /dev/null\necho '${JSON.stringify(result401())}'\necho boom >&2\nexit ${exit}`);
+      const err = await caught(createClaudeCliLlm({ binPath: bin }).complete(askParams));
+      expect(isClaudeAuthError(err)).toBe(true);
+    }
+  });
+
+  test("one-shot json: an is_error result with no api_error_status 401 is not an auth failure", async () => {
+    const bin = fakeBin(
+      `#!/usr/bin/env bash\ncat > /dev/null\necho '{"type":"result","subtype":"success","is_error":true,"result":"Failed to authenticate. API Error: 401 revoked"}'`,
+    );
+    const err = await caught(createClaudeCliLlm({ binPath: bin }).complete(askParams));
+    expect(isClaudeAuthError(err)).toBe(false);
+  });
+
+  test("an is_error result whose text says 401 / auth, with no api_error_status, is not an auth failure", async () => {
+    const events = [{ type: "result", subtype: "success", is_error: true, result: "Failed to authenticate. API Error: 401 revoked" }];
+    const [s, t] = await settle(events, 0);
+    // stream hands the text back as the answer; traced throws a plain error
+    expect(isClaudeAuthError(s?.[1])).toBe(false);
+    expect(isClaudeAuthError(t?.[1])).toBe(false);
+  });
+
+  test("a non-401 api_error_status is not an auth failure", async () => {
+    const events = [{ ...result401("overloaded"), api_error_status: 529 }];
+    for (const [name, err] of await settle(events, 0)) {
+      expect([name, isClaudeAuthError(err)]).toEqual([name, false]);
+    }
+  });
 
   for (const subtype of ["error_max_turns", "error_during_execution"]) {
-    test(`a long streamed answer about 401/auth is returned when ${subtype} carries no result text`, async () => {
-      expect(authTalk.length).toBeGreaterThan(600);
-      const bin = fakeStreamBin([...textBlock(authTalk), { type: "result", subtype, is_error: true }]);
-      const out = await createClaudeCliLlm({ binPath: bin }).stream!({ system: "s", messages: [{ role: "user", content: "hi" }] }, () => {});
+    test(`a long answer about 401/auth is not an auth failure when ${subtype} carries no result text`, async () => {
+      const events = [...textBlock(authTalk), { type: "result", subtype, is_error: true }];
+      for (const [name, err] of await settle(events, 0)) {
+        expect([name, isClaudeAuthError(err)]).toEqual([name, false]);
+      }
+      const out = await createClaudeCliLlm({ binPath: fakeEventsBin(events, 0) }).stream!(askParams, () => {});
       expect(out).toBe(authTalk.trim());
     });
   }
 
-  test("a later failed round does not turn an earlier real answer about 401/auth into a refused token", async () => {
-    const bin = fakeStreamBin([
-      ...textBlock(authTalk),
-      { type: "result", subtype: "success", is_error: false, result: authTalk },
-      { type: "result", subtype: "error_max_turns", is_error: true },
-    ]);
-    const out = await createClaudeCliLlm({ binPath: bin }).stream!({ system: "s", messages: [{ role: "user", content: "hi" }] }, () => {});
-    expect(out).toBe(authTalk.trim());
+  test("a short real answer mentioning 401 and auth is returned as the answer", async () => {
+    const answer = "approved - the middleware now returns 401 when the auth header is missing";
+    const events = [{ type: "result", subtype: "success", is_error: false, result: answer }];
+    const out = await createClaudeCliLlm({ binPath: fakeEventsBin(events, 0) }).stream!(askParams, () => {});
+    expect(out).toBe(answer);
   });
 
-  test("a long is_error result that merely discusses 401/auth is returned, not thrown", async () => {
-    const bin = fakeStreamBin([{ type: "result", subtype: "success", is_error: true, result: authTalk }]);
-    const out = await createClaudeCliLlm({ binPath: bin }).stream!({ system: "s", messages: [{ role: "user", content: "hi" }] }, () => {});
-    expect(out).toBe(authTalk.trim());
-  });
-});
-
-describe("createClaudeCliLlm.complete (traced) with a refused token", () => {
-  const params = { system: "s", messages: [{ role: "user" as const, content: "hi" }] };
-  const traced = (events: unknown[]) => createClaudeCliLlm({ binPath: fakeStreamBin(events), onToolTrace: () => {} });
-  const textBlock = (text: string) => [
-    { type: "stream_event", event: { type: "content_block_start", index: 0, content_block: { type: "text" } } },
-    { type: "stream_event", event: { type: "content_block_delta", index: 0, delta: { type: "text_delta", text } } },
-    { type: "stream_event", event: { type: "content_block_stop", index: 0 } },
-  ];
-  const authTalk =
-    "I traced it: the webhook handler returns 401 because the auth middleware rejects the signature, so the delivery fails to authenticate. " +
-    "The invalid api key theory does not hold, the secret matches. ".repeat(10);
-
-  test("an is_error result carrying the 401 throws it", async () => {
-    const llm = traced([{ type: "result", subtype: "success", is_error: true, result: "Failed to authenticate. API Error: 401 revoked" }]);
-    await expect(llm.complete(params)).rejects.toThrow("Failed to authenticate");
-  });
-
-  test("a long answer about 401/auth before an is_error result with no text is not an auth failure", async () => {
-    const llm = traced([...textBlock(authTalk), { type: "result", subtype: "error_max_turns", is_error: true }]);
-    const err = await llm.complete(params).then(
-      () => new Error("resolved"),
-      (e: unknown) => e as Error,
-    );
-    expect(err.message).toContain("error_max_turns");
-    expect(isAuthFailure(err)).toBe(false);
-  });
-
-  test("a long is_error result that merely discusses 401/auth is not an auth failure", async () => {
-    const llm = traced([{ type: "result", subtype: "success", is_error: true, result: authTalk }]);
-    const err = await llm.complete(params).then(
-      () => new Error("resolved"),
-      (e: unknown) => e as Error,
-    );
-    expect(isAuthFailure(err)).toBe(false);
+  test("a normal result is unchanged on both paths", async () => {
+    const events = [{ type: "result", subtype: "success", is_error: false, result: "At your service." }];
+    expect(await createClaudeCliLlm({ binPath: fakeEventsBin(events, 0) }).stream!(askParams, () => {})).toBe("At your service.");
+    expect(await createClaudeCliLlm({ binPath: fakeEventsBin(events, 0), onToolTrace: () => {} }).complete(askParams)).toBe("At your service.");
   });
 });
 
