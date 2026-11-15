@@ -1351,6 +1351,75 @@ describe("background work cut off when the run ends", () => {
     expect(deltas.join("")).toBe(out);
   });
 
+  test("a caller that takes the cut-off hears it and the reply is left alone", async () => {
+    const llm = createClaudeCliLlm({
+      binPath: fakeStreamBin([
+        tasks([{ task_id: "a1", description: "Write the blog post" }]),
+        text("started it"),
+        { type: "result", subtype: "success", is_error: false, result: "started it" },
+      ]),
+    });
+    const deltas: string[] = [];
+    const live: (readonly string[])[] = [];
+    const cut: (readonly string[])[] = [];
+    const out = await llm.stream!(
+      {
+        system: "s",
+        messages: [{ role: "user", content: "hi" }],
+        onBackgroundTasks: (t) => void live.push(t),
+        onBackgroundCutOff: (t) => void cut.push(t),
+      },
+      (e) => {
+        if (e.type === "text") deltas.push(e.delta);
+      },
+    );
+    expect(cut).toEqual([["Write the blog post"]]);
+    expect(live).toEqual([["Write the blog post"]]);
+    // The notice is the caller's now: the closed stream is no place for it.
+    expect(out).toBe("started it");
+    expect(deltas.join("")).toBe("started it");
+  });
+
+  test("nothing left running clears the tracked list and reports no cut-off", async () => {
+    const llm = createClaudeCliLlm({
+      binPath: fakeStreamBin([
+        tasks([{ task_id: "a1", description: "job" }]),
+        tasks([]),
+        text("done"),
+        { type: "result", subtype: "success", is_error: false, result: "done" },
+      ]),
+    });
+    const live: (readonly string[])[] = [];
+    const cut: (readonly string[])[] = [];
+    await llm.stream!(
+      { system: "s", messages: [{ role: "user", content: "hi" }], onBackgroundTasks: (t) => void live.push(t), onBackgroundCutOff: (t) => void cut.push(t) },
+      () => {},
+    );
+    expect(cut).toEqual([]);
+    expect(live.at(-1)).toEqual([]);
+  });
+
+  test("a run its caller aborted does not report a cut-off, and clears the list", async () => {
+    const llm = createClaudeCliLlm({
+      binPath: fakeStreamBin([
+        tasks([{ task_id: "a1", description: "job" }]),
+        text("hi"),
+        { type: "result", subtype: "success", is_error: false, result: "hi" },
+      ]),
+    });
+    const ctl = new AbortController();
+    ctl.abort();
+    const live: (readonly string[])[] = [];
+    const cut: (readonly string[])[] = [];
+    await llm
+      .stream!(
+        { system: "s", messages: [{ role: "user", content: "hi" }], signal: ctl.signal, onBackgroundTasks: (t) => void live.push(t), onBackgroundCutOff: (t) => void cut.push(t) },
+        () => {},
+      )
+      .catch(() => {});
+    expect(cut).toEqual([]);
+  });
+
   test("jobs that finished before the exit say nothing", async () => {
     const llm = createClaudeCliLlm({
       binPath: fakeStreamBin([

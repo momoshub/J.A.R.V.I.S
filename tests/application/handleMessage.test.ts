@@ -12,6 +12,8 @@ import { readyMessage } from "../../src/domain/watch.ts";
 import { syntheticTs } from "../../src/domain/slackLinks.ts";
 import { guideFile } from "../../src/domain/promptGuides.ts";
 import { RESTART_STOPPER } from "../../src/application/runRegistry.ts";
+import { createBackgroundWatch } from "../../src/application/backgroundWatch.ts";
+import { createBackgroundJobRepo } from "../../src/infrastructure/db/backgroundJobRepo.ts";
 
 const slackMsg = (over: Partial<SlackMessage> & { ts: string; userId: string; text: string }): SlackMessage => ({
   userName: "",
@@ -533,6 +535,92 @@ describe("handleMessage", () => {
     await handleMessage(deps, inbound);
     expect(seen[1]?.session).toEqual({ id: "sess-1", resume: true, name: "jarvis-C1-100.1" });
     expect(seen[1]?.messages.map((m) => m.content)).toContain("first");
+  });
+
+  describe("background work that dies", () => {
+    const wire = (llm: LlmPort) => {
+      const deps = build(llm);
+      const jobs = createBackgroundJobRepo(db);
+      const said: { channel: string; text: string; thread: string }[] = [];
+      const turns: { channelId: string; threadTs: string; slackUserId: string }[] = [];
+      deps.backgroundWatch = createBackgroundWatch({
+        jobs,
+        clock: deps.clock,
+        say: async (channel, text, thread) => void said.push({ channel, text, thread }),
+        runTurn: async (r) => void turns.push(r),
+      });
+      return { deps, jobs, said, turns };
+    };
+
+    test("the callbacks are wired for the thread and the turn's user: one notice there, none in the reply", async () => {
+      // a top-level DM: no threadTs, so the thread is the message itself
+      const { deps, jobs, said, turns } = wire({
+        complete: async (p) => {
+          p.onBackgroundTasks?.(["Build the report"]);
+          expect(jobs.list()).toMatchObject([{ channelId: "D1", threadTs: "200.2", slackUserId: OWNER, tasks: ["Build the report"] }]);
+          p.onBackgroundCutOff?.(["Build the report"]);
+          return "Started it.";
+        },
+      });
+      const res = await handleMessage(deps, { channelId: "D1", slackUserId: OWNER, text: "build it", messageTs: "200.2" });
+      await Promise.resolve();
+      expect(res).toEqual({ kind: "reply", text: "Started it." });
+      expect(said).toHaveLength(1);
+      expect(said[0]).toMatchObject({ channel: "D1", thread: "200.2" });
+      expect(said[0]?.text).toContain("`Build the report`");
+      expect(turns).toMatchObject([{ channelId: "D1", threadTs: "200.2", slackUserId: OWNER }]);
+      expect(jobs.list()).toEqual([]);
+    });
+
+    test("a thread reply is keyed by its threadTs, not its own ts", async () => {
+      const { deps, jobs } = wire({
+        complete: async (p) => {
+          p.onBackgroundTasks?.(["job"]);
+          return "ok";
+        },
+      });
+      await handleMessage(deps, { channelId: "C1", slackUserId: OWNER, text: "go", threadTs: "100.1", messageTs: "100.9" });
+      expect(jobs.list()).toMatchObject([{ channelId: "C1", threadTs: "100.1" }]);
+    });
+
+    test("a run cut for a restart keeps its row, so the next boot reports the death", async () => {
+      const cut = new AbortController();
+      const { deps, jobs, said } = wire({
+        complete: async (p) => {
+          p.onBackgroundTasks?.(["job"]);
+          cut.abort(RESTART_STOPPER);
+          // what the CLI does as the cut kills it: the list empties with the process
+          p.onBackgroundTasks?.([]);
+          return "half";
+        },
+      });
+      await handleMessage(deps, { channelId: "C1", slackUserId: OWNER, text: "go", threadTs: "100.1", messageTs: "100.1" }, undefined, cut.signal);
+      expect(jobs.list()).toMatchObject([{ threadTs: "100.1", tasks: ["job"] }]);
+      expect(said).toEqual([]);
+      // the next process: one notice from recovery
+      const next = createBackgroundWatch({
+        jobs,
+        clock: deps.clock,
+        say: async (channel, text, thread) => void said.push({ channel, text, thread }),
+        runTurn: async () => {},
+      });
+      expect(await next.recover()).toBe(1);
+      expect(said).toHaveLength(1);
+    });
+
+    test("a run stopped by a person clears its row", async () => {
+      const stop = new AbortController();
+      const { deps, jobs } = wire({
+        complete: async (p) => {
+          p.onBackgroundTasks?.(["job"]);
+          stop.abort("U1");
+          p.onBackgroundTasks?.([]);
+          return "ok";
+        },
+      });
+      await handleMessage(deps, { channelId: "C1", slackUserId: OWNER, text: "go", threadTs: "100.1", messageTs: "100.1" }, undefined, stop.signal);
+      expect(jobs.list()).toEqual([]);
+    });
   });
 
   test("a turn that dies still leaves its session bound, so the retry resumes it", async () => {

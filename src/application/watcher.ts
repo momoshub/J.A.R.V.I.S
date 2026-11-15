@@ -20,6 +20,8 @@ import {
   gaveUpMessage,
   MAX_CONSECUTIVE_ERRORS,
   readyMessage,
+  workerDeath,
+  workerDiedNotice,
   type WatchState,
 } from "../domain/watch.ts";
 import { decodeGate, type GateSpec } from "../domain/ciGate.ts";
@@ -106,8 +108,7 @@ export const createWatcher = (deps: WatcherDeps): Watcher => {
   // The row is settled before the turn starts, so the turn itself is never
   // awaited: a hand-back can run for half an hour, and a tick held on it left
   // every other due watch unchecked for just as long (#190 held #191 that way).
-  const finish = (w: Watch, state: WatchState, text: string, error?: string): void => {
-    deps.watches.settle(w.id, state, deps.clock(), error);
+  const handBack = (w: Watch, text: string): void => {
     // The turn is the point of the watch, so losing it is worth a word in
     // the thread rather than only a line in the log.
     const lost = (e: unknown): Promise<void> => {
@@ -136,6 +137,11 @@ export const createWatcher = (deps: WatcherDeps): Watcher => {
     } catch (e) {
       void lost(e);
     }
+  };
+
+  const finish = (w: Watch, state: WatchState, text: string, error?: string): void => {
+    deps.watches.settle(w.id, state, deps.clock(), error);
+    handBack(w, text);
   };
 
   const one = async (w: Watch): Promise<void> => {
@@ -213,7 +219,16 @@ export const createWatcher = (deps: WatcherDeps): Watcher => {
       } catch (e) {
         log(`watch ${w.id}: keeping what it printed failed: ${e instanceof Error ? e.message : String(e)}`);
       }
-      finish(w, "fired", readyMessage(w.note, waited, res.output));
+      // A dead worker is said at once, in one line: its hand-back turn queues
+      // behind whatever the thread is doing and may be a long way off.
+      // The row is settled FIRST: a process that exits while the line is being
+      // posted must not find the watch still waiting and fire it a second time.
+      deps.watches.settle(w.id, "fired", deps.clock());
+      const death = workerDeath(res.output);
+      if (death && deps.say) {
+        await deps.say(w.channelId, workerDiedNotice(death), w.threadTs).catch(logAndIgnore("worker death notice"));
+      }
+      handBack(w, readyMessage(w.note, waited, res.output));
       return;
     }
 

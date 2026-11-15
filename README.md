@@ -1167,7 +1167,7 @@ What is still not covered, said plainly: the held GitHub token lives in the
 bot's memory, so after a bot restart the token minted before it can no longer be
 revoked and runs out on its own (at most 1h from its mint, one repository,
 contents/metadata only); a token the worker copied somewhere is only killed by
-the events above, and `watch worker` polls every 3 minutes, so a worker that
+the events above, and `watch worker` polls every 30 seconds, so a worker that
 dies is noticed up to that late; and the token file is protected by file mode and
 by the tool policy (pal and executer may not `Read` `~/.config/jarvis/**`), not
 by the OS: an Orca worker runs as the same host user as the bot, so any other

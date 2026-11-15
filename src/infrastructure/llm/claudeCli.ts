@@ -613,6 +613,15 @@ export const createClaudeCliLlm = (config: ClaudeCliConfig = {}): LlmPort => {
     }
   };
 
+  /** Hand the caller the live background list; its failure is never the run's. */
+  const tellTasks = (cb: LlmCompleteParams["onBackgroundTasks"], tasks: readonly string[]): void => {
+    try {
+      cb?.(tasks);
+    } catch {
+      // the caller's problem, not the run's
+    }
+  };
+
   const completeOneShot = async ({ system, messages, assistantName, policy, session, oauthToken, useHostLogin, signal, runTicket, bill, onUsage }: LlmCompleteParams) => {
     const proc = spawnClaude(config, [...buildArgs(config, false, policy, session), "--append-system-prompt", system], renderPrompt(messages, assistantName), policy, oauthToken, useHostLogin, signal, runTicket, session, await turnEnv(), bill);
     const [stdout, stderr, exitCode] = await Promise.all([
@@ -649,7 +658,7 @@ export const createClaudeCliLlm = (config: ClaudeCliConfig = {}): LlmPort => {
    * output carries only the final answer, so a run made that way left no
    * record of what it ran.
    */
-  const runStreaming = async ({ system, messages, assistantName, policy, session, oauthToken, useHostLogin, signal, runTicket, bill, onUsage }: LlmCompleteParams, sink: LlmStreamSink) => {
+  const runStreaming = async ({ system, messages, assistantName, policy, session, oauthToken, useHostLogin, signal, runTicket, bill, onUsage, onBackgroundTasks, onBackgroundCutOff }: LlmCompleteParams, sink: LlmStreamSink) => {
     const proc = spawnClaude(config, [...buildArgs(config, true, policy, session), "--append-system-prompt", system], renderPrompt(messages, assistantName), policy, oauthToken, useHostLogin, signal, runTicket, session, await turnEnv(), bill);
     const stderrPromise = new Response(proc.stderr).text();
 
@@ -844,6 +853,7 @@ export const createClaudeCliLlm = (config: ClaudeCliConfig = {}): LlmPort => {
         backgroundTasks = (e.tasks as Record<string, unknown>[]).map((t) =>
           typeof t.description === "string" && t.description.trim() ? t.description.trim() : String(t.task_id ?? "a task"),
         );
+        tellTasks(onBackgroundTasks, backgroundTasks);
       } else if (e.type === "result") {
         // Recorded even when the run errored: a turn that burned nine minutes
         // and then failed cost exactly as much as one that worked.
@@ -910,16 +920,22 @@ export const createClaudeCliLlm = (config: ClaudeCliConfig = {}): LlmPort => {
     }
 
     const exitCode = await proc.exited;
+    // Whatever was still listed died with the process. Said at once and out of
+    // band: the reply's own stream is usually closed by now. A run its caller
+    // aborted (`stop`) already told the caller everything.
+    const cutOff = signal?.aborted ? [] : backgroundTasks;
+    if (cutOff.length > 0 && onBackgroundCutOff) tellTasks(onBackgroundCutOff, cutOff);
+    else tellTasks(onBackgroundTasks, []);
     // finalText is the last round's text only; an answer streamed before a
     // react call belongs in front of it.
     const lead = reactAnswers.map((t) => t.trim()).filter((t) => t && !finalText.includes(t));
     const finished = (finalText ? [...lead, finalText].join("\n\n") : streamedText).trim();
     const refused = authRejected || isRefusedResult(resultEvent);
-    return { exitCode, finished, finalText, resultEvent, refused, stderr: stderrPromise, emit, backgroundTasks };
+    return { exitCode, finished, finalText, resultEvent, refused, stderr: stderrPromise, emit, backgroundTasks, tellsCutOff: !!onBackgroundCutOff };
   };
 
   const stream = async (params: LlmCompleteParams, sink: LlmStreamSink) => {
-    const { exitCode, finished: answer, refused, stderr, emit, backgroundTasks } = await runStreaming(params, sink);
+    const { exitCode, finished: answer, refused, stderr, emit, backgroundTasks, tellsCutOff } = await runStreaming(params, sink);
     // A refused token ends as an `is_error` result (often exit 0), not as a failed
     // exit. Returning it would hand the raw CLI error to the caller as the answer,
     // so throw the typed auth error, whatever the text or exit code was.
@@ -933,7 +949,7 @@ export const createClaudeCliLlm = (config: ClaudeCliConfig = {}): LlmPort => {
     // ask "???" to find out. Say it in the reply itself: streamed if the
     // message is still open, and in the returned text for a caller that posts
     // or rewrites it.
-    const notice = backgroundTasks.length > 0 ? backgroundCutOffNotice(backgroundTasks) : "";
+    const notice = backgroundTasks.length > 0 && !tellsCutOff ? backgroundCutOffNotice(backgroundTasks) : "";
     if (notice) emit({ type: "text", delta: `\n\n${notice}` });
     const finished = notice ? `${answer}\n\n${notice}` : answer;
     // Killed after it had already said something. What we hold is a fragment of

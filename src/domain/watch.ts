@@ -27,10 +27,14 @@ export const DEFAULT_EVERY_MS = 60_000;
 export const DEFAULT_DEADLINE_MS = 45 * 60_000;
 /**
  * `watch worker` waits on an Orca worker, which runs for tens of minutes to
- * hours: a minute's poll is wasted `orca` calls, 45 minutes gives up on a
- * worker still doing its job.
+ * hours, and 45 minutes would give up on one still doing its job. It polls
+ * every 30s because that poll is the ONLY signal there is: Orca has no wait,
+ * subscribe or webhook a `claude -p` turn could hold, and `worker-show` is one
+ * local call (no model, no session, no queue slot). A dead worker used to wait
+ * up to 3 minutes for its next look, with the thread silent the whole time;
+ * now it is at most 30s (the tick is 10s, so 30s is real) and posts at once.
  */
-export const WORKER_EVERY_MS = 3 * 60_000;
+export const WORKER_EVERY_MS = 30_000;
 export const WORKER_DEADLINE_MS = 3 * 60 * 60_000;
 /** Consecutive predicate errors before a watch gives up and says so. */
 export const MAX_CONSECUTIVE_ERRORS = 10;
@@ -452,6 +456,16 @@ export const workerEventLine = (dispatchId: string, ev: { readonly kind: string;
 const USAGE_PREFIX = /^orca worker ctx_[A-Za-z0-9_-]+ usage \{/;
 
 const WORKER_LINE = /^orca worker (ctx_[A-Za-z0-9_-]+) (finished|died|waiting): (.*)$/m;
+
+/** The worker a fired `watch worker` found dead, or undefined for any other outcome. */
+export const workerDeath = (output: string): { readonly id: string; readonly detail: string } | undefined => {
+  const m = output.match(WORKER_LINE);
+  return m && m[2] === "died" ? { id: m[1] ?? "", detail: m[3] ?? "" } : undefined;
+};
+
+/** The one line the thread gets the moment a watched worker is found dead, before its hand-back turn queues. */
+export const workerDiedNotice = (death: { readonly id: string; readonly detail: string }): string =>
+  `_heads up: Orca worker ${death.id} died without reporting (${death.detail.slice(0, 160)}). Its work is not done. I am picking it up in a new turn now._`;
 
 /** The hand-back's opening, naming which of the three happened. */
 const workerLead = (output: string, waited: number): { readonly lead: string; readonly waiting: boolean } | undefined => {

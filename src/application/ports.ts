@@ -194,6 +194,19 @@ export type LlmCompleteParams = {
    * watched live still signs its reply with what it cost.
    */
   readonly onUsage?: (usage: LlmUsage) => void;
+  /**
+   * Told each time the CLI's list of live background tasks changes (CLI adapter
+   * only), so whoever keeps it knows what a dying process takes with it. An
+   * empty list means none left.
+   */
+  readonly onBackgroundTasks?: (tasks: readonly string[]) => void;
+  /**
+   * Told, right after the CLI exits, which background tasks it took with it (CLI
+   * adapter only) - never for a run the caller aborted itself. When set, the
+   * caller owns telling the thread, and the notice is no longer appended to the
+   * reply: by then that reply's Slack stream is usually closed.
+   */
+  readonly onBackgroundCutOff?: (tasks: readonly string[]) => void;
 };
 
 /** Anything that can turn a system prompt + history into a reply. */

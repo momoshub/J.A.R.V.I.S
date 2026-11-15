@@ -113,6 +113,32 @@ export const migrate = (db: Database): void => {
   migrateLearningSource(db);
   migrateLearningNoticeFingerprint(db);
   migrateBugReports(db);
+  migrateBackgroundJobs(db);
+};
+
+/**
+ * Migration v42: the background work each thread's turn has running.
+ *
+ * One row per thread, replaced as the CLI reports its live task list and
+ * deleted when the work is reported dead. A row found at boot belongs to a
+ * process that no longer exists: what it listed died with it. A new table, so
+ * a rerun is a no-op.
+ */
+const migrateBackgroundJobs = (db: Database): void => {
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS background_jobs (
+      channel_id    TEXT NOT NULL,
+      thread_ts     TEXT NOT NULL,
+      slack_user_id TEXT NOT NULL,
+      tasks         TEXT NOT NULL,
+      updated_at    INTEGER NOT NULL,
+      PRIMARY KEY (channel_id, thread_ts)
+    );
+  `);
+  const { user_version } = db.query<{ user_version: number }, []>("PRAGMA user_version").get() ?? {
+    user_version: 0,
+  };
+  if (user_version < 42) db.exec("PRAGMA user_version = 42;");
 };
 
 /**
