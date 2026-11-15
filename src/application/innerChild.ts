@@ -430,7 +430,8 @@ export const createInnerChild = (deps: InnerChildDeps): InnerChild => {
    * an approved report as `covered` (that report's own fix owns it), so
    * nothing is fixed twice or against a Reject; this also catches an issue
    * filed before the decision. A fix already running cannot be stopped from
-   * here: its thread is told, once, so the session and the owner see it.
+   * here: its thread is told, once, so the owner sees it (the running session
+   * will probably not: bot posts are not intake).
    */
   const closeDecided = async (now: number): Promise<void> => {
     const queued = deps.issues.queued();
