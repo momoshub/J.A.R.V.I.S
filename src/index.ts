@@ -1313,6 +1313,8 @@ const main = async () => {
     noTools: noTools(config.dbMcpServers),
     enabled: () =>
       !!innerChildChannel() && settings.get(SETTING_KEYS.innerChild)?.trim().toLowerCase() !== "off",
+    autofix: () => settings.get(SETTING_KEYS.innerChildAutofix)?.trim().toLowerCase() === "on",
+    model: () => settings.get(SETTING_KEYS.innerChildModel)?.trim(),
     cursor: {
       get: () => {
         const v = Number(settings.get(SETTING_KEYS.innerChildCursor));

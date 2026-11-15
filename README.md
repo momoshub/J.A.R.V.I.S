@@ -156,7 +156,7 @@ Every command is gated by its own `command:<name>` grant, and its sub-actions by
 | `ask <question>` | pal, executer, admin | one-shot question to the brain |
 | `model [role\|subagent\|worker\|plan\|loop\|here\|#channel] [name\|default]` | pal, executer, admin (setting: `settings:manage`) | show the brain; `settings:manage` pins a model per role or channel, or for subagents, Orca workers, planning and loop fires |
 | `logsource [grafana,datadog\|default]` | pal, executer, admin (setting: `settings:manage`) | where it looks for logs - see [Investigating](#investigating) |
-| `inner-child [status]`, `inner-child on\|off`, `inner-child channel <#channel>\|off` | pal, executer, admin (setting: `settings:manage`) | whether the self-review feature is on, its channel and how many fixes are open; `settings:manage` switches it or sets its channel - see [The inner child](#the-inner-child) |
+| `inner-child [status]`, `inner-child on\|off`, `inner-child autofix on\|off`, `inner-child channel <#channel>\|off` | pal, executer, admin (setting: `settings:manage`) | whether the self-review feature is on, whether it fixes what it finds (autofix, off by default), its channel and how many issues are open or queued; `settings:manage` switches it, its autofix or sets its channel - see [The inner child](#the-inner-child) |
 | `cloudwatch [--group /log/group] [--last 15m \| --from <t> --to <t>] [--region r] [--limit n] <insights query>` (alias `cw`), `cloudwatch help`, `cloudwatch default <group\|reset>` | executer, admin (runs at once with `cloudwatch:direct`, else Confirm first) | query CloudWatch Logs Insights directly - see [CloudWatch](#cloudwatch) |
 | `forget` | pal, executer, admin | wipe the bot's memory of this channel |
 | `sys` (alias `vitals`) | admin | how the host, the bot and Orca are doing, as Block Kit: a verdict header, cpu/memory/swap/disk/battery/host/bot/turns fields, the last hour's trend, then Orca's runtime, active runs, workers by status and a table of live workers (one "unreachable" line when Orca is down or slow). The message text keeps the plain report as the fallback |
@@ -654,18 +654,28 @@ reason reports `unknown` rather than blaming a permission.
 
 ## The inner child
 
-An always-on part that reads the bot's own finished turns every ten minutes.
+An always-on part that reads the bot's own finished turns every thirty minutes.
 Off until a channel is set: `inner-child channel #channel`, then `inner-child on`
 (on is the default once there is a channel). `inner-child off` pauses it and keeps
-the channel, `inner-child` shows on/off, the channel and how many issues are open.
-Changing it needs `settings:manage`; the status is open to everyone. (Under the
-hood these are the `inner_child_channel` and `inner_child` settings.)
+the channel, `inner-child` shows on/off, autofix, the channel and how many issues
+are open and queued. Changing it needs `settings:manage`; the status is open to
+everyone. (Under the hood these are the `inner_child_channel`, `inner_child` and
+`inner_child_autofix` settings.)
 
-- **Defects in the bot itself** are filed and fixed by the bot in that channel,
-  announced before and after, at most four fixes a day. At most 10 are open
-  (queued or being fixed) at once; while the queue is full, triage files
-  nothing new and logs it. A queued issue nobody got to in 7 days is closed
-  with state `stale` (the row is kept, its fingerprint still dedupes).
+It is built to be cheap, since it spends the owner's model tokens. Triage runs on
+a small model (`claude-haiku-4-5-20251001`; the `inner_child_model` setting
+changes it, read every run) and reads only what ended since its cursor. It never
+catches up on a backlog: `inner-child on` moves the cursor to now, and a cursor
+older than 6 hours jumps to now.
+
+- **Defects in the bot itself** are always filed, as queued. Fixing them is
+  opt-in: `inner-child autofix on` (the `inner_child_autofix` setting, off by
+  default). With autofix on the bot fixes them in that channel, announced before
+  and after, at most two fixes a day; off, they just wait in the queue and
+  `inner-child status` shows how many. At most 10 are open (queued or being
+  fixed) at once; while the queue is full, triage files nothing new and logs it.
+  A queued issue nobody got to in 7 days is closed with state `stale` (the row is
+  kept, its fingerprint still dedupes).
 - **Voice drift** - a final reply that starts a paragraph with a capital (`I`
   and acronyms excepted), uses an em/en dash, a semicolon, an arrow, a markdown
   heading or `**bold**`, or answers in a different language from the thread -
@@ -676,7 +686,7 @@ hood these are the `inner_child_channel` and `inner_child` settings.)
   the drift log channel with the nudge, followed by the session's answer in its
   thread. The channel is the `inner_child_drift_channel` setting, falling back
   to `DRAIN_NOTICE_CHANNEL`; `off` turns drift steering off. One nudge per
-  reply, at most 12 a day, never in a workflow thread.
+  reply, at most 2 per triage run and 4 a day, never in a workflow thread.
 
 ## Staying online
 
@@ -1393,7 +1403,7 @@ A permission is an id; `role perms [filter]` and the Roles page list them all:
 | `chat:self-update`, `chat:desktop` | the self-update flow, learn url and watches offered in chat; driving the screen |
 | `commands:unlimited`, `commands:approve` | not held back by the per-window command allowance (`pal` is); pressing the approve / reject buttons on a held command |
 | `access:decide` | deciding access requests |
-| `settings:manage` | the configuration sub-actions of commands: model, review-agents, review policy overrides, logsource, review-inbox moves, inner-child on/off and channel, ticket config, cloudwatch default group, someone's allowance, `token who`, `note parent` |
+| `settings:manage` | the configuration sub-actions of commands: model, review-agents, review policy overrides, logsource, review-inbox moves, inner-child on/off, autofix and channel, ticket config, cloudwatch default group, someone's allowance, `token who`, `note parent` |
 | `review:policy`, `runs:stop-any`, `secrets:2fa-manage`, `watch:shell`, `reminders:manage-all`, `cloudwatch:direct` | choosing a review policy; stopping someone else's turn or session; adding and removing 2FA setup keys; shell-check watches (and seeing everyone's watches); everyone's reminders; CloudWatch without the Confirm step |
 
 As seeded: `owner` holds everything. `admin` is sandboxed like an `executer` (never fewer tools than one): `tools:code`, the read-only database servers (`EXECUTER_DB_MCP_SERVERS`), Notion and Datadog, with no arbitrary shell and no permission bypass; on top of that every command at or below admin, all twelve `github:` actions and the admin sub-actions (no `tools:orca`: `Bash(orca:*)` is denied by name). `executer` is sandboxed with `tools:code`, the read-only database servers (`EXECUTER_DB_MCP_SERVERS`) and executer-level commands, the `git`/`pr-create`/`pr-edit`/`comment`/`labels-add`/`reviewers-request` App actions (commit identity only: no `github:push`, so no token). `pal` is sandboxed read-only (GitHub read, Notion read, web, read-only git and aws), may use `quick-review` and react, and is held to the per-window command allowance.

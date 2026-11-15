@@ -22,10 +22,17 @@
  * log and a message in the drift log channel, with the session's answer in
  * that message's thread.
  *
- * Nobody approves a fix, by request. What keeps that safe is everything
- * around it: one fix at a time, a daily cap, a fingerprint per defect so the
- * same one is never filed twice, its own fix threads excluded from triage so
- * it never chases itself, and the restart script refusing a red build.
+ * Nobody approves a fix, by request, but fixing is opt-in (`autofix`, off by
+ * default): off, issues are still triaged and filed as queued, and none is
+ * started. What keeps a fix safe once it is on is everything around it: one
+ * fix at a time, a daily cap, a fingerprint per defect so the same one is
+ * never filed twice, its own fix threads excluded from triage so it never
+ * chases itself, and the restart script refusing a red build.
+ *
+ * It is also cheap by design, because every part of it spends the owner's
+ * model tokens: triage runs on a small model every 30 minutes, never reads a
+ * backlog (a stale or missing cursor jumps to now), and drift nudges and fixes
+ * are capped per triage and per day.
  */
 import {
   afterNotice,
@@ -84,6 +91,10 @@ export type InnerChildDeps = {
   noTools: readonly string[];
   /** Off switch, read every tick. */
   enabled: () => boolean;
+  /** Whether queued issues are fixed at all. Read every tick; absent = off. */
+  autofix?: () => boolean;
+  /** Model the triage runs on. Read every tick; empty or absent = `TRIAGE_MODEL`. */
+  model?: () => string | undefined;
   /** Where the last triage stopped, so a restart does not re-read or skip. */
   cursor: { get: () => number | undefined; set: (at: number) => void };
   post: (channel: string, text: string, threadTs?: string) => Promise<{ ts: string } | void>;
@@ -122,6 +133,8 @@ export type DriftDeps = {
   /** The activity log. */
   activity?: (event: string, data: Record<string, unknown>) => void;
   maxPerDay?: number;
+  /** Most nudges one triage run starts. */
+  maxPerTriage?: number;
 };
 
 type SteerRequest = { channelId: string; threadTs: string; slackUserId: string; text: string };
@@ -156,12 +169,20 @@ export type InnerChild = {
   tick: () => Promise<void>;
 };
 
+/** The triage reads text and files findings: a small model is enough. */
+export const TRIAGE_MODEL = "claude-haiku-4-5-20251001";
+/** Triage runs this often by default. */
+export const TRIAGE_EVERY_MS = 30 * 60 * 1000;
+/** A cursor older than this is not caught up from: it jumps to now. */
+export const CURSOR_MAX_AGE_MS = 6 * 60 * 60 * 1000;
+/** Auto-fixes a day, when `autofix` is on. */
+const FIXES_PER_DAY = 2;
 /** Most a single triage reads, and most it may file. */
 const TRIAGE_BATCH = 60;
 const MAX_FILED_PER_TRIAGE = 5;
 /**
  * Open self-issues (queued + fixing) allowed at once. Fixes start at most
- * `maxFixesPerDay` (4) a day, so 10 is about two and a half days of work: a
+ * `maxFixesPerDay` (2) a day, so 10 is about five days of work: a
  * backlog the fixer can plausibly clear before the findings go stale, while
  * still leaving room for a bad day to file a handful. It had no bound before
  * and reached 35 queued against 11 fixed.
@@ -170,7 +191,9 @@ export const MAX_OPEN_ISSUES = 10;
 /** A queued issue with no activity for this long is closed as `stale`. */
 export const STALE_AFTER_MS = 7 * 24 * 60 * 60 * 1000;
 /** Nudges a day, across every thread. A bad model day must not become a flood. */
-const DRIFT_PER_DAY = 12;
+const DRIFT_PER_DAY = 4;
+/** Nudges one triage run starts, so a pause or a bad batch cannot burst. */
+const DRIFT_PER_TRIAGE = 2;
 /** A steered turn older than this is written off as unanswered. */
 const DRIFT_TIMEOUT_MS = 2 * 60 * 60 * 1000;
 
@@ -197,8 +220,8 @@ export const brief = (i: SelfIssue): IssueBrief => ({
 
 export const createInnerChild = (deps: InnerChildDeps): InnerChild => {
   const log = deps.log ?? (() => {});
-  const triageEvery = deps.triageEveryMs ?? 10 * 60 * 1000;
-  const maxPerDay = deps.maxFixesPerDay ?? 4;
+  const triageEvery = deps.triageEveryMs ?? TRIAGE_EVERY_MS;
+  const maxPerDay = deps.maxFixesPerDay ?? FIXES_PER_DAY;
   const maxOpen = deps.maxOpenIssues ?? MAX_OPEN_ISSUES;
   const staleAfter = deps.staleAfterMs ?? STALE_AFTER_MS;
   const fixTimeout = deps.fixTimeoutMs ?? 2 * 60 * 60 * 1000;
@@ -330,7 +353,13 @@ export const createInnerChild = (deps: InnerChildDeps): InnerChild => {
     const logChannel = driftOn();
     if (!drift || !logChannel) return;
     const cap = drift.maxPerDay ?? DRIFT_PER_DAY;
+    const perTriage = drift.maxPerTriage ?? DRIFT_PER_TRIAGE;
+    let started = 0;
     for (const c of candidates) {
+      if (started >= perTriage) {
+        log(`drift: ${perTriage} nudges this run, the rest are not steered`);
+        return;
+      }
       if (drift.events.steeredSince(now - DAY_MS) >= cap) {
         log("drift: daily cap reached, the rest are not steered");
         return;
@@ -374,10 +403,12 @@ export const createInnerChild = (deps: InnerChildDeps): InnerChild => {
       drift.events.setLog(e.id, logChannel, posted.ts);
       // Not awaited: the steered turn waits its turn in that thread's queue.
       void steerOne({ ...e, logChannel, logTs: posted.ts }, c);
+      started += 1;
     }
   };
 
   const startNext = async (now: number): Promise<void> => {
+    if (!deps.autofix?.()) return;
     if (deps.issues.fixing().length > 0) return;
     if (deps.issues.startedSince(now - DAY_MS) >= maxPerDay) return;
     const issue = deps.issues.nextQueued();
@@ -402,12 +433,18 @@ export const createInnerChild = (deps: InnerChildDeps): InnerChild => {
       deps.cursor.set(now);
       return;
     }
+    // No catching up: after a long pause the backlog is not read, it is skipped.
+    if (now - cursor > CURSOR_MAX_AGE_MS) {
+      log(`cursor ${new Date(cursor).toISOString()} is older than 6h, skipping the backlog`);
+      deps.cursor.set(now);
+      return;
+    }
     const entries = deps.turns
       .since(cursor + 1, TRIAGE_BATCH)
       .filter((t) => t.endedAt > cursor && !deps.issues.isFixThread(t.channelId, t.threadTs));
     const newest = entries.reduce((max, t) => Math.max(max, t.endedAt), cursor);
     // Moved on before the model runs: a triage that keeps failing must not
-    // pay for the same batch every ten minutes.
+    // pay for the same batch every run.
     deps.cursor.set(newest);
     if (entries.length === 0) return;
 
@@ -455,7 +492,7 @@ export const createInnerChild = (deps: InnerChildDeps): InnerChild => {
         messages: [
           { role: "user", content: triageMessage(observed, deps.issues.recentTitles(30)), speakerId: deps.ownerSlackId },
         ],
-        policy: { skipPermissions: false, disallowedTools: deps.noTools },
+        policy: { skipPermissions: false, disallowedTools: deps.noTools, model: deps.model?.()?.trim() || TRIAGE_MODEL },
         bill: { actor: deps.ownerSlackId, kind: "inner-child", channel: deps.channelId },
       });
     } catch (e) {
