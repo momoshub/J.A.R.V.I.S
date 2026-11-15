@@ -7,9 +7,10 @@ import type { Finding, Severity } from "../../domain/innerChild.ts";
 /**
  * `stale` is an issue closed unfixed by `pruneStale`: it sat queued past the
  * age limit, `rejected` one the owner turned down through a bug report on the
- * same thread. The row stays (its fingerprint still dedupes), only the state says why.
+ * same thread, `covered` one the owner approved a bug report for (that report's
+ * own fix owns it). The row stays (its fingerprint still dedupes), only the state says why.
  */
-export type SelfIssueState = "queued" | "fixing" | "fixed" | "not_fixed" | "failed" | "stale" | "rejected";
+export type SelfIssueState = "queued" | "fixing" | "fixed" | "not_fixed" | "failed" | "stale" | "rejected" | "covered";
 
 export type SelfIssue = {
   readonly id: number;
@@ -44,7 +45,7 @@ type Row = {
 };
 
 const asState = (v: string): SelfIssueState =>
-  v === "fixing" || v === "fixed" || v === "not_fixed" || v === "failed" || v === "stale" || v === "rejected" ? v : "queued";
+  v === "fixing" || v === "fixed" || v === "not_fixed" || v === "failed" || v === "stale" || v === "rejected" || v === "covered" ? v : "queued";
 
 const toIssue = (r: Row): SelfIssue => ({
   id: r.id,

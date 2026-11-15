@@ -35,6 +35,17 @@ describe("bug report repo", () => {
     expect(repo.byState("approved", 10)).toEqual([]);
   });
 
+  test("threadLinks lists every link of one state, with no window", () => {
+    const repo = createBugReportRepo(openDatabase(":memory:"));
+    for (let i = 0; i < 60; i++) {
+      repo.add({ ...base, fingerprint: `f${i}`, threadLink: `https://acme.slack.com/archives/C1/p${1000000 + i}` }, 100 + i);
+      repo.decide(i + 1, "rejected", 200);
+    }
+    repo.add({ ...base, fingerprint: "open" }, 300);
+    expect(repo.threadLinks("rejected")).toHaveLength(60);
+    expect(repo.threadLinks("pending")).toEqual([{ threadLink: base.threadLink }]);
+  });
+
   test("decide moves a pending row once and never back", () => {
     const repo = createBugReportRepo(openDatabase(":memory:"));
     repo.add(base, 100);

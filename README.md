@@ -691,8 +691,9 @@ older than 6 hours jumps to now.
   kept, its fingerprint still dedupes). The owner's bug reports win over it: a
   thread whose bug report the owner rejected is never filed from again (an issue
   already queued there is closed as `rejected`, and triage is told not to report
-  it), and an issue on a thread with a report still waiting for the owner is not
-  fixed until they decide.
+  it), an approved report runs its own fix so the inner child leaves that thread
+  alone too (`covered`), and an issue on a thread with a report still waiting for
+  the owner is not fixed until they decide.
 - **Voice drift** - a final reply that starts a paragraph with a capital (`I`
   and acronyms excepted), uses an em/en dash, a semicolon, an arrow, a markdown
   heading or `**bold**`, or answers in a different language from the thread -

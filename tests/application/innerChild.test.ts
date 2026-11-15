@@ -267,7 +267,7 @@ describe("inner child", () => {
     expect(content).toContain("tool call dies");
   });
 
-  test("a pending or approved report does not stop filing", async () => {
+  test("a pending report does not stop filing", async () => {
     cursor = now - 100;
     addTurn();
     report("pending");
@@ -296,16 +296,54 @@ describe("inner child", () => {
     expect(fixes).toHaveLength(1);
   });
 
-  test("a pending report decided later releases the issue", async () => {
+  test("an approved report owns the fix: its thread is not filed from and a queued issue there is covered, not fixed twice", async () => {
+    cursor = now - 100;
+    addTurn();
+    const approved = report("pending");
+    bugReports.decide(approved.id, "approved", now);
+    file("x", now);
+    const logs: string[] = [];
+    triageAnswer = JSON.stringify([finding({ fingerprint: "again" })]);
+    await build({ log: (m) => logs.push(m) }).tick();
+    await settle();
+    expect(issues.get(1)?.state).toBe("covered");
+    expect(issues.get(2)).toBeUndefined();
+    expect(fixes).toHaveLength(0);
+  });
+
+  test("a pending report that is rejected later closes the held issue", async () => {
     file("x", now);
     const r = report("pending");
     const child = build();
     await child.tick();
-    expect(fixes).toHaveLength(0);
-    bugReports.decide(r.id, "approved", now);
+    expect(issues.get(1)?.state).toBe("queued");
+    bugReports.decide(r.id, "rejected", now);
     await child.tick();
-    await settle();
-    expect(fixes).toHaveLength(1);
+    expect(issues.get(1)?.state).toBe("rejected");
+    expect(fixes).toHaveLength(0);
+  });
+
+  test("a fix already running when the owner decides its thread is told once, not stopped", async () => {
+    const child = build({ fixTimeoutMs: 10 * 60 * 1000 });
+    await child.tick();
+    file("x", now);
+    issues.startFix(1, "CFIX", "7.0", now);
+    report("rejected");
+    await child.tick();
+    await child.tick();
+    const warnings = posts.filter((p) => p.thread === "7.0" && p.text.includes("rejected a bug report"));
+    expect(warnings).toHaveLength(1);
+    expect(issues.get(1)?.state).toBe("fixing");
+  });
+
+  test("an old rejected report is checked however many came after it", async () => {
+    cursor = now - 100;
+    addTurn();
+    report("rejected");
+    for (let i = 0; i < 60; i++) report("rejected", `https://acme.slack.com/archives/C8/p${1000000 + i}`, `other ${i}`);
+    triageAnswer = JSON.stringify([finding()]);
+    await build({ maxFixesPerDay: 0 }).tick();
+    expect(issues.get(1)).toBeUndefined();
   });
 
   test("an issue being fixed counts as open, a finished one frees its place", async () => {

@@ -58,6 +58,8 @@ export type BugReportRepo = {
   recent: (fingerprint: string, since: number) => BugReport | undefined;
   /** The newest reports in this state, newest first. */
   byState: (state: BugReportState, limit: number) => BugReport[];
+  /** The thread link of every report in this state, no window: a thread check must not age out. */
+  threadLinks: (state: BugReportState) => { threadLink: string }[];
   /** How many reports were filed at or after `since`. */
   countSince: (since: number) => number;
   setNotice: (id: number, channel: string, ts: string) => void;
@@ -78,6 +80,7 @@ export const createBugReportRepo = (db: DbClient): BugReportRepo => {
     "SELECT * FROM bug_reports WHERE fingerprint = ? AND created_at >= ? ORDER BY id DESC LIMIT 1",
   );
   const stateStmt = db.query<Row, [string, number]>("SELECT * FROM bug_reports WHERE state = ? ORDER BY id DESC LIMIT ?");
+  const linksStmt = db.query<{ thread_link: string }, [string]>("SELECT thread_link FROM bug_reports WHERE state = ?");
   const countStmt = db.query<{ n: number }, [number]>("SELECT COUNT(*) AS n FROM bug_reports WHERE created_at >= ?");
   const noticeStmt = db.query("UPDATE bug_reports SET notice_channel = ?, notice_ts = ? WHERE id = ?");
   const decideStmt = db.query("UPDATE bug_reports SET state = ?, decided_at = ? WHERE id = ? AND state = 'pending'");
@@ -106,6 +109,7 @@ export const createBugReportRepo = (db: DbClient): BugReportRepo => {
       return row ? toReport(row) : undefined;
     },
     byState: (state, limit) => stateStmt.all(state, Math.max(1, limit)).map(toReport),
+    threadLinks: (state) => linksStmt.all(state).map((r) => ({ threadLink: r.thread_link })),
     countSince: (since) => countStmt.get(since)?.n ?? 0,
     setNotice: (id, channel, ts) => void noticeStmt.run(channel, ts, id),
     decide: (id, state, at) => decideStmt.run(state, at, id).changes > 0,

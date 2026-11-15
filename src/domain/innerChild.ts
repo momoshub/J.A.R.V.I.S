@@ -226,6 +226,12 @@ export type FixOutcome = "fixed" | "not_fixed";
 export const readOutcome = (reply: string): FixOutcome =>
   /RESULT:\s*fixed\b/i.test(reply) && !/RESULT:\s*not\s+fixed/i.test(reply) ? "fixed" : "not_fixed";
 
+/** Posted in a fix thread when the owner decides a bug report on its source thread while the fix runs. */
+export const coveredNotice = (id: number, by: "rejected" | "approved"): string =>
+  by === "rejected"
+    ? `:no_entry: the owner rejected a bug report on issue #${id}'s source thread while this fix runs. do not merge or restart anything: stop, change nothing more and say so`
+    : `:warning: the owner approved a bug report on issue #${id}'s source thread, and that report starts its own fix. if this run has not merged yet, stop and say so`;
+
 /** Posted in the fix thread AFTER the run, on top of the run's own reply. */
 export const afterNotice = (id: number, outcome: FixOutcome | "failed", detail = ""): string => {
   if (outcome === "fixed") return `:white_check_mark: issue #${id} fixed, I restart once idle`;

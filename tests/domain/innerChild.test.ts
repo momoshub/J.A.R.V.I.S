@@ -8,6 +8,7 @@ import {
   normaliseFingerprint,
   parseFindings,
   readOutcome,
+  coveredNotice,
   triageMessage,
   triageSystem,
 } from "../../src/domain/innerChild.ts";
@@ -125,6 +126,11 @@ describe("messages", () => {
 
   test("the triage is told what is already known", () => {
     expect(triageMessage([], ["a: b"])).toContain("- a: b");
+  });
+
+  test("a running fix is told about a decided bug report on its thread", () => {
+    expect(coveredNotice(4, "rejected")).toContain("rejected a bug report");
+    expect(coveredNotice(4, "approved")).toContain("approved a bug report");
   });
 
   test("the triage is told which bugs the owner rejected", () => {
