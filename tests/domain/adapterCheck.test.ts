@@ -85,3 +85,23 @@ describe("describeCheck", () => {
     expect(describeCheck({ ok: false, violations: ["a", "b"] })).toBe("- a\n- b");
   });
 });
+
+describe("checkAdapterFiles skill routing", () => {
+  const skill = (extra: string) => `---\nname: a\ndescription: d\n${extra}---\nbody\n`;
+
+  test("a skill with neither key passes", () => {
+    expect(check({ "skills/a/SKILL.md": skill("") }).ok).toBe(true);
+  });
+
+  test("known model and worker pass", () => {
+    expect(check({ "skills/a/SKILL.md": skill("model: sonnet\nworker: orca\n") }).ok).toBe(true);
+  });
+
+  test("an unknown model or worker is a violation", () => {
+    const result = check({ "skills/a/SKILL.md": skill("model: gpt\nworker: inline\n") });
+    expect(result.ok).toBe(false);
+    expect(result.violations.some((v) => v.includes("skills/a/SKILL.md") && v.includes("model: gpt"))).toBe(true);
+    expect(result.violations.some((v) => v.includes("worker: inline"))).toBe(true);
+  });
+});
+

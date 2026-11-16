@@ -31,6 +31,7 @@ import {
   POLICY_FILE,
   scopedId,
   SKILLS_DIR,
+  skillRouting,
   withoutTitle,
 } from "../../domain/adapter.ts";
 
@@ -168,7 +169,8 @@ export const createAdapterStore = (db: DbClient, mirrorPath: string, importFrom?
       .map((rel) => {
         const head = frontmatter(all.get(rel) ?? "");
         const name = rel.slice(skillsDir.length + 1, -"/SKILL.md".length);
-        return { name: head.name?.trim() || name, description: head.description?.trim() || "", path: rel };
+        const { model, worker } = skillRouting(head);
+        return { name: head.name?.trim() || name, description: head.description?.trim() || "", path: rel, model, worker };
       })
       .filter((s) => s.description)
       .sort((a, b) => a.name.localeCompare(b.name));

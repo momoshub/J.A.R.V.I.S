@@ -32,6 +32,7 @@ import {
   SKILLS_DIR,
   adapterRules,
   scopedId,
+  skillRouting,
 } from "./adapter.ts";
 
 /** Files the framework owns; they are never learnable and never a violation. */
@@ -106,6 +107,16 @@ export const checkAdapterFiles = (
       if (path.startsWith(`${dir}/`) && !scopedId(path, dir)) {
         violations.push(`${path} is not named for a Slack id, so nothing would ever load it`);
       }
+    }
+  }
+
+  // `model:` / `worker:` are optional, but a value the bot cannot route on must
+  // be refused here - ignoring it would run the skill inline while its author
+  // believes it runs elsewhere.
+  for (const [path, content] of files) {
+    if (!/^skills\/[^/]+\/SKILL\.md$/.test(path)) continue;
+    for (const problem of skillRouting(frontmatter(content)).invalid) {
+      violations.push(`${path}: ${problem}`);
     }
   }
 

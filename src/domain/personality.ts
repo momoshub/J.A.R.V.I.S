@@ -464,7 +464,7 @@ export const buildSystemPromptParts = (
   // otherwise - an instance that has not migrated must keep working unchanged.
   const learnings = (options.learnings ?? []).map((l) => l.trim()).filter(Boolean);
   const learningsBlock = options.adapter
-    ? renderAdapter(options.adapter, options.adapterScope ?? {})
+    ? renderAdapter(options.adapter, { ...options.adapterScope, orca: options.orca === true })
     : learnings.length
       ? `\n\nThings you have learned (treat these as known facts):\n${learnings.map((l) => `- ${l}`).join("\n")}`
       : "";
