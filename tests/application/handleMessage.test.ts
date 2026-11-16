@@ -1,4 +1,5 @@
 import { describe, expect, test } from "bun:test";
+import { SANDBOX_SHELL_NOTE } from "../../src/domain/personality.ts";
 import { openDatabase, type DbClient } from "../../src/infrastructure/db/client.ts";
 import { createUserRepo } from "../../src/infrastructure/db/userRepo.ts";
 import { createMessageRepo } from "../../src/infrastructure/db/messageRepo.ts";
@@ -459,6 +460,23 @@ describe("handleMessage", () => {
 
     await handleMessage(deps, { channelId: "C-cheap", slackUserId: OWNER, text: "hi" });
     expect(policy?.model).toBe("haiku"); // the channel decided, not the role
+  });
+
+  test("a sandboxed turn is told to split its shell lines, a full-access one is not", async () => {
+    let system = "";
+    const deps = build({
+      complete: async (p) => {
+        system = p.system ?? "";
+        return "ok";
+      },
+    });
+    deps.toolPolicy = () => ({ skipPermissions: false });
+    await handleMessage(deps, { channelId: "C1", slackUserId: OWNER, text: "is the PR merged?" });
+    expect(system).toContain(SANDBOX_SHELL_NOTE);
+
+    deps.toolPolicy = () => ({ skipPermissions: true });
+    await handleMessage(deps, { channelId: "C1", slackUserId: OWNER, text: "and now?" });
+    expect(system).not.toContain(SANDBOX_SHELL_NOTE);
   });
 
   test("a forced model beats the channel's and the role's", async () => {
