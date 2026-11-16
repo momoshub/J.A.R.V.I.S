@@ -203,10 +203,31 @@ describe("renderAdapter skill routing", () => {
   });
 
   test("a skill with the keys shows run: next to read:", () => {
-    const out = renderAdapter(routed);
+    const out = renderAdapter(routed, { orca: true });
     expect(out).toContain("read: /adapter/skills/heavy/SKILL.md, run: sonnet, orca");
-    expect(out).toContain("read: /adapter/skills/cheap/SKILL.md, run: haiku");
     expect(out).toContain("A skill with `run:` is not done inline");
+    expect(out).toContain("orca = an Orca worker");
+  });
+
+  test("model without worker defaults to foreground and renders it", () => {
+    expect(renderAdapter(routed)).toContain("read: /adapter/skills/cheap/SKILL.md, run: haiku, foreground");
+  });
+
+  test("worker without model renders the worker only and names no model", () => {
+    const a = adapter({
+      skills: [{ name: "bg", description: "x", path: "skills/bg/SKILL.md", worker: "background" }],
+    });
+    const out = renderAdapter(a);
+    expect(out).toContain("read: /adapter/skills/bg/SKILL.md, run: background\n");
+    expect(out).toContain("A skill with no model runs on the turn's model");
+    expect(out).not.toContain("opus");
+  });
+
+  test("without the Orca grant worker: orca is background and the rule never says Orca", () => {
+    for (const out of [renderAdapter(routed), renderAdapter(routed, { orca: false })]) {
+      expect(out).toContain("read: /adapter/skills/heavy/SKILL.md, run: sonnet, background");
+      expect(out).not.toMatch(/orca/i);
+    }
   });
 
   test("without the keys the listing is unchanged and carries no rule", () => {
@@ -221,6 +242,7 @@ describe("renderAdapter skill routing", () => {
 
   test("adapterRules carries run so a change resets sessions", () => {
     expect(adapterRules(routed)).toContain("heavy: long job run: sonnet, orca");
+    expect(adapterRules(routed)).toContain("cheap: quick run: haiku, foreground");
     expect(adapterRules(adapter())).not.toContain("run:");
   });
 });

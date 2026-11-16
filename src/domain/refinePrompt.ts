@@ -43,7 +43,7 @@ The layout:
 - \`${NOTES_FILE}\` - facts loaded into every conversation. Also keep short.
 - \`${PEOPLE_DIR}/<SLACKID>.md\` - what you know about one person. Loaded only when they are in the conversation.
 - \`${CHANNELS_DIR}/<CHANNELID>.md\` - what you know about one channel. Loaded only in that channel.
-- \`${SKILLS_DIR}/<slug>/SKILL.md\` - something you know in depth. Only its \`description:\` is always loaded; you read the body when it turns out to be relevant. Frontmatter needs \`name:\` and \`description:\`.
+- \`${SKILLS_DIR}/<slug>/SKILL.md\` - something you know in depth. Only its \`description:\` is always loaded; you read the body when it turns out to be relevant. Frontmatter needs \`name:\` and \`description:\`; it may also carry the optional routing keys \`model:\` and \`worker:\`. Keep those exactly as written - never drop, rewrite or merge them away, and a merge of skills keeps the routing of the skill it keeps.
 
 The budget: the always-on part - policy plus global notes plus the one-line skill descriptions - must come in under *${req.budget} bytes*. It is currently *${req.currentBytes}*.${
     over

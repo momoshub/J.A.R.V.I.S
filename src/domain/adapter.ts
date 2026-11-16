@@ -56,14 +56,16 @@ export type AdapterLimit = {
   readonly frontmatter: readonly string[];
 };
 
-/** Model a skill runs on. Absent means opus, the turn's own model. */
+/** Model a skill runs on. Absent means the turn's model. */
 export const SKILL_MODELS = ["opus", "sonnet", "haiku"] as const;
 export type SkillModel = (typeof SKILL_MODELS)[number];
 
 /**
- * How a skill runs. Absent means inline: read in the main turn. `foreground` is
- * the Agent tool waited on, `background` the Agent tool with run_in_background,
- * `orca` an Orca worker (plus a watch) started with `--model <model>`.
+ * How a skill runs. Absent means inline: read in the main turn, unless `model`
+ * is set - a model needs a worker to run on, so it defaults to `foreground`.
+ * `foreground` is the Agent tool waited on, `background` the Agent tool with
+ * run_in_background, `orca` an Orca worker (plus a watch) started with
+ * `--model <model>`; a turn without the Orca grant gets `background` instead.
  */
 export const SKILL_WORKERS = ["foreground", "background", "orca"] as const;
 export type SkillWorker = (typeof SKILL_WORKERS)[number];
@@ -74,9 +76,9 @@ export type AdapterSkill = {
   readonly description: string;
   /** Path to SKILL.md, relative to the adapter root. */
   readonly path: string;
-  /** Optional `model:` frontmatter. Absent = opus. */
+  /** Optional `model:` frontmatter. Absent = the turn's model. */
   readonly model?: SkillModel;
-  /** Optional `worker:` frontmatter. Absent = inline. */
+  /** Optional `worker:` frontmatter. Absent = inline, or `foreground` when `model` is set. */
   readonly worker?: SkillWorker;
 };
 
@@ -111,6 +113,12 @@ export type AdapterScope = {
    * rendered inline. Defaults to true.
    */
   readonly canReadFiles?: boolean;
+  /**
+   * Whether this turn holds the Orca grant (`PERM.orca`). Without it the
+   * `orca` tool is denied, so a skill declaring `worker: orca` is shown and
+   * treated as `background`, and the rule never mentions Orca. Defaults to false.
+   */
+  readonly orca?: boolean;
 };
 
 export const MANIFEST_FILE = "adapter.yaml";
@@ -122,8 +130,8 @@ export const SKILLS_DIR = "skills";
 export const AGENTS_DIR = "agents";
 
 /** Printed under the skill listing when any skill declares `run:`. */
-export const SKILL_RUN_RULE =
-  "A skill with `run:` is not done inline: hand its work to that mode on that model (foreground/background = Agent tool, background with run_in_background; orca = an Orca worker with --model, plus a watch), with the skill path in the brief. No `run:` = read it inline.";
+export const skillRunRule = (orca = false): string =>
+  `A skill with \`run:\` is not done inline: hand its work to that mode on that model (foreground/background = Agent tool, background with run_in_background${orca ? "; orca = an Orca worker with --model, plus a watch" : ""}), with the skill path in the brief. A skill with no model runs on the turn's model. No \`run:\` = read it inline.`;
 
 /** Slack ids are the filenames under memory/people and memory/channels. */
 const ID_PATTERN = /^[A-Z0-9]+$/;
@@ -274,9 +282,17 @@ export const skillRouting = (
   return { ...(model ? { model } : {}), ...(worker ? { worker } : {}), invalid };
 };
 
+/** The worker a skill really runs on: `model` alone means `foreground`, and `orca` needs the grant. */
+export const effectiveWorker = (s: AdapterSkill, orca = true): SkillWorker | undefined => {
+  const worker = s.worker ?? (s.model ? "foreground" : undefined);
+  return worker === "orca" && !orca ? "background" : worker;
+};
+
 /** `run: sonnet, orca` for a skill that declares how it runs; empty when it declares nothing. */
-export const skillRunLabel = (s: AdapterSkill): string =>
-  s.model || s.worker ? `run: ${[s.model, s.worker].filter(Boolean).join(", ")}` : "";
+export const skillRunLabel = (s: AdapterSkill, orca = true): string => {
+  const parts = [s.model, effectiveWorker(s, orca)].filter(Boolean);
+  return parts.length ? `run: ${parts.join(", ")}` : "";
+};
 
 /**
  * Drop a file's own title heading.
@@ -359,13 +375,13 @@ export const renderAdapter = (adapter: Adapter, scope: AdapterScope = {}): strin
   if (adapter.skills.length > 0 && scope.canReadFiles !== false) {
     const lines = adapter.skills
       .map((s) => {
-        const run = skillRunLabel(s);
+        const run = skillRunLabel(s, scope.orca === true);
         return `- *${s.name}* - ${s.description}\n  read: ${adapter.root}/${s.path}${run ? `, ${run}` : ""}`;
       })
       .join("\n");
-    const routed = adapter.skills.some((s) => s.model || s.worker);
+    const routed = adapter.skills.some((s) => skillRunLabel(s));
     parts.push(
-      `\n\nWhat you know in depth (read one ONLY when the conversation is actually about it - the description is usually enough to know whether it is):\n${lines}${routed ? `\n${SKILL_RUN_RULE}` : ""}`,
+      `\n\nWhat you know in depth (read one ONLY when the conversation is actually about it - the description is usually enough to know whether it is):\n${lines}${routed ? `\n${skillRunRule(scope.orca === true)}` : ""}`,
     );
   }
 
