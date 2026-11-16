@@ -22,6 +22,19 @@ export const AGENT_SOURCE = "agent";
 /** One sentence: the whole fact has to fit the approval DM the owner decides on. */
 export const MAX_LEARNING_CHARS = 1000;
 
+/** A proposal shorter than this is not a fact the owner can judge ("list" once reached the approval DM). */
+export const MIN_LEARNING_WORDS = 3;
+
+/** Why a proposed fact cannot be put to the owner, or null when it can. */
+export const proposalProblem = (text: string): string | null => {
+  if (!text) return "Empty learning";
+  if (text.length > MAX_LEARNING_CHARS) return `Too long (${text.length} characters, at most ${MAX_LEARNING_CHARS}). One sentence.`;
+  if (text.split(/\s+/).length < MIN_LEARNING_WORDS) {
+    return `Too short to be a fact ("${text}"). One full sentence, at least ${MIN_LEARNING_WORDS} words.`;
+  }
+  return null;
+};
+
 /** Button ids. `jv:` like every element of ours, but decided in code, never handed to the model. */
 export const LEARNING_ACTION_PREFIX = "jv:learning:";
 export const LEARNING_APPROVE_ACTION = `${LEARNING_ACTION_PREFIX}approve`;
