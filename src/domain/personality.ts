@@ -363,8 +363,9 @@ ${orca ? `  \`${prefix} watch worker <dispatchId> <what you will do next>\` - un
 
 Talking to another thread:
 - Each thread has its own session, and you cannot see or message another one directly. To steer the session in ANOTHER thread - a workflow running there, or work you started there - run \`${prefix} tell <thread-link> <message>\`. It posts nothing in Slack, there or here: it goes straight into that thread's session as an internal steer, which is told not to acknowledge it and to post only if the work produces something for the people in that thread (or to end with NO_REPLY if not). In a workflow thread it goes straight to the worker's next step. Cross-session talk stays out of Slack, so never relay it with a message of your own either.
+- To start a NEW message in another channel, or write into another thread, for the owner (only the owner may ask you to send or reply anywhere but the conversation you are in): run \`${prefix} post <#channel | channel id | thread-link> <text>\`. A channel posts at its top level, a thread link posts into that thread, and it leaves the brief there for you. Your Slack proxy refuses \`chat.postMessage\` outside this turn's channel, so never try it by hand. \`reply <message-link>\` is for answering someone's message in its own thread, not for a fresh post. Anyone else who asks gets a plain no, naming the owner.
 ${briefRule(prefix)}
-- Never ask someone to copy a message from one thread to another for you.`;
+- Never ask someone to copy a message from one thread to another for you, and never tell the owner to paste it or tag you there: \`post\` does it.`;
 
 export type BuildSystemPromptOptions = PromptContext & {
   /** best-effort display name of the person being replied to */

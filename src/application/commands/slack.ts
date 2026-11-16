@@ -1,7 +1,7 @@
-/** Acting in Slack and on threads: bomb, limit, workflow, rm-msg, tell, brief, reply. */
+/** Acting in Slack and on threads: bomb, limit, workflow, rm-msg, tell, brief, post, reply. */
 
 import { BOMB_SIZE, DEFAULT_CATEGORY, parseCategories, pickBomb, renderCategories } from "../../domain/emoji.ts";
-import { parseMessageLink } from "../../domain/slackLinks.ts";
+import { parseMessageLink, parsePostTarget } from "../../domain/slackLinks.ts";
 import { runWorkflowTurn, WORKFLOW_MIN_ROLE, type WorkflowDeps } from "../workflow.ts";
 import { afterWorkflowTurn, steerWorker } from "../workflowContinue.ts";
 import { allowanceFor, limitFor, PAL_WINDOW_MS, setLimit, type CommandLimitDeps } from "../commandLimits.ts";
@@ -338,6 +338,76 @@ Leaves a short note FOR another thread: what you posted there, why, the facts it
         deps.clock(),
       );
       return "filed - that thread reads it the next time anyone speaks there, nothing posted 📝";
+    },
+  },
+  {
+    name: "post",
+    // A message in a room the sender may not be in: only the owner may ask for it, and the turn's own Slack proxy
+    // cannot, since it only writes into the channel the turn runs in.
+    minRole: "owner",
+    quiet: true,
+    usage: "<#channel | channel id | thread-link> <text>",
+    summary: "post a new message in another channel (top level) or into a linked thread; owner only, files a brief there",
+    run: async ({ deps, actor, args, rest, prefix, channelId, threadTs }) => {
+      const usage = `\`${prefix} post <#channel | channel id | thread-link> <text>\``;
+      if (!deps.slack) return "Slack tools are not available.";
+      const target = parsePostTarget(args[0] ?? "");
+      if (!target) return `Name where it goes: a channel (\`#name\`, \`<#C123>\` or its id) or a Slack thread link. ${usage}`;
+      // `rest` keeps the line breaks the text was written with; only the target word comes off.
+      const text = rest.replace(/^\S+\s*/, "").trim();
+      if (!text) return `And what to post? ${usage}`;
+
+      let channel: string;
+      let into: string | undefined;
+      if (target.kind === "name") {
+        if (!deps.slack.listConversationPage) return `I cannot look channel names up here - use the channel id or a thread link. ${usage}`;
+        let found: string | undefined;
+        let cursor: string | undefined;
+        try {
+          for (let page = 0; page < 30 && !found; page++) {
+            const res = await deps.slack.listConversationPage("channels", cursor);
+            found = res.conversations.find((c) => c.name.toLowerCase() === target.name)?.id;
+            cursor = res.nextCursor;
+            if (!cursor) break;
+          }
+        } catch (e) {
+          return `Could not look up #${target.name}: ${e instanceof Error ? e.message : String(e)}`;
+        }
+        if (!found) return `No channel named #${target.name} that I can see. Use its id or a thread link.`;
+        channel = found;
+      } else {
+        channel = target.channel;
+        if (target.kind === "thread") into = target.threadTs;
+      }
+      if (channel === channelId && (into ?? undefined) === threadTs) return "That is this thread - just say it here.";
+
+      let posted: Awaited<ReturnType<typeof deps.slack.post>>;
+      try {
+        posted = await deps.slack.post(channel, text, into, actor.displayName || undefined);
+      } catch (e) {
+        const err = e instanceof Error ? e.message : String(e);
+        if (/not_in_channel|channel_not_found/.test(err)) return "I am not in that channel (or it does not exist), so I could not post. Invite me there first.";
+        return `Could not post it: ${err}`;
+      }
+
+      // The target thread's session would see the message but never the reason: leave the note for it, unless there is
+      // no thread to file it under or the transport did not say where the message landed.
+      const briefThread = into ?? (posted ? posted.ts : undefined);
+      const briefed =
+        deps.briefs && threadTs && briefThread
+          ? (() => {
+              const note = cleanBriefText(`I posted this here for <@${actor.slackId}>, who asked me to. Message: ${text.length > 1500 ? `${text.slice(0, 1500)} [cut]` : text}`);
+              deps.briefs!.add(
+                { fromChannel: channelId, fromThread: threadTs, toChannel: channel, toThread: briefThread, author: actor.slackId, text: note },
+                deps.clock(),
+              );
+              return true;
+            })()
+          : false;
+      const where = into ? "in that thread" : `in <#${channel}>`;
+      return briefed
+        ? `posted ${where} 📮 and filed a brief there so its session knows why. Add what you wait for with \`${prefix} brief <thread-link> <text>\`.`
+        : `posted ${where} 📮 - no brief was filed (${!threadTs ? "no thread to file it from" : !deps.briefs ? "briefs are not available right now" : "Slack did not say where it landed"}); run \`${prefix} brief <thread-link> <text>\` if its session needs the reason.`;
     },
   },
   {

@@ -12,6 +12,9 @@
  * are, because a prompt-injected turn that could post anywhere would be an
  * exfiltration channel of its own.
  *
+ * A write to another channel is deliberately not allowed here, owner or not: the owner's
+ * route is the `post` command (role gate + audit log), which the bot runs itself.
+ *
  * Pure: no I/O, so the whole policy is testable without Slack.
  */
 
