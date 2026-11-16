@@ -132,11 +132,11 @@ describe("the owner decides", () => {
   test("pending lists what waits, with who asked", async () => {
     const d = build();
     expect(await run(d, actor(), "learn pending")).toContain("No learnings are waiting");
-    const a = await pendingFrom(d, "first fact");
-    await run(d, actor(), "learn second fact", true);
+    const a = await pendingFrom(d, "the first fact");
+    await run(d, actor(), "learn the second fact", true);
     const out = await run(d, actor(), "learn pending");
-    expect(out).toContain(`#${a.id} (<@${MEMBER.slackId}>) first fact`);
-    expect(out).toContain("(from a turn) second fact");
+    expect(out).toContain(`#${a.id} (<@${MEMBER.slackId}>) the first fact`);
+    expect(out).toContain("(from a turn) the second fact");
   });
 
   test("the owner is told in `learnings` how many wait, and nobody else is", async () => {
@@ -429,6 +429,18 @@ describe("limits on what can wait", () => {
     expect(slackCalls.posts).toEqual([]);
   });
 
+  test("a one or two word proposal is refused, so the owner never gets a DM showing just `list`", async () => {
+    const d = build();
+    for (const junk of ["list", " two words "]) {
+      const r = await proposeLearning(d.learningApproval!, junk, AGENT_SOURCE);
+      expect(r.ok).toBe(false);
+      if (!r.ok) expect(r.error).toContain("Too short");
+    }
+    expect(d.learnings!.pending()).toEqual([]);
+    expect(slackCalls.posts).toEqual([]);
+    expect((await proposeLearning(d.learningApproval!, "three words here", AGENT_SOURCE)).ok).toBe(true);
+  });
+
   test("a DM that cannot be sent still leaves it pending, never active", async () => {
     const d = build();
     d.learningApproval = { ...d.learningApproval!, slack: { ...d.slack!, postDmInteractive: async () => undefined } };
@@ -468,7 +480,7 @@ describe("rewording is a write too", () => {
     const d = build();
     await run(d, actor(), `learn ${FACT}`);
     const id = d.learnings!.list()[0]!.id;
-    await run(d, actor(), `relearn ${id} something injected`, true);
+    await run(d, actor(), `relearn ${id} something injected here`, true);
     expect(d.learnings!.get(id)?.status).toBe("pending");
     expect(d.learnings!.list()).toEqual([]);
   });
@@ -478,20 +490,29 @@ describe("rewording is a write too", () => {
     await run(d, actor(), `learn ${FACT}`);
     const id = d.learnings!.list()[0]!.id;
     const who = { slackId: "", owner: false };
-    expect(await rewordLearning(d.learningApproval!, id, "variant one", who)).toMatchObject({ ok: true, pending: true });
+    expect(await rewordLearning(d.learningApproval!, id, "the variant one fact", who)).toMatchObject({ ok: true, pending: true });
     const dms = slackCalls.posts.length;
     // now pending: more variants are refused and send nothing
-    for (const v of ["variant two", "variant three"]) {
+    for (const v of ["the variant two fact", "the variant three fact"]) {
       expect(await rewordLearning(d.learningApproval!, id, v, who)).toMatchObject({ ok: false });
     }
     expect(slackCalls.posts).toHaveLength(dms);
-    expect(d.learnings!.get(id)?.content).toBe("variant one");
+    expect(d.learnings!.get(id)?.content).toBe("the variant one fact");
 
     // with the queue full, an active row cannot be pushed into it either
     const other = d.learnings!.add("another active fact", OWNER, 1, "active");
     for (let i = 0; i < MAX_PENDING; i++) d.learnings!.add(`waiting ${i}`, "agent", 1, "pending");
-    expect(await rewordLearning(d.learningApproval!, other.id, "changed", who)).toMatchObject({ ok: false });
+    expect(await rewordLearning(d.learningApproval!, other.id, "a changed active fact", who)).toMatchObject({ ok: false });
     expect(d.learnings!.get(other.id)).toMatchObject({ status: "active", content: "another active fact" });
+  });
+
+  test("rewording to a one-word fact is refused like a proposal, the owner's typing still allowed", async () => {
+    const d = build();
+    await run(d, actor(), `learn ${FACT}`);
+    const id = d.learnings!.list()[0]!.id;
+    expect(await rewordLearning(d.learningApproval!, id, "list", { slackId: "", owner: false })).toMatchObject({ ok: false });
+    expect(d.learnings!.get(id)).toMatchObject({ status: "active", content: FACT });
+    expect(await rewordLearning(d.learningApproval!, id, "vpn", { slackId: OWNER, owner: true })).toMatchObject({ ok: true });
   });
 
   test("a rejected learning stays rejected: nobody but the owner's typing rewords it back", async () => {
