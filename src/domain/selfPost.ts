@@ -30,20 +30,20 @@ export type SelfPostCall = {
  * is a person acting on a post that is now wrong. Rewording is not the code's
  * job: `jarvis_note` tells the model right after the post to end with NO_REPLY.
  *
- * Share of the post's words the reply must hold (see `repeatsPosted`): a short
- * answer to a long post, or a different answer on the same subject, holds well
- * under half of it.
+ * Share of the post's words the reply must hold (see `repeatsPosted`): all of
+ * them, so a reply that dropped a word of the post ("safe to rerun" ->
+ * "safe to delete") is not a repeat. A short or different answer is kept too.
  */
-export const MIN_POST_COVERAGE = 0.9;
+export const MIN_POST_COVERAGE = 1;
 /**
  * Share of the reply's words the posts do not hold (not even by their first
- * letters) up to which a reply is still a repeat. Small on purpose: a
- * correction or a warning added to the post is a handful of new words ("but ...
- * not ... yet"), and that must keep the reply.
+ * letters) up to which a reply is still a repeat. Zero: one flipped word ("is
+ * not safe", "checks failed") in a long repeated reply is a correction, and a
+ * share bound let it through once the reply had 20 words.
  */
-export const MAX_FRESH_SHARE = 0.1;
-/** Never a repeat when more words than this are new, however long the reply is. Two: "not" and "yet" in an otherwise repeated sentence is a correction. */
-export const MAX_FRESH_WORDS = 2;
+export const MAX_FRESH_SHARE = 0;
+/** Never a repeat when more words than this are new, however long the reply is. Zero, for the same reason: any added or swapped word keeps the reply. */
+export const MAX_FRESH_WORDS = 0;
 /** A sentence of the reply with more than this share of words new to the posts says something the posts did not: the reply is kept. */
 export const MAX_SENTENCE_FRESH_SHARE = 0.5;
 /** A reply with fewer words than this is compared only for equality: "ok, done" shares words with almost anything. */
