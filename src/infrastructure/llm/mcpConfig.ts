@@ -18,6 +18,22 @@ export const NO_CLAUDEAI_CONNECTORS_ENV = { ENABLE_CLAUDEAI_MCP_SERVERS: "false"
 
 type Servers = Record<string, unknown>;
 
+/** How a stdio server is wrapped in the lazy proxy (`bin/mcp-lazy-proxy.ts`). */
+export type LazyProxy = {
+  /** The runtime that runs the proxy script (bun). */
+  readonly runtime: string;
+  readonly script: string;
+  /** Where each server's cached schema lives. */
+  readonly cacheDir: string;
+};
+
+export type McpConfigOptions = {
+  /** Wrap every stdio server in the lazy proxy so none starts before a tool is called. */
+  readonly lazy?: LazyProxy;
+  /** The turn's `--disallowedTools`: a whole-server entry (`mcp__name`) keeps that server out of the config. */
+  readonly disallowedTools?: readonly string[];
+};
+
 const asRecord = (v: unknown): Record<string, unknown> | undefined =>
   v && typeof v === "object" && !Array.isArray(v) ? (v as Record<string, unknown>) : undefined;
 
@@ -32,6 +48,7 @@ export const mcpConfigFor = (
   claudeJson: unknown,
   cwd: string | undefined,
   deny: readonly string[] = UNAUTHENTICATED_MCP_SERVERS,
+  opts: McpConfigOptions = {},
 ): string | undefined => {
   const root = asRecord(claudeJson);
   if (!root) return undefined;
@@ -40,7 +57,24 @@ export const mcpConfigFor = (
   if (!user && !project) return undefined;
   const merged: Servers = { ...user, ...project };
   for (const name of deny) delete merged[name];
+  // A server the role may not call has no business being started: drop it, not just its tools.
+  for (const tool of opts.disallowedTools ?? []) if (tool.startsWith("mcp__") && !tool.includes("__", 5)) delete merged[tool.slice(5)];
+  const { lazy } = opts;
+  if (lazy) for (const [name, def] of Object.entries(merged)) merged[name] = lazyStdio(name, def, lazy);
   return JSON.stringify({ mcpServers: merged });
+};
+
+/** A stdio definition run through the lazy proxy; anything else (http, sse) is returned as it was. */
+const lazyStdio = (name: string, def: unknown, lazy: LazyProxy): unknown => {
+  const d = asRecord(def);
+  if (!d || typeof d.command !== "string" || (d.type !== undefined && d.type !== "stdio")) return def;
+  const args = Array.isArray(d.args) ? d.args.map(String) : [];
+  return {
+    ...d,
+    type: "stdio",
+    command: lazy.runtime,
+    args: [lazy.script, "--name", name, "--cache-dir", lazy.cacheDir, "--", d.command, ...args],
+  };
 };
 
 /**

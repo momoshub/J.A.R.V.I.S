@@ -13,6 +13,8 @@
  * - `stream` uses `--output-format stream-json --include-partial-messages` and
  *   forwards text deltas and tool-call progress to a sink as they arrive.
  */
+import { homedir } from "node:os";
+import { join } from "node:path";
 import type {
   BillingContext,
   LlmCompleteParams,
@@ -47,6 +49,8 @@ export type ClaudeCliConfig = {
   cwd?: string;
   /** The host's `~/.claude.json`, read for the MCP server list. Default `~/.claude.json`; tests point it elsewhere. */
   claudeJsonPath?: string;
+  /** Where the lazy MCP proxy keeps each stdio server's cached schema. Default `~/.jarvis/mcp-schema-cache`. */
+  mcpSchemaCacheDir?: string;
   /** Hard timeout for a single invocation, ms. Default 120000. */
   timeoutMs?: number;
   /**
@@ -519,12 +523,16 @@ const spawnClaude = (
   return proc;
 };
 
+const LAZY_PROXY_SCRIPT = join(import.meta.dir, "..", "..", "..", "bin", "mcp-lazy-proxy.ts");
+
 const claudeJsonReaders = new Map<string, () => unknown>();
 
 /**
  * Keeps unauthenticated MCP servers out of a bot turn (see
- * `UNAUTHENTICATED_MCP_SERVERS`). Every other configured server is passed
- * explicitly under `--strict-mcp-config`, which is what drops the rest. A
+ * `UNAUTHENTICATED_MCP_SERVERS`) and every server the role's `disallowedTools`
+ * names whole. Every other configured server is passed explicitly under
+ * `--strict-mcp-config`, which is what drops the rest; each stdio one runs behind
+ * the lazy proxy, so it only starts when a tool of it is called. A
  * host-login spawn is left alone: its commands (read, ticket, note, close) use
  * the account's connectors. Goes last because `--mcp-config` is variadic and
  * the flag after it ends the list.
@@ -537,7 +545,14 @@ const connectorArgs = (config: ClaudeCliConfig, policy?: ToolPolicy, useHostLogi
     read = createClaudeJsonReader(config.claudeJsonPath);
     claudeJsonReaders.set(key, read);
   }
-  const json = mcpConfigFor(read(), policy?.cwd ?? config.cwd);
+  const json = mcpConfigFor(read(), policy?.cwd ?? config.cwd, undefined, {
+    lazy: {
+      runtime: process.execPath,
+      script: LAZY_PROXY_SCRIPT,
+      cacheDir: config.mcpSchemaCacheDir ?? join(homedir(), ".jarvis", "mcp-schema-cache"),
+    },
+    disallowedTools: policy?.disallowedTools,
+  });
   return json ? ["--mcp-config", json, "--strict-mcp-config"] : [];
 };
 

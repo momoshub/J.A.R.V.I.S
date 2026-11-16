@@ -39,6 +39,40 @@ describe("mcpConfigFor", () => {
   });
 });
 
+describe("mcpConfigFor lazy proxy", () => {
+  const lazy = { runtime: "/bin/bun", script: "/repo/bin/mcp-lazy-proxy.ts", cacheDir: "/cache" };
+  const host = {
+    mcpServers: {
+      "pg-prod": { type: "stdio", command: "/bin/bunx", args: ["dbhub", "--x"], env: { DSN: "secret" } },
+      bare: { command: "tool" },
+      notion: { type: "http", url: "https://example.test/mcp" },
+      "ch-prod": { command: "uvx", args: ["mcp-clickhouse"] },
+    },
+  };
+  const parsed = (json: string | undefined) => (JSON.parse(json ?? "{}") as { mcpServers: Record<string, any> }).mcpServers;
+
+  test("wraps every stdio server in the proxy, keeping its env, and leaves http alone", () => {
+    const cfg = parsed(mcpConfigFor(host, undefined, [], { lazy }));
+    expect(cfg["pg-prod"]).toEqual({
+      type: "stdio",
+      command: "/bin/bun",
+      args: ["/repo/bin/mcp-lazy-proxy.ts", "--name", "pg-prod", "--cache-dir", "/cache", "--", "/bin/bunx", "dbhub", "--x"],
+      env: { DSN: "secret" },
+    });
+    expect(cfg.bare.args).toEqual(["/repo/bin/mcp-lazy-proxy.ts", "--name", "bare", "--cache-dir", "/cache", "--", "tool"]);
+    expect(cfg.notion).toEqual({ type: "http", url: "https://example.test/mcp" });
+  });
+
+  test("a server named whole in disallowedTools is not in the config at all; a single tool deny keeps it", () => {
+    const cfg = parsed(mcpConfigFor(host, undefined, [], { lazy, disallowedTools: ["Bash", "mcp__pg-prod", "mcp__notion", "mcp__ch-prod__run_query"] }));
+    expect(Object.keys(cfg)).toEqual(["bare", "ch-prod"]);
+  });
+
+  test("without the option nothing is wrapped", () => {
+    expect(parsed(mcpConfigFor(host, undefined, []))["pg-prod"].command).toBe("/bin/bunx");
+  });
+});
+
 describe("createClaudeJsonReader", () => {
   test("reads the file, follows changes, and answers undefined when it is missing or broken", () => {
     const dir = mkdtempSync(join(tmpdir(), "jarvis-mcp-"));

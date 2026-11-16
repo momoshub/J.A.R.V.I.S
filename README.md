@@ -274,6 +274,15 @@ X/jv cloudwatch --group /ecs/prod-api --last 15m fields @timestamp, @message | f
 
 The buttons carry `jv:cloudwatch:confirm` / `jv:cloudwatch:cancel` ids but are decided in code and never handed to the model like other `jv:` presses, so a model turn cannot confirm its own query.
 
+### Lazy MCP servers in a bot turn
+
+A bot turn's stdio MCP servers (the database servers) are started lazily: each is
+wrapped in `bin/mcp-lazy-proxy.ts`, which answers the tool list from
+`~/.jarvis/mcp-schema-cache` and starts the real server only on the first tool
+call, and a role that may not use a server (`mcp__<server>` in its denied tools)
+does not get it in the config at all. The first turn after a new or edited
+server still starts it once to fill the cache.
+
 ## Investigating
 
 Asked what went wrong, the bot looks for logs, metrics and traces in a stated

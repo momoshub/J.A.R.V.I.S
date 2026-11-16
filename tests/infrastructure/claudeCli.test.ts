@@ -257,7 +257,17 @@ describe("createClaudeCliLlm", () => {
     const [flag, strict, cfg] = (await llm.complete({ system: "s", messages: [{ role: "user", content: "hi" }] })).split(" ");
     expect(flag).toBe("false");
     expect(strict).toBe("yes");
-    expect(Object.keys(JSON.parse(Buffer.from(cfg!, "base64").toString()).mcpServers)).toEqual(["notion", "acme-pg-prod"]);
+    const servers = JSON.parse(Buffer.from(cfg!, "base64").toString()).mcpServers;
+    expect(Object.keys(servers)).toEqual(["notion", "acme-pg-prod"]);
+    // the stdio server runs behind the lazy proxy, the http one is untouched
+    expect(servers["acme-pg-prod"].args).toEqual([
+      expect.stringContaining("mcp-lazy-proxy.ts"), "--name", "acme-pg-prod", "--cache-dir", expect.stringContaining("mcp-schema-cache"), "--", "x",
+    ]);
+    expect(servers.notion).toEqual({ type: "http" });
+
+    // a role that may not use a database server does not get it started at all
+    const sandboxed = (await llm.complete({ system: "s", messages: [{ role: "user", content: "hi" }], policy: { skipPermissions: false, disallowedTools: ["mcp__acme-pg-prod"] } })).split(" ");
+    expect(Object.keys(JSON.parse(Buffer.from(sandboxed[2]!, "base64").toString()).mcpServers)).toEqual(["notion"]);
 
     // a caller's own token is a bot turn too
     const own = await llm.complete({ system: "s", messages: [{ role: "user", content: "hi" }], oauthToken: "sk-ant-oat01-theirs" });
