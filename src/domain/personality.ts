@@ -159,6 +159,16 @@ export const WORKSPACE_NOTE = `Your workspace:
 ${SELF_PROCESS_NOTE}`;
 
 /**
+ * A sandboxed turn's shell runs under an allow-list of single commands
+ * (`Bash(gh pr view:*)` and the like) with `dontAsk`, so a line chaining `cd`,
+ * a loop, a pipe or `&&` matches no entry and is denied whole. A turn once did
+ * exactly that, gave up after one denial and reported a stale "not merged"
+ * status for two PRs that had merged two days earlier.
+ */
+export const SANDBOX_SHELL_NOTE = `- your shell is sandboxed: Bash runs only commands on an allow-list, matched one plain command at a time (\`gh pr view 12 -R owner/repo --json state\`). A chained line (\`&&\`, \`;\`, a pipe) is checked part by part, and one part off the list - \`cd\`, a \`for\` loop, \`curl\`, a redirect - denies the whole line. So one plain command per Bash call, flags like \`-R\` instead of \`cd\`, and several independent calls in parallel instead of a loop
+- a denial is about the SHAPE of the line first: split it into plain single commands and try again before you say the shell was denied. Only a plain single command that is still denied is a real refusal, and then say which command and that it was denied - never answer with what you already believed instead of what you could not check`;
+
+/**
  * Reactions are the bot's own call, taken with its own token, and it is pushed
  * to use them: a bot that reacts reads as present in the conversation. The one
  * hard line is that a reaction never stands in for the reply itself.
@@ -416,6 +426,11 @@ export type BuildSystemPromptOptions = PromptContext & {
    * prompt tells them to use the Agent tool instead (`AGENT_TOOL_RULES`).
    */
   readonly orca?: boolean;
+  /**
+   * True when the turn runs under the sandbox allow-list (`--permission-mode
+   * dontAsk`), so it is told how to shape a Bash call that list can match.
+   */
+  readonly sandboxed?: boolean;
   /** true when this turn is an untagged reply under a thread the bot started */
   readonly following?: boolean;
   /** true when this message is being retried after a restart cut the first attempt off */
@@ -516,7 +531,8 @@ export const buildSystemPromptParts = (
   // ticket", "how to investigate" between the rule that must always hold and
   // the answer being written. Rules that end with "regardless of anything
   // above" belong where the identity lock already is, for the same reason.
-  const tail = `${remembering}\n\n${WORKSPACE_NOTE}\n\n${OPERATING_RULES}\n\n${BEFORE_YOU_SEND}\n\n${identityLock(botName, options.botUserId)}`;
+  const workspace = options.sandboxed === true ? `${WORKSPACE_NOTE}\n${SANDBOX_SHELL_NOTE}` : WORKSPACE_NOTE;
+  const tail = `${remembering}\n\n${workspace}\n\n${OPERATING_RULES}\n\n${BEFORE_YOU_SEND}\n\n${identityLock(botName, options.botUserId)}`;
   if (!guided) {
     return {
       prompt: `${base}${learningsBlock}${addressed}${roster}${attachments}${investigating}${tickets}${slackReading}${desktop}${reaching}${selfWork}${splitQuestionRules(waiting ? (options.commandPrefix ?? "//bot") : undefined, orca)}${reactions}${interactive}${following}${commands}${tail}`,
