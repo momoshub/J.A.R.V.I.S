@@ -84,7 +84,7 @@ export const SCHEDULE_COMMANDS: readonly CommandDef[] = [
     // The confirmation is for the brain, not the thread: it already says what
     // it is waiting for in its own words, and a second notice is just noise.
     quiet: true,
-    usage: "pr|checks|reply|url|worker <target> [--past-wait] <what to do> | <what to do> -- <shell check> | list | cancel",
+    usage: "pr|checks|reply|url|worker <target> [--past-wait] <what to do> | <what to do> -- <shell check> | list | cancel [<id>]",
     summary: "wait for a PR, CI, a reply, a url or an Orca worker, then carry on in this thread by itself",
     run: async ({ can, roles, deps, actor, args, rest, prefix, threadTs, channelId }) => {
       if (!deps.watches) return "I have nowhere to keep a watch right now.";
@@ -106,6 +106,19 @@ export const SCHEDULE_COMMANDS: readonly CommandDef[] = [
       }
 
       if (sub === "cancel" || sub === "stop") {
+        // `cancel <id>` ends that one watch and says what happened to it; it
+        // used to ignore the id and answer for the whole thread, which read
+        // "nothing was being watched" for a watch that had just fired.
+        const idArg = (args[1] ?? "").replace(/^#/, "");
+        if (idArg) {
+          if (!/^\d+$/.test(idArg)) return `\`${prefix} watch cancel [<id>]\` - the id is the #number the watch printed.`;
+          const w = deps.watches.get(Number(idArg));
+          if (!w) return `There is no watch #${idArg}.`;
+          const mine = w.slackUserId === actor.slackId || (w.channelId === channelId && w.threadTs === threadTs);
+          if (!mine && !can(PERM.shellWatch)) return `#${w.id} is not yours to cancel - ask <@${w.slackUserId}>.`;
+          if (w.state !== "waiting") return `#${w.id} had already ${w.state === "fired" ? "fired" : `ended (${w.state})`}, so there was nothing left to cancel.`;
+          return deps.watches.cancel(w.id, deps.clock()) ? `stopped watch #${w.id}` : `#${w.id} ended just now, before the cancel.`;
+        }
         if (!threadTs) return "Cancel which thread's watch? Run it in the thread.";
         const n = deps.watches.cancelThread(channelId, threadTs, deps.clock());
         return n > 0 ? `stopped ${n} watch${n === 1 ? "" : "es"} here` : "nothing was being watched here.";

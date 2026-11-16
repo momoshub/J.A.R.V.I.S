@@ -1,5 +1,6 @@
 /** Runs, sessions and credentials: stop, session, token, 2fa, review-agents. */
 
+import { cancelWorkerWatches } from "../watcher.ts";
 import { asAgentCap, DEFAULT_REVIEW_AGENTS, REVIEW_AGENT_CEILING } from "../../domain/reviewPrompt.ts";
 import { tokenHint } from "../../domain/claudeToken.ts";
 import { encodeTotpRequest, TOTP_ACTION } from "../totp.ts";
@@ -88,7 +89,17 @@ export const RUNTIME_COMMANDS: readonly CommandDef[] = [
       // this turn's and every earlier turn's.
       const background = deps.backgroundAgents
         ? await deps.backgroundAgents
-            .stopForThread({ channelId, threadTs, actor: actor.slackId, mayStopOthers: isAdmin })
+            .stopForThread({
+              channelId,
+              threadTs,
+              actor: actor.slackId,
+              mayStopOthers: isAdmin,
+              // A worker stopped here is stopped on purpose: its watches end
+              // before the stop, or each could post a death and start a redo turn.
+              beforeStop: (l) => {
+                if (l.kind === "orca-worker" && deps.watches) cancelWorkerWatches(deps.watches, l.id, deps.clock());
+              },
+            })
             .catch(logAndIgnore("stop background agents", NOTHING_IN_BACKGROUND))
         : NOTHING_IN_BACKGROUND;
       const reply = stopReply(turnLine, background);

@@ -7,7 +7,7 @@
  */
 import type { PromptMessage } from "../domain/types.ts";
 import type { ToolPolicy } from "../domain/toolPolicy.ts";
-import type { BackgroundStopResult } from "../domain/threadBackground.ts";
+import type { BackgroundLaunch, BackgroundStopResult } from "../domain/threadBackground.ts";
 
 /** An incremental event produced while the model is generating a reply. */
 export type LlmStreamEvent =
@@ -105,6 +105,8 @@ export type BackgroundAgentsPort = {
     actor: string;
     /** An admin may stop anyone's. */
     mayStopOthers: boolean;
+    /** Called right before each one is stopped (a stopped worker's watches end first). Must not throw. */
+    beforeStop?: (launch: BackgroundLaunch) => void;
   }) => Promise<BackgroundStopResult>;
   /**
    * Whether anything the thread started is still running, or could not be
@@ -207,6 +209,12 @@ export type LlmCompleteParams = {
    * reply: by then that reply's Slack stream is usually closed.
    */
   readonly onBackgroundCutOff?: (tasks: readonly string[]) => void;
+  /**
+   * Told each Bash command the moment the model has written it, before the
+   * shell runs it (CLI adapter only, streamed and traced runs alike, so a turn
+   * with no Slack sink is seen too). Must not throw; a throw is ignored.
+   */
+  readonly onBashCommand?: (command: string) => void;
 };
 
 /** Anything that can turn a system prompt + history into a reply. */

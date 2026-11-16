@@ -47,6 +47,7 @@ import type { BugReportRepo } from "../infrastructure/db/bugReportRepo.ts";
 import type { SelfIssueRepo } from "../infrastructure/db/selfIssueRepo.ts";
 import type { LoopRepo } from "../infrastructure/db/loopRepo.ts";
 import type { WatchRepo } from "../infrastructure/db/watchRepo.ts";
+import { cancelWatchesOnWorkerStop } from "./watcher.ts";
 import type { FollowRepo } from "../infrastructure/db/followRepo.ts";
 import type { WorkflowRepo } from "../infrastructure/db/workflowRepo.ts";
 import type { AccessRequestRepo } from "../infrastructure/db/accessRequestRepo.ts";
@@ -580,6 +581,9 @@ export const handleMessage = async (
     onUsage: (u: LlmUsage) => {
       usage = u;
     },
+    // A worker this turn stops on purpose is not a death: its watches end
+    // before the shell runs the stop - in every turn, a sinkless hand-back too.
+    ...(deps.watches ? { onBashCommand: cancelWatchesOnWorkerStop(deps.watches, deps.clock, (m) => console.log(`[watch] ${m}`)) } : {}),
     // Background work this turn leaves running dies with the CLI; the thread is
     // told when it does, by whoever keeps the list.
     ...(bgWatch && bgThread

@@ -1,7 +1,12 @@
 import { beforeEach, describe, expect, test } from "bun:test";
 import { openDatabase, type DbClient } from "../../src/infrastructure/db/client.ts";
 import { createWatchRepo, type WatchRepo } from "../../src/infrastructure/db/watchRepo.ts";
-import { createWatcher, type CheckResult } from "../../src/application/watcher.ts";
+import {
+  cancelWatchesOnWorkerStop,
+  cancelWorkerWatches,
+  createWatcher,
+  type CheckResult,
+} from "../../src/application/watcher.ts";
 import { MAX_CONSECUTIVE_ERRORS } from "../../src/domain/watch.ts";
 
 let db: DbClient;
@@ -400,6 +405,48 @@ describe("watcher: CI gate rows", () => {
     now += EVERY;
     await w.tick();
     expect(said).toEqual([]);
+    expect(turns).toHaveLength(1);
+  });
+
+  test("a watch cancelled while its check ran says nothing and hands nothing back", async () => {
+    const w0 = add({ check: "'bun' '/x/bin/orca-worker-wait.ts' 'ctx_dead1'" });
+    const w = build(async () => {
+      // the bot stops the worker (and cancels its watch) mid-check
+      watches.cancel(w0.id, now);
+      return { code: 0, output: "orca worker ctx_dead1 died: stopped without reporting, task left blocked" };
+    });
+    now += EVERY;
+    await w.tick();
+    expect(said).toEqual([]);
+    expect(turns).toEqual([]);
+    expect(watches.get(w0.id)?.state).toBe("cancelled");
+  });
+
+  test("cancelWorkerWatches ends only the watches on that dispatch", () => {
+    const a = add({ check: "'bun' '/x/bin/orca-worker-wait.ts' 'ctx_abc'" });
+    const b = add({ check: "'bun' '/x/bin/orca-worker-wait.ts' 'ctx_abc' '--past-wait=5'", threadTs: "1.1" });
+    const c = add({ check: "'bun' '/x/bin/orca-worker-wait.ts' 'ctx_abcd'" });
+    const d = add({ check: "echo ctx_abc" });
+    expect(cancelWorkerWatches(watches, "ctx_abc", now).sort()).toEqual([a.id, b.id].sort());
+    expect(watches.waiting().map((w) => w.id).sort()).toEqual([c.id, d.id].sort());
+  });
+
+  test("a turn's worker-stop command cancels that worker's watch, and nothing else", () => {
+    const a = add({ check: "'bun' '/x/bin/orca-worker-wait.ts' 'ctx_5b5fa1aae471'" });
+    const b = add({ check: "'bun' '/x/bin/orca-worker-wait.ts' 'ctx_other'" });
+    const seen = cancelWatchesOnWorkerStop(watches, () => now);
+    seen("orca orchestration worker-show --dispatch ctx_other --json");
+    seen("orca orchestration worker-stop --dispatch ctx_5b5fa1aae471 --json");
+    expect(watches.get(a.id)?.state).toBe("cancelled");
+    expect(watches.get(b.id)?.state).toBe("waiting");
+  });
+
+  test("a worker that dies on its own still gets the heads-up and the hand-back", async () => {
+    add({ check: "'bun' '/x/bin/orca-worker-wait.ts' 'ctx_crash'" });
+    const w = build(async () => ({ code: 0, output: "orca worker ctx_crash died: liveness dead, no outcome" }));
+    now += EVERY;
+    await w.tick();
+    expect(said[0]).toContain("died without reporting");
     expect(turns).toHaveLength(1);
   });
 });

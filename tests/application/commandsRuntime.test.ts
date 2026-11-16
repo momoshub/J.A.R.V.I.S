@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { createSettingsRepo } from "../../src/infrastructure/db/settingsRepo.ts";
+import { createWatchRepo } from "../../src/infrastructure/db/watchRepo.ts";
 import { createThreadSessionRepo } from "../../src/infrastructure/db/threadSessionRepo.ts";
 import { createRunRegistry } from "../../src/application/runRegistry.ts";
 import { dispatchCommand, type CommandDeps } from "../../src/application/commands.ts";
@@ -65,7 +66,7 @@ describe("stop command", () => {
   describe("background agents", () => {
     const bgAgent = { kind: "claude-bg" as const, id: "cfaf8d7a", actor: OWNER };
     const port = (result: BackgroundStopResult = { stopped: [bgAgent], failed: [], notYours: [], unchecked: [] }) => {
-      const asked: { actor: string; mayStopOthers: boolean; channelId: string; threadTs: string }[] = [];
+      const asked: Parameters<BackgroundAgentsPort["stopForThread"]>[0][] = [];
       const backgroundAgents: BackgroundAgentsPort = {
         stopForThread: async (q) => {
           asked.push(q);
@@ -88,7 +89,7 @@ describe("stop command", () => {
       expect(t.signal.aborted).toBe(true);
       expect(out).toContain("stopped *the long one*");
       expect(out).toContain("and 1 background agent it started (`cfaf8d7a`)");
-      expect(asked).toEqual([{ channelId: "C1", threadTs: "900.1", actor: OWNER, mayStopOthers: true }]);
+      expect(asked).toEqual([{ channelId: "C1", threadTs: "900.1", actor: OWNER, mayStopOthers: true, beforeStop: expect.any(Function) }]);
     });
 
     test("with no turn running it still ends the earlier turns' agents", async () => {
@@ -97,6 +98,29 @@ describe("stop command", () => {
       deps.backgroundAgents = port().backgroundAgents;
       const out = await dispatchCommand(deps, actor(), "C1", "stop", { threadTs: "900.1" });
       expect(out).toBe("⏹ stopped 1 background agent this thread started (`cfaf8d7a`)");
+    });
+
+    test("a stopped Orca worker takes its watches with it, so it is never reported dead", async () => {
+      const deps = build();
+      deps.runs = createRunRegistry();
+      const watches = createWatchRepo(db);
+      deps.watches = watches;
+      const w = watches.add(
+        { channelId: "C1", threadTs: "900.1", slackUserId: OWNER, note: "merge it", check: "'bun' '/x/bin/orca-worker-wait.ts' 'ctx_w1'", everyMs: 30_000, deadlineAt: 9e12, createdAt: 0 },
+        0,
+      );
+      // The watch must already be cancelled when the stop itself runs, not after.
+      let stateAtStop: string | undefined;
+      deps.backgroundAgents = {
+        stopForThread: async (q) => {
+          const l = { kind: "orca-worker" as const, id: "ctx_w1", actor: OWNER };
+          q.beforeStop?.(l);
+          stateAtStop = watches.get(w.id)?.state;
+          return { stopped: [l], failed: [], notYours: [], unchecked: [] };
+        },
+      };
+      await dispatchCommand(deps, actor(), "C1", "stop", { threadTs: "900.1" });
+      expect(stateAtStop).toBe("cancelled");
     });
 
     test("nothing in the background keeps the plain answer", async () => {
@@ -135,7 +159,7 @@ describe("stop command", () => {
 
       t.done();
       await dispatchCommand(deps, pal, "C1", "stop", { threadTs: "900.1" });
-      expect(asked).toEqual([{ channelId: "C1", threadTs: "900.1", actor: "U0PAL0008", mayStopOthers: false }]);
+      expect(asked).toEqual([{ channelId: "C1", threadTs: "900.1", actor: "U0PAL0008", mayStopOthers: false, beforeStop: expect.any(Function) }]);
     });
 
     test("a port that throws never takes the turn's stop down with it", async () => {
