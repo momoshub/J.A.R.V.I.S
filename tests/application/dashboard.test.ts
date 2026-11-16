@@ -124,17 +124,17 @@ describe("dashboard use cases", () => {
       }).p,
     );
     expect((await app.teach("  ")).ok).toBe(false);
-    const out = await app.teach(" a fact ");
+    const out = await app.teach(" a short fact ");
     expect(out).toMatchObject({ ok: true, value: { status: "pending" } });
     expect(repo.list()).toEqual([]);
-    expect(repo.pending()[0]).toMatchObject({ content: "a fact", createdBy: "agent", noticeTs: "9.1" });
+    expect(repo.pending()[0]).toMatchObject({ content: "a short fact", createdBy: "agent", noticeTs: "9.1" });
     expect(dms).toHaveLength(1);
     expect(dms[0]).toContain(OWNER);
 
     // an adapter changes nothing here: the fact only reaches it when the owner approves
     const withAdapter = ports({ adapter: adapter(), learningApproval: { learnings: repo, clock: () => 5, ownerSlackId: OWNER } });
-    expect((await createDashboardService(withAdapter.p).teach("another")).ok).toBe(true);
-    expect(repo.pending().map((l) => l.content)).toEqual(["a fact", "another"]);
+    expect((await createDashboardService(withAdapter.p).teach("another real fact")).ok).toBe(true);
+    expect(repo.pending().map((l) => l.content)).toEqual(["a short fact", "another real fact"]);
   });
 
   test("teach is refused when approval is not wired", async () => {
