@@ -11,6 +11,7 @@
  * Nothing about a call's content is logged, only who was refused and why.
  */
 import { checkSlackCall, isAuditedMethod, isSlackFileUrl, type IsNotice } from "../domain/slackProxy.ts";
+import type { SelfPosts } from "./selfPosts.ts";
 import type { SlackTickets, SlackTicketRefusal } from "./slackTickets.ts";
 
 const SLACK_API = "https://slack.com/api/";
@@ -27,6 +28,8 @@ export type SlackProxyDeps = {
   botToken: string;
   /** Approval notices the bot posted, which a turn may not `chat.update` (see `domain/slackProxy.ts`). */
   isNotice?: IsNotice;
+  /** Where a turn's successful posts into its own thread are noted, so a closing reply that repeats one can be dropped. */
+  selfPosts?: SelfPosts;
   fetchFn?: typeof fetch;
   log?: (line: string) => void;
 };
@@ -102,6 +105,10 @@ export const createSlackProxy = (deps: SlackProxyDeps): SlackProxy => {
             status: 429,
             body: JSON.stringify({ ok: false, error: "ratelimited", ...(Number.isFinite(retryAfter) ? { retry_after: retryAfter } : {}) }),
           };
+        }
+        // only the turn's own thread is noted, and only what Slack accepted
+        if (res.ok && checked.method.startsWith("chat.") && resolved.ctx.channel) {
+          deps.selfPosts?.record(resolved.ctx.channel, resolved.ctx.threadTs, { method: checked.method, params: checked.params, answer: text });
         }
         return { status: res.status, body: text };
       } catch (e) {

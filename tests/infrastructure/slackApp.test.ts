@@ -24,6 +24,7 @@ import { createThreadQueue, type ThreadQueue } from "../../src/application/threa
 import { FOOTER_BLOCK_ID } from "../../src/domain/messageFooter.ts";
 import { createRunRegistry, type RunRegistry } from "../../src/application/runRegistry.ts";
 import { blockKitReply } from "../../src/domain/blockKit.ts";
+import { createSelfPosts, type SelfPosts } from "../../src/application/selfPosts.ts";
 
 const OWNER = "U0OWNER0001";
 
@@ -83,6 +84,8 @@ const build = (opts: {
   statusThrows?: boolean;
   /** The run registry, wired to idle the session the way `createSlackApp` does. */
   runs?: RunRegistry;
+  /** What the turn posted into its own thread itself; the handler drops a closing reply that repeats it. */
+  selfPosts?: SelfPosts;
 }) => {
   const db = openDatabase(":memory:");
   const users = createUserRepo(db);
@@ -138,7 +141,7 @@ const build = (opts: {
     },
   };
   opts.runs?.onSessionIdle((channel, threadTs) => void idleSession(client, channel, threadTs, () => {}));
-  const handle = createHandler(config, deps, () => {});
+  const handle = createHandler(config, { ...deps, ...(opts.selfPosts ? { selfPosts: opts.selfPosts } : {}) }, () => {});
   const msg = (text: string, threadTs = "111.1", messageTs = "111.1"): Incoming => ({
     channelId: "C1",
     userId: OWNER,
@@ -728,6 +731,99 @@ describe("createHandler streaming truth table", () => {
     expect(updates[0]).toMatchObject({ ts: "222.2" });
     expect(String(updates[0]?.text).trim()).not.toBe("");
     expect(said).toHaveLength(0);
+  });
+
+  describe("a turn that posted its answer itself", () => {
+    const ANSWER =
+      "The checkout latency came from the orders query: it scanned four million rows because the created_at index was dropped in the last migration. I re-added the index and p95 went from 1.8s to 120ms.";
+    const REWORDED =
+      "Checkout latency was caused by the orders query scanning four million rows, since the created_at index had been dropped in the last migration. I added the index back and p95 dropped from 1.8s to 120ms.";
+    const selfPost = (selfPosts: SelfPosts, thread: string, text: string, ts = "333.3") =>
+      selfPosts.record("C1", thread, {
+        method: "chat.postMessage",
+        params: { channel: "C1", thread_ts: thread, text },
+        answer: JSON.stringify({ ok: true, ts }),
+      });
+
+    test("the same answer reworded is not streamed a second time: the stream message goes, the posted one stays", async () => {
+      const selfPosts = createSelfPosts();
+      const r = build({ llm: streamingLlm(REWORDED, [card, { type: "text", delta: REWORDED }]), streamUpdates: true, selfPosts });
+      selfPost(selfPosts, "000.9", ANSWER);
+      await r.handle(r.msg("why is checkout slow", "000.9"));
+      expect(r.deletes).toEqual(["222.2"]);
+      expect(r.deletes).not.toContain("333.3");
+      expect(r.updates).toHaveLength(0);
+      expect(r.said).toHaveLength(0);
+      // the turn is over: nothing stays behind for the next one
+      expect(selfPosts.posts("C1", "000.9")).toEqual([]);
+    });
+
+    test("without streaming, a repeat is not posted either", async () => {
+      const selfPosts = createSelfPosts();
+      const r = build({ llm: streamingLlm(REWORDED), streamUpdates: false, selfPosts });
+      selfPost(selfPosts, "000.9", ANSWER);
+      await r.handle(r.msg("why is checkout slow", "000.9"));
+      expect(r.said).toHaveLength(0);
+      expect(r.deletes).toHaveLength(0);
+    });
+
+    test("a closing reply with new content goes out unchanged", async () => {
+      const selfPosts = createSelfPosts();
+      const closing = `Separately, the nightly export job times out: its connection pool is capped at two, so I raised it to ten and queued a rerun for tonight.`;
+      const r = build({ llm: streamingLlm(closing, [card, { type: "text", delta: closing }]), streamUpdates: true, selfPosts });
+      selfPost(selfPosts, "000.9", ANSWER);
+      await r.handle(r.msg("anything else", "000.9"));
+      expect(r.deletes).toHaveLength(0);
+      expect(r.updates).toHaveLength(1);
+      expect(String(r.updates[0]?.text)).toContain("nightly export job");
+    });
+
+    test("a self-post in another thread suppresses nothing", async () => {
+      const selfPosts = createSelfPosts();
+      const r = build({ llm: streamingLlm(REWORDED, [card, { type: "text", delta: REWORDED }]), streamUpdates: true, selfPosts });
+      selfPost(selfPosts, "555.5", ANSWER);
+      await r.handle(r.msg("why is checkout slow", "000.9"));
+      expect(r.deletes).toHaveLength(0);
+      expect(r.updates).toHaveLength(1);
+      expect(String(r.updates[0]?.text)).toContain("orders query");
+    });
+
+    test("a turn that posted nothing replies as always", async () => {
+      const r = build({ llm: streamingLlm(REWORDED), streamUpdates: false, selfPosts: createSelfPosts() });
+      await r.handle(r.msg("why is checkout slow", "000.9"));
+      expect(r.said).toHaveLength(1);
+    });
+
+    test("NO_REPLY after a self-post drops the stream even when it showed narration", async () => {
+      const selfPosts = createSelfPosts();
+      const r = build({
+        llm: streamingLlm("NO_REPLY", [card, { type: "text", delta: "Posting the answer now." }, { type: "text", delta: "NO_REPLY" }]),
+        streamUpdates: true,
+        selfPosts,
+      });
+      selfPost(selfPosts, "000.9", ANSWER);
+      await r.handle(r.msg("why is checkout slow", "000.9"));
+      expect(r.deletes).toEqual(["222.2"]);
+      expect(r.updates).toHaveLength(0);
+      expect(r.said).toHaveLength(0);
+    });
+  });
+
+  test("a normal turn that ends with NO_REPLY after narration leaves nothing, with no self-post at all", async () => {
+    const r = build({
+      llm: streamingLlm("NO_REPLY", [card, { type: "text", delta: "Looking at it." }]),
+      streamUpdates: true,
+    });
+    await r.handle(r.msg("ok thanks", "000.9"));
+    expect(r.deletes).toEqual(["222.2"]);
+    expect(r.updates).toHaveLength(0);
+    expect(r.said).toHaveLength(0);
+  });
+
+  test("a normal turn that ends with NO_REPLY and never streamed posts nothing", async () => {
+    const r = build({ llm: streamingLlm("NO_REPLY"), streamUpdates: false });
+    await r.handle(r.msg("ok thanks", "000.9"));
+    expect(r.said).toHaveLength(0);
   });
 
   test("a following turn that only looked around and stayed quiet leaves nothing", async () => {

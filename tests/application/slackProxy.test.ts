@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { capBytes, createSlackProxy } from "../../src/application/slackProxy.ts";
 import { createSlackTickets } from "../../src/application/slackTickets.ts";
+import { createSelfPosts } from "../../src/application/selfPosts.ts";
 
 const BOT_TOKEN = "xoxb-the-bots-own-token";
 
@@ -222,5 +223,44 @@ describe("Slack proxy", () => {
       expect(file.ok).toBe(true);
       expect(seen).toHaveLength(2);
     });
+  });
+});
+
+describe("Slack proxy notes what a turn posts into its own thread", () => {
+  const withLog = (answer: () => Response) => {
+    const selfPosts = createSelfPosts();
+    const tickets = createSlackTickets(() => 0);
+    const fetchFn = (async () => answer()) as unknown as typeof fetch;
+    const proxy = createSlackProxy({ tickets, botToken: BOT_TOKEN, selfPosts, fetchFn });
+    return { proxy, tickets, selfPosts };
+  };
+
+  test("a post with no thread_ts lands in the turn's thread and is noted; its update replaces the words", async () => {
+    const { proxy, tickets, selfPosts } = withLog(() => Response.json({ ok: true, ts: "5.5" }));
+    const ticket = tickets.issue({ channel: "C1", threadTs: "1.1" });
+    await proxy.call({ ticket, method: "chat.postMessage", params: { channel: "C1", text: "first" } });
+    expect(selfPosts.posts("C1", "1.1")).toEqual([{ ts: "5.5", texts: ["first"] }]);
+    await proxy.call({ ticket, method: "chat.update", params: { channel: "C1", ts: "5.5", text: "final" } });
+    expect(selfPosts.posts("C1", "1.1")).toEqual([{ ts: "5.5", texts: ["final"] }]);
+  });
+
+  test("a top-level post, a failed post and a refused post are not noted", async () => {
+    const { proxy, tickets, selfPosts } = withLog(() => Response.json({ ok: true, ts: "5.5" }));
+    const ticket = tickets.issue({ channel: "C1", threadTs: "1.1" });
+    await proxy.call({ ticket, method: "chat.postMessage", params: { channel: "C1", text: "x", thread_ts: "none" } });
+    await proxy.call({ ticket, method: "chat.postMessage", params: { channel: "C2", text: "x" } });
+    expect(selfPosts.posts("C1", "1.1")).toEqual([]);
+    const failing = withLog(() => Response.json({ ok: false, error: "channel_not_found" }));
+    const t2 = failing.tickets.issue({ channel: "C1", threadTs: "1.1" });
+    await failing.proxy.call({ ticket: t2, method: "chat.postMessage", params: { channel: "C1", text: "x" } });
+    expect(failing.selfPosts.posts("C1", "1.1")).toEqual([]);
+  });
+
+  test("a reaction or a read is not a post", async () => {
+    const { proxy, tickets, selfPosts } = withLog(() => Response.json({ ok: true, ts: "5.5" }));
+    const ticket = tickets.issue({ channel: "C1", threadTs: "1.1" });
+    await proxy.call({ ticket, method: "reactions.add", params: { channel: "C1", timestamp: "1.1", name: "eyes" } });
+    await proxy.call({ ticket, method: "conversations.replies", params: { channel: "C1", ts: "1.1" } });
+    expect(selfPosts.posts("C1", "1.1")).toEqual([]);
   });
 });

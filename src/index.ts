@@ -138,6 +138,7 @@ import { createCommandTickets, refusalMessage } from "./application/commandTicke
 import { createSlackTickets } from "./application/slackTickets.ts";
 import { createNoticeLookup } from "./infrastructure/db/noticeLookup.ts";
 import { createSlackProxy } from "./application/slackProxy.ts";
+import { createSelfPosts } from "./application/selfPosts.ts";
 import { scrubSecretEnv } from "./domain/turnEnv.ts";
 import { createWorkerTickets, revokeOnWorkerEnd } from "./application/workerTickets.ts";
 import { createWorkerTicketRepo } from "./infrastructure/db/workerTicketRepo.ts";
@@ -323,8 +324,10 @@ const main = async () => {
   const commandTickets = createCommandTickets(() => Date.now(), undefined, config.commandTicketUses);
   // A turn's Slack access: the bot's token stays here, a turn only ever holds a ticket for it.
   const slackTickets = createSlackTickets(() => Date.now());
+  const selfPosts = createSelfPosts();
   const slackProxy = createSlackProxy({
     tickets: slackTickets,
+    selfPosts,
     botToken: config.slackBotToken,
     // A turn may not rewrite an approval notice: its buttons decide things.
     isNotice: createNoticeLookup(db),
@@ -1021,6 +1024,7 @@ const main = async () => {
       ...deps,
       kitViews,
       log: activity.line,
+      selfPosts,
       stopLogChannel: logChannel,
       // The follow gate reads a batch on the pal model (Haiku by default), with no tools.
       gatePolicy: () => ({

@@ -269,7 +269,7 @@ ${orca ? ORCA_AGENT_RULES : AGENT_TOOL_RULES}${
 - Every \`worker-start\` is followed, in the same turn, by \`${prefix} watch worker <dispatchId> <what you will do with its result>\` - one per worker, the \`dispatchId\` from worker-start's JSON. That is how you wait on a worker: it hands you this thread back when that worker finishes, dies (stopped without reporting counts as died) or stands waiting for input, and says which. The task-list check above is only for the batch as a whole, never instead of these. Never end a turn with a worker running and no watch on it`
     : ""
 }
-- Hand each answer over the moment it lands, never hold the whole reply for the slowest part. Post the first finished part into this thread with chat.postMessage (with this thread's thread_ts), then fold each later part into that same message with chat.update, so the thread ends up with one message, not a trail of them. Your closing reply only adds what that message does not already say.
+- Hand each answer over the moment it lands, never hold the whole reply for the slowest part. Post the first finished part into this thread with chat.postMessage (with this thread's thread_ts), then fold each later part into that same message with chat.update, so the thread ends up with one message, not a trail of them. Your closing reply only adds what that message does not already say; if that message already is the whole answer, end the turn with the single word NO_REPLY and nothing else - a closing reply that repeats it, reworded, is dropped by the bot anyway, but only NO_REPLY is certain.
 - A single question, or parts that are one chain, is answered the normal way - do not spin up agents for the sake of it.`;
 
 /**

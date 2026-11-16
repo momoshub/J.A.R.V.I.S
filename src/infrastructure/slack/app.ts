@@ -90,6 +90,8 @@ import { collapsedBlocks, collapseSteps } from "../../domain/collapseSteps.ts";
 import { usageFooter } from "../../domain/usageFooter.ts";
 import { footerLine, restamp, signedText, SIGNATURES, withFooter } from "../../domain/messageFooter.ts";
 import { isSilenceNote } from "../../domain/silence.ts";
+import { isDuplicateReply } from "../../domain/selfPost.ts";
+import type { SelfPosts } from "../../application/selfPosts.ts";
 import {
   decodeKitMeta,
   describeAction,
@@ -180,6 +182,8 @@ type Deps = RespondDeps & {
   kitViews?: Pick<KitViewRepo, "get">;
   /** The log channel a stop press is reported to; empty or absent: only logged. */
   stopLogChannel?: () => string;
+  /** What each turn posted into its own thread itself (via the Slack proxy), to take back a closing reply that only repeats it. */
+  selfPosts?: SelfPosts;
   /**
    * The policy the follow gate's model runs on: the pal model, no tools, a
    * short timeout. Absent, the gate is off and followed threads behave as
@@ -514,6 +518,14 @@ export const createHandler =
       // armed, and only finishing cancels it.
       const streamed = stream ? await stream.finish() : false;
       const parts = stream?.parts ?? [];
+      // A turn that posted its answer into this thread itself and then closed with the same answer reworded
+      // would leave it there twice; the reply is taken back, never the message the turn posted. A turn that
+      // closed with NO_REPLY is the same, even when its stream already shows some narration.
+      const repeated = result.kind === "reply" && isDuplicateReply(result.text, deps.selfPosts?.posts(msg.channelId, msg.threadTs) ?? []);
+      if (repeated || isSilenceNote(result.text)) {
+        if (repeated) log(`reply repeats a message the turn posted itself, dropped channel=${msg.channelId} thread=${msg.threadTs}`);
+        return dropQuiet(msg, parts, log);
+      }
       const fail = (e: unknown) => log(`collapse failed: ${e instanceof Error ? e.message : String(e)}`);
       const collapsed = collapseSteps(stream?.steps ?? []);
       // Signed, not stamped: tidying the streamed reply is still its first
@@ -667,6 +679,7 @@ export const createHandler =
       // registry idles it when the last run of the thread ends (see
       // `onSessionIdle`), which this turn's own `done()` already did unless its
       // stream opened after that.
+      deps.selfPosts?.clear(msg.channelId, msg.threadTs);
       if (streamOpened && !deps.runs) await idleSession(msg.client, msg.channelId, msg.threadTs, log);
       else if (openedUntracked) deps.runs?.sessionMayIdle(msg.channelId, msg.threadTs ?? msg.messageTs);
     }
