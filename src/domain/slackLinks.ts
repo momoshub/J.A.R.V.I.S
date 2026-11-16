@@ -21,3 +21,37 @@ export const parseMessageLink = (url: string): MessageRef | undefined => {
  * thread there, and drop the instruction it was actually started with.
  */
 export const syntheticTs = (nowMs: number): string => (nowMs / 1000).toFixed(6);
+
+/** Where `post` puts a message: a channel's top level (id known or still a name), or inside an existing thread. */
+export type PostTarget =
+  | { readonly kind: "channel"; readonly channel: string }
+  | { readonly kind: "name"; readonly name: string }
+  | { readonly kind: "thread"; readonly channel: string; readonly threadTs: string };
+
+const CHANNEL_ID = /^[CGD][A-Z0-9]{8,}$/;
+const CHANNEL_NAME = /^[a-z0-9][a-z0-9._-]{0,79}$/;
+
+/**
+ * Read the first argument of `post`: a Slack channel mention (`<#C123|name>`), a
+ * channel id (`C123`, `#C123`), a channel name (`#name`), or a message/thread
+ * permalink. A link means that thread (its `thread_ts` when it points at a reply,
+ * else the message itself as the thread root), everything else is the top level.
+ * A bare word without `#` is no target: it is more likely the first word of the text.
+ */
+export const parsePostTarget = (raw: string): PostTarget | undefined => {
+  const arg = raw.trim().replace(/&amp;/g, "&");
+  const mention = arg.match(/^<#([A-Z0-9]+)(?:\|[^>]*)?>$/);
+  if (mention?.[1]) return CHANNEL_ID.test(mention[1]) ? { kind: "channel", channel: mention[1] } : undefined;
+  const link = arg.replace(/^<|>$/g, "");
+  if (/^https?:\/\//i.test(link)) {
+    const ref = parseMessageLink(link);
+    if (!ref) return undefined;
+    return { kind: "thread", channel: ref.channel, threadTs: link.match(/[?&]thread_ts=(\d+\.\d+)/)?.[1] ?? ref.ts };
+  }
+  if (CHANNEL_ID.test(arg)) return { kind: "channel", channel: arg };
+  const hashed = arg.replace(/^#/, "");
+  if (!arg.startsWith("#")) return undefined;
+  if (CHANNEL_ID.test(hashed)) return { kind: "channel", channel: hashed };
+  const name = hashed.toLowerCase();
+  return CHANNEL_NAME.test(name) ? { kind: "name", name } : undefined;
+};

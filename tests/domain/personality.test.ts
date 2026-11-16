@@ -682,3 +682,13 @@ describe("ORCA_BATCH_CHECK", () => {
     expect(run(JSON.stringify({ ok: false, error: { code: "run_required" } })).code).not.toBe(0);
   });
 });
+
+describe("cross-channel post rule", () => {
+  test("the waiting rules point the owner's cross-channel asks at post, never at pasting", async () => {
+    const { waitingRules } = await import("../../src/domain/personality.ts");
+    const rules = waitingRules("//bot");
+    expect(rules).toContain("//bot post <#channel | channel id | thread-link> <text>");
+    expect(rules).toContain("only the owner");
+    expect(rules).toContain("never tell the owner to paste it or tag you there");
+  });
+});
