@@ -24,6 +24,8 @@ import { createThreadQueue, type ThreadQueue } from "../../src/application/threa
 import { FOOTER_BLOCK_ID } from "../../src/domain/messageFooter.ts";
 import { createRunRegistry, type RunRegistry } from "../../src/application/runRegistry.ts";
 import { blockKitReply } from "../../src/domain/blockKit.ts";
+import { createCommandTickets } from "../../src/application/commandTickets.ts";
+import { createSelfPosts, type SelfPosts } from "../../src/application/selfPosts.ts";
 
 const OWNER = "U0OWNER0001";
 
@@ -83,6 +85,8 @@ const build = (opts: {
   statusThrows?: boolean;
   /** The run registry, wired to idle the session the way `createSlackApp` does. */
   runs?: RunRegistry;
+  /** What the turn posted into its own thread itself; the handler drops a closing reply that repeats it. */
+  selfPosts?: SelfPosts;
 }) => {
   const db = openDatabase(":memory:");
   const users = createUserRepo(db);
@@ -97,6 +101,8 @@ const build = (opts: {
     ownerSlackId: OWNER,
     ...(opts.threadQueue ? { threadQueue: opts.threadQueue } : {}),
     ...(opts.runs ? { runs: opts.runs } : {}),
+    // a turn's run ticket is what its self-posts are keyed by
+    ...(opts.selfPosts ? { commandTickets: createCommandTickets(() => t++) } : {}),
   };
   const config: SlackAppConfig = {
     botToken: "x",
@@ -138,7 +144,8 @@ const build = (opts: {
     },
   };
   opts.runs?.onSessionIdle((channel, threadTs) => void idleSession(client, channel, threadTs, () => {}));
-  const handle = createHandler(config, deps, () => {});
+  const logs: string[] = [];
+  const handle = createHandler(config, { ...deps, ...(opts.selfPosts ? { selfPosts: opts.selfPosts } : {}) }, (line) => void logs.push(line));
   const msg = (text: string, threadTs = "111.1", messageTs = "111.1"): Incoming => ({
     channelId: "C1",
     userId: OWNER,
@@ -151,7 +158,7 @@ const build = (opts: {
       said.push({ text: m.text, ...(m.reply_broadcast ? { reply_broadcast: true } : {}) });
     },
   });
-  return { handle, msg, said, updates, deletes, apiCalls, rec, messages, opened: () => streams };
+  return { handle, msg, said, updates, deletes, apiCalls, rec, messages, logs, opened: () => streams };
 };
 
 const streamingLlm = (final: string, events: LlmStreamEvent[] = []): LlmPort => ({
@@ -728,6 +735,222 @@ describe("createHandler streaming truth table", () => {
     expect(updates[0]).toMatchObject({ ts: "222.2" });
     expect(String(updates[0]?.text).trim()).not.toBe("");
     expect(said).toHaveLength(0);
+  });
+
+  describe("a turn that posted its answer itself", () => {
+    const ANSWER =
+      "The checkout latency came from the orders query: it scanned four million rows because the created_at index was dropped in the last migration. I re-added the index and p95 went from 1.8s to 120ms.";
+    const REWORDED =
+      "Checkout was slow because the orders query scanned four million rows, the created_at index having been dropped by the last migration. The index is back and p95 is now 120ms. I put all of it in the message I posted above.";
+    const VI_POST =
+      "dạ stuck thật anh :man-bowing::skin-tone-2: sub agent Fable cũ chết theo turn hôm đó, 2h21m không branch, không PR. lỗi của em: chỉ watch file kết quả, không watch con agent nên nó chết mà không ai biết\n- đã chạy lại Fable dạng process riêng, không chết theo turn nữa\n- 2 watch: một cái báo khi bài xong, một cái báo ngay nếu writer chết giữa chừng\n- lỗ này nằm ở skill blog, em đã gửi bug report #4 để anh duyệt sửa\nxong em gửi tiêu đề, PR, ảnh diagram + nút Publish/Revise vào thread này, tối đa 3 tiếng :coffee:";
+    const VI_REPLY =
+      "Dạ stuck thật anh :man-bowing::skin-tone-2: Sub agent Fable cũ chết theo turn hôm đó. Sau 2h21m vẫn không có branch, không có PR nào. Lỗi của em: em chỉ watch file kết quả, không watch chính con agent, nên nó chết mà không ai biết. Em cập nhật hết trong message em đã post ở thread này rồi.  - em đã chạy lại Fable thành một process riêng, lần này không chết theo turn nữa - có 2 watch: một cái báo khi bài xong, một cái báo ngay nếu writer chết giữa chừng - lỗ này nằm ở skill blog, em đã gửi bug report #4 chờ anh duyệt sửa  Bài xong em gửi vào thread này tiêu đề, link PR, ảnh diagram và nút Publish/Revise, tối đa 3 tiếng :coffee:";
+    const CORRECTION = "Correction: staging is NOT green, the smoke suite failed.";
+    /** The turn `turn` of the thread `000.9` posted `text` into `postedTo` (the proxy only notes the turn's own thread). */
+    const selfPost = (selfPosts: SelfPosts, turn: string, text: string, postedTo = "000.9", ts = "333.3") =>
+      selfPosts.record(turn, "000.9", {
+        method: "chat.postMessage",
+        params: { channel: "C1", thread_ts: postedTo, text },
+        answer: JSON.stringify({ ok: true, ts }),
+      });
+    /** A model that posts `posted` into the thread through the proxy under its own turn's ticket, then streams `events` and closes with `final`. */
+    const postingLlm = (
+      selfPosts: SelfPosts,
+      posted: string,
+      final: string,
+      events: LlmStreamEvent[] = [],
+      postedTo = "000.9",
+    ): LlmPort => ({
+      complete: async (p) => {
+        if (p.runTicket) selfPost(selfPosts, p.runTicket, posted, postedTo);
+        return final;
+      },
+      stream: async (p, sink) => {
+        if (p.runTicket) selfPost(selfPosts, p.runTicket, posted, postedTo);
+        for (const e of events) sink(e);
+        return final;
+      },
+    });
+    const turnBuild = (selfPosts: SelfPosts, llm: LlmPort, streamUpdates = true) => build({ llm, streamUpdates, selfPosts });
+
+    test("the real Vietnamese reword is dropped: the stream message goes, the posted one stays, the drop is logged", async () => {
+      const selfPosts = createSelfPosts();
+      const r = turnBuild(selfPosts, postingLlm(selfPosts, VI_POST, VI_REPLY, [card, { type: "text", delta: VI_REPLY }]));
+      await r.handle(r.msg("stuck chưa", "000.9"));
+      expect(r.deletes).toEqual(["222.2"]);
+      expect(r.deletes).not.toContain("333.3");
+      expect(r.updates).toHaveLength(0);
+      expect(r.said).toHaveLength(0);
+      const line = r.logs.find((l) => l.includes("closing reply dropped"));
+      expect(line).toContain("thread=000.9");
+      expect(line).toContain(`length=${VI_REPLY.length}`);
+    });
+
+    test("any other closing reply is dropped as well, a correction without the marker included", async () => {
+      const selfPosts = createSelfPosts();
+      const r = turnBuild(selfPosts, postingLlm(selfPosts, "Staging is green.", CORRECTION, [card, { type: "text", delta: CORRECTION }]));
+      await r.handle(r.msg("is staging green", "000.9"));
+      expect(r.deletes).toEqual(["222.2"]);
+      expect(r.updates).toHaveLength(0);
+      expect(r.said).toHaveLength(0);
+    });
+
+    test("narration streamed before the post goes with the stream", async () => {
+      const selfPosts = createSelfPosts();
+      const r = turnBuild(
+        selfPosts,
+        postingLlm(selfPosts, ANSWER, REWORDED, [{ type: "text", delta: "Looking into the orders query.\n\n" }, card, { type: "text", delta: REWORDED }]),
+      );
+      await r.handle(r.msg("why is checkout slow", "000.9"));
+      expect(r.deletes).toContain("222.2");
+      expect(r.updates).toHaveLength(0);
+      expect(r.said).toHaveLength(0);
+    });
+
+    test("with the KEEP_REPLY marker the correction is sent, the marker stripped", async () => {
+      const selfPosts = createSelfPosts();
+      const closing = `${CORRECTION}\nKEEP_REPLY`;
+      const r = turnBuild(selfPosts, postingLlm(selfPosts, "Staging is green.", closing, [card, { type: "text", delta: closing }]));
+      await r.handle(r.msg("is staging green", "000.9"));
+      expect(r.deletes).toHaveLength(0);
+      expect(r.updates).toHaveLength(1);
+      expect(String(r.updates[0]?.text)).toContain("NOT green");
+      expect(JSON.stringify(r.updates[0])).not.toContain("KEEP_REPLY");
+    });
+
+    test("a rolled-over reply with the marker is sent on one message, the marker nowhere", async () => {
+      const selfPosts = createSelfPosts();
+      const big = (id: string): LlmStreamEvent => ({ ...card, id, title: `run: ${id}`, status: "in_progress", details: `log at: ${"d".repeat(250)} - line 1` });
+      const cards = Array.from({ length: 40 }, (_, i) => big(`t${i}`));
+      const closing = `${CORRECTION}\nKEEP_REPLY`;
+      const r = turnBuild(selfPosts, postingLlm(selfPosts, "Staging is green.", closing, [...cards, { type: "text", delta: `${CORRECTION}\n` }, { type: "text", delta: "KEEP_" }, { type: "text", delta: "REPLY" }]));
+      await r.handle(r.msg("is staging green", "000.9"));
+      expect(r.said).toHaveLength(0);
+      expect(r.updates.length).toBeGreaterThan(0);
+      expect(JSON.stringify(r.updates)).toContain("NOT green");
+      expect(JSON.stringify(r.updates)).not.toContain("KEEP_REPLY");
+    });
+
+    test("the marker is stripped without a successful self-post too", async () => {
+      const closing = `${CORRECTION}\nKEEP_REPLY`;
+      const noPost = build({ llm: streamingLlm(closing, [{ type: "text", delta: closing }]), streamUpdates: true });
+      await noPost.handle(noPost.msg("is staging green", "000.9"));
+      expect(JSON.stringify(noPost.updates)).toContain("NOT green");
+      expect(JSON.stringify(noPost.updates)).not.toContain("KEEP_REPLY");
+      const selfPosts = createSelfPosts();
+      const other = turnBuild(selfPosts, postingLlm(selfPosts, "x", closing, [], "555.5"), false);
+      await other.handle(other.msg("is staging green", "000.9"));
+      expect(JSON.stringify(other.said)).toContain("NOT green");
+      expect(JSON.stringify(other.said)).not.toContain("KEEP_REPLY");
+    });
+
+    test("a reply that is only the marker posts nothing", async () => {
+      const selfPosts = createSelfPosts();
+      const r = turnBuild(selfPosts, postingLlm(selfPosts, "Staging is green.", "KEEP_REPLY", [card, { type: "text", delta: "KEEP_REPLY" }]));
+      await r.handle(r.msg("is staging green", "000.9"));
+      expect(r.said).toHaveLength(0);
+      expect(r.updates).toHaveLength(0);
+      const quiet = turnBuild(selfPosts, postingLlm(selfPosts, "Staging is green.", "KEEP_REPLY"), false);
+      await quiet.handle(quiet.msg("is staging green", "000.9"));
+      expect(quiet.said).toHaveLength(0);
+    });
+
+    test("with the marker and no streaming the reply is posted without it", async () => {
+      const selfPosts = createSelfPosts();
+      const r = turnBuild(selfPosts, postingLlm(selfPosts, "Staging is green.", `KEEP_REPLY\n${CORRECTION}`), false);
+      await r.handle(r.msg("is staging green", "000.9"));
+      expect(r.said).toHaveLength(1);
+      expect(JSON.stringify(r.said)).toContain("NOT green");
+      expect(JSON.stringify(r.said)).not.toContain("KEEP_REPLY");
+    });
+
+    test("without streaming, a closing reply after a self-post is not posted either", async () => {
+      const selfPosts = createSelfPosts();
+      const r = turnBuild(selfPosts, postingLlm(selfPosts, ANSWER, REWORDED), false);
+      await r.handle(r.msg("why is checkout slow", "000.9"));
+      expect(r.said).toHaveLength(0);
+      expect(r.deletes).toHaveLength(0);
+    });
+
+    test("the turn's record is gone once it is over", async () => {
+      const selfPosts = createSelfPosts();
+      let ticket: string | undefined;
+      const llm: LlmPort = {
+        complete: async () => REWORDED,
+        stream: async (p, sink) => {
+          ticket = p.runTicket;
+          if (ticket) selfPost(selfPosts, ticket, ANSWER);
+          sink({ type: "text", delta: REWORDED });
+          return REWORDED;
+        },
+      };
+      const r = turnBuild(selfPosts, llm);
+      await r.handle(r.msg("why is checkout slow", "000.9"));
+      expect(ticket).toBeDefined();
+      expect(selfPosts.posts(ticket as string)).toEqual([]);
+    });
+
+    test("a post recorded before the turn started (another turn's, same thread) never silences its reply", async () => {
+      const selfPosts = createSelfPosts();
+      // a watch hand-back / tell / command posted this earlier, under a ticket of its own
+      selfPost(selfPosts, "some-other-turn-ticket", ANSWER);
+      const r = turnBuild(selfPosts, streamingLlm(REWORDED, [card, { type: "text", delta: REWORDED }]));
+      await r.handle(r.msg("status?", "000.9"));
+      expect(r.deletes).toHaveLength(0);
+      expect(r.updates).toHaveLength(1);
+      expect(String(r.updates[0]?.text)).toContain("orders query");
+    });
+
+    test("a self-post in another thread silences nothing", async () => {
+      const selfPosts = createSelfPosts();
+      const r = turnBuild(selfPosts, postingLlm(selfPosts, ANSWER, REWORDED, [card, { type: "text", delta: REWORDED }], "555.5"));
+      await r.handle(r.msg("why is checkout slow", "000.9"));
+      expect(r.deletes).toHaveLength(0);
+      expect(r.updates).toHaveLength(1);
+      expect(String(r.updates[0]?.text)).toContain("orders query");
+    });
+
+    test("a top-level self-post silences nothing", async () => {
+      const selfPosts = createSelfPosts();
+      const r = turnBuild(selfPosts, postingLlm(selfPosts, ANSWER, REWORDED, [card, { type: "text", delta: REWORDED }], "none"));
+      await r.handle(r.msg("why is checkout slow", "000.9"));
+      expect(r.deletes).toHaveLength(0);
+      expect(r.updates).toHaveLength(1);
+    });
+
+    test("a turn that posted nothing replies as always", async () => {
+      const r = turnBuild(createSelfPosts(), streamingLlm(REWORDED), false);
+      await r.handle(r.msg("why is checkout slow", "000.9"));
+      expect(r.said).toHaveLength(1);
+    });
+
+    test("NO_REPLY after a self-post drops the stream even when it showed narration, without a drop log", async () => {
+      const selfPosts = createSelfPosts();
+      const r = turnBuild(selfPosts, postingLlm(selfPosts, ANSWER, "NO_REPLY", [card, { type: "text", delta: "Posting the answer now." }, { type: "text", delta: "NO_REPLY" }]));
+      await r.handle(r.msg("why is checkout slow", "000.9"));
+      expect(r.deletes).toEqual(["222.2"]);
+      expect(r.updates).toHaveLength(0);
+      expect(r.said).toHaveLength(0);
+      expect(r.logs.some((l) => l.includes("closing reply dropped"))).toBe(false);
+    });
+  });
+
+  test("a normal turn that ends with NO_REPLY after narration leaves nothing, with no self-post at all", async () => {
+    const r = build({
+      llm: streamingLlm("NO_REPLY", [card, { type: "text", delta: "Looking at it." }]),
+      streamUpdates: true,
+    });
+    await r.handle(r.msg("ok thanks", "000.9"));
+    expect(r.deletes).toEqual(["222.2"]);
+    expect(r.updates).toHaveLength(0);
+    expect(r.said).toHaveLength(0);
+  });
+
+  test("a normal turn that ends with NO_REPLY and never streamed posts nothing", async () => {
+    const r = build({ llm: streamingLlm("NO_REPLY"), streamUpdates: false });
+    await r.handle(r.msg("ok thanks", "000.9"));
+    expect(r.said).toHaveLength(0);
   });
 
   test("a following turn that only looked around and stayed quiet leaves nothing", async () => {

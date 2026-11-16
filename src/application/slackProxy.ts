@@ -11,6 +11,8 @@
  * Nothing about a call's content is logged, only who was refused and why.
  */
 import { checkSlackCall, isAuditedMethod, isSlackFileUrl, type IsNotice } from "../domain/slackProxy.ts";
+import { KEEP_REPLY } from "../domain/selfPost.ts";
+import type { SelfPosts } from "./selfPosts.ts";
 import type { SlackTickets, SlackTicketRefusal } from "./slackTickets.ts";
 
 const SLACK_API = "https://slack.com/api/";
@@ -27,8 +29,28 @@ export type SlackProxyDeps = {
   botToken: string;
   /** Approval notices the bot posted, which a turn may not `chat.update` (see `domain/slackProxy.ts`). */
   isNotice?: IsNotice;
+  /** Where a turn's successful posts into its own thread are noted, so the turn's closing reply can be dropped. */
+  selfPosts?: SelfPosts;
   fetchFn?: typeof fetch;
   log?: (line: string) => void;
+};
+
+/**
+ * Added to Slack's answer when the turn has just put a message into its own
+ * thread. The Slack handler drops the closing reply of such a turn, and a tool
+ * result right after the post is read at the moment it matters.
+ */
+export const SELF_POST_NOTE = `this message is now in the thread the turn runs in. Your closing reply will be dropped, not posted. To add something, chat.update the message you posted, or put a line ${KEEP_REPLY} in the closing reply and it is sent (without that line)`;
+
+/** Slack's own fields untouched, `jarvis_note` added. A body that is not a JSON object is left as it is. */
+const withSelfPostNote = (body: string): string => {
+  try {
+    const parsed: unknown = JSON.parse(body);
+    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return body;
+    return JSON.stringify({ ...(parsed as Record<string, unknown>), jarvis_note: SELF_POST_NOTE });
+  } catch {
+    return body;
+  }
 };
 
 export type SlackProxyReply = { readonly status: number; readonly body: string };
@@ -102,6 +124,11 @@ export const createSlackProxy = (deps: SlackProxyDeps): SlackProxy => {
             status: 429,
             body: JSON.stringify({ ok: false, error: "ratelimited", ...(Number.isFinite(retryAfter) ? { retry_after: retryAfter } : {}) }),
           };
+        }
+        // noted per turn, only what Slack accepted, and only into the turn's own thread
+        if (res.ok && checked.method.startsWith("chat.") && resolved.ctx.turn) {
+          const landed = deps.selfPosts?.record(resolved.ctx.turn, resolved.ctx.threadTs, { method: checked.method, params: checked.params, answer: text });
+          if (landed) return { status: res.status, body: withSelfPostNote(text) };
         }
         return { status: res.status, body: text };
       } catch (e) {

@@ -21,6 +21,7 @@ import { isHiddenAction } from "../../domain/toolVisibility.ts";
 import { MAX_SILENCE_NOTE } from "../../domain/silence.ts";
 import { toSlackMarkdown } from "../../domain/slackFormat.ts";
 import { createEmphasisNormalizer } from "./emphasis.ts";
+import { createKeepMarkerFilter } from "../../domain/selfPost.ts";
 import { createFenceNormalizer } from "../../domain/fences.ts";
 import type { FinishedStep } from "../../domain/collapseSteps.ts";
 import type { LlmUsage } from "../../application/ports.ts";
@@ -204,6 +205,7 @@ export const createSlackStream = (
   const prose = (text: string): string => emphasis.push(text);
   const proseFlush = (text: string): string => emphasis.push(text) + emphasis.flush();
   const kit = createBlockKitExtractor();
+  const markerFilter = createKeepMarkerFilter();
 
   const cancelPending = (): void => {
     if (pending === undefined) return;
@@ -458,9 +460,11 @@ export const createSlackStream = (
     cancelPending(); // something arrived, so no placeholder is needed
     completeThinking(); // first real content ends the thinking step
     if (event.type === "text") {
-      if (event.delta) {
+      // The marker line the turn may end with is for the bot, not the reader.
+      const delta = markerFilter.push(event.delta);
+      if (delta) {
         contentShown = true;
-        emitSegments(kit.push(event.delta));
+        emitSegments(kit.push(delta));
       }
       return;
     }
@@ -633,6 +637,8 @@ export const createSlackStream = (
     finish: async () => {
       cancelPending();
       completeThinking();
+      const rest = markerFilter.flush();
+      if (rest) emitSegments(kit.push(rest));
       emitSegments(kit.flush());
       const tail = proseFlush(fences.flush());
       if (tail) appendText(tail);

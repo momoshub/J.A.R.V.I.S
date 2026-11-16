@@ -32,6 +32,17 @@ describe("createSlackStream", () => {
     expect(f.made()).toBe(0);
   });
 
+  test("the KEEP_REPLY marker never reaches the live stream, even split across chunks", async () => {
+    const f = fakeStreamer();
+    const s = createSlackStream(f.make);
+    for (const delta of ["Correction: not green.\n", "KEEP_", "REPLY"]) s.sink({ type: "text", delta });
+    await s.finish();
+    const shown = f.appends.map((a) => a.markdown_text ?? "").join("");
+    expect(shown).toContain("not green");
+    expect(shown).not.toContain("KEEP");
+    expect(s.parts.map((p) => p.text).join("")).not.toContain("KEEP_REPLY");
+  });
+
   test("streams text and tool cards, then stops", async () => {
     const f = fakeStreamer();
     const s = createSlackStream(f.make);

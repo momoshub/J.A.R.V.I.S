@@ -402,18 +402,22 @@ describe("createClaudeCliLlm", () => {
       await withEnv(BOT_ENV, async () => {
         const asked: (BillingContext | undefined)[] = [];
         const ended: string[] = [];
+        const turns: (string | undefined)[] = [];
         const llm = createClaudeCliLlm({
           binPath: probe(),
-          slackTicket: (bill) => {
+          slackTicket: (bill, turn) => {
             asked.push(bill);
+            turns.push(turn);
             return { token: "jvsl_this-turn", end: () => void ended.push("jvsl_this-turn") };
           },
         });
         const bill: BillingContext = { actor: "U0OWNER0001", kind: "chat", channel: "C0TEST00001", threadTs: "1.1" };
-        const out = await llm.complete({ system: "s", messages: [{ role: "user", content: "hi" }], bill });
+        const out = await llm.complete({ system: "s", messages: [{ role: "user", content: "hi" }], bill, runTicket: "jvrt_turn" });
         expect(out).toContain("slack=[jvsl_this-turn]");
         expect(out).toStartWith("hits=0");
         expect(asked).toEqual([bill]);
+        // the turn's run ticket goes along, so what this process posts is filed under its turn
+        expect(turns).toEqual(["jvrt_turn"]);
         // the process has exited by the time complete() returns; its ticket ends right behind it
         await Bun.sleep(50);
         expect(ended).toEqual(["jvsl_this-turn"]);

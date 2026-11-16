@@ -348,8 +348,9 @@ export type HandleResult =
    * posted after the fact (nobody watched it stream) carries the same usage
    * line in its footer as a live one. `trigger` is what started the turn when
    * it was an internal message (watch, loop, nudge, ...), for the footer.
+   * `turn` is the turn's run ticket, the key of what it posted itself.
    */
-  | { kind: "reply"; text: string; by?: string; usage?: LlmUsage; trigger?: InternalKind }
+  | { kind: "reply"; text: string; by?: string; usage?: LlmUsage; trigger?: InternalKind; turn?: string }
   | { kind: "denied"; text: string }
   | { kind: "ignored" };
 
@@ -656,7 +657,7 @@ export const handleMessage = async (
     deps.clock(),
   );
 
-  return { kind: "reply", text: safeReply, ...(usage ? { usage } : {}), ...(inbound.trigger ? { trigger: inbound.trigger } : {}) };
+  return { kind: "reply", text: safeReply, ...(usage ? { usage } : {}), ...(inbound.trigger ? { trigger: inbound.trigger } : {}), ...(runTicket ? { turn: runTicket } : {}) };
 };
 
 /**

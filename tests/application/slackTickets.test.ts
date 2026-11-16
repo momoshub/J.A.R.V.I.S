@@ -10,6 +10,12 @@ describe("Slack tickets", () => {
     expect(first).toEqual({ ok: true, ctx: { channel: "C1", threadTs: "1.1" }, left: 999 });
   });
 
+  test("a ticket carries the turn it belongs to, when it has one", () => {
+    const tickets = createSlackTickets(() => 0);
+    const r = tickets.redeem(tickets.issue({ channel: "C1", threadTs: "1.1", turn: "run-1" }));
+    expect(r.ok && r.ctx).toEqual({ channel: "C1", threadTs: "1.1", turn: "run-1" });
+  });
+
   test("a read-only ticket carries no channel", () => {
     const tickets = createSlackTickets(() => 0);
     const r = tickets.redeem(tickets.issue({}));

@@ -138,6 +138,7 @@ import { createCommandTickets, refusalMessage } from "./application/commandTicke
 import { createSlackTickets } from "./application/slackTickets.ts";
 import { createNoticeLookup } from "./infrastructure/db/noticeLookup.ts";
 import { createSlackProxy } from "./application/slackProxy.ts";
+import { createSelfPosts } from "./application/selfPosts.ts";
 import { scrubSecretEnv } from "./domain/turnEnv.ts";
 import { createWorkerTickets, revokeOnWorkerEnd } from "./application/workerTickets.ts";
 import { createWorkerTicketRepo } from "./infrastructure/db/workerTicketRepo.ts";
@@ -323,8 +324,10 @@ const main = async () => {
   const commandTickets = createCommandTickets(() => Date.now(), undefined, config.commandTicketUses);
   // A turn's Slack access: the bot's token stays here, a turn only ever holds a ticket for it.
   const slackTickets = createSlackTickets(() => Date.now());
+  const selfPosts = createSelfPosts();
   const slackProxy = createSlackProxy({
     tickets: slackTickets,
+    selfPosts,
     botToken: config.slackBotToken,
     // A turn may not rewrite an approval notice: its buttons decide things.
     isNotice: createNoticeLookup(db),
@@ -542,9 +545,14 @@ const main = async () => {
     turnEnv,
     () => builtinAgentOverrides(agentModels()),
     // One ticket per spawned turn, only when the run belongs to a channel; it ends with the process.
-    (bill) => {
+    // The turn's run ticket rides along, so what the turn posts itself is told apart from any other turn's in the thread.
+    (bill, turn) => {
       if (!bill?.channel) return undefined;
-      const token = slackTickets.issue({ channel: bill.channel, ...(bill.threadTs ? { threadTs: bill.threadTs } : {}) });
+      const token = slackTickets.issue({
+        channel: bill.channel,
+        ...(bill.threadTs ? { threadTs: bill.threadTs } : {}),
+        ...(turn ? { turn } : {}),
+      });
       return { token, end: () => slackTickets.revoke(token) };
     },
   );
@@ -1021,6 +1029,7 @@ const main = async () => {
       ...deps,
       kitViews,
       log: activity.line,
+      selfPosts,
       stopLogChannel: logChannel,
       // The follow gate reads a batch on the pal model (Haiku by default), with no tools.
       gatePolicy: () => ({
