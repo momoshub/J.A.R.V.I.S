@@ -27,9 +27,9 @@ describe("normalizeText", () => {
 });
 
 describe("isDuplicateReply", () => {
-  test("the same answer with only markup, punctuation or word endings changed is a duplicate", () => {
+  test("the same answer with only markup or punctuation changed is a duplicate", () => {
     const reworded =
-      "Findings: the checkout latency comes from the orders query, it scanned 4M rows because the index on created_at was dropped in the last migration. I re-added the index and p95 went from 1.8s to 120ms.";
+      "Findings: the checkout latency comes from the orders query, it scans 4M rows because the index on created_at was dropped in the last migration. I re-added the index and p95 went from 1.8s to 120ms.";
     expect(isDuplicateReply(reworded, [post(ANSWER)])).toBe(true);
   });
   test("a reply that adds a sentence about the post is kept: the guard errs toward sending", () => {
@@ -95,11 +95,11 @@ describe("a reply that repeats the post, in any language", () => {
   });
   test("an English near-verbatim repeat is still dropped", () => {
     const reworded =
-      "Findings: the checkout latency comes from the orders query, it scanned 4M rows because the index on created_at was dropped in the last migration. I re-added the index and p95 went from 1.8s to 120ms.";
+      "Findings: the checkout latency comes from the orders query, it scans 4M rows because the index on created_at was dropped in the last migration. I re-added the index and p95 went from 1.8s to 120ms.";
     expect(isDuplicateReply(reworded, [post(ANSWER)])).toBe(true);
   });
   test("an English reply adding a new sentence with a number, a link or a name is kept", () => {
-    const reworded = "Findings: the checkout latency comes from the orders query, it scanned 4M rows because the index on created_at was dropped in the last migration. I re-added the index and p95 went from 1.8s to 120ms.";
+    const reworded = "Findings: the checkout latency comes from the orders query, it scans 4M rows because the index on created_at was dropped in the last migration. I re-added the index and p95 went from 1.8s to 120ms.";
     expect(isDuplicateReply(`${reworded} I also bumped the pool to 40 connections.`, [post(ANSWER)])).toBe(false);
     expect(isDuplicateReply(`${reworded} The runbook is at https://wiki.example.com/runbooks/orders now.`, [post(ANSWER)])).toBe(false);
     expect(isDuplicateReply(`${reworded} I asked Priya to review the migration.`, [post(ANSWER)])).toBe(false);
@@ -113,7 +113,7 @@ describe("a reply that repeats the post, in any language", () => {
 
 describe("the two-sided check: the post is covered by the reply, and the reply stays close to the post", () => {
   const REWORDED =
-    "Findings: the checkout latency comes from the orders query, it scanned 4M rows because the index on created_at was dropped in the last migration. I re-added the index and p95 went from 1.8s to 120ms.";
+    "Findings: the checkout latency comes from the orders query, it scans 4M rows because the index on created_at was dropped in the last migration. I re-added the index and p95 went from 1.8s to 120ms.";
   const LONG_POST =
     "Deploy summary for the week: the billing service moved to the new queue, retries now back off for up to ten minutes, the dashboard shows lag per consumer, the old workers were scaled down on Tuesday, the alerts page the platform rotation instead of everyone, and the runbook covers rollback step by step.";
 
@@ -196,6 +196,9 @@ describe("a reply that tells the person something the post did not is KEPT (revi
     kept(RELEASE, "Correction: all checks failed on staging and the deploy to production finished without errors, so the release can go out today as planned with the notes already shared.");
     kept(RELEASE, "All checks failed on staging and the deploy to production finished without errors, so the release cannot go out today as planned with the notes already shared.");
   });
+  test("a word that shares a stem but flips the meaning (verify round 4)", () => {
+    kept("The migration ran with downtime on the orders table last night.", "The migration ran without downtime on the orders table last night.");
+  });
   test("the same words in a different order (review round 5)", () => {
     kept("Staging is green and prod is red, so hold the release.", "Staging is red and prod is green, so hold the release.");
     kept("The export is not blocked and the lock was released.", "The export is blocked and the lock was not released.");
@@ -212,7 +215,7 @@ describe("a reply that tells the person something the post did not is KEPT (revi
 
 describe("isDuplicateStream", () => {
   const REWORDED =
-    "Findings: the checkout latency comes from the orders query, it scanned 4M rows because the index on created_at was dropped in the last migration. I re-added the index and p95 went from 1.8s to 120ms.";
+    "Findings: the checkout latency comes from the orders query, it scans 4M rows because the index on created_at was dropped in the last migration. I re-added the index and p95 went from 1.8s to 120ms.";
   test("a stream of only the reply (and silence) may be taken back", () => {
     expect(isDuplicateStream(REWORDED, [REWORDED], [post(ANSWER)])).toBe(true);
     expect(isDuplicateStream(REWORDED, ["", REWORDED, "NO_REPLY"], [post(ANSWER)])).toBe(true);

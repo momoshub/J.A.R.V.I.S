@@ -100,7 +100,7 @@ no classes.
   ticket) and the answer handed back carries a `jarvis_note` telling the model to
   end with NO_REPLY (the main defence); the Slack handler also drops a closing reply
   that is a verbatim repeat of it - the post's words in the same order, no new word
-  at all (markup, punctuation and word endings aside) - when the rest of the stream
+  at all (markup and punctuation aside) - when the rest of the stream
   is covered by it too (`domain/selfPost.ts`). It errs toward sending: a double
   message is a nuisance, a dropped correction or warning is not. Files go through
   `/api/slack/file`. `slack-read`, `slack-react`, `slack-file` and `slack-upload`

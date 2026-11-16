@@ -147,8 +147,8 @@ const bringsNewHardToken = (text: string, known: Known): boolean => [...hardToke
  *     the post again, not a shorter or different answer);
  *  4. at most `MAX_FRESH_SHARE` and `MAX_FRESH_WORDS` of its words are new to
  *     the posts (a correction inside a repeated sentence is a few new words);
- *  5. its words, cut to their stems, are a post's (or the posts joined) in
- *     the same order (a swap of two words is a correction too).
+ *  5. its words are a post's (or the posts joined), whole and in the same
+ *     order (a swap of two words, or "with" -> "without", is a correction).
  * Any doubt keeps the reply.
  */
 export const repeatsPosted = (reply: string, posted: readonly string[]): boolean => {
@@ -169,12 +169,13 @@ export const repeatsPosted = (reply: string, posted: readonly string[]): boolean
 };
 
 /**
- * The same words in the same order, each cut to its stem, as one post or as
- * the posts joined. A set of words cannot tell "staging is green and prod is
- * red" from "staging is red and prod is green", and that swap is a correction.
+ * The same words in the same order, as one post or as the posts joined. A set
+ * of words cannot tell "staging is green and prod is red" from "staging is red
+ * and prod is green", and that swap is a correction. Whole words, never stems:
+ * "with" and "without" share a stem.
  */
 const sameInOrder = (replyWords: readonly string[], posted: readonly string[]): boolean => {
-  const key = (ws: readonly string[]) => ws.map(stemOf).join(" ");
+  const key = (ws: readonly string[]) => ws.join(" ");
   const replyKey = key(replyWords);
   return posted.some((p) => key(words(p)) === replyKey) || key(posted.flatMap(words)) === replyKey;
 };
