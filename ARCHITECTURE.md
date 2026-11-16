@@ -97,8 +97,10 @@ no classes.
   with `db/noticeLookup.ts`) and calls Slack with the
   token it holds. A post or update that lands in the turn's own thread is also
   noted per turn (`selfPosts`, keyed by the turn's run ticket carried on the Slack
-  ticket), and the Slack handler drops a closing reply that only repeats it when
-  the rest of the stream is covered by it too (`domain/selfPost.ts`). Files go through
+  ticket) and the answer handed back carries a `jarvis_note` telling the model to
+  end with NO_REPLY; the Slack handler also drops a closing reply that only repeats
+  it - the reply holds nearly all of the post, adds no new number, link or name and
+  few new words - when the rest of the stream is covered by it too (`domain/selfPost.ts`). Files go through
   `/api/slack/file`. `slack-read`, `slack-react`, `slack-file` and `slack-upload`
   are built on it.
 - **Commands from the brain.** The brain runs real commands through

@@ -4,6 +4,8 @@ import {
   blocksText,
   isDuplicateReply,
   isDuplicateStream,
+  MAX_FRESH_SHARE,
+  MIN_POST_COVERAGE,
   normalizeText,
   repeatsPosted,
   type SelfPost,
@@ -59,7 +61,7 @@ describe("isDuplicateReply", () => {
   test("the words of several posts together can cover the reply", () => {
     const a = post("The index on created_at was dropped in a migration, which made the orders query scan four million rows.");
     const b = { ts: "9.2", texts: ["I re-added the index and the p95 latency went from 1.8s to 120ms for checkout."] };
-    expect(isDuplicateReply("Checkout latency: the dropped created_at index made the orders query scan every row; re-added, p95 is down to 120ms from 1.8s.", [a, b])).toBe(true);
+    expect(isDuplicateReply("Checkout latency: the index on created_at was dropped in a migration, which made the orders query scan four million rows; I re-added the index and the p95 latency went from 1.8s to 120ms for checkout.", [a, b])).toBe(true);
   });
   test("a blocks body counts as well as the text fallback", () => {
     const blocks = JSON.stringify([{ type: "section", text: { type: "mrkdwn", text: ANSWER } }]);
@@ -100,6 +102,41 @@ describe("a reply that repeats the post, in any language", () => {
     const posted = "Thanks to Priya for the review. The orders query scanned four million rows because the created_at index was dropped; p95 is back to 120ms from 1.8s.";
     const reply = "Thanks to Priya for the review. The orders query scanned four million rows because the created_at index was dropped, and p95 is back to 120ms from 1.8s.";
     expect(isDuplicateReply(reply, [post(posted)])).toBe(true);
+  });
+});
+
+describe("the two-sided check: the post is covered by the reply, and the reply stays close to the post", () => {
+  const REWORDED =
+    "The checkout latency was caused by the orders query: it scanned 4M rows since the created_at index had been dropped in the last migration. I added the index back, and p95 dropped from 1.8s to 120ms.";
+  const LONG_POST =
+    "Deploy summary for the week: the billing service moved to the new queue, retries now back off for up to ten minutes, the dashboard shows lag per consumer, the old workers were scaled down on Tuesday, the alerts page the platform rotation instead of everyone, and the runbook covers rollback step by step.";
+
+  test("a reword with one number changed is kept", () => {
+    expect(repeatsPosted(REWORDED.replace("1.8s", "2.4s"), [ANSWER])).toBe(false);
+  });
+  test("a post plus a new paragraph with a real new fact is kept", () => {
+    const more = `${REWORDED}\n\nSeparately, the nightly export job also times out: its connection pool is capped at two, so I raised the cap to ten and queued a rerun for tonight.`;
+    expect(isDuplicateReply(more, [post(ANSWER)])).toBe(false);
+  });
+  test("a post plus a short new sentence with a new name, number or link is kept", () => {
+    expect(isDuplicateReply(`${REWORDED} I asked Priya to review it.`, [post(ANSWER)])).toBe(false);
+    expect(isDuplicateReply(`${REWORDED} Pool is now 40.`, [post(ANSWER)])).toBe(false);
+    expect(isDuplicateReply(`${REWORDED} See https://wiki.example.com/orders.`, [post(ANSWER)])).toBe(false);
+  });
+  test("a short reply to a long post is kept: it holds too little of the post", () => {
+    // every word is in the post, no hard token, 0% fresh: only the post-coverage tells it apart from a repeat
+    const short = "Retries now back off for up to ten minutes, and the alerts page the platform rotation instead of everyone.";
+    expect(isDuplicateReply(short, [post(LONG_POST)])).toBe(false);
+    expect(isDuplicateReply(LONG_POST, [post(LONG_POST)])).toBe(true);
+  });
+  test("a reply that covers the post but says much more is kept: too many fresh words", () => {
+    const wordy = `${LONG_POST} Unrelatedly, yesterday's outage report blamed expired certificates, so security rotated credentials across regions, finance paused invoices temporarily, support drafted apology emails, legal reviewed contract clauses, and marketing postponed Thursday's webinar until further notice.`;
+    expect(isDuplicateReply(wordy, [post(LONG_POST)])).toBe(false);
+  });
+  test("the real Vietnamese fixture is covered by a wide margin on both sides of the numbers", () => {
+    // fresh share of the reply about 24%, post-coverage about 0.95: far from both bounds' failing side
+    expect(MAX_FRESH_SHARE).toBeGreaterThan(0.24);
+    expect(MIN_POST_COVERAGE).toBeLessThanOrEqual(0.9);
   });
 });
 

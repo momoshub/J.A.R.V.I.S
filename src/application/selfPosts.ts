@@ -20,8 +20,8 @@ export const SELF_POSTS_TTL_MS = 3 * 60 * 60_000;
 export const SELF_POSTS_MAX_TURNS = 500;
 
 export type SelfPosts = {
-  /** Note a call the proxy made for the turn `turn`, which runs in the thread `threadTs`. */
-  record: (turn: string, threadTs: string | undefined, call: SelfPostCall) => void;
+  /** Note a call the proxy made for the turn `turn`, which runs in the thread `threadTs`. True when the call put (or changed) a message of the turn's own thread. */
+  record: (turn: string, threadTs: string | undefined, call: SelfPostCall) => boolean;
   /** What that turn has posted so far. */
   posts: (turn: string) => readonly SelfPost[];
   /** The turn ended. */
@@ -34,12 +34,12 @@ export const createSelfPosts = (clock: Clock = () => Date.now()): SelfPosts => {
   const byTurn = new Map<string, Entry>();
   return {
     record: (key, threadTs, call) => {
-      if (!threadTs) return;
+      if (!threadTs) return false;
       const now = clock();
       const live = byTurn.get(key);
       const before = live && now - live.at < SELF_POSTS_TTL_MS ? live.posts : [];
       const after = applySelfPostCall(before, call, threadTs);
-      if (after === before) return;
+      if (after === before) return false;
       // delete first so a re-set turn moves to the newest end of the Map
       byTurn.delete(key);
       byTurn.set(key, { posts: after, at: now });
@@ -47,6 +47,7 @@ export const createSelfPosts = (clock: Clock = () => Date.now()): SelfPosts => {
         if (byTurn.size <= SELF_POSTS_MAX_TURNS) break;
         byTurn.delete(oldest);
       }
+      return true;
     },
     posts: (turn) => {
       const live = byTurn.get(turn);

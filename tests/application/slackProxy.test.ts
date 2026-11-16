@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { capBytes, createSlackProxy } from "../../src/application/slackProxy.ts";
+import { SELF_POST_NOTE, capBytes, createSlackProxy } from "../../src/application/slackProxy.ts";
 import { createSlackTickets } from "../../src/application/slackTickets.ts";
 import { createSelfPosts } from "../../src/application/selfPosts.ts";
 
@@ -282,5 +282,42 @@ describe("Slack proxy notes what a turn posts into its own thread", () => {
     await proxy.call({ ticket, method: "reactions.add", params: { channel: "C1", timestamp: "1.1", name: "eyes" } });
     await proxy.call({ ticket, method: "conversations.replies", params: { channel: "C1", ts: "1.1" } });
     expect(selfPosts.posts("run-1")).toEqual([]);
+  });
+
+  test("a post or update into the turn's own thread gets a jarvis_note, with Slack's own fields untouched", async () => {
+    const slack = { ok: true, ts: "5.5", channel: "C1", message: { text: "first", ts: "5.5" } };
+    const { proxy, tickets } = withLog(() => Response.json(slack));
+    const ticket = tickets.issue({ channel: "C1", threadTs: "1.1", turn: "run-1" });
+    const posted = await proxy.call({ ticket, method: "chat.postMessage", params: { channel: "C1", text: "first" } });
+    expect(JSON.parse(posted.body)).toEqual({ ...slack, jarvis_note: SELF_POST_NOTE });
+    expect(SELF_POST_NOTE).toContain("NO_REPLY");
+    const updated = await proxy.call({ ticket, method: "chat.update", params: { channel: "C1", ts: "5.5", text: "final" } });
+    expect(JSON.parse(updated.body)).toEqual({ ...slack, jarvis_note: SELF_POST_NOTE });
+  });
+
+  test("no note for a failed post, a top-level post, an update of a foreign message, another call, or a ticket with no turn", async () => {
+    const slack = { ok: true, ts: "5.5" };
+    const { proxy, tickets } = withLog(() => Response.json(slack));
+    const ticket = tickets.issue({ channel: "C1", threadTs: "1.1", turn: "run-1" });
+    const top = await proxy.call({ ticket, method: "chat.postMessage", params: { channel: "C1", text: "x", thread_ts: "none" } });
+    expect(JSON.parse(top.body)).toEqual(slack);
+    const foreign = await proxy.call({ ticket, method: "chat.update", params: { channel: "C1", ts: "7.7", text: "x" } });
+    expect(JSON.parse(foreign.body)).toEqual(slack);
+    const react = await proxy.call({ ticket, method: "reactions.add", params: { channel: "C1", timestamp: "1.1", name: "eyes" } });
+    expect(JSON.parse(react.body)).toEqual(slack);
+    const noTurn = tickets.issue({ channel: "C1", threadTs: "1.1" });
+    const plain = await proxy.call({ ticket: noTurn, method: "chat.postMessage", params: { channel: "C1", text: "x" } });
+    expect(JSON.parse(plain.body)).toEqual(slack);
+    const failing = withLog(() => Response.json({ ok: false, error: "channel_not_found" }));
+    const t2 = failing.tickets.issue({ channel: "C1", threadTs: "1.1", turn: "run-1" });
+    const failed = await failing.proxy.call({ ticket: t2, method: "chat.postMessage", params: { channel: "C1", text: "x" } });
+    expect(JSON.parse(failed.body)).toEqual({ ok: false, error: "channel_not_found" });
+  });
+
+  test("a body that is not a JSON object is passed on as it is", async () => {
+    const { proxy, tickets } = withLog(() => new Response("<html>"));
+    const ticket = tickets.issue({ channel: "C1", threadTs: "1.1", turn: "run-1" });
+    const res = await proxy.call({ ticket, method: "chat.postMessage", params: { channel: "C1", text: "x" } });
+    expect(res.body).toBe("<html>");
   });
 });

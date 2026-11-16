@@ -34,6 +34,26 @@ export type SlackProxyDeps = {
   log?: (line: string) => void;
 };
 
+/**
+ * Added to Slack's answer when the turn has just put a message into its own
+ * thread. The closing reply is posted there too, and a line in the system
+ * prompt was not enough to stop the same answer going out twice; a tool result
+ * right after the post is read at the moment it matters.
+ */
+export const SELF_POST_NOTE =
+  "this message is now in the thread the turn runs in. Your closing reply is posted there too, so end the turn with NO_REPLY unless it adds something this message does not say";
+
+/** Slack's own fields untouched, `jarvis_note` added. A body that is not a JSON object is left as it is. */
+const withSelfPostNote = (body: string): string => {
+  try {
+    const parsed: unknown = JSON.parse(body);
+    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return body;
+    return JSON.stringify({ ...(parsed as Record<string, unknown>), jarvis_note: SELF_POST_NOTE });
+  } catch {
+    return body;
+  }
+};
+
 export type SlackProxyReply = { readonly status: number; readonly body: string };
 
 export type SlackFileReply =
@@ -108,7 +128,8 @@ export const createSlackProxy = (deps: SlackProxyDeps): SlackProxy => {
         }
         // noted per turn, only what Slack accepted, and only into the turn's own thread
         if (res.ok && checked.method.startsWith("chat.") && resolved.ctx.turn) {
-          deps.selfPosts?.record(resolved.ctx.turn, resolved.ctx.threadTs, { method: checked.method, params: checked.params, answer: text });
+          const landed = deps.selfPosts?.record(resolved.ctx.turn, resolved.ctx.threadTs, { method: checked.method, params: checked.params, answer: text });
+          if (landed) return { status: res.status, body: withSelfPostNote(text) };
         }
         return { status: res.status, body: text };
       } catch (e) {

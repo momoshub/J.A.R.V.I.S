@@ -25,14 +25,28 @@ export type SelfPostCall = {
 };
 
 /**
- * Share of a reply's words the posts do not hold (not even by their first
- * letters) up to which it is still a repeat. Rewording moves some words and a
- * reword says a little about the post itself ("I updated the message above"),
- * so it is not zero.
+ * A reply is a repeat only when the posts and the reply cover each other, not
+ * when the reply is merely close to the posts (see `repeatsPosted`).
+ *
+ * Share of the post's words the reply must hold. A reword keeps the post's
+ * content words and moves function words, so almost all of the post is there
+ * (the real Vietnamese thread: about 0.95); a short answer to a long post, or
+ * a different answer on the same subject, holds well under half of it.
  */
-export const MAX_FRESH_SHARE = 0.2;
-/** Never a repeat when more words than this are new, however long the reply is: twenty percent of a long reply is a paragraph. */
+export const MIN_POST_COVERAGE = 0.8;
+/**
+ * Share of the reply's words the posts do not hold (not even by their first
+ * letters) up to which a reply is still a repeat. Rewording in a language of
+ * short function words adds many (the real Vietnamese thread: 24%) and a
+ * closing "I updated the message above" adds more, so this is loose; the
+ * post-coverage and the hard-token check are what keep real answers.
+ */
+export const MAX_FRESH_SHARE = 0.35;
+/** Never a repeat when more words than this are new, however long the reply is: a third of a long reply is paragraphs. */
 export const MAX_FRESH_WORDS = 20;
+/** A part of the stream, taken alone, is covered by the posts only up to this share of new words (no post-coverage: a part may hold half of a post). */
+const MAX_PART_FRESH_SHARE = 0.2;
+const MAX_PART_FRESH_WORDS = 20;
 /** A reply with fewer words than this is compared only for equality: "ok, done" shares words with almost anything. */
 export const MIN_WORDS = 4;
 /** Words are matched by their first letters, so "scans"/"scanned" and "migrate"/"migration" meet without a stemmer or a word list for any one language. */
@@ -99,37 +113,63 @@ const knownOf = (posted: readonly string[]): Known => {
 
 const isKnown = (word: string, known: Known): boolean => known.exact.has(word) || known.stems.has(stemOf(word));
 
+const wordsKnown = (list: readonly string[]): Known => {
+  const exact = new Set(list);
+  return { exact, stems: new Set(list.map(stemOf)) };
+};
+
+/** The share of `list` that `known` does not hold, and how many words that is. */
+const freshOf = (list: readonly string[], known: Known): { count: number; share: number } => {
+  const count = list.filter((w) => !isKnown(w, known)).length;
+  return { count, share: list.length === 0 ? 0 : count / list.length };
+};
+
+const bringsNewHardToken = (text: string, known: Known): boolean => [...hardTokens(text)].some((h) => !known.exact.has(h));
+
 /**
  * Does `reply` say nothing that `posted` did not? Equal once normalised is
- * always a repeat. Otherwise, with no language assumed:
- *  - a number, id, link or name the posts do not hold is a new fact: not a repeat;
- *  - only a small share of its words may be new to the posts, which is how a
- *    reword with a closing "I updated the message above" sentence stays a
- *    repeat while a new paragraph does not.
+ * always a repeat. Otherwise, with no language assumed, ALL of these hold:
+ *  1. no number, id, link or name the posts do not hold (a new fact);
+ *  2. the reply holds at least `MIN_POST_COVERAGE` of the posts' words (it is
+ *     the post again, not a shorter or different answer);
+ *  3. at most `MAX_FRESH_SHARE` of its words are new to the posts (a reword
+ *     with an "I updated the message above" sentence stays a repeat, a new
+ *     paragraph does not).
+ * One test alone misses the real thread or drops a real answer: the fresh
+ * share alone needs a bound loose enough to swallow a different answer.
  */
 export const repeatsPosted = (reply: string, posted: readonly string[]): boolean => {
   const replyNorm = normalizeText(reply);
   if (!replyNorm) return false;
   if (posted.some((p) => normalizeText(p) === replyNorm)) return true;
-  const known = knownOf(posted);
   const replyWords = replyNorm.split(" ");
   if (replyWords.length < MIN_WORDS) return false;
-  for (const h of hardTokens(reply)) if (!known.exact.has(h)) return false;
-  const fresh = replyWords.filter((w) => !isKnown(w, known)).length;
-  return fresh <= MAX_FRESH_WORDS && fresh / replyWords.length <= MAX_FRESH_SHARE;
+  const known = knownOf(posted);
+  if (bringsNewHardToken(reply, known)) return false;
+  const postWords = posted.flatMap(words);
+  if (postWords.length === 0) return false;
+  const missing = freshOf(postWords, wordsKnown(replyWords));
+  if (1 - missing.share < MIN_POST_COVERAGE) return false;
+  const fresh = freshOf(replyWords, known);
+  return fresh.count <= MAX_FRESH_WORDS && fresh.share <= MAX_FRESH_SHARE;
 };
 
 /**
- * Is a streamed part, taken alone, only what was posted (or nothing)? A short
+ * Is a streamed part, taken alone, only what was posted (or nothing)? A part
+ * may be any piece of the post, so only the fresh share counts here. A short
  * one counts only when every word of it is in the posts.
  */
-export const partIsCovered = (text: string, posted: readonly string[]): boolean => {
+export const partIsCovered = (text: string, posted: readonly string[], reply = ""): boolean => {
   const norm = normalizeText(text);
   if (!norm || isSilenceNote(text)) return true;
+  // the part that holds the closing reply is the one already judged a repeat
+  if (norm === normalizeText(reply)) return true;
   const ws = norm.split(" ");
-  if (ws.length >= MIN_WORDS) return repeatsPosted(text, posted);
   const known = knownOf(posted);
-  return ws.every((w) => isKnown(w, known)) && [...hardTokens(text)].every((h) => known.exact.has(h));
+  if (bringsNewHardToken(text, known)) return false;
+  const fresh = freshOf(ws, known);
+  if (ws.length < MIN_WORDS) return fresh.count === 0;
+  return fresh.count <= MAX_PART_FRESH_WORDS && fresh.share <= MAX_PART_FRESH_SHARE;
 };
 
 /** Is the closing reply a repeat of what the turn already posted in its own thread? */
@@ -146,7 +186,7 @@ export const isDuplicateReply = (reply: string, posts: readonly SelfPost[]): boo
 export const isDuplicateStream = (reply: string, parts: readonly string[], posts: readonly SelfPost[]): boolean => {
   if (!isDuplicateReply(reply, posts)) return false;
   const posted = posts.flatMap((p) => p.texts);
-  return parts.every((part) => partIsCovered(part, posted));
+  return parts.every((part) => partIsCovered(part, posted, reply));
 };
 
 /** The words of a `blocks` JSON string: section, header, markdown, context and rich text elements. Unparseable: nothing. */
