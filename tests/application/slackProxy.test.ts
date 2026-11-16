@@ -235,13 +235,13 @@ describe("Slack proxy notes what a turn posts into its own thread", () => {
     return { proxy, tickets, selfPosts };
   };
 
-  test("a post with no thread_ts lands in the turn's thread and is noted under the turn; its update replaces the words", async () => {
+  test("a post with no thread_ts lands in the turn's thread and is noted under the turn; its update keeps it noted", async () => {
     const { proxy, tickets, selfPosts } = withLog(() => Response.json({ ok: true, ts: "5.5" }));
     const ticket = tickets.issue({ channel: "C1", threadTs: "1.1", turn: "run-1" });
     await proxy.call({ ticket, method: "chat.postMessage", params: { channel: "C1", text: "first" } });
-    expect(selfPosts.posts("run-1")).toEqual([{ ts: "5.5", texts: ["first"] }]);
+    expect(selfPosts.posts("run-1")).toEqual([{ ts: "5.5" }]);
     await proxy.call({ ticket, method: "chat.update", params: { channel: "C1", ts: "5.5", text: "final" } });
-    expect(selfPosts.posts("run-1")).toEqual([{ ts: "5.5", texts: ["final"] }]);
+    expect(selfPosts.posts("run-1")).toEqual([{ ts: "5.5" }]);
   });
 
   test("two processes of one turn share the record; another turn in the thread does not", async () => {
@@ -252,9 +252,10 @@ describe("Slack proxy notes what a turn posts into its own thread", () => {
     const other = tickets.issue({ channel: "C1", threadTs: "1.1", turn: "run-2" });
     await proxy.call({ ticket: a, method: "chat.postMessage", params: { channel: "C1", text: "from a" } });
     await proxy.call({ ticket: other, method: "chat.postMessage", params: { channel: "C1", text: "from another turn" } });
-    expect(selfPosts.posts("run-1").flatMap((p) => p.texts)).toEqual(["from a"]);
+    expect(selfPosts.posts("run-1").map((p) => p.ts)).toEqual(["5.1"]);
+    expect(selfPosts.posts("run-2").map((p) => p.ts)).toEqual(["5.2"]);
     await proxy.call({ ticket: b, method: "chat.postMessage", params: { channel: "C1", text: "from b" } });
-    expect(selfPosts.posts("run-1").flatMap((p) => p.texts)).toEqual(["from a", "from b"]);
+    expect(selfPosts.posts("run-1").map((p) => p.ts)).toEqual(["5.1", "5.3"]);
   });
 
   test("a ticket with no turn notes nothing", async () => {
@@ -290,7 +291,9 @@ describe("Slack proxy notes what a turn posts into its own thread", () => {
     const ticket = tickets.issue({ channel: "C1", threadTs: "1.1", turn: "run-1" });
     const posted = await proxy.call({ ticket, method: "chat.postMessage", params: { channel: "C1", text: "first" } });
     expect(JSON.parse(posted.body)).toEqual({ ...slack, jarvis_note: SELF_POST_NOTE });
-    expect(SELF_POST_NOTE).toContain("NO_REPLY");
+    expect(SELF_POST_NOTE).toContain("KEEP_REPLY");
+    expect(SELF_POST_NOTE).toContain("dropped");
+    expect(SELF_POST_NOTE).toContain("chat.update");
     const updated = await proxy.call({ ticket, method: "chat.update", params: { channel: "C1", ts: "5.5", text: "final" } });
     expect(JSON.parse(updated.body)).toEqual({ ...slack, jarvis_note: SELF_POST_NOTE });
   });

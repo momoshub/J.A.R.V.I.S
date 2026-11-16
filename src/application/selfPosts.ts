@@ -2,8 +2,8 @@
  * What each turn has posted into its own thread through the Slack proxy.
  *
  * The proxy records a successful `chat.postMessage` / `chat.update` here; the
- * Slack handler reads it when the turn ends, to take back a closing reply that
- * only repeats what the turn already said (`domain/selfPost.ts`), and clears it.
+ * Slack handler reads it when the turn ends, to drop the closing reply of a turn
+ * that posted its answer itself (`domain/selfPost.ts`), and clears it.
  *
  * Keyed by the turn's run ticket (shared by every process the turn spawns, each
  * of which has its own Slack ticket), not by thread: watch hand-backs, `tell`,

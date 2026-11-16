@@ -11,6 +11,7 @@
  * Nothing about a call's content is logged, only who was refused and why.
  */
 import { checkSlackCall, isAuditedMethod, isSlackFileUrl, type IsNotice } from "../domain/slackProxy.ts";
+import { KEEP_REPLY } from "../domain/selfPost.ts";
 import type { SelfPosts } from "./selfPosts.ts";
 import type { SlackTickets, SlackTicketRefusal } from "./slackTickets.ts";
 
@@ -28,7 +29,7 @@ export type SlackProxyDeps = {
   botToken: string;
   /** Approval notices the bot posted, which a turn may not `chat.update` (see `domain/slackProxy.ts`). */
   isNotice?: IsNotice;
-  /** Where a turn's successful posts into its own thread are noted, so a closing reply that repeats one can be dropped. */
+  /** Where a turn's successful posts into its own thread are noted, so the turn's closing reply can be dropped. */
   selfPosts?: SelfPosts;
   fetchFn?: typeof fetch;
   log?: (line: string) => void;
@@ -36,12 +37,10 @@ export type SlackProxyDeps = {
 
 /**
  * Added to Slack's answer when the turn has just put a message into its own
- * thread. The closing reply is posted there too, and a line in the system
- * prompt was not enough to stop the same answer going out twice; a tool result
- * right after the post is read at the moment it matters.
+ * thread. The Slack handler drops the closing reply of such a turn, and a tool
+ * result right after the post is read at the moment it matters.
  */
-export const SELF_POST_NOTE =
-  "this message is now in the thread the turn runs in. Your closing reply is posted there too, so end the turn with NO_REPLY unless it adds something this message does not say";
+export const SELF_POST_NOTE = `this message is now in the thread the turn runs in. Your closing reply will be dropped, not posted. To add something, chat.update the message you posted, or put a line ${KEEP_REPLY} in the closing reply and it is sent (without that line)`;
 
 /** Slack's own fields untouched, `jarvis_note` added. A body that is not a JSON object is left as it is. */
 const withSelfPostNote = (body: string): string => {

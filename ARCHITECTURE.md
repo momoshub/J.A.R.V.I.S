@@ -97,12 +97,11 @@ no classes.
   with `db/noticeLookup.ts`) and calls Slack with the
   token it holds. A post or update that lands in the turn's own thread is also
   noted per turn (`selfPosts`, keyed by the turn's run ticket carried on the Slack
-  ticket) and the answer handed back carries a `jarvis_note` telling the model to
-  end with NO_REPLY (the main defence); the Slack handler also drops a closing reply
-  that is a verbatim repeat of it - the post's words in the same order, no new word
-  at all (markup and punctuation aside) - when the rest of the stream
-  is covered by it too (`domain/selfPost.ts`). It errs toward sending: a double
-  message is a nuisance, a dropped correction or warning is not. Files go through
+  ticket) and the answer handed back carries a `jarvis_note` saying the closing reply
+  will be dropped, and how to add something (`chat.update` the post, or put a
+  `KEEP_REPLY` line in the closing reply). The Slack handler then sends no closing
+  reply for that turn unless it carries the marker (`domain/selfPost.ts`); the drop
+  is logged with thread and length. Files go through
   `/api/slack/file`. `slack-read`, `slack-react`, `slack-file` and `slack-upload`
   are built on it.
 - **Commands from the brain.** The brain runs real commands through
@@ -296,7 +295,7 @@ Orchestrates the domain and depends on **ports**, not concrete adapters.
 - `handleMessage.ts` - the chat flow (access -> remember -> ask model -> remember), applying the role's tool policy
 - `cloudwatch.ts` (application) + `domain/cloudwatch.ts` + `infrastructure/aws/cloudwatchCli.ts` + `db/cloudwatchRepo.ts` - the `cloudwatch` command: Logs Insights run by the bot's own `aws` CLI (a turn's `aws logs` stays denied), a scan estimate from the log group's stored size, owner runs after a warning, executer/admin park a `cloudwatch_requests` row behind `jv:cloudwatch:confirm|cancel` buttons decided in code (never a model turn), every request audited
 - `slackTickets.ts`, `slackProxy.ts` (application) + `domain/slackProxy.ts` + `domain/turnEnv.ts` - a turn's Slack access: the per-turn ticket, the allowlisted call made with the bot's token, and the environment scrub
-- `selfPosts.ts` (application) + `domain/selfPost.ts` - what a turn (by its run ticket) posted into its own thread through the proxy, so a closing reply that is a near-verbatim repeat of it is dropped instead of streamed a second time (a reword is `jarvis_note`'s job)
+- `selfPosts.ts` (application) + `domain/selfPost.ts` - what a turn (by its run ticket) posted into its own thread through the proxy, so that turn's closing reply is dropped instead of streamed as a second message (unless it carries a `KEEP_REPLY` line)
 - `commands.ts`, `commandTickets.ts`, `workerTickets.ts`, `commandLimits.ts`, `brainRun.ts` - the command registry (configurable prefix + slash, role gates, help), the brain's tickets, allowances and result delivery. The command definitions live in `commands/`, one file per group (`chat`, `schedule`, `people`, `adapter`, `learnings`, `errands`, `review`, `runtime`, `slack`, `cloudwatch`), with `commands/shared.ts` for the deps, the `CommandDef` type and the helpers more than one group uses
 - `learningApproval.ts` (+ `domain/learning.ts`) - learnings need the owner's approval: only the owner's own typed `learn` is saved active; a member's `learn`, the agent's `learn` and every `POST /api/learnings` are stored pending (`learnings.status`, migration v35), kept out of every prompt (`injectedLearnings` is the one place the injection reads, active only) and put to the owner with `jv:learning:approve|reject` buttons - in the thread of the turn that proposed it when that is the owner's DM or a thread they started (source recorded in `learnings.source_*`, migration v39), otherwise in the owner's DM with a link to that thread - a press is honoured only on the notice exactly as last rendered (`domain/noticeFingerprint.ts` over its text and buttons, stored in `learnings.notice_fingerprint`, migration v40; `slackProxy` also refuses a turn's `chat.update` on any stored notice) - decided in code in `slack/app.ts` like `jv:loop:` and never handed to the model; after a decision the notice keeps its buttons (`updateInteractive`: the pressed one relabelled `Approved by` / `Rejected by`, the other flips the decision, which `LearningsRepo.decide` allows), unlike the other approval notices, which are settled with `settleInteractive`
 - `threadQueue.ts`, `runRegistry.ts` - one turn per thread, and stopping one

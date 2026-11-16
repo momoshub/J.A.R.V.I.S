@@ -90,7 +90,7 @@ import { collapsedBlocks, collapseSteps } from "../../domain/collapseSteps.ts";
 import { usageFooter } from "../../domain/usageFooter.ts";
 import { footerLine, restamp, signedText, SIGNATURES, withFooter } from "../../domain/messageFooter.ts";
 import { isSilenceNote } from "../../domain/silence.ts";
-import { isDuplicateStream } from "../../domain/selfPost.ts";
+import { closingReply } from "../../domain/selfPost.ts";
 import type { SelfPosts } from "../../application/selfPosts.ts";
 import {
   decodeKitMeta,
@@ -520,23 +520,19 @@ export const createHandler =
       // armed, and only finishing cancels it.
       const streamed = stream ? await stream.finish() : false;
       const parts = stream?.parts ?? [];
-      // A turn that posted its answer into this thread itself and then closed with the same answer reworded
-      // would leave it there twice; the reply is taken back, never the message the turn posted. Only the
-      // posts of THIS turn count (keyed by its run ticket), and only when everything the stream showed is
-      // in them too: `result.text` is the last round, earlier narration lives in `parts`.
-      // A turn that closed with NO_REPLY is the same, even when its stream already shows some narration.
+      // A turn that posted its answer into this thread itself does not stream a closing reply: every
+      // stream message goes, the messages the turn posted are never touched. Only the posts of THIS turn
+      // count (keyed by its run ticket). The turn keeps its reply by putting KEEP_REPLY on a line of it.
+      // A turn that closed with NO_REPLY is dropped too, even when its stream already shows some narration.
       const posted = result.kind === "reply" && result.turn ? (deps.selfPosts?.posts(result.turn) ?? []) : [];
-      const repeated =
-        result.kind === "reply" &&
-        isDuplicateStream(
-          result.text,
-          parts.map((p) => p.text),
-          posted,
-        );
-      if (repeated || isSilenceNote(result.text)) {
-        if (repeated) log(`reply repeats a message the turn posted itself, dropped channel=${msg.channelId} thread=${msg.threadTs}`);
+      const closing = closingReply(result.text, posted);
+      if (closing.kind === "drop" || isSilenceNote(result.text)) {
+        if (closing.kind === "drop" && !isQuiet(result.text)) {
+          log(`closing reply dropped, the turn posted its own answer channel=${msg.channelId} thread=${msg.threadTs} length=${result.text.length}`);
+        }
         return dropQuiet(msg, parts, log);
       }
+      const replyText = closing.text;
       const fail = (e: unknown) => log(`collapse failed: ${e instanceof Error ? e.message : String(e)}`);
       const collapsed = collapseSteps(stream?.steps ?? []);
       // Signed, not stamped: tidying the streamed reply is still its first
@@ -577,7 +573,7 @@ export const createHandler =
       const rewriteDeadStream = async (): Promise<boolean> => {
         const [first, ...rest] = parts;
         if (!first) return false;
-        const rewritten = await updateTidy(first.ts, result.text, true)
+        const rewritten = await updateTidy(first.ts, replyText, true)
           .then(() => true)
           .catch((e: unknown) => {
             log(`rewrite of dead stream failed: ${e instanceof Error ? e.message : String(e)}`);
@@ -594,7 +590,7 @@ export const createHandler =
       // requested" message. With nothing worth saying it is taken back, and
       // a real answer that never streamed as text is written onto it instead.
       if (parts.length > 0 && isQuiet(parts.map((p) => p.text).join(""))) {
-        if (isQuiet(result.text)) return dropQuiet(msg, parts, log);
+        if (isQuiet(replyText)) return dropQuiet(msg, parts, log);
         if (await rewriteDeadStream()) return;
       }
       if (streamed) {
@@ -631,7 +627,7 @@ export const createHandler =
         } else if (parts.length === 1 && stream?.ts) {
           // Always rewritten now, not only when there is something to
           // collapse: every message carries its signature footer.
-          await updateTidy(stream.ts, result.text, true)
+          await updateTidy(stream.ts, replyText, true)
             // A tidy-up that fails must leave the answer exactly as it was.
             .catch(fail);
         } else if (parts.length > 1) {
@@ -646,7 +642,7 @@ export const createHandler =
             await updateTidy(part.ts, part.text, i === lastWithText).catch(fail);
           }
         }
-      } else if (result.text.trim() && !isSilenceNote(result.text)) {
+      } else if (replyText.trim() && !isSilenceNote(replyText)) {
         // The stream died part way - Slack closes one left open for about ten
         // minutes, so a long turn finds it gone at the end - but its message
         // is still there, showing half the reply. Posting the answer as a new
@@ -659,10 +655,10 @@ export const createHandler =
         // markdown blocks around them; anything else stays a plain text post.
         // Blocks Slack refuses (`invalid_blocks`) fall back to the plain post.
         // Either way it carries the signature footer.
-        const rich = toBlockMessage(result.text, toMrkdwn);
+        const rich = toBlockMessage(replyText, toMrkdwn);
         const extra = { thread_ts: msg.threadTs };
         // A refused signed post still gets the words out, bare.
-        const words = rich?.plain ?? toMrkdwn(result.text);
+        const words = rich?.plain ?? toMrkdwn(replyText);
         const bare = () => msg.say({ text: words, ...extra });
         const plain = () => msg.say({ ...signedText(words, footer), ...extra }).catch(bare);
         if (rich) await msg.say({ text: rich.text, blocks: withFooter(rich.blocks, footer), ...extra }).catch(plain);
