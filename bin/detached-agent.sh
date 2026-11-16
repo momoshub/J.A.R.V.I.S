@@ -9,6 +9,7 @@
 # file on stdin, in the current directory, and returns at once. It writes
 # <dir>/<name>.pid (pid + start time), <name>.log (all output) and, when the
 # agent ends, <name>.exit (its exit code). It refuses while <name> is alive.
+# Dead with no <name>.exit means it was killed, not that it finished.
 #
 # `alive` exits 0 while that agent is running and 1 once it is gone (or was
 # never started), so a watch can fire on its death:
@@ -35,7 +36,8 @@ is_alive() {
   start=$(sed -n 2p "$file")
   [ -n "$pid" ] || return 1
   kill -0 "$pid" 2>/dev/null || return 1
-  [ -z "$start" ] || [ "$(started_at "$pid")" = "$start" ]
+  # No start time means it was gone before start could read it.
+  [ -n "$start" ] && [ "$(started_at "$pid")" = "$start" ]
 }
 
 cmd=${1:-}

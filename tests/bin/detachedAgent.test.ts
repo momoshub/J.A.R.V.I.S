@@ -82,6 +82,32 @@ describe("bin/detached-agent.sh", () => {
     Bun.spawnSync(["kill", pid]);
   });
 
+  test("survives the caller's process group and tree being killed", async () => {
+    // The caller leads its own group (like a turn under launchd) and stays alive after start.
+    const caller = Bun.spawn({
+      cmd: ["bash", "-c", `bash '${script}' start '${join(dir, "run")}' w7 '${prompt}'; sleep 30`],
+      env: { PATH: "/usr/bin:/bin", HOME: process.env.HOME, CLAUDE_BIN: shim, SLEEP: "3" },
+      cwd: dir,
+      detached: true,
+    });
+    expect(await waitFor(() => existsSync(join(dir, "run", "w7.pid")) && alive("w7") === 0)).toBe(true);
+    const tree = (pid: number): number[] => {
+      const kids = Bun.spawnSync(["pgrep", "-P", String(pid)]).stdout.toString().trim().split("\n").filter(Boolean).map(Number);
+      return kids.flatMap((k) => [...tree(k), k]);
+    };
+    for (const p of [...tree(caller.pid), caller.pid]) Bun.spawnSync(["kill", "-9", String(p)]);
+    Bun.spawnSync(["kill", "-9", `-${caller.pid}`]);
+    await caller.exited;
+    await Bun.sleep(200);
+    expect(alive("w7")).toBe(0);
+    Bun.spawnSync(["kill", readFileSync(join(dir, "run", "w7.pid"), "utf8").split("\n")[0] ?? ""]);
+  });
+
+  test("a pid recorded without a start time is not alive", () => {
+    writeFileSync(join(dir, "w8.pid"), `${process.pid}\n\n`);
+    expect(run(["alive", dir, "w8"]).exitCode).toBe(1);
+  });
+
   test("refuses a second start while the first is alive", () => {
     expect(run(["start", join(dir, "run"), "w4", prompt], { SLEEP: "2" }).exitCode).toBe(0);
     const again = run(["start", join(dir, "run"), "w4", prompt]);
