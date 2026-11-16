@@ -22,6 +22,23 @@ export const AGENT_SOURCE = "agent";
 /** One sentence: the whole fact has to fit the approval DM the owner decides on. */
 export const MAX_LEARNING_CHARS = 1000;
 
+/** The least a proposal needs to read as a fact the owner can judge, not a stray word ("list"). */
+export const MIN_LEARNING_WORDS = 3;
+export const MIN_LEARNING_CHARS = 15;
+
+/** Why a proposed fact (already one line) is the wrong size, or undefined when it fits. */
+export const learningSizeError = (text: string): string | undefined => {
+  if (!text) return "Empty learning";
+  if (text.length > MAX_LEARNING_CHARS) {
+    return `Too long (${text.length} characters, at most ${MAX_LEARNING_CHARS}). One sentence.`;
+  }
+  const words = text.split(/\s+/).length;
+  if (words < MIN_LEARNING_WORDS || text.length < MIN_LEARNING_CHARS) {
+    return `Too short to be a fact ("${text}"). A learning is one full sentence, at least ${MIN_LEARNING_WORDS} words and ${MIN_LEARNING_CHARS} characters. To read the learnings, run \`learnings\` instead.`;
+  }
+  return undefined;
+};
+
 /** Button ids. `jv:` like every element of ours, but decided in code, never handed to the model. */
 export const LEARNING_ACTION_PREFIX = "jv:learning:";
 export const LEARNING_APPROVE_ACTION = `${LEARNING_ACTION_PREFIX}approve`;

@@ -325,7 +325,7 @@ describe("dashboard mutations", () => {
 
   test("learnings: a POST is pending and says so, remove deletes", async () => {
     const { dash, learnings } = build();
-    const res = await dash.handle(postJson(`/api/learnings`, { content: "staging is X" }));
+    const res = await dash.handle(postJson(`/api/learnings`, { content: "staging is at stg.example.com" }));
     const body = (await res.json()) as { ok: boolean; status: string; id: number; message: string };
     expect(body).toMatchObject({ ok: true, status: "pending" });
     expect(body.message).toContain("Pending owner approval");
@@ -333,14 +333,14 @@ describe("dashboard mutations", () => {
     // never active: nothing the prompt reads
     expect(learnings.list()).toHaveLength(0);
     const [l] = learnings.pending();
-    expect(l?.content).toBe("staging is X");
+    expect(l?.content).toBe("staging is at stg.example.com");
     await dash.handle(postJson(`/api/learnings/remove`, { id: l!.id }));
     expect(learnings.pending()).toHaveLength(0);
   });
 
   test("learnings are refused when approval is not wired, never saved unchecked", async () => {
     const { dash, learnings } = build({ learningApproval: undefined });
-    const res = await dash.handle(postJson(`/api/learnings`, { content: "staging is X" }));
+    const res = await dash.handle(postJson(`/api/learnings`, { content: "staging is at stg.example.com" }));
     expect(res.status).toBe(503);
     expect(learnings.pending()).toHaveLength(0);
     expect(learnings.list()).toHaveLength(0);
@@ -429,9 +429,9 @@ describe("editing a learning", () => {
 
   test("the API reports the real status: the same text leaves it active and says so", async () => {
     const { dash, learnings } = build();
-    learnings.add("a fact", "dashboard", 1, "active");
+    learnings.add("staging is at stg.example.com", "dashboard", 1, "active");
     const id = learnings.list()[0]!.id;
-    const res = await dash.handle(postJson("/api/learnings/update", { id, content: "a fact" }));
+    const res = await dash.handle(postJson("/api/learnings/update", { id, content: "staging is at stg.example.com" }));
     const body = (await res.json()) as { status: string; message: string };
     expect(body.status).toBe("active");
     expect(body.message).toContain("Unchanged");

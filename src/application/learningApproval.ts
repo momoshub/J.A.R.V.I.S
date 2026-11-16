@@ -19,7 +19,7 @@ import {
   AGENT_SOURCE,
   LEARNING_APPROVE_ACTION,
   LEARNING_REJECT_ACTION,
-  MAX_LEARNING_CHARS,
+  learningSizeError,
   approvalCore,
   approvalText,
   oneLine,
@@ -143,10 +143,8 @@ export const proposeLearning = async (
   source?: LearningSource,
 ): Promise<Proposed> => {
   const text = oneLine(fact);
-  if (!text) return { ok: false, error: "Empty learning" };
-  if (text.length > MAX_LEARNING_CHARS) {
-    return { ok: false, error: `Too long (${text.length} characters, at most ${MAX_LEARNING_CHARS}). One sentence.` };
-  }
+  const sizeError = learningSizeError(text);
+  if (sizeError) return { ok: false, error: sizeError };
   const waiting = deps.learnings.pending();
   const same = waiting.find((l) => l.content === text);
   if (same) return { ok: true, learning: same };
@@ -331,9 +329,8 @@ export const rewordLearning = async (
     deps.learnings.update(id, text, before.status);
     return { ok: true, learning: { ...before, content: text }, pending: false };
   }
-  if (text.length > MAX_LEARNING_CHARS) {
-    return { ok: false, error: `Too long (${text.length} characters, at most ${MAX_LEARNING_CHARS}). One sentence.` };
-  }
+  const sizeError = learningSizeError(text);
+  if (sizeError) return { ok: false, error: sizeError };
   if (text === before.content) return { ok: true, learning: before, pending: before.status === "pending" };
   // Same limits as a new proposal, or this door floods the owner's DMs and brings back what they rejected.
   if (before.status === "rejected") return { ok: false, error: `Learning #${id} was rejected by the owner.` };
