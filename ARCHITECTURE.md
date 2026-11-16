@@ -163,8 +163,10 @@ no classes.
   reported later (a thread already running a turn is told but not handed a second).
   A death is reported once (the row is claimed), and a cut-off with no row says nothing. `watch worker` polls every 30s and posts a dead worker's
   line before its hand-back turn. A worker the bot stops on purpose is no death:
-  a turn's `worker-stop` (seen in its stream before the shell runs it) and the
-  thread `stop` command cancel that worker's watches first, and the watcher
+  a turn's `worker-stop` (`onBashCommand`, told by the CLI adapter before the
+  shell runs it, in every turn with or without a Slack sink) and the thread
+  `stop` command (`beforeStop`, before each `worker-stop`) cancel that worker's
+  watches first, and the watcher
   re-reads the row after its check, so a watch cancelled meanwhile stays quiet.
   None of them hold a session or a queue slot while they wait.
 - **Followed threads: debounce and gate.** An untagged message in a thread the bot

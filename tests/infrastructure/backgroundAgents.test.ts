@@ -72,6 +72,22 @@ describe("createBackgroundAgents", () => {
     }
   });
 
+  test("beforeStop hears each launch before its stop command runs", async () => {
+    const { run, calls } = fakeRun();
+    const agents = createBackgroundAgents({ traceDir: dir, run });
+    const order: string[] = [];
+    await agents.stopForThread({
+      channelId: "C1",
+      threadTs: "100.1",
+      actor: "U-me",
+      mayStopOthers: false,
+      beforeStop: (l) => {
+        order.push(`before ${l.id} after ${calls.filter((c) => c.includes(" stop") || c.includes("worker-stop")).length} stops`);
+      },
+    });
+    expect(order).toEqual(["before aaaaaaaa after 0 stops", "before ctx_a1b2c3 after 1 stops"]);
+  });
+
   test("an admin stops everyone's", async () => {
     const { run } = fakeRun();
     const agents = createBackgroundAgents({ traceDir: dir, run });

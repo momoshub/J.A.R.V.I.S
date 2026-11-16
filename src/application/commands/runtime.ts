@@ -89,16 +89,19 @@ export const RUNTIME_COMMANDS: readonly CommandDef[] = [
       // this turn's and every earlier turn's.
       const background = deps.backgroundAgents
         ? await deps.backgroundAgents
-            .stopForThread({ channelId, threadTs, actor: actor.slackId, mayStopOthers: isAdmin })
+            .stopForThread({
+              channelId,
+              threadTs,
+              actor: actor.slackId,
+              mayStopOthers: isAdmin,
+              // A worker stopped here is stopped on purpose: its watches end
+              // before the stop, or each could post a death and start a redo turn.
+              beforeStop: (l) => {
+                if (l.kind === "orca-worker" && deps.watches) cancelWorkerWatches(deps.watches, l.id, deps.clock());
+              },
+            })
             .catch(logAndIgnore("stop background agents", NOTHING_IN_BACKGROUND))
         : NOTHING_IN_BACKGROUND;
-      // A worker stopped here is stopped on purpose: its watches end with it,
-      // or each would post a death and start a turn to redo the work.
-      if (deps.watches) {
-        for (const l of background.stopped) {
-          if (l.kind === "orca-worker") cancelWorkerWatches(deps.watches, l.id, deps.clock());
-        }
-      }
       const reply = stopReply(turnLine, background);
       if (reply) return reply;
       // Said plainly: "nothing is running" and "I could not stop it" are very

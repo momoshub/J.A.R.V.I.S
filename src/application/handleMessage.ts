@@ -581,6 +581,9 @@ export const handleMessage = async (
     onUsage: (u: LlmUsage) => {
       usage = u;
     },
+    // A worker this turn stops on purpose is not a death: its watches end
+    // before the shell runs the stop - in every turn, a sinkless hand-back too.
+    ...(deps.watches ? { onBashCommand: cancelWatchesOnWorkerStop(deps.watches, deps.clock, (m) => console.log(`[watch] ${m}`)) } : {}),
     // Background work this turn leaves running dies with the CLI; the thread is
     // told when it does, by whoever keeps the list.
     ...(bgWatch && bgThread
@@ -596,10 +599,8 @@ export const handleMessage = async (
         }
       : {}),
   };
-  // A worker this turn stops on purpose is not a death: its watches end first.
-  const turnSink = sink && deps.watches ? cancelWatchesOnWorkerStop(deps.watches, deps.clock, sink, (m) => console.log(`[watch] ${m}`)) : sink;
   const run = (p: Parameters<typeof deps.llm.complete>[0]) =>
-    turnSink && deps.llm.stream ? deps.llm.stream(p, turnSink) : deps.llm.complete(p);
+    sink && deps.llm.stream ? deps.llm.stream(p, sink) : deps.llm.complete(p);
 
   // Named after the thread, so another thread's session can find this one.
   const name = key ? threadSessionName(key.channelId, key.threadTs) : undefined;

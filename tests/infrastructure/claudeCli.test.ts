@@ -1148,6 +1148,28 @@ describe("tracing every tool call in full", () => {
     expect(traces.every((t) => t.bill === bill)).toBe(true);
   });
 
+  test("a sinkless complete still tells onBashCommand each Bash command before its result", async () => {
+    const events = [
+      { type: "stream_event", event: { type: "content_block_start", index: 0, content_block: { type: "tool_use", id: "t1", name: "Bash" } } },
+      { type: "stream_event", event: { type: "content_block_delta", index: 0, delta: { type: "input_json_delta", partial_json: '{"command":"orca orchestration worker-stop --dispatch ctx_a1"}' } } },
+      { type: "stream_event", event: { type: "content_block_stop", index: 0 } },
+      { type: "user", message: { content: [{ type: "tool_result", tool_use_id: "t1", is_error: false, content: "ok" }] } },
+      { type: "result", subtype: "success", is_error: false, result: "stopped" },
+    ];
+    const seen: string[] = [];
+    const llm = createClaudeCliLlm({ binPath: fakeStreamBin(events), onToolTrace: () => {} });
+    const out = await llm.complete({
+      system: "s",
+      messages: [{ role: "user", content: "stop it" }],
+      onBashCommand: (c) => {
+        seen.push(c);
+        throw new Error("an observer that throws never breaks the run");
+      },
+    });
+    expect(out).toBe("stopped");
+    expect(seen).toEqual(["orca orchestration worker-stop --dispatch ctx_a1"]);
+  });
+
   test("a one-shot complete is traced too, and keeps complete's contract", async () => {
     const events = [
       { type: "stream_event", event: { type: "content_block_start", index: 0, content_block: { type: "tool_use", id: "t1", name: "Bash" } } },

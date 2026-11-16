@@ -130,7 +130,7 @@ export const createBackgroundAgents = (opts: {
         return true;
       }
     },
-    stopForThread: async ({ channelId, threadTs, actor, mayStopOthers }): Promise<BackgroundStopResult> => {
+    stopForThread: async ({ channelId, threadTs, actor, mayStopOthers, beforeStop }): Promise<BackgroundStopResult> => {
       try {
         const launches = backgroundLaunches(
           readThreadTrace(opts.traceDir, channelId, threadTs, opts.tailBytes ?? BACKGROUND_TRACE_BYTES),
@@ -146,6 +146,11 @@ export const createBackgroundAgents = (opts: {
         const stopped: BackgroundLaunch[] = [];
         const failed: (BackgroundLaunch & { reason: string })[] = [];
         for (const l of live.filter(allowed)) {
+          try {
+            beforeStop?.(l);
+          } catch {
+            // the stop still happens; a watch left behind only reports late
+          }
           const out = await stopOne(l);
           if (out.code === 0) stopped.push(l);
           else failed.push({ ...l, reason: firstLine(out) });

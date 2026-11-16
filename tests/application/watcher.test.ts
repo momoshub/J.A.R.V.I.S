@@ -7,7 +7,6 @@ import {
   createWatcher,
   type CheckResult,
 } from "../../src/application/watcher.ts";
-import type { LlmStreamEvent } from "../../src/application/ports.ts";
 import { MAX_CONSECUTIVE_ERRORS } from "../../src/domain/watch.ts";
 
 let db: DbClient;
@@ -432,21 +431,14 @@ describe("watcher: CI gate rows", () => {
     expect(watches.waiting().map((w) => w.id).sort()).toEqual([c.id, d.id].sort());
   });
 
-  test("a turn's worker-stop cancels the worker's watch before the event passes on", () => {
+  test("a turn's worker-stop command cancels that worker's watch, and nothing else", () => {
     const a = add({ check: "'bun' '/x/bin/orca-worker-wait.ts' 'ctx_5b5fa1aae471'" });
-    const seen: LlmStreamEvent[] = [];
-    const sink = cancelWatchesOnWorkerStop(watches, () => now, (e) => {
-      seen.push(e);
-      expect(watches.get(a.id)?.state).toBe("cancelled");
-    });
-    sink({
-      type: "tool",
-      id: "t1",
-      title: "Run",
-      command: "orca orchestration worker-stop --dispatch ctx_5b5fa1aae471 --json",
-      status: "in_progress",
-    });
-    expect(seen).toHaveLength(1);
+    const b = add({ check: "'bun' '/x/bin/orca-worker-wait.ts' 'ctx_other'" });
+    const seen = cancelWatchesOnWorkerStop(watches, () => now);
+    seen("orca orchestration worker-show --dispatch ctx_other --json");
+    seen("orca orchestration worker-stop --dispatch ctx_5b5fa1aae471 --json");
+    expect(watches.get(a.id)?.state).toBe("cancelled");
+    expect(watches.get(b.id)?.state).toBe("waiting");
   });
 
   test("a worker that dies on its own still gets the heads-up and the hand-back", async () => {

@@ -30,7 +30,7 @@ import {
 import { decodeGate, type GateSpec } from "../domain/ciGate.ts";
 import type { Watch, WatchRepo } from "../infrastructure/db/watchRepo.ts";
 import type { InternalKind } from "../domain/internalMessages.ts";
-import type { Clock, LlmStreamSink } from "./ports.ts";
+import type { Clock } from "./ports.ts";
 import { logAndIgnore } from "./ignoredError.ts";
 
 /** Result of running a watch's predicate. */
@@ -115,24 +115,21 @@ export const cancelWorkerWatches = (watches: WatchRepo, dispatchId: string, at: 
     .map((w) => w.id);
 
 /**
- * The turn's stream, with every `worker-stop` it runs cancelling that worker's
- * watches first. The tool event carries the whole command before the shell
- * runs it, so the cancel lands before the worker is gone.
+ * The observer a turn hands the model run (`onBashCommand`): every
+ * `worker-stop` it is about to run cancels that worker's watches first. The
+ * command is seen once the model has written it, before the shell runs it.
  */
 export const cancelWatchesOnWorkerStop =
-  (watches: WatchRepo, clock: Clock, sink: LlmStreamSink, log: (msg: string) => void = () => {}): LlmStreamSink =>
-  (ev) => {
-    if (ev.type === "tool" && ev.status === "in_progress" && ev.command) {
-      for (const id of stoppedDispatchIds(ev.command)) {
-        try {
-          const ended = cancelWorkerWatches(watches, id, clock());
-          if (ended.length > 0) log(`worker-stop ${id}: cancelled watch ${ended.map((n) => `#${n}`).join(", ")}`);
-        } catch (e) {
-          log(`worker-stop ${id}: could not cancel its watches: ${e instanceof Error ? e.message : String(e)}`);
-        }
+  (watches: WatchRepo, clock: Clock, log: (msg: string) => void = () => {}) =>
+  (command: string): void => {
+    for (const id of stoppedDispatchIds(command)) {
+      try {
+        const ended = cancelWorkerWatches(watches, id, clock());
+        if (ended.length > 0) log(`worker-stop ${id}: cancelled watch ${ended.map((n) => `#${n}`).join(", ")}`);
+      } catch (e) {
+        log(`worker-stop ${id}: could not cancel its watches: ${e instanceof Error ? e.message : String(e)}`);
       }
     }
-    sink(ev);
   };
 
 export const createWatcher = (deps: WatcherDeps): Watcher => {

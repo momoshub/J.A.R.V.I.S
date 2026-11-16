@@ -658,7 +658,7 @@ export const createClaudeCliLlm = (config: ClaudeCliConfig = {}): LlmPort => {
    * output carries only the final answer, so a run made that way left no
    * record of what it ran.
    */
-  const runStreaming = async ({ system, messages, assistantName, policy, session, oauthToken, useHostLogin, signal, runTicket, bill, onUsage, onBackgroundTasks, onBackgroundCutOff }: LlmCompleteParams, sink: LlmStreamSink) => {
+  const runStreaming = async ({ system, messages, assistantName, policy, session, oauthToken, useHostLogin, signal, runTicket, bill, onUsage, onBackgroundTasks, onBackgroundCutOff, onBashCommand }: LlmCompleteParams, sink: LlmStreamSink) => {
     const proc = spawnClaude(config, [...buildArgs(config, true, policy, session), "--append-system-prompt", system], renderPrompt(messages, assistantName), policy, oauthToken, useHostLogin, signal, runTicket, session, await turnEnv(), bill);
     const stderrPromise = new Response(proc.stderr).text();
 
@@ -804,6 +804,14 @@ export const createClaudeCliLlm = (config: ClaudeCliConfig = {}): LlmPort => {
         } else if (ev.type === "content_block_stop" && typeof index === "number") {
           const tb = toolByIndex.get(index);
           const spot = tb ? trace({ kind: "call", id: tb.id, name: tb.name, input: tb.json }) : undefined;
+          if (tb?.name === "Bash" && onBashCommand) {
+            try {
+              const command = (JSON.parse(tb.json) as Record<string, unknown>).command;
+              if (typeof command === "string") onBashCommand(command);
+            } catch {
+              // unreadable input or a throwing observer: the run goes on
+            }
+          }
           if (tb && !isNoiseTool(tb.name)) {
             const { title, details, command } = summarizeTool(tb.name, tb.json, spot);
             cardById.set(tb.id, { title, command });
