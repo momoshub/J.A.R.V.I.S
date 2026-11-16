@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { createSettingsRepo } from "../../src/infrastructure/db/settingsRepo.ts";
+import { createWatchRepo } from "../../src/infrastructure/db/watchRepo.ts";
 import { createThreadSessionRepo } from "../../src/infrastructure/db/threadSessionRepo.ts";
 import { createRunRegistry } from "../../src/application/runRegistry.ts";
 import { dispatchCommand, type CommandDeps } from "../../src/application/commands.ts";
@@ -97,6 +98,20 @@ describe("stop command", () => {
       deps.backgroundAgents = port().backgroundAgents;
       const out = await dispatchCommand(deps, actor(), "C1", "stop", { threadTs: "900.1" });
       expect(out).toBe("⏹ stopped 1 background agent this thread started (`cfaf8d7a`)");
+    });
+
+    test("a stopped Orca worker takes its watches with it, so it is never reported dead", async () => {
+      const deps = build();
+      deps.runs = createRunRegistry();
+      const watches = createWatchRepo(db);
+      deps.watches = watches;
+      const w = watches.add(
+        { channelId: "C1", threadTs: "900.1", slackUserId: OWNER, note: "merge it", check: "'bun' '/x/bin/orca-worker-wait.ts' 'ctx_w1'", everyMs: 30_000, deadlineAt: 9e12, createdAt: 0 },
+        0,
+      );
+      deps.backgroundAgents = port({ stopped: [{ kind: "orca-worker", id: "ctx_w1", actor: OWNER }], failed: [], notYours: [], unchecked: [] }).backgroundAgents;
+      await dispatchCommand(deps, actor(), "C1", "stop", { threadTs: "900.1" });
+      expect(watches.get(w.id)?.state).toBe("cancelled");
     });
 
     test("nothing in the background keeps the plain answer", async () => {

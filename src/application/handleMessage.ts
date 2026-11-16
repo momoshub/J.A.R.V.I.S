@@ -47,6 +47,7 @@ import type { BugReportRepo } from "../infrastructure/db/bugReportRepo.ts";
 import type { SelfIssueRepo } from "../infrastructure/db/selfIssueRepo.ts";
 import type { LoopRepo } from "../infrastructure/db/loopRepo.ts";
 import type { WatchRepo } from "../infrastructure/db/watchRepo.ts";
+import { cancelWatchesOnWorkerStop } from "./watcher.ts";
 import type { FollowRepo } from "../infrastructure/db/followRepo.ts";
 import type { WorkflowRepo } from "../infrastructure/db/workflowRepo.ts";
 import type { AccessRequestRepo } from "../infrastructure/db/accessRequestRepo.ts";
@@ -595,8 +596,10 @@ export const handleMessage = async (
         }
       : {}),
   };
+  // A worker this turn stops on purpose is not a death: its watches end first.
+  const turnSink = sink && deps.watches ? cancelWatchesOnWorkerStop(deps.watches, deps.clock, sink, (m) => console.log(`[watch] ${m}`)) : sink;
   const run = (p: Parameters<typeof deps.llm.complete>[0]) =>
-    sink && deps.llm.stream ? deps.llm.stream(p, sink) : deps.llm.complete(p);
+    turnSink && deps.llm.stream ? deps.llm.stream(p, turnSink) : deps.llm.complete(p);
 
   // Named after the thread, so another thread's session can find this one.
   const name = key ? threadSessionName(key.channelId, key.threadTs) : undefined;

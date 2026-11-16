@@ -542,6 +542,32 @@ describe("dispatchCommand", () => {
     expect(watches.waiting()).toHaveLength(0);
   });
 
+  test("watch cancel <id> ends only that watch, and says when it had already fired", async () => {
+    const deps = build();
+    const watches = createWatchRepo(db);
+    const d = { ...deps, watches };
+    await dispatchCommand(d, actor(), "C1", "watch first -- true", { threadTs: "9.9" });
+    await dispatchCommand(d, actor(), "C1", "watch second -- true", { threadTs: "9.9" });
+    const [a, b] = watches.waiting();
+    expect(await dispatchCommand(d, actor(), "C1", `watch cancel ${a?.id}`, { threadTs: "9.9" })).toContain(`stopped watch #${a?.id}`);
+    expect(watches.waiting().map((w) => w.id)).toEqual([b?.id ?? -1]);
+    watches.settle(b?.id ?? -1, "fired", 1);
+    // The bug: this used to answer "nothing was being watched here".
+    expect(await dispatchCommand(d, actor(), "C1", `watch cancel #${b?.id}`, { threadTs: "9.9" })).toContain("had already fired");
+    expect(await dispatchCommand(d, actor(), "C1", "watch cancel 99999", { threadTs: "9.9" })).toContain("no watch #99999");
+  });
+
+  test("watch cancel <id> of someone else's watch in another thread needs watch:shell", async () => {
+    const deps = build();
+    const watches = createWatchRepo(db);
+    const d = { ...deps, watches };
+    await dispatchCommand(d, actor(), "C1", "watch it -- true", { threadTs: "9.9" });
+    const [w] = watches.waiting();
+    const stranger = actor({ slackId: "U9", role: "pal" });
+    expect(await dispatchCommand(d, stranger, "C1", `watch cancel ${w?.id}`, { threadTs: "1.1" })).toContain("not yours");
+    expect(watches.waiting()).toHaveLength(1);
+  });
+
   test("watch list says what it is waiting for, or that it is not", async () => {
     const deps = build();
     const watches = createWatchRepo(db);

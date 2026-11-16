@@ -14,12 +14,15 @@
  * Every exit tells the thread something. A watch that quietly stopped would
  * reproduce the exact failure it was built to fix, so there are only three
  * ends: it fired, it ran out of time, or its check kept erroring - and all
- * three post.
+ * three post. The one quiet end is a cancel: someone (or the bot, stopping
+ * the worker it watched) decided the wait was over, so nothing is owed.
  */
 import {
   gaveUpMessage,
   MAX_CONSECUTIVE_ERRORS,
   readyMessage,
+  stoppedDispatchIds,
+  watchesWorker,
   workerDeath,
   workerDiedNotice,
   type WatchState,
@@ -27,7 +30,7 @@ import {
 import { decodeGate, type GateSpec } from "../domain/ciGate.ts";
 import type { Watch, WatchRepo } from "../infrastructure/db/watchRepo.ts";
 import type { InternalKind } from "../domain/internalMessages.ts";
-import type { Clock } from "./ports.ts";
+import type { Clock, LlmStreamSink } from "./ports.ts";
 import { logAndIgnore } from "./ignoredError.ts";
 
 /** Result of running a watch's predicate. */
@@ -98,6 +101,39 @@ export type Watcher = {
   /** Check everything that is due. Safe to call on a timer. */
   tick: () => Promise<void>;
 };
+
+/**
+ * End every waiting `watch worker` on this dispatch, whichever thread set it.
+ * Called the moment the bot stops the worker itself: a worker stopped on
+ * purpose is not a death, and its watch must not post one or start a redo turn.
+ */
+export const cancelWorkerWatches = (watches: WatchRepo, dispatchId: string, at: number): number[] =>
+  watches
+    .waiting(500)
+    .filter((w) => watchesWorker(w.check, dispatchId))
+    .filter((w) => watches.cancel(w.id, at))
+    .map((w) => w.id);
+
+/**
+ * The turn's stream, with every `worker-stop` it runs cancelling that worker's
+ * watches first. The tool event carries the whole command before the shell
+ * runs it, so the cancel lands before the worker is gone.
+ */
+export const cancelWatchesOnWorkerStop =
+  (watches: WatchRepo, clock: Clock, sink: LlmStreamSink, log: (msg: string) => void = () => {}): LlmStreamSink =>
+  (ev) => {
+    if (ev.type === "tool" && ev.status === "in_progress" && ev.command) {
+      for (const id of stoppedDispatchIds(ev.command)) {
+        try {
+          const ended = cancelWorkerWatches(watches, id, clock());
+          if (ended.length > 0) log(`worker-stop ${id}: cancelled watch ${ended.map((n) => `#${n}`).join(", ")}`);
+        } catch (e) {
+          log(`worker-stop ${id}: could not cancel its watches: ${e instanceof Error ? e.message : String(e)}`);
+        }
+      }
+    }
+    sink(ev);
+  };
 
 export const createWatcher = (deps: WatcherDeps): Watcher => {
   const log = deps.log ?? (() => {});
@@ -198,6 +234,13 @@ export const createWatcher = (deps: WatcherDeps): Watcher => {
     }
 
     const res = await deps.check(w.check, CHECK_TIMEOUT_MS);
+    // The check can take seconds, and the watch may have been cancelled while
+    // it ran - by `watch cancel`, or because the bot stopped that very worker on
+    // purpose. A cancelled watch says nothing and hands nothing back.
+    if (deps.watches.get(w.id)?.state !== "waiting") {
+      log(`watch ${w.id} ended while its check ran; dropping the result`);
+      return;
+    }
 
     if (res.error) {
       const errors = w.errors + 1;

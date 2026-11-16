@@ -109,6 +109,22 @@ export type BuiltinOptions = {
 /** An Orca dispatch id as `worker-start` prints it. */
 const DISPATCH_ID = /^ctx_[A-Za-z0-9_-]+$/;
 
+/** `worker-stop ... --dispatch <id>` in a shell line, quoted or not, `=` or a space. */
+const WORKER_STOP = /worker-stop\b[^\n;&|]*?--dispatch[= ]+['"]?(ctx_[A-Za-z0-9_-]+)/g;
+
+/**
+ * The dispatch ids a shell command stops with `orca orchestration worker-stop`.
+ * A worker stopped on purpose is not a death: its watches are cancelled the
+ * moment the command is seen, before it runs, so the watch cannot fire first.
+ */
+export const stoppedDispatchIds = (command: string): string[] => [
+  ...new Set([...command.matchAll(WORKER_STOP)].map((m) => m[1] ?? "").filter(Boolean)),
+];
+
+/** Whether a watch's check is a `watch worker` on this dispatch (`bin/orca-worker-wait.ts '<id>'`). */
+export const watchesWorker = (check: string, dispatchId: string): boolean =>
+  check.includes("orca-worker-wait") && new RegExp(`'${dispatchId}'(\\s|$)`).test(check);
+
 /** Single-quote for `sh -c`, so a url with an `&` cannot become two commands. */
 export const shellQuote = (value: string): string => `'${value.replaceAll("'", `'\\''`)}'`;
 

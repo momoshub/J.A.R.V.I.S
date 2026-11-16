@@ -17,8 +17,7 @@ import {
   SHELL_IDLE_MS,
   workerEventLine,
   WORKER_EVERY_MS,
-  WORKER_DEADLINE_MS,
-} from "../../src/domain/watch.ts";
+  WORKER_DEADLINE_MS, stoppedDispatchIds, watchesWorker } from "../../src/domain/watch.ts";
 
 describe("parseDuration", () => {
   test("the shapes people type", () => {
@@ -584,5 +583,25 @@ describe("the worker hand-back says which of the three happened", () => {
 
   test("any other check keeps the plain hand-back", () => {
     expect(readyMessage("go", 60_000, "orca worker ctx_abc still running")).toStartWith("The thing you were waiting for is ready");
+  });
+});
+
+describe("worker-stop on purpose", () => {
+  test("reads the dispatch ids a shell line stops", () => {
+    expect(stoppedDispatchIds("orca orchestration worker-stop --dispatch ctx_a1 --json")).toEqual(["ctx_a1"]);
+    expect(stoppedDispatchIds("orca orchestration worker-stop --json --dispatch='ctx_b2'")).toEqual(["ctx_b2"]);
+    expect(
+      stoppedDispatchIds("orca orchestration worker-stop --dispatch ctx_a1 && orca orchestration worker-stop --dispatch \"ctx_c3\""),
+    ).toEqual(["ctx_a1", "ctx_c3"]);
+    expect(stoppedDispatchIds("orca orchestration worker-show --dispatch ctx_a1 --json")).toEqual([]);
+    expect(stoppedDispatchIds("echo worker-stop; orca orchestration worker-show --dispatch ctx_a1")).toEqual([]);
+  });
+
+  test("knows a worker watch on that exact dispatch", () => {
+    const check = "'/bin/bun' '/x/bin/orca-worker-wait.ts' 'ctx_ab'";
+    expect(watchesWorker(check, "ctx_ab")).toBe(true);
+    expect(watchesWorker(`${check} '--past-wait=1'`, "ctx_ab")).toBe(true);
+    expect(watchesWorker(check, "ctx_a")).toBe(false);
+    expect(watchesWorker("echo 'ctx_ab'", "ctx_ab")).toBe(false);
   });
 });

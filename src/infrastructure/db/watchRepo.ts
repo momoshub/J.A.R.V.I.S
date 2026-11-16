@@ -74,6 +74,8 @@ export type WatchRepo = {
   /** Push the next check out, counting the attempt (and any error). */
   reschedule: (id: number, nextAt: number, at: number, error?: string) => void;
   settle: (id: number, state: WatchState, at: number, error?: string) => void;
+  /** End one watch if it is still waiting; false when it had already ended (or never existed). */
+  cancel: (id: number, at: number) => boolean;
   /** End every watch on a thread; returns how many. */
   cancelThread: (channelId: string, threadTs: string, at: number) => number;
   /** Waiting watches bound to a thread. */
@@ -106,6 +108,9 @@ export const createWatchRepo = (db: DbClient): WatchRepo => {
   );
   const settleStmt = db.query(
     "UPDATE watches SET state = $state, updated_at = $at, last_error = COALESCE($error, last_error) WHERE id = $id",
+  );
+  const cancelStmt = db.query(
+    "UPDATE watches SET state = 'cancelled', updated_at = $at WHERE id = $id AND state = 'waiting'",
   );
   const cancelThreadStmt = db.query(
     "UPDATE watches SET state = 'cancelled', updated_at = $at WHERE channel_id = $channelId AND thread_ts = $threadTs AND state = 'waiting'",
@@ -147,6 +152,7 @@ export const createWatchRepo = (db: DbClient): WatchRepo => {
       void rescheduleStmt.run({ $id: id, $nextAt: nextAt, $at: at, $error: error.slice(0, 300) }),
     settle: (id, state, at, error) =>
       void settleStmt.run({ $id: id, $state: state, $at: at, $error: error?.slice(0, 300) ?? null }),
+    cancel: (id, at) => cancelStmt.run({ $id: id, $at: at }).changes > 0,
     cancelThread: (channelId, threadTs, at) =>
       Number(cancelThreadStmt.run({ $channelId: channelId, $threadTs: threadTs, $at: at }).changes),
   };
