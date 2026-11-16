@@ -29,6 +29,12 @@ export type SlackTicketContext = {
   /** The channel writes may target; none makes the ticket read-only. */
   channel?: string;
   threadTs?: string;
+  /**
+   * The turn this process belongs to: the run ticket every process of one turn
+   * shares (a turn may spawn several, each with its own Slack ticket). It is
+   * the key of what the turn posted itself (`selfPosts`); none, no such record.
+   */
+  turn?: string;
 };
 
 export type SlackTicketRefusal = "unknown" | "expired" | "spent";
@@ -77,7 +83,11 @@ export const createSlackTickets = (
       entry.used += 1;
       return {
         ok: true,
-        ctx: { ...(entry.channel ? { channel: entry.channel } : {}), ...(entry.threadTs ? { threadTs: entry.threadTs } : {}) },
+        ctx: {
+          ...(entry.channel ? { channel: entry.channel } : {}),
+          ...(entry.threadTs ? { threadTs: entry.threadTs } : {}),
+          ...(entry.turn ? { turn: entry.turn } : {}),
+        },
         left: calls - entry.used,
       };
     },

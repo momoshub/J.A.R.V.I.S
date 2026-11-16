@@ -73,7 +73,7 @@ export type ClaudeCliConfig = {
    * not), and `end` runs when that process exits, so the ticket dies with the
    * turn. Nothing is minted when it returns undefined.
    */
-  slackTicket?: (bill: BillingContext | undefined) => { token: string; end: () => void } | undefined;
+  slackTicket?: (bill: BillingContext | undefined, turn: string | undefined) => { token: string; end: () => void } | undefined;
   /**
    * Agent definitions passed as `--agents`, asked fresh each turn. Replaces
    * built-in agents of the same name, e.g. to pin Explore and Plan's models.
@@ -472,7 +472,7 @@ const spawnClaude = (
   extraEnv: Record<string, string | undefined> = {},
   bill?: BillingContext,
 ) => {
-  const slackTicket = config.slackTicket?.(bill);
+  const slackTicket = config.slackTicket?.(bill, runTicket);
   const proc = Bun.spawn({
     cmd: [config.binPath ?? "claude", ...args, ...connectorArgs(config, policy, useHostLogin)],
     stdin: Buffer.from(prompt),

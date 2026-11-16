@@ -106,9 +106,9 @@ export const createSlackProxy = (deps: SlackProxyDeps): SlackProxy => {
             body: JSON.stringify({ ok: false, error: "ratelimited", ...(Number.isFinite(retryAfter) ? { retry_after: retryAfter } : {}) }),
           };
         }
-        // only the turn's own thread is noted, and only what Slack accepted
-        if (res.ok && checked.method.startsWith("chat.") && resolved.ctx.channel) {
-          deps.selfPosts?.record(resolved.ctx.channel, resolved.ctx.threadTs, { method: checked.method, params: checked.params, answer: text });
+        // noted per turn, only what Slack accepted, and only into the turn's own thread
+        if (res.ok && checked.method.startsWith("chat.") && resolved.ctx.turn) {
+          deps.selfPosts?.record(resolved.ctx.turn, resolved.ctx.threadTs, { method: checked.method, params: checked.params, answer: text });
         }
         return { status: res.status, body: text };
       } catch (e) {

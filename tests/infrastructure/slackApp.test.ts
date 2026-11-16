@@ -24,6 +24,7 @@ import { createThreadQueue, type ThreadQueue } from "../../src/application/threa
 import { FOOTER_BLOCK_ID } from "../../src/domain/messageFooter.ts";
 import { createRunRegistry, type RunRegistry } from "../../src/application/runRegistry.ts";
 import { blockKitReply } from "../../src/domain/blockKit.ts";
+import { createCommandTickets } from "../../src/application/commandTickets.ts";
 import { createSelfPosts, type SelfPosts } from "../../src/application/selfPosts.ts";
 
 const OWNER = "U0OWNER0001";
@@ -100,6 +101,8 @@ const build = (opts: {
     ownerSlackId: OWNER,
     ...(opts.threadQueue ? { threadQueue: opts.threadQueue } : {}),
     ...(opts.runs ? { runs: opts.runs } : {}),
+    // a turn's run ticket is what its self-posts are keyed by
+    ...(opts.selfPosts ? { commandTickets: createCommandTickets(() => t++) } : {}),
   };
   const config: SlackAppConfig = {
     botToken: "x",
@@ -738,40 +741,98 @@ describe("createHandler streaming truth table", () => {
       "The checkout latency came from the orders query: it scanned four million rows because the created_at index was dropped in the last migration. I re-added the index and p95 went from 1.8s to 120ms.";
     const REWORDED =
       "Checkout latency was caused by the orders query scanning four million rows, since the created_at index had been dropped in the last migration. I added the index back and p95 dropped from 1.8s to 120ms.";
-    const selfPost = (selfPosts: SelfPosts, thread: string, text: string, ts = "333.3") =>
-      selfPosts.record("C1", thread, {
+    /** The turn `turn` of the thread `000.9` posted `text` into `postedTo` (the proxy only notes the turn's own thread). */
+    const selfPost = (selfPosts: SelfPosts, turn: string, text: string, postedTo = "000.9", ts = "333.3") =>
+      selfPosts.record(turn, "000.9", {
         method: "chat.postMessage",
-        params: { channel: "C1", thread_ts: thread, text },
+        params: { channel: "C1", thread_ts: postedTo, text },
         answer: JSON.stringify({ ok: true, ts }),
       });
+    /** A model that posts `posted` into the thread through the proxy under its own turn's ticket, then streams `events` and closes with `final`. */
+    const postingLlm = (
+      selfPosts: SelfPosts,
+      posted: string,
+      final: string,
+      events: LlmStreamEvent[] = [],
+      postedTo = "000.9",
+    ): LlmPort => ({
+      complete: async (p) => {
+        if (p.runTicket) selfPost(selfPosts, p.runTicket, posted, postedTo);
+        return final;
+      },
+      stream: async (p, sink) => {
+        if (p.runTicket) selfPost(selfPosts, p.runTicket, posted, postedTo);
+        for (const e of events) sink(e);
+        return final;
+      },
+    });
+    const turnBuild = (selfPosts: SelfPosts, llm: LlmPort, streamUpdates = true) => build({ llm, streamUpdates, selfPosts });
 
     test("the same answer reworded is not streamed a second time: the stream message goes, the posted one stays", async () => {
       const selfPosts = createSelfPosts();
-      const r = build({ llm: streamingLlm(REWORDED, [card, { type: "text", delta: REWORDED }]), streamUpdates: true, selfPosts });
-      selfPost(selfPosts, "000.9", ANSWER);
+      const r = turnBuild(selfPosts, postingLlm(selfPosts, ANSWER, REWORDED, [card, { type: "text", delta: REWORDED }]));
       await r.handle(r.msg("why is checkout slow", "000.9"));
       expect(r.deletes).toEqual(["222.2"]);
       expect(r.deletes).not.toContain("333.3");
       expect(r.updates).toHaveLength(0);
       expect(r.said).toHaveLength(0);
-      // the turn is over: nothing stays behind for the next one
-      expect(selfPosts.posts("C1", "000.9")).toEqual([]);
+    });
+
+    test("the turn's record is gone once it is over", async () => {
+      const selfPosts = createSelfPosts();
+      let ticket: string | undefined;
+      const llm: LlmPort = {
+        complete: async () => REWORDED,
+        stream: async (p, sink) => {
+          ticket = p.runTicket;
+          if (ticket) selfPost(selfPosts, ticket, ANSWER);
+          sink({ type: "text", delta: REWORDED });
+          return REWORDED;
+        },
+      };
+      const r = turnBuild(selfPosts, llm);
+      await r.handle(r.msg("why is checkout slow", "000.9"));
+      expect(ticket).toBeDefined();
+      expect(selfPosts.posts(ticket as string)).toEqual([]);
     });
 
     test("without streaming, a repeat is not posted either", async () => {
       const selfPosts = createSelfPosts();
-      const r = build({ llm: streamingLlm(REWORDED), streamUpdates: false, selfPosts });
-      selfPost(selfPosts, "000.9", ANSWER);
+      const r = turnBuild(selfPosts, postingLlm(selfPosts, ANSWER, REWORDED), false);
       await r.handle(r.msg("why is checkout slow", "000.9"));
       expect(r.said).toHaveLength(0);
       expect(r.deletes).toHaveLength(0);
     });
 
+    test("a post recorded before the turn started (another turn's, same thread) never suppresses its reply", async () => {
+      const selfPosts = createSelfPosts();
+      // a watch hand-back / tell / command posted this earlier, under a ticket of its own
+      selfPost(selfPosts, "some-other-turn-ticket", ANSWER);
+      const r = turnBuild(selfPosts, streamingLlm(REWORDED, [card, { type: "text", delta: REWORDED }]));
+      await r.handle(r.msg("status?", "000.9"));
+      expect(r.deletes).toHaveLength(0);
+      expect(r.updates).toHaveLength(1);
+      expect(String(r.updates[0]?.text)).toContain("orders query");
+    });
+
+    test("streamed narration that is in neither the post nor the reply survives", async () => {
+      const selfPosts = createSelfPosts();
+      const narration = "Heads up: staging is also down, I paged on-call.";
+      // enough running cards between the narration and the answer to roll the stream over: the narration is a part of its own
+      const cards = Array.from({ length: 40 }, (_, i): LlmStreamEvent => ({ ...card, id: `t${i}`, title: `run: t${i}`, status: "in_progress", details: `log at: ${"d".repeat(250)} - line 1` }));
+      const r = turnBuild(
+        selfPosts,
+        postingLlm(selfPosts, ANSWER, REWORDED, [{ type: "text", delta: `${narration}\n\n` }, ...cards, { type: "text", delta: REWORDED }]),
+      );
+      await r.handle(r.msg("why is checkout slow", "000.9"));
+      expect(r.deletes).not.toContain("222.2");
+      expect(r.updates.map((u) => String(u.text)).join("\n")).toContain("paged on-call");
+    });
+
     test("a closing reply with new content goes out unchanged", async () => {
       const selfPosts = createSelfPosts();
       const closing = `Separately, the nightly export job times out: its connection pool is capped at two, so I raised it to ten and queued a rerun for tonight.`;
-      const r = build({ llm: streamingLlm(closing, [card, { type: "text", delta: closing }]), streamUpdates: true, selfPosts });
-      selfPost(selfPosts, "000.9", ANSWER);
+      const r = turnBuild(selfPosts, postingLlm(selfPosts, ANSWER, closing, [card, { type: "text", delta: closing }]));
       await r.handle(r.msg("anything else", "000.9"));
       expect(r.deletes).toHaveLength(0);
       expect(r.updates).toHaveLength(1);
@@ -780,8 +841,7 @@ describe("createHandler streaming truth table", () => {
 
     test("a self-post in another thread suppresses nothing", async () => {
       const selfPosts = createSelfPosts();
-      const r = build({ llm: streamingLlm(REWORDED, [card, { type: "text", delta: REWORDED }]), streamUpdates: true, selfPosts });
-      selfPost(selfPosts, "555.5", ANSWER);
+      const r = turnBuild(selfPosts, postingLlm(selfPosts, ANSWER, REWORDED, [card, { type: "text", delta: REWORDED }], "555.5"));
       await r.handle(r.msg("why is checkout slow", "000.9"));
       expect(r.deletes).toHaveLength(0);
       expect(r.updates).toHaveLength(1);
@@ -789,19 +849,14 @@ describe("createHandler streaming truth table", () => {
     });
 
     test("a turn that posted nothing replies as always", async () => {
-      const r = build({ llm: streamingLlm(REWORDED), streamUpdates: false, selfPosts: createSelfPosts() });
+      const r = turnBuild(createSelfPosts(), streamingLlm(REWORDED), false);
       await r.handle(r.msg("why is checkout slow", "000.9"));
       expect(r.said).toHaveLength(1);
     });
 
     test("NO_REPLY after a self-post drops the stream even when it showed narration", async () => {
       const selfPosts = createSelfPosts();
-      const r = build({
-        llm: streamingLlm("NO_REPLY", [card, { type: "text", delta: "Posting the answer now." }, { type: "text", delta: "NO_REPLY" }]),
-        streamUpdates: true,
-        selfPosts,
-      });
-      selfPost(selfPosts, "000.9", ANSWER);
+      const r = turnBuild(selfPosts, postingLlm(selfPosts, ANSWER, "NO_REPLY", [card, { type: "text", delta: "Posting the answer now." }, { type: "text", delta: "NO_REPLY" }]));
       await r.handle(r.msg("why is checkout slow", "000.9"));
       expect(r.deletes).toEqual(["222.2"]);
       expect(r.updates).toHaveLength(0);

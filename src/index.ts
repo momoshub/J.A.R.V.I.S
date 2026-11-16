@@ -545,9 +545,14 @@ const main = async () => {
     turnEnv,
     () => builtinAgentOverrides(agentModels()),
     // One ticket per spawned turn, only when the run belongs to a channel; it ends with the process.
-    (bill) => {
+    // The turn's run ticket rides along, so what the turn posts itself is told apart from any other turn's in the thread.
+    (bill, turn) => {
       if (!bill?.channel) return undefined;
-      const token = slackTickets.issue({ channel: bill.channel, ...(bill.threadTs ? { threadTs: bill.threadTs } : {}) });
+      const token = slackTickets.issue({
+        channel: bill.channel,
+        ...(bill.threadTs ? { threadTs: bill.threadTs } : {}),
+        ...(turn ? { turn } : {}),
+      });
       return { token, end: () => slackTickets.revoke(token) };
     },
   );

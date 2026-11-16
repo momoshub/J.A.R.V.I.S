@@ -90,7 +90,7 @@ import { collapsedBlocks, collapseSteps } from "../../domain/collapseSteps.ts";
 import { usageFooter } from "../../domain/usageFooter.ts";
 import { footerLine, restamp, signedText, SIGNATURES, withFooter } from "../../domain/messageFooter.ts";
 import { isSilenceNote } from "../../domain/silence.ts";
-import { isDuplicateReply } from "../../domain/selfPost.ts";
+import { isDuplicateStream } from "../../domain/selfPost.ts";
 import type { SelfPosts } from "../../application/selfPosts.ts";
 import {
   decodeKitMeta,
@@ -477,6 +477,7 @@ export const createHandler =
         ? () => stream.showThinkingAfter(config.thinkingLabel(), config.thinkingAfterMs)
         : undefined;
 
+    let turnTicket: string | undefined;
     try {
       const result = await respond(
         deps,
@@ -498,6 +499,7 @@ export const createHandler =
         armThinking,
       );
       log(`handled user=${msg.userId} channel=${msg.channelId} kind=${result.kind}`);
+      if (result.kind === "reply") turnTicket = result.turn;
       if (result.kind === "ignored") {
         // Queued, dropped, or not for us. Returning here used to leave the
         // armed "thinking" timer to fire a few seconds later into a turn that
@@ -519,9 +521,18 @@ export const createHandler =
       const streamed = stream ? await stream.finish() : false;
       const parts = stream?.parts ?? [];
       // A turn that posted its answer into this thread itself and then closed with the same answer reworded
-      // would leave it there twice; the reply is taken back, never the message the turn posted. A turn that
-      // closed with NO_REPLY is the same, even when its stream already shows some narration.
-      const repeated = result.kind === "reply" && isDuplicateReply(result.text, deps.selfPosts?.posts(msg.channelId, msg.threadTs) ?? []);
+      // would leave it there twice; the reply is taken back, never the message the turn posted. Only the
+      // posts of THIS turn count (keyed by its run ticket), and only when everything the stream showed is
+      // in them too: `result.text` is the last round, earlier narration lives in `parts`.
+      // A turn that closed with NO_REPLY is the same, even when its stream already shows some narration.
+      const posted = result.kind === "reply" && result.turn ? (deps.selfPosts?.posts(result.turn) ?? []) : [];
+      const repeated =
+        result.kind === "reply" &&
+        isDuplicateStream(
+          result.text,
+          parts.map((p) => p.text),
+          posted,
+        );
       if (repeated || isSilenceNote(result.text)) {
         if (repeated) log(`reply repeats a message the turn posted itself, dropped channel=${msg.channelId} thread=${msg.threadTs}`);
         return dropQuiet(msg, parts, log);
@@ -679,7 +690,7 @@ export const createHandler =
       // registry idles it when the last run of the thread ends (see
       // `onSessionIdle`), which this turn's own `done()` already did unless its
       // stream opened after that.
-      deps.selfPosts?.clear(msg.channelId, msg.threadTs);
+      if (turnTicket) deps.selfPosts?.clear(turnTicket);
       if (streamOpened && !deps.runs) await idleSession(msg.client, msg.channelId, msg.threadTs, log);
       else if (openedUntracked) deps.runs?.sessionMayIdle(msg.channelId, msg.threadTs ?? msg.messageTs);
     }

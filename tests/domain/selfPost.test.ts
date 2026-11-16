@@ -3,6 +3,7 @@ import {
   applySelfPostCall,
   blocksText,
   isDuplicateReply,
+  isDuplicateStream,
   normalizeText,
   repeatsPosted,
   type SelfPost,
@@ -46,10 +47,9 @@ describe("isDuplicateReply", () => {
   });
   test("a changed number or id in an otherwise repeated reply is new content", () => {
     const before = "Deployed build 4182 to staging, ran the smoke suite, all 37 checks passed, and opened the rollout ticket for the team.";
-    const after = "Deployed build 4183 to staging, ran the smoke suite, all 36 checks passed, and opened the rollout ticket for the team.";
-    // two changed numbers in a long repeat stay inside the budget; a reply built around new ids does not
-    expect(repeatsPosted(after, [before])).toBe(true);
-    expect(repeatsPosted("Build 4183 failed 6 checks: login, billing, export, search, upload, invite. Rolling back to 4182 now.", [before])).toBe(false);
+    const after = "Deployed build 4183 to staging, ran the smoke suite, all 37 checks passed, and opened the rollout ticket for the team.";
+    expect(repeatsPosted(before, [before])).toBe(true);
+    expect(repeatsPosted(after, [before])).toBe(false);
   });
   test("no posts, or an empty reply, never matches", () => {
     expect(isDuplicateReply(ANSWER, [])).toBe(false);
@@ -64,6 +64,64 @@ describe("isDuplicateReply", () => {
   test("a blocks body counts as well as the text fallback", () => {
     const blocks = JSON.stringify([{ type: "section", text: { type: "mrkdwn", text: ANSWER } }]);
     expect(isDuplicateReply(ANSWER, [post("fallback", blocksText(blocks))])).toBe(true);
+  });
+});
+
+describe("a reply that repeats the post, in any language", () => {
+  const VI_POST =
+    "dạ stuck thật anh :man-bowing::skin-tone-2: sub agent Fable cũ chết theo turn hôm đó, 2h21m không branch, không PR. lỗi của em: chỉ watch file kết quả, không watch con agent nên nó chết mà không ai biết\n- đã chạy lại Fable dạng process riêng, không chết theo turn nữa\n- 2 watch: một cái báo khi bài xong, một cái báo ngay nếu writer chết giữa chừng\n- lỗ này nằm ở skill blog, em đã gửi bug report #4 để anh duyệt sửa\nxong em gửi tiêu đề, PR, ảnh diagram + nút Publish/Revise vào thread này, tối đa 3 tiếng :coffee:";
+  // Captured from a real thread: the reword adds function words and one sentence about the post itself.
+  const VI_REPLY =
+    "Dạ stuck thật anh :man-bowing::skin-tone-2: Sub agent Fable cũ chết theo turn hôm đó. Sau 2h21m vẫn không có branch, không có PR nào. Lỗi của em: em chỉ watch file kết quả, không watch chính con agent, nên nó chết mà không ai biết. Em cập nhật hết trong message em đã post ở thread này rồi.  - em đã chạy lại Fable thành một process riêng, lần này không chết theo turn nữa - có 2 watch: một cái báo khi bài xong, một cái báo ngay nếu writer chết giữa chừng - lỗ này nằm ở skill blog, em đã gửi bug report #4 chờ anh duyệt sửa  Bài xong em gửi vào thread này tiêu đề, link PR, ảnh diagram và nút Publish/Revise, tối đa 3 tiếng :coffee:";
+
+  test("the real Vietnamese case is dropped", () => {
+    expect(isDuplicateReply(VI_REPLY, [post(VI_POST)])).toBe(true);
+  });
+  test("a Vietnamese reply adding a new sentence with a number, a link or a name is kept", () => {
+    expect(isDuplicateReply(`${VI_REPLY} Em cũng đã sửa xong lỗi thanh toán, PR #87 đang chờ review.`, [post(VI_POST)])).toBe(false);
+    expect(isDuplicateReply(`${VI_REPLY} Chi tiết ở https://github.com/acme/blog/pull/12 nhé anh.`, [post(VI_POST)])).toBe(false);
+    expect(isDuplicateReply(`${VI_REPLY} Em đã nhờ Hoàng xem giúp phần này luôn.`, [post(VI_POST)])).toBe(false);
+  });
+  test("an unrelated Vietnamese reply is kept", () => {
+    expect(isDuplicateReply("Dạ em kiểm tra rồi anh, server staging vẫn chạy bình thường, không có lỗi nào trong log từ sáng đến giờ cả.", [post(VI_POST)])).toBe(false);
+  });
+  test("an English reword is still dropped", () => {
+    const reworded =
+      "The checkout latency was caused by the orders query: it scanned 4M rows since the created_at index had been dropped in the last migration. I added the index back, and p95 dropped from 1.8s to 120ms.";
+    expect(isDuplicateReply(reworded, [post(ANSWER)])).toBe(true);
+  });
+  test("an English reply adding a new sentence with a number, a link or a name is kept", () => {
+    const reworded = "The checkout latency was caused by the orders query: it scanned 4M rows since the created_at index had been dropped in the last migration. I added the index back, and p95 dropped from 1.8s to 120ms.";
+    expect(isDuplicateReply(`${reworded} I also bumped the pool to 40 connections.`, [post(ANSWER)])).toBe(false);
+    expect(isDuplicateReply(`${reworded} The runbook is at https://wiki.example.com/runbooks/orders now.`, [post(ANSWER)])).toBe(false);
+    expect(isDuplicateReply(`${reworded} I asked Priya to review the migration.`, [post(ANSWER)])).toBe(false);
+  });
+  test("a name already in the post is not a new fact", () => {
+    const posted = "Thanks to Priya for the review. The orders query scanned four million rows because the created_at index was dropped; p95 is back to 120ms from 1.8s.";
+    const reply = "Thanks to Priya for the review. The orders query scanned four million rows because the created_at index was dropped, and p95 is back to 120ms from 1.8s.";
+    expect(isDuplicateReply(reply, [post(posted)])).toBe(true);
+  });
+});
+
+describe("isDuplicateStream", () => {
+  const REWORDED =
+    "The checkout latency was caused by the orders query: it scanned 4M rows since the created_at index had been dropped in the last migration. I added the index back, and p95 dropped from 1.8s to 120ms.";
+  test("a stream of only the reply (and silence) may be taken back", () => {
+    expect(isDuplicateStream(REWORDED, [REWORDED], [post(ANSWER)])).toBe(true);
+    expect(isDuplicateStream(REWORDED, ["", REWORDED, "NO_REPLY"], [post(ANSWER)])).toBe(true);
+    expect(isDuplicateStream(REWORDED, [], [post(ANSWER)])).toBe(true);
+  });
+  test("streamed narration that is in neither the post nor the reply keeps the stream", () => {
+    const heads = "Heads up: staging is also down, I paged on-call.";
+    expect(isDuplicateStream(REWORDED, [heads, REWORDED], [post(ANSWER)])).toBe(false);
+    // one message holding both, as a stream that did not roll over does
+    expect(isDuplicateStream(REWORDED, [`${heads}\n\n${REWORDED}`], [post(ANSWER)])).toBe(false);
+    // a short line is not covered either
+    expect(isDuplicateStream(REWORDED, ["Checking the logs.", REWORDED], [post(ANSWER)])).toBe(false);
+  });
+  test("a reply that is not a repeat never drops the stream", () => {
+    expect(isDuplicateStream("Something else entirely, with 3 new facts.", ["x"], [post(ANSWER)])).toBe(false);
+    expect(isDuplicateStream(REWORDED, [REWORDED], [])).toBe(false);
   });
 });
 

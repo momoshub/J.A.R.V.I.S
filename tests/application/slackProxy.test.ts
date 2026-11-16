@@ -235,32 +235,52 @@ describe("Slack proxy notes what a turn posts into its own thread", () => {
     return { proxy, tickets, selfPosts };
   };
 
-  test("a post with no thread_ts lands in the turn's thread and is noted; its update replaces the words", async () => {
+  test("a post with no thread_ts lands in the turn's thread and is noted under the turn; its update replaces the words", async () => {
+    const { proxy, tickets, selfPosts } = withLog(() => Response.json({ ok: true, ts: "5.5" }));
+    const ticket = tickets.issue({ channel: "C1", threadTs: "1.1", turn: "run-1" });
+    await proxy.call({ ticket, method: "chat.postMessage", params: { channel: "C1", text: "first" } });
+    expect(selfPosts.posts("run-1")).toEqual([{ ts: "5.5", texts: ["first"] }]);
+    await proxy.call({ ticket, method: "chat.update", params: { channel: "C1", ts: "5.5", text: "final" } });
+    expect(selfPosts.posts("run-1")).toEqual([{ ts: "5.5", texts: ["final"] }]);
+  });
+
+  test("two processes of one turn share the record; another turn in the thread does not", async () => {
+    let n = 0;
+    const { proxy, tickets, selfPosts } = withLog(() => Response.json({ ok: true, ts: `5.${++n}` }));
+    const a = tickets.issue({ channel: "C1", threadTs: "1.1", turn: "run-1" });
+    const b = tickets.issue({ channel: "C1", threadTs: "1.1", turn: "run-1" });
+    const other = tickets.issue({ channel: "C1", threadTs: "1.1", turn: "run-2" });
+    await proxy.call({ ticket: a, method: "chat.postMessage", params: { channel: "C1", text: "from a" } });
+    await proxy.call({ ticket: other, method: "chat.postMessage", params: { channel: "C1", text: "from another turn" } });
+    expect(selfPosts.posts("run-1").flatMap((p) => p.texts)).toEqual(["from a"]);
+    await proxy.call({ ticket: b, method: "chat.postMessage", params: { channel: "C1", text: "from b" } });
+    expect(selfPosts.posts("run-1").flatMap((p) => p.texts)).toEqual(["from a", "from b"]);
+  });
+
+  test("a ticket with no turn notes nothing", async () => {
     const { proxy, tickets, selfPosts } = withLog(() => Response.json({ ok: true, ts: "5.5" }));
     const ticket = tickets.issue({ channel: "C1", threadTs: "1.1" });
-    await proxy.call({ ticket, method: "chat.postMessage", params: { channel: "C1", text: "first" } });
-    expect(selfPosts.posts("C1", "1.1")).toEqual([{ ts: "5.5", texts: ["first"] }]);
-    await proxy.call({ ticket, method: "chat.update", params: { channel: "C1", ts: "5.5", text: "final" } });
-    expect(selfPosts.posts("C1", "1.1")).toEqual([{ ts: "5.5", texts: ["final"] }]);
+    await proxy.call({ ticket, method: "chat.postMessage", params: { channel: "C1", text: "x" } });
+    expect(selfPosts.posts("")).toEqual([]);
   });
 
   test("a top-level post, a failed post and a refused post are not noted", async () => {
     const { proxy, tickets, selfPosts } = withLog(() => Response.json({ ok: true, ts: "5.5" }));
-    const ticket = tickets.issue({ channel: "C1", threadTs: "1.1" });
+    const ticket = tickets.issue({ channel: "C1", threadTs: "1.1", turn: "run-1" });
     await proxy.call({ ticket, method: "chat.postMessage", params: { channel: "C1", text: "x", thread_ts: "none" } });
     await proxy.call({ ticket, method: "chat.postMessage", params: { channel: "C2", text: "x" } });
-    expect(selfPosts.posts("C1", "1.1")).toEqual([]);
+    expect(selfPosts.posts("run-1")).toEqual([]);
     const failing = withLog(() => Response.json({ ok: false, error: "channel_not_found" }));
-    const t2 = failing.tickets.issue({ channel: "C1", threadTs: "1.1" });
+    const t2 = failing.tickets.issue({ channel: "C1", threadTs: "1.1", turn: "run-1" });
     await failing.proxy.call({ ticket: t2, method: "chat.postMessage", params: { channel: "C1", text: "x" } });
-    expect(failing.selfPosts.posts("C1", "1.1")).toEqual([]);
+    expect(failing.selfPosts.posts("run-1")).toEqual([]);
   });
 
   test("a reaction or a read is not a post", async () => {
     const { proxy, tickets, selfPosts } = withLog(() => Response.json({ ok: true, ts: "5.5" }));
-    const ticket = tickets.issue({ channel: "C1", threadTs: "1.1" });
+    const ticket = tickets.issue({ channel: "C1", threadTs: "1.1", turn: "run-1" });
     await proxy.call({ ticket, method: "reactions.add", params: { channel: "C1", timestamp: "1.1", name: "eyes" } });
     await proxy.call({ ticket, method: "conversations.replies", params: { channel: "C1", ts: "1.1" } });
-    expect(selfPosts.posts("C1", "1.1")).toEqual([]);
+    expect(selfPosts.posts("run-1")).toEqual([]);
   });
 });
