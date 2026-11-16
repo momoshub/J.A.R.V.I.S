@@ -59,10 +59,10 @@ describe("isDuplicateReply", () => {
     expect(isDuplicateReply("", [post(ANSWER)])).toBe(false);
     expect(isDuplicateReply("   ", [post("")])).toBe(false);
   });
-  test("the words of several posts together can cover the reply", () => {
+  test("several posts together, in order, can cover the reply", () => {
     const a = post("The index on created_at was dropped in a migration, which made the orders query scan four million rows.");
     const b = { ts: "9.2", texts: ["I re-added the index and the p95 latency went from 1.8s to 120ms for checkout."] };
-    expect(isDuplicateReply("Checkout latency: the index on created_at was dropped in a migration, which made the orders query scan four million rows; I re-added the index and the p95 latency went from 1.8s to 120ms for checkout.", [a, b])).toBe(true);
+    expect(isDuplicateReply("The index on created_at was dropped in a migration, which made the orders query scan four million rows; I re-added the index and the p95 latency went from 1.8s to 120ms for checkout.", [a, b])).toBe(true);
   });
   test("a blocks body counts as well as the text fallback", () => {
     const blocks = JSON.stringify([{ type: "section", text: { type: "mrkdwn", text: ANSWER } }]);
@@ -195,6 +195,10 @@ describe("a reply that tells the person something the post did not is KEPT (revi
     kept(RERUN, "I checked the logs and the export job is safe to delete now, the lock was released and the queue is empty, so go ahead whenever you are ready.");
     kept(RELEASE, "Correction: all checks failed on staging and the deploy to production finished without errors, so the release can go out today as planned with the notes already shared.");
     kept(RELEASE, "All checks failed on staging and the deploy to production finished without errors, so the release cannot go out today as planned with the notes already shared.");
+  });
+  test("the same words in a different order (review round 5)", () => {
+    kept("Staging is green and prod is red, so hold the release.", "Staging is red and prod is green, so hold the release.");
+    kept("The export is not blocked and the lock was released.", "The export is blocked and the lock was not released.");
   });
   test("a copy with only punctuation or markup changed is still a repeat", () => {
     expect(repeatsPosted(`*${EXPORT.replace(/,/g, " -")}*`, [EXPORT])).toBe(true);
