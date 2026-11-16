@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { promptFingerprint } from "../../src/domain/promptFingerprint.ts";
-import { buildSystemPrompt } from "../../src/domain/personality.ts";
+import { buildSystemPrompt, SANDBOX_SHELL_NOTE } from "../../src/domain/personality.ts";
 
 const fp = (base?: string) => promptFingerprint(buildSystemPrompt as never, base);
 
@@ -66,3 +66,14 @@ describe("the fingerprint sees every guide body", () => {
   });
 });
 
+describe("the fingerprint sees the sandbox shell note", () => {
+  test("a sentinel build renders SANDBOX_SHELL_NOTE, so editing it reopens live threads", () => {
+    const builds: string[] = [];
+    promptFingerprint(((opts: Record<string, unknown>) => {
+      const out = buildSystemPrompt(opts as never);
+      builds.push(out);
+      return out;
+    }) as never, "persona");
+    expect(builds.some((b) => b.includes(SANDBOX_SHELL_NOTE))).toBe(true);
+  });
+});

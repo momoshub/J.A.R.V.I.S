@@ -595,3 +595,41 @@ describe("the workflow front", () => {
     expect(toolPolicyFor("owner", opts).disallowedTools ?? []).not.toContain("Bash(*>*)");
   });
 });
+
+/**
+ * A model of how the CLI matches a Bash line against `--allowedTools` under
+ * `dontAsk`: a chained line is split on `&&`, `||`, `;`, `|` and newlines, and
+ * every part must start with an allowed `Bash(<prefix>:*)` prefix. Shell syntax
+ * such as `cd` or a `for` loop matches no entry, so it denies the whole line.
+ */
+const bashAllowed = (allowed: readonly string[], line: string): boolean => {
+  const prefixes = allowed.flatMap((t) => {
+    const m = /^Bash\((.+):\*\)$/.exec(t);
+    return m?.[1] ? [m[1]] : [];
+  });
+  const parts = line.split(/&&|\|\||;|\||\n/).map((p) => p.trim()).filter(Boolean);
+  return parts.length > 0 && parts.every((p) => prefixes.some((x) => p === x || p.startsWith(`${x} `)));
+};
+
+describe("sandboxed shell: one plain command per call", () => {
+  // The line a sandboxed turn once sent to check two PRs; it was denied whole
+  // and the turn answered with a stale "not merged" instead of retrying.
+  const compound =
+    "cd /scratch && for n in 101 102; do gh pr view $n -R acme/app --json state,mergedAt; done; curl -s https://api.github.com/repos/acme/app/pulls/101";
+
+  test("the compound line is denied", () => {
+    expect(bashAllowed(PAL_TOOLS, compound)).toBe(false);
+  });
+
+  test("the same check split into plain commands is allowed", () => {
+    for (const n of [101, 102]) {
+      expect(bashAllowed(PAL_TOOLS, `gh pr view ${n} -R acme/app --json state,mergedAt`)).toBe(true);
+    }
+    expect(bashAllowed(PAL_TOOLS, "gh api repos/acme/app/pulls/101")).toBe(true);
+  });
+
+  test("chaining two allowed commands is the only compound form that passes", () => {
+    expect(bashAllowed(PAL_TOOLS, "gh pr view 1 && gh pr view 2")).toBe(true);
+    expect(bashAllowed(PAL_TOOLS, "cd /x && gh pr view 1")).toBe(false);
+  });
+});

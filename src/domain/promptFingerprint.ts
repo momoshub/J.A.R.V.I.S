@@ -56,6 +56,9 @@ const SENTINELS = {
   macUiScript: "/fp/mac-ui",
   agentDesktop: "/fp/agent-desktop",
   desktopScript: "/fp/desktop",
+  // the sandboxed tier's shell note rides in the workspace block, which only
+  // renders it for a sandboxed turn
+  sandboxed: true,
 };
 
 /**

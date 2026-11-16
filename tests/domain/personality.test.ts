@@ -1,5 +1,11 @@
 import { describe, expect, test } from "bun:test";
-import { buildSystemPrompt, buildSystemPromptParts, DEFAULT_PERSONALITY, ORCA_BATCH_CHECK } from "../../src/domain/personality.ts";
+import {
+  buildSystemPrompt,
+  buildSystemPromptParts,
+  DEFAULT_PERSONALITY,
+  ORCA_BATCH_CHECK,
+  SANDBOX_SHELL_NOTE,
+} from "../../src/domain/personality.ts";
 import { AGENT_GUIDE_SUMMARIES, guideFile, type PromptGuide } from "../../src/domain/promptGuides.ts";
 
 describe("buildSystemPrompt", () => {
@@ -680,5 +686,24 @@ describe("ORCA_BATCH_CHECK", () => {
   test("no tasks, or an error answer, is never settled", () => {
     expect(run(tasks()).code).not.toBe(0);
     expect(run(JSON.stringify({ ok: false, error: { code: "run_required" } })).code).not.toBe(0);
+  });
+});
+
+describe("sandboxed shell note", () => {
+  test("a sandboxed turn is told one plain command per Bash call, and to split and retry on a denial", () => {
+    const out = buildSystemPrompt({ learnings: [], sandboxed: true });
+    expect(out).toContain(SANDBOX_SHELL_NOTE);
+    expect(out).toContain("one plain command per Bash call");
+    expect(out).toContain("try again before you say the shell was denied");
+  });
+
+  test("a full-access turn does not carry it", () => {
+    expect(buildSystemPrompt({ learnings: [] })).not.toContain(SANDBOX_SHELL_NOTE);
+    expect(buildSystemPrompt({ learnings: [], sandboxed: false })).not.toContain(SANDBOX_SHELL_NOTE);
+  });
+
+  test("it sits in the workspace block, so the inlined and the guided prompt both keep it", () => {
+    const guided = buildSystemPromptParts({ learnings: [], sandboxed: true, guideDir: "/tmp/guides" }).prompt;
+    expect(guided).toContain(SANDBOX_SHELL_NOTE);
   });
 });

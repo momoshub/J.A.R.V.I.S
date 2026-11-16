@@ -479,6 +479,8 @@ export const handleMessage = async (
     // Orca workers run with full permissions on the host: owner only, everyone
     // else is told to use the Agent tool in their own process.
     orca: mayUseOrca(decision.user.role, book),
+    // An allow-listed shell denies a chained line whole, so it is told to split.
+    sandboxed: tierOf(policy) === "sandbox",
     following: inbound.following === true,
     interrupted: inbound.interrupted === true,
     commandPrefix: deps.commandPrefix,
