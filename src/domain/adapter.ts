@@ -56,12 +56,28 @@ export type AdapterLimit = {
   readonly frontmatter: readonly string[];
 };
 
+/** Model a skill runs on. Absent means opus, the turn's own model. */
+export const SKILL_MODELS = ["opus", "sonnet", "haiku"] as const;
+export type SkillModel = (typeof SKILL_MODELS)[number];
+
+/**
+ * How a skill runs. Absent means inline: read in the main turn. `foreground` is
+ * the Agent tool waited on, `background` the Agent tool with run_in_background,
+ * `orca` an Orca worker (plus a watch) started with `--model <model>`.
+ */
+export const SKILL_WORKERS = ["foreground", "background", "orca"] as const;
+export type SkillWorker = (typeof SKILL_WORKERS)[number];
+
 /** A skill: on-demand knowledge, indexed by description and read when relevant. */
 export type AdapterSkill = {
   readonly name: string;
   readonly description: string;
   /** Path to SKILL.md, relative to the adapter root. */
   readonly path: string;
+  /** Optional `model:` frontmatter. Absent = opus. */
+  readonly model?: SkillModel;
+  /** Optional `worker:` frontmatter. Absent = inline. */
+  readonly worker?: SkillWorker;
 };
 
 /** The adapter as the prompt builder needs it. */
@@ -104,6 +120,10 @@ export const PEOPLE_DIR = "memory/people";
 export const CHANNELS_DIR = "memory/channels";
 export const SKILLS_DIR = "skills";
 export const AGENTS_DIR = "agents";
+
+/** Printed under the skill listing when any skill declares `run:`. */
+export const SKILL_RUN_RULE =
+  "A skill with `run:` is not done inline: hand its work to that mode on that model (foreground/background = Agent tool, background with run_in_background; orca = an Orca worker with --model, plus a watch), with the skill path in the brief. No `run:` = read it inline.";
 
 /** Slack ids are the filenames under memory/people and memory/channels. */
 const ID_PATTERN = /^[A-Z0-9]+$/;
@@ -230,6 +250,34 @@ export const frontmatter = (text: string): Record<string, string> => {
   return out;
 };
 
+const oneOf = <T extends string>(allowed: readonly T[], v: string | undefined): T | undefined =>
+  allowed.find((a) => a === v?.trim());
+
+/**
+ * The optional `model` / `worker` keys of a SKILL.md's frontmatter. A value
+ * outside the allowed set is left out of the skill and named in `invalid`, so
+ * the gate can refuse it instead of the key being silently ignored.
+ */
+export const skillRouting = (
+  head: Record<string, string>,
+): { model?: SkillModel; worker?: SkillWorker; invalid: string[] } => {
+  const invalid: string[] = [];
+  const pick = <T extends string>(key: string, allowed: readonly T[]): T | undefined => {
+    const raw = head[key];
+    if (raw === undefined || raw.trim() === "") return undefined;
+    const found = oneOf(allowed, raw);
+    if (!found) invalid.push(`\`${key}: ${raw.trim()}\` is not one of ${allowed.join(" | ")}`);
+    return found;
+  };
+  const model = pick("model", SKILL_MODELS);
+  const worker = pick("worker", SKILL_WORKERS);
+  return { ...(model ? { model } : {}), ...(worker ? { worker } : {}), invalid };
+};
+
+/** `run: sonnet, orca` for a skill that declares how it runs; empty when it declares nothing. */
+export const skillRunLabel = (s: AdapterSkill): string =>
+  s.model || s.worker ? `run: ${[s.model, s.worker].filter(Boolean).join(", ")}` : "";
+
 /**
  * Drop a file's own title heading.
  *
@@ -273,7 +321,7 @@ export const adapterRules = (adapter: Adapter): string => {
   const parts: string[] = [];
   if (!isBlank(adapter.policy)) parts.push(adapter.policy.trim());
   const index = adapter.skills
-    .map((s) => `${s.name}: ${s.description}`)
+    .map((s) => [`${s.name}: ${s.description}`, skillRunLabel(s)].filter(Boolean).join(" "))
     .join("\n");
   if (index) parts.push(index);
   return parts.join("\n\n");
@@ -310,10 +358,14 @@ export const renderAdapter = (adapter: Adapter, scope: AdapterScope = {}): strin
 
   if (adapter.skills.length > 0 && scope.canReadFiles !== false) {
     const lines = adapter.skills
-      .map((s) => `- *${s.name}* - ${s.description}\n  read: ${adapter.root}/${s.path}`)
+      .map((s) => {
+        const run = skillRunLabel(s);
+        return `- *${s.name}* - ${s.description}\n  read: ${adapter.root}/${s.path}${run ? `, ${run}` : ""}`;
+      })
       .join("\n");
+    const routed = adapter.skills.some((s) => s.model || s.worker);
     parts.push(
-      `\n\nWhat you know in depth (read one ONLY when the conversation is actually about it - the description is usually enough to know whether it is):\n${lines}`,
+      `\n\nWhat you know in depth (read one ONLY when the conversation is actually about it - the description is usually enough to know whether it is):\n${lines}${routed ? `\n${SKILL_RUN_RULE}` : ""}`,
     );
   }
 

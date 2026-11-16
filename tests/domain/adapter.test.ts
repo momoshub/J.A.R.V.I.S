@@ -9,6 +9,7 @@ import {
   parseManifest,
   renderAdapter,
   scopedId,
+  skillRouting,
   withoutTitle,
 } from "../../src/domain/adapter.ts";
 
@@ -165,5 +166,61 @@ describe("withoutTitle", () => {
 
   test("a heading further down is content, not a title", () => {
     expect(withoutTitle("- a fact\n# Later")).toBe("- a fact\n# Later");
+  });
+});
+
+describe("skillRouting", () => {
+  test("absent keys parse to nothing and stay valid", () => {
+    expect(skillRouting({ name: "x" })).toEqual({ invalid: [] });
+    expect(skillRouting({ model: "", worker: " " })).toEqual({ invalid: [] });
+  });
+
+  test("known values parse", () => {
+    expect(skillRouting({ model: "sonnet", worker: "orca" })).toEqual({ model: "sonnet", worker: "orca", invalid: [] });
+    expect(skillRouting(frontmatter("---\nmodel: haiku\nworker: background\n---\n"))).toEqual({
+      model: "haiku",
+      worker: "background",
+      invalid: [],
+    });
+  });
+
+  test("an unknown value is reported, not dropped silently", () => {
+    const r = skillRouting({ model: "gpt", worker: "inline" });
+    expect(r.model).toBeUndefined();
+    expect(r.worker).toBeUndefined();
+    expect(r.invalid).toHaveLength(2);
+    expect(r.invalid[0]).toContain("model: gpt");
+  });
+});
+
+describe("renderAdapter skill routing", () => {
+  const routed = adapter({
+    skills: [
+      { name: "plain", description: "no routing", path: "skills/plain/SKILL.md" },
+      { name: "heavy", description: "long job", path: "skills/heavy/SKILL.md", model: "sonnet", worker: "orca" },
+      { name: "cheap", description: "quick", path: "skills/cheap/SKILL.md", model: "haiku" },
+    ],
+  });
+
+  test("a skill with the keys shows run: next to read:", () => {
+    const out = renderAdapter(routed);
+    expect(out).toContain("read: /adapter/skills/heavy/SKILL.md, run: sonnet, orca");
+    expect(out).toContain("read: /adapter/skills/cheap/SKILL.md, run: haiku");
+    expect(out).toContain("A skill with `run:` is not done inline");
+  });
+
+  test("without the keys the listing is unchanged and carries no rule", () => {
+    const out = renderAdapter(adapter());
+    expect(out.endsWith("read: /adapter/skills/releases/SKILL.md")).toBe(true);
+    expect(out).not.toContain("run:");
+  });
+
+  test("the plain skill line has no run:", () => {
+    expect(renderAdapter(routed)).toContain("read: /adapter/skills/plain/SKILL.md\n");
+  });
+
+  test("adapterRules carries run so a change resets sessions", () => {
+    expect(adapterRules(routed)).toContain("heavy: long job run: sonnet, orca");
+    expect(adapterRules(adapter())).not.toContain("run:");
   });
 });

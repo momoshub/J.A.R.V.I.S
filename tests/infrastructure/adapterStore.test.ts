@@ -44,6 +44,19 @@ describe("the adapter store", () => {
     expect(rows?.n).toBe(3);
   });
 
+  test("a skill's model and worker frontmatter load onto it, and stay absent otherwise", () => {
+    const old = seed({
+      "adapter.yaml": MANIFEST,
+      "ADAPTER.md": "# Policy\n- be clear\n",
+      "skills/plain/SKILL.md": "---\nname: plain\ndescription: p\n---\nbody\n",
+      "skills/heavy/SKILL.md": "---\nname: heavy\ndescription: h\nmodel: sonnet\nworker: orca\n---\nbody\n",
+    });
+    const skills = createAdapterStore(openDatabase(":memory:"), tmp("mirror"), old).load().skills;
+    expect(skills.find((x) => x.name === "plain")?.model).toBeUndefined();
+    expect(skills.find((x) => x.name === "plain")?.worker).toBeUndefined();
+    expect(skills.find((x) => x.name === "heavy")).toMatchObject({ model: "sonnet", worker: "orca" });
+  });
+
   test("the database wins over the old directory once it has rows", () => {
     const db = openDatabase(":memory:");
     const old = legacy();

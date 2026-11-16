@@ -262,7 +262,7 @@ No I/O, no frameworks. Just data shapes and functions of their inputs.
 - `threadSession.ts`, `agentSession.ts` - one CLI session per thread and when it may be resumed
 - `threadBrief.ts` - briefs between threads: the opaque source reference (an HMAC), the nonce-delimited, escaped block a turn's message carries, its caps, the prompt rule
 - `internalMessages.ts` - the console's hidden messages: which stored `user` turn is a tell / nudge / watch hand-back / orca question / loop fire (by the prompt's own opening), a brief as one, secrets redacted, oldest first
-- `adapter.ts`, `adapterCheck.ts` - memory as a checked, versioned directory (facts + skills) instead of an ever-growing list
+- `adapter.ts`, `adapterCheck.ts` - memory as a checked, versioned directory (facts + skills) instead of an ever-growing list; a skill's optional `model:` / `worker:` frontmatter says which model and worker mode runs it (absent = inline on the turn's model)
 - `ciGate.ts` (domain) - CI verdict of a PR from its check rollup, what a CI-gate poll should do, the spec of a gate's watch row
 - `threadFollow.ts`, `followGate.ts` - which untagged thread messages the bot answers, and the pure rules of the gate in front of a followed thread (settings, bypass, batch windows, verdict parsing, the gate's prompt)
 - `bugReport.ts` - the internal `bug-report` command's pure parts: flag parsing, the Slack-link check, the fingerprint that dedupes, the owner's DM text, the `jv:bug-report:` button ids (the prefix is code-handled: `application/bugReportApproval.ts` decides a press, owner only, on the stored notice channel/ts, and only an approve starts the fix turn)
