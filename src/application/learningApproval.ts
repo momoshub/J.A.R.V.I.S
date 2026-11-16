@@ -28,7 +28,7 @@ import {
   type LearningSource,
 } from "../domain/learning.ts";
 import { SIGNATURES } from "../domain/messageFooter.ts";
-import { noticeFingerprint, withoutEmoji } from "../domain/noticeFingerprint.ts";
+import { noticeFingerprint } from "../domain/noticeFingerprint.ts";
 import type { Learning } from "../domain/types.ts";
 import type { LearningsRepo } from "../infrastructure/db/learningsRepo.ts";
 import type { Clock } from "./ports.ts";
@@ -287,9 +287,8 @@ export const decideLearningPress = async (
   // Slack does not reliably flag an app's own chat.update as edited, so what the message shows decides.
   // Slack hands the quote marker back as `&gt; `, so either form of the marker counts. The fact itself stays
   // compared escaped: a raw `<` shown (a live link or mention) never matches the stored `&lt;`.
-  // Emoji are dropped on both sides: Slack echoes them as shortcodes, so a fact with one would never match.
-  const core = withoutEmoji(approvalCore(l.content));
-  const shown = withoutEmoji((press.shown ?? []).join("\n"));
+  const core = approvalCore(l.content);
+  const shown = (press.shown ?? []).join("\n");
   const showsTheFact = shown.includes(core) || shown.includes(`&gt; ${core.slice(2)}`);
   const fromTheDm = !!l.noticeChannel && !!l.noticeTs && press.channel === l.noticeChannel && press.messageTs === l.noticeTs;
   // The whole message, not the fact in it: text, buttons (ids, labels) and block layout must be what was last rendered.

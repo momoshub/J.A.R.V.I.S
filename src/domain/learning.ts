@@ -70,17 +70,21 @@ export const approvalCore = (content: string): string => `> ${escapeForSlack(one
 
 const whoAsked = (by: string): string => (by === AGENT_SOURCE || !by ? "one of my turns" : `<@${by}>`);
 
-/** The DM the owner decides on. The fact is escaped, so it cannot render a link or a mention. */
+/**
+ * The DM the owner decides on. The fact is escaped, so it cannot render a link or a mention.
+ * Its icons are written as shortcodes: Slack hands block text back with emoji as `:shortcode:`,
+ * so a unicode 🧠 here never matched the fingerprint of the pressed message.
+ */
 export const approvalText = (id: number, content: string, by: string, sourceLink?: string): string =>
   [
-    `🧠 ${whoAsked(by)} wants me to remember this (learning #${id}). It is NOT part of my memory until you approve it:`,
+    `:brain: ${whoAsked(by)} wants me to remember this (learning #${id}). It is NOT part of my memory until you approve it:`,
     approvalCore(content),
     "Approve adds it to what I carry into every reply, in every channel. Reject discards it.",
     ...(sourceLink ? [`Proposed in <${sourceLink}|this thread>.`] : []),
   ].join("\n");
 
 export const settledText = (kind: "approved" | "rejected", id: number, content: string, by: string): string =>
-  `${kind === "approved" ? "✅" : "❌"} learning #${id} ${kind} by <@${by}>\n${approvalCore(content)}`;
+  `${kind === "approved" ? ":white_check_mark:" : ":x:"} learning #${id} ${kind} by <@${by}>\n${approvalCore(content)}`;
 
 /** What the typed `learn` says back when the fact is parked for the owner. */
 export const pendingReply = (id: number, prefix: string): string =>
