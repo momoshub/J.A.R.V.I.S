@@ -739,8 +739,9 @@ describe("createHandler streaming truth table", () => {
   describe("a turn that posted its answer itself", () => {
     const ANSWER =
       "The checkout latency came from the orders query: it scanned four million rows because the created_at index was dropped in the last migration. I re-added the index and p95 went from 1.8s to 120ms.";
+    // near-verbatim: the code guard drops only that; a real reword is `jarvis_note`'s job (the model ends with NO_REPLY)
     const REWORDED =
-      "Checkout latency was caused by the orders query scanning four million rows, since the created_at index had been dropped in the last migration. I added the index back and p95 dropped from 1.8s to 120ms.";
+      "The checkout latency came from the orders query: it scanned four million rows because the created_at index was dropped in the last migration. I re-added the index, and p95 went from 1.8s to 120ms.";
     /** The turn `turn` of the thread `000.9` posted `text` into `postedTo` (the proxy only notes the turn's own thread). */
     const selfPost = (selfPosts: SelfPosts, turn: string, text: string, postedTo = "000.9", ts = "333.3") =>
       selfPosts.record(turn, "000.9", {
@@ -837,6 +838,40 @@ describe("createHandler streaming truth table", () => {
       expect(r.deletes).toHaveLength(0);
       expect(r.updates).toHaveLength(1);
       expect(String(r.updates[0]?.text)).toContain("nightly export job");
+    });
+
+    test("a correction after the post is kept, not dropped as a repeat", async () => {
+      const selfPosts = createSelfPosts();
+      const posted = "Deploy to staging is green, all checks passed, the smoke suite and the load test are done, and the release can go out today.";
+      const closing =
+        "Correction: deploy to staging is not green, the checks did not pass, the smoke suite and the load test are not done, so the release cannot go out today.";
+      const r = turnBuild(selfPosts, postingLlm(selfPosts, posted, closing, [card, { type: "text", delta: closing }]));
+      await r.handle(r.msg("is staging green", "000.9"));
+      expect(r.deletes).toHaveLength(0);
+      expect(r.updates).toHaveLength(1);
+      expect(String(r.updates[0]?.text)).toContain("not green");
+    });
+
+    test("a rollback after the post is kept, not dropped as a repeat", async () => {
+      const selfPosts = createSelfPosts();
+      const posted = "I merged the fix and deployed it to production, and the error rate is back to normal on every dashboard we watch.";
+      const closing =
+        "I merged the fix and deployed it to production, but the error rate did not go back to normal on every dashboard we watch so I rolled it back.";
+      const r = turnBuild(selfPosts, postingLlm(selfPosts, posted, closing, [card, { type: "text", delta: closing }]));
+      await r.handle(r.msg("did the fix work", "000.9"));
+      expect(r.deletes).toHaveLength(0);
+      expect(r.updates).toHaveLength(1);
+      expect(String(r.updates[0]?.text)).toContain("rolled it back");
+    });
+
+    test("the real Vietnamese reword with its meta sentence is kept: jarvis_note covers it, not the code guard", async () => {
+      const selfPosts = createSelfPosts();
+      const posted = "Dạ em restart xong rồi anh, bot đã chạy lại bình thường và các watch đã được gắn lại, không còn turn nào bị kẹt nữa.";
+      const closing = `${posted} Em cập nhật hết trong message em đã post ở thread này rồi.`;
+      const r = turnBuild(selfPosts, postingLlm(selfPosts, posted, closing, [card, { type: "text", delta: closing }]));
+      await r.handle(r.msg("restart xong chưa", "000.9"));
+      expect(r.deletes).toHaveLength(0);
+      expect(r.updates).toHaveLength(1);
     });
 
     test("a self-post in another thread suppresses nothing", async () => {

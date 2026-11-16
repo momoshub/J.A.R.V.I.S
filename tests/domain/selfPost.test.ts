@@ -5,6 +5,7 @@ import {
   isDuplicateReply,
   isDuplicateStream,
   MAX_FRESH_SHARE,
+  MAX_FRESH_WORDS,
   MIN_POST_COVERAGE,
   normalizeText,
   repeatsPosted,
@@ -28,11 +29,11 @@ describe("normalizeText", () => {
 describe("isDuplicateReply", () => {
   test("the same answer reworded is a duplicate", () => {
     const reworded =
-      "The checkout latency was caused by the orders query: it scanned 4M rows since the created_at index had been dropped in the last migration. I added the index back, and p95 dropped from 1.8s to 120ms.";
+      "The checkout latency comes from the orders query - it scanned 4M rows because the index on created_at was dropped in the last migration. I re-added the index and p95 went from 1.8s to 120ms.";
     expect(isDuplicateReply(reworded, [post(ANSWER)])).toBe(true);
   });
-  test("a reworded answer that also says it updated the message is still a duplicate", () => {
-    expect(isDuplicateReply(`${ANSWER} I updated everything in the message I posted in this thread.`, [post(ANSWER)])).toBe(true);
+  test("a reply that adds a sentence about the post is kept: the guard errs toward sending", () => {
+    expect(isDuplicateReply(`${ANSWER} I updated everything in the message I posted in this thread.`, [post(ANSWER)])).toBe(false);
   });
   test("identical text up to formatting is a duplicate, even a short one", () => {
     expect(isDuplicateReply("Done - it's fixed!", [post("done, it's fixed")])).toBe(true);
@@ -76,8 +77,13 @@ describe("a reply that repeats the post, in any language", () => {
   const VI_REPLY =
     "Dạ stuck thật anh :man-bowing::skin-tone-2: Sub agent Fable cũ chết theo turn hôm đó. Sau 2h21m vẫn không có branch, không có PR nào. Lỗi của em: em chỉ watch file kết quả, không watch chính con agent, nên nó chết mà không ai biết. Em cập nhật hết trong message em đã post ở thread này rồi.  - em đã chạy lại Fable thành một process riêng, lần này không chết theo turn nữa - có 2 watch: một cái báo khi bài xong, một cái báo ngay nếu writer chết giữa chừng - lỗ này nằm ở skill blog, em đã gửi bug report #4 chờ anh duyệt sửa  Bài xong em gửi vào thread này tiêu đề, link PR, ảnh diagram và nút Publish/Revise, tối đa 3 tiếng :coffee:";
 
-  test("the real Vietnamese case is dropped", () => {
-    expect(isDuplicateReply(VI_REPLY, [post(VI_POST)])).toBe(true);
+  test("the real Vietnamese case is KEPT by the code guard", () => {
+    // Its meta sentence ("Em cập nhật hết trong message em đã post ở thread này rồi") is new words, and a reply with
+    // a new sentence is kept: the guard only drops near-verbatim repeats, because a dropped correction is worse than a
+    // double message. This shape is covered by `jarvis_note` instead: right after the post the model is told to end
+    // with NO_REPLY. The post alone, and a plain copy of it, are still repeats.
+    expect(isDuplicateReply(VI_REPLY, [post(VI_POST)])).toBe(false);
+    expect(isDuplicateReply(VI_POST, [post(VI_POST)])).toBe(true);
   });
   test("a Vietnamese reply adding a new sentence with a number, a link or a name is kept", () => {
     expect(isDuplicateReply(`${VI_REPLY} Em cũng đã sửa xong lỗi thanh toán, PR #87 đang chờ review.`, [post(VI_POST)])).toBe(false);
@@ -89,11 +95,11 @@ describe("a reply that repeats the post, in any language", () => {
   });
   test("an English reword is still dropped", () => {
     const reworded =
-      "The checkout latency was caused by the orders query: it scanned 4M rows since the created_at index had been dropped in the last migration. I added the index back, and p95 dropped from 1.8s to 120ms.";
+      "The checkout latency comes from the orders query - it scanned 4M rows because the index on created_at was dropped in the last migration. I re-added the index and p95 went from 1.8s to 120ms.";
     expect(isDuplicateReply(reworded, [post(ANSWER)])).toBe(true);
   });
   test("an English reply adding a new sentence with a number, a link or a name is kept", () => {
-    const reworded = "The checkout latency was caused by the orders query: it scanned 4M rows since the created_at index had been dropped in the last migration. I added the index back, and p95 dropped from 1.8s to 120ms.";
+    const reworded = "The checkout latency comes from the orders query - it scanned 4M rows because the index on created_at was dropped in the last migration. I re-added the index and p95 went from 1.8s to 120ms.";
     expect(isDuplicateReply(`${reworded} I also bumped the pool to 40 connections.`, [post(ANSWER)])).toBe(false);
     expect(isDuplicateReply(`${reworded} The runbook is at https://wiki.example.com/runbooks/orders now.`, [post(ANSWER)])).toBe(false);
     expect(isDuplicateReply(`${reworded} I asked Priya to review the migration.`, [post(ANSWER)])).toBe(false);
@@ -107,7 +113,7 @@ describe("a reply that repeats the post, in any language", () => {
 
 describe("the two-sided check: the post is covered by the reply, and the reply stays close to the post", () => {
   const REWORDED =
-    "The checkout latency was caused by the orders query: it scanned 4M rows since the created_at index had been dropped in the last migration. I added the index back, and p95 dropped from 1.8s to 120ms.";
+    "The checkout latency comes from the orders query - it scanned 4M rows because the index on created_at was dropped in the last migration. I re-added the index and p95 went from 1.8s to 120ms.";
   const LONG_POST =
     "Deploy summary for the week: the billing service moved to the new queue, retries now back off for up to ten minutes, the dashboard shows lag per consumer, the old workers were scaled down on Tuesday, the alerts page the platform rotation instead of everyone, and the runbook covers rollback step by step.";
 
@@ -133,16 +139,61 @@ describe("the two-sided check: the post is covered by the reply, and the reply s
     const wordy = `${LONG_POST} Unrelatedly, yesterday's outage report blamed expired certificates, so security rotated credentials across regions, finance paused invoices temporarily, support drafted apology emails, legal reviewed contract clauses, and marketing postponed Thursday's webinar until further notice.`;
     expect(isDuplicateReply(wordy, [post(LONG_POST)])).toBe(false);
   });
-  test("the real Vietnamese fixture is covered by a wide margin on both sides of the numbers", () => {
-    // fresh share of the reply about 24%, post-coverage about 0.95: far from both bounds' failing side
-    expect(MAX_FRESH_SHARE).toBeGreaterThan(0.24);
-    expect(MIN_POST_COVERAGE).toBeLessThanOrEqual(0.9);
+  test("the bounds stay tight: only a near-verbatim repeat is dropped", () => {
+    expect(MAX_FRESH_SHARE).toBeLessThanOrEqual(0.2);
+    expect(MAX_FRESH_WORDS).toBeLessThanOrEqual(2);
+    expect(MIN_POST_COVERAGE).toBeGreaterThanOrEqual(0.8);
+  });
+});
+
+describe("a reply that tells the person something the post did not is KEPT (review round 3)", () => {
+  // Each row was dropped by the loosened check: a correction, rollback or warning dropped leaves the person
+  // acting on a post that is now wrong. Better a double message than that.
+  const kept = (postText: string, reply: string) => {
+    expect(repeatsPosted(reply, [postText])).toBe(false);
+    expect(isDuplicateStream(reply, [reply], [post(postText)])).toBe(false);
+  };
+  const EXPORT =
+    "The nightly export failed because its connection pool ran dry, so I raised the cap on the pool and reran the export for the whole team, and it finished clean.";
+  const STAGING = "Deploy to staging is green, all checks passed, the smoke suite and the load test are done, and the release can go out today.";
+  const SHIPPED = "I merged the fix and deployed it to production, and the error rate is back to normal on every dashboard we watch.";
+  const MIGRATION = "The migration is ready: it adds the index and backfills the table in small batches, and it is safe to run during business hours.";
+  const VI_RESTART = "Dạ em restart xong rồi anh, bot đã chạy lại bình thường và các watch đã được gắn lại, không còn turn nào bị kẹt nữa.";
+  const DATA = "The backup of the orders database finished and the snapshot was verified, so the data is safe to delete from the old cluster.";
+
+  test("a warning added to the post", () => {
+    kept(EXPORT, `${EXPORT} Heads up: do not run the manual backfill until it finishes or the pool will run dry again.`);
+  });
+  test("a correction that flips the post", () => {
+    kept(STAGING, "Correction: deploy to staging is not green, the checks did not pass, the smoke suite and the load test are not done, so the release cannot go out today.");
+  });
+  test("an apology that flips the post", () => {
+    kept(STAGING, "Sorry, I was wrong: deploy to staging is not green, the checks failed, the smoke suite and the load test are not done, and the release should not go out today.");
+  });
+  test("a rollback", () => {
+    kept(SHIPPED, "I merged the fix and deployed it to production, but the error rate did not go back to normal on every dashboard we watch so I rolled it back.");
+  });
+  test("a new sentence that opens with a name", () => {
+    kept(MIGRATION, `${MIGRATION} Priya reviewed it and asked us to wait for her sign off before running it.`);
+  });
+  test("a Vietnamese warning added to the post", () => {
+    kept(VI_RESTART, `${VI_RESTART} Anh đừng chạy backfill lúc này nha, sẽ làm hết connection pool.`);
+  });
+  test("a short new sentence of plain words", () => {
+    kept(MIGRATION, `${MIGRATION} Please don't deploy anything until then.`);
+  });
+  test("one sentence turned around with a few words", () => {
+    kept(DATA, "The backup of the orders database finished and the snapshot was verified, but the data is not safe to delete from the old cluster yet.");
+  });
+  test("an unchanged post is still a repeat", () => {
+    expect(repeatsPosted(EXPORT, [EXPORT])).toBe(true);
+    expect(repeatsPosted(MIGRATION, [MIGRATION])).toBe(true);
   });
 });
 
 describe("isDuplicateStream", () => {
   const REWORDED =
-    "The checkout latency was caused by the orders query: it scanned 4M rows since the created_at index had been dropped in the last migration. I added the index back, and p95 dropped from 1.8s to 120ms.";
+    "The checkout latency comes from the orders query - it scanned 4M rows because the index on created_at was dropped in the last migration. I re-added the index and p95 went from 1.8s to 120ms.";
   test("a stream of only the reply (and silence) may be taken back", () => {
     expect(isDuplicateStream(REWORDED, [REWORDED], [post(ANSWER)])).toBe(true);
     expect(isDuplicateStream(REWORDED, ["", REWORDED, "NO_REPLY"], [post(ANSWER)])).toBe(true);

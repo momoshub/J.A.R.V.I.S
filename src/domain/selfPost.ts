@@ -25,28 +25,27 @@ export type SelfPostCall = {
 };
 
 /**
- * A reply is a repeat only when the posts and the reply cover each other, not
- * when the reply is merely close to the posts (see `repeatsPosted`).
+ * The code guard only drops a NEAR-VERBATIM repeat and errs toward sending: a
+ * duplicate message is a nuisance, a dropped correction, rollback or warning
+ * is a person acting on a post that is now wrong. Rewording is not the code's
+ * job: `jarvis_note` tells the model right after the post to end with NO_REPLY.
  *
- * Share of the post's words the reply must hold. A reword keeps the post's
- * content words and moves function words, so almost all of the post is there
- * (the real Vietnamese thread: about 0.95); a short answer to a long post, or
- * a different answer on the same subject, holds well under half of it.
+ * Share of the post's words the reply must hold (see `repeatsPosted`): a short
+ * answer to a long post, or a different answer on the same subject, holds well
+ * under half of it.
  */
-export const MIN_POST_COVERAGE = 0.8;
+export const MIN_POST_COVERAGE = 0.9;
 /**
  * Share of the reply's words the posts do not hold (not even by their first
- * letters) up to which a reply is still a repeat. Rewording in a language of
- * short function words adds many (the real Vietnamese thread: 24%) and a
- * closing "I updated the message above" adds more, so this is loose; the
- * post-coverage and the hard-token check are what keep real answers.
+ * letters) up to which a reply is still a repeat. Small on purpose: a
+ * correction or a warning added to the post is a handful of new words ("but ...
+ * not ... yet"), and that must keep the reply.
  */
-export const MAX_FRESH_SHARE = 0.35;
-/** Never a repeat when more words than this are new, however long the reply is: a third of a long reply is paragraphs. */
-export const MAX_FRESH_WORDS = 20;
-/** A part of the stream, taken alone, is covered by the posts only up to this share of new words (no post-coverage: a part may hold half of a post). */
-const MAX_PART_FRESH_SHARE = 0.2;
-const MAX_PART_FRESH_WORDS = 20;
+export const MAX_FRESH_SHARE = 0.1;
+/** Never a repeat when more words than this are new, however long the reply is. Two: "not" and "yet" in an otherwise repeated sentence is a correction. */
+export const MAX_FRESH_WORDS = 2;
+/** A sentence of the reply with more than this share of words new to the posts says something the posts did not: the reply is kept. */
+export const MAX_SENTENCE_FRESH_SHARE = 0.5;
 /** A reply with fewer words than this is compared only for equality: "ok, done" shares words with almost anything. */
 export const MIN_WORDS = 4;
 /** Words are matched by their first letters, so "scans"/"scanned" and "migrate"/"migration" meet without a stemmer or a word list for any one language. */
@@ -124,19 +123,31 @@ const freshOf = (list: readonly string[], known: Known): { count: number; share:
   return { count, share: list.length === 0 ? 0 : count / list.length };
 };
 
+/** Sentences of a text: sentence ends, line breaks and list dashes (not the colon: "Heads up: ..." is one sentence). */
+const SENTENCE_BREAK = /[.!?…]+(?:\s|$)|\n+|(?:^|\s)[-•*]\s+/;
+
+/** Does some sentence of `text` have a majority of words new to `known`? Then it says something the posts did not, however few words that is. */
+const hasNewSentence = (text: string, known: Known): boolean =>
+  cleanText(text)
+    .split(SENTENCE_BREAK)
+    .some((sentence) => {
+      const ws = words(sentence);
+      return ws.length > 0 && freshOf(ws, known).share > MAX_SENTENCE_FRESH_SHARE;
+    });
+
 const bringsNewHardToken = (text: string, known: Known): boolean => [...hardTokens(text)].some((h) => !known.exact.has(h));
 
 /**
  * Does `reply` say nothing that `posted` did not? Equal once normalised is
  * always a repeat. Otherwise, with no language assumed, ALL of these hold:
  *  1. no number, id, link or name the posts do not hold (a new fact);
- *  2. the reply holds at least `MIN_POST_COVERAGE` of the posts' words (it is
+ *  2. no sentence of the reply has a majority of words new to the posts (a new
+ *     sentence, even a short one: "Please don't deploy anything until then.");
+ *  3. the reply holds at least `MIN_POST_COVERAGE` of the posts' words (it is
  *     the post again, not a shorter or different answer);
- *  3. at most `MAX_FRESH_SHARE` of its words are new to the posts (a reword
- *     with an "I updated the message above" sentence stays a repeat, a new
- *     paragraph does not).
- * One test alone misses the real thread or drops a real answer: the fresh
- * share alone needs a bound loose enough to swallow a different answer.
+ *  4. at most `MAX_FRESH_SHARE` and `MAX_FRESH_WORDS` of its words are new to
+ *     the posts (a correction inside a repeated sentence is a few new words).
+ * Any doubt keeps the reply.
  */
 export const repeatsPosted = (reply: string, posted: readonly string[]): boolean => {
   const replyNorm = normalizeText(reply);
@@ -145,7 +156,7 @@ export const repeatsPosted = (reply: string, posted: readonly string[]): boolean
   const replyWords = replyNorm.split(" ");
   if (replyWords.length < MIN_WORDS) return false;
   const known = knownOf(posted);
-  if (bringsNewHardToken(reply, known)) return false;
+  if (bringsNewHardToken(reply, known) || hasNewSentence(reply, known)) return false;
   const postWords = posted.flatMap(words);
   if (postWords.length === 0) return false;
   const missing = freshOf(postWords, wordsKnown(replyWords));
@@ -156,7 +167,7 @@ export const repeatsPosted = (reply: string, posted: readonly string[]): boolean
 
 /**
  * Is a streamed part, taken alone, only what was posted (or nothing)? A part
- * may be any piece of the post, so only the fresh share counts here. A short
+ * may be any piece of the post, so there is no post-coverage here. A short
  * one counts only when every word of it is in the posts.
  */
 export const partIsCovered = (text: string, posted: readonly string[], reply = ""): boolean => {
@@ -166,10 +177,10 @@ export const partIsCovered = (text: string, posted: readonly string[], reply = "
   if (norm === normalizeText(reply)) return true;
   const ws = norm.split(" ");
   const known = knownOf(posted);
-  if (bringsNewHardToken(text, known)) return false;
+  if (bringsNewHardToken(text, known) || hasNewSentence(text, known)) return false;
   const fresh = freshOf(ws, known);
   if (ws.length < MIN_WORDS) return fresh.count === 0;
-  return fresh.count <= MAX_PART_FRESH_WORDS && fresh.share <= MAX_PART_FRESH_SHARE;
+  return fresh.count <= MAX_FRESH_WORDS && fresh.share <= MAX_FRESH_SHARE;
 };
 
 /** Is the closing reply a repeat of what the turn already posted in its own thread? */
