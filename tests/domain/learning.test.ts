@@ -61,8 +61,8 @@ describe("approval wording", () => {
   });
 
   test("the settled line names the owner and the decision", () => {
-    expect(settledText("approved", 3, "a fact", "U0OWNER0001")).toContain("✅ learning #3 approved by <@U0OWNER0001>");
-    expect(settledText("rejected", 3, "a fact", "U0OWNER0001")).toContain("❌ learning #3 rejected");
+    expect(settledText("approved", 3, "a fact", "U0OWNER0001")).toContain(":white_check_mark: learning #3 approved by <@U0OWNER0001>");
+    expect(settledText("rejected", 3, "a fact", "U0OWNER0001")).toContain(":x: learning #3 rejected");
   });
 
   test("what the agent and the typist are told says it is not saved", () => {
