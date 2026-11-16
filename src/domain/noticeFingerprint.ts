@@ -10,8 +10,10 @@
  *
  * Slack echoes blocks with extra fields (`block_id`, `verbatim`, `action_ts`)
  * and may escape the quote marker, so only the fields the bot writes are read,
- * whitespace is dropped, and `&gt;` is read as `>`. A `<` is never softened: a
- * live link in place of an escaped one is a different message.
+ * whitespace is dropped, and `&gt;` is read as `>`. Slack also hands an emoji
+ * back as its shortcode (the notice's 🧠 returns as `:brain:`), so emoji are
+ * dropped in both forms. A `<` is never softened: a live link in place of an
+ * escaped one is a different message.
  *
  * Pure: blocks in, hex digest out.
  */
@@ -21,7 +23,14 @@ type Loose = Record<string, unknown>;
 
 const isRecord = (v: unknown): v is Loose => typeof v === "object" && v !== null && !Array.isArray(v);
 
-const canon = (text: unknown): string => (typeof text === "string" ? text.replaceAll("&gt;", ">").replace(/\s+/g, "") : "");
+/** An emoji as the bot writes it (unicode) or as Slack echoes it (`:shortcode:`). */
+const EMOJI = /:[a-z0-9_+'-]+:|[\p{Extended_Pictographic}\p{Emoji_Modifier}\u{FE0F}\u{200D}]/gu;
+
+/** Text with every emoji dropped, so what the bot wrote and what Slack echoes compare equal. */
+export const withoutEmoji = (text: string): string => text.replace(EMOJI, "");
+
+const canon = (text: unknown): string =>
+  typeof text === "string" ? withoutEmoji(text.replaceAll("&gt;", ">")).replace(/\s+/g, "") : "";
 
 const textOf = (v: unknown): string => (isRecord(v) ? canon(v.text) : "");
 

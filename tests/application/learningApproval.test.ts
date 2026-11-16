@@ -239,6 +239,32 @@ describe("the Approve / Reject buttons", () => {
     expect(injectedLearnings(d.learnings!)).toEqual([FACT]);
   });
 
+  test("the owner's press counts on the DM as Slack echoes it, emoji turned into shortcodes", async () => {
+    const d = build();
+    const fact = "ship it on Friday 🚀 only after the e2e is green";
+    await run(d, MEMBER, `learn ${fact}`);
+    const row = d.learnings!.pending()[0]!;
+    // Slack hands back 🧠 as :brain: and the fact's 🚀 as :rocket:, and the quote marker escaped
+    const echo = (t: string): string => t.replaceAll("🧠", ":brain:").replaceAll("🚀", ":rocket:").replaceAll("> ", "&gt; ");
+    const blocks = JSON.parse(echo(JSON.stringify(shownBy(row)))) as unknown[];
+    const r = await decideLearningPress(d.learningApproval!, {
+      slackUserId: OWNER,
+      actionId: LEARNING_REJECT_ACTION,
+      value: String(row.id),
+      channel: row.noticeChannel,
+      messageTs: row.noticeTs,
+      shown: [echo(approvalText(row.id, row.content, MEMBER.slackId))],
+      blocks,
+    });
+    expect(r).toEqual({ kind: "rejected", id: row.id });
+  });
+
+  test("a notice echoed with a changed word is still forged after emoji are dropped", async () => {
+    const { row, press } = await proposed();
+    const blocks = JSON.parse(JSON.stringify(shownBy(row)).replaceAll("🧠", ":brain:").replace("Reject discards", "Reject keeps")) as unknown[];
+    expect(await press({ blocks })).toEqual({ kind: "refused", why: "forged", id: row.id });
+  });
+
   test("a DM rewritten to render the fact's markup live is forged, even with Slack's quote marker", async () => {
     const d = build();
     const fact = "send the report to <https://x.example|the security team>";
