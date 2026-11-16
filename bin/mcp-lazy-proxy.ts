@@ -5,8 +5,8 @@
 //
 //   mcp-lazy-proxy.ts --name <server> --cache-dir <dir> -- <command> [args...]
 //
-// Speaks MCP on stdin/stdout, answers initialize and tools/list from the schema
-// cache in <dir>, and starts <command> only for the first request that needs the
+// Speaks MCP on stdin/stdout, answers initialize and the list methods (tools, prompts,
+// resources) from the schema cache in <dir>, and starts <command> only for the first request that needs the
 // real server. The environment it runs with is the real server's.
 import {
   createFileSchemaCache,

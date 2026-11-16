@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { mkdtempSync, readFileSync, existsSync } from "node:fs";
+import { mkdtempSync, readFileSync, existsSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
@@ -16,34 +16,37 @@ const INIT: JsonRpc = { protocolVersion: "2025-06-18", capabilities: { tools: {}
 const TOOLS = [{ name: "run_query" }];
 
 /** A scripted real server: answers initialize/tools/list/tools/call and records what it was sent. */
-const harness = (cached?: CachedSchema) => {
+const harness = (cached?: CachedSchema, opts: { hang?: boolean; startTimeoutMs?: number; tools?: unknown[] } = {}) => {
   const sent: JsonRpc[] = [];
   const out: JsonRpc[] = [];
   let spawned = 0;
   let stored = cached;
+  const exits: (() => void)[] = [];
   let exit: () => void = () => {};
   const proxy = createLazyProxy({
     cache: { read: () => stored, write: (s) => void (stored = s) },
     out: (m) => void out.push(m),
+    startTimeoutMs: opts.startTimeoutMs,
     spawn: (): RealServer => {
       spawned++;
       let on: (m: JsonRpc) => void = () => {};
       return {
         onMessage: (cb) => void (on = cb),
-        onExit: (cb) => void (exit = cb),
+        onExit: (cb) => void (exits.push(cb), (exit = cb)),
         kill: () => {},
         send: (m) => {
           sent.push(m);
+          if (opts.hang) return;
           queueMicrotask(() => {
             if (m.method === "initialize") on({ jsonrpc: "2.0", id: m.id, result: INIT });
-            if (m.method === "tools/list") on({ jsonrpc: "2.0", id: m.id, result: { tools: TOOLS } });
+            if (m.method === "tools/list") on({ jsonrpc: "2.0", id: m.id, result: { tools: opts.tools ?? TOOLS } });
             if (m.method === "tools/call") on({ jsonrpc: "2.0", id: m.id, result: { content: [{ type: "text", text: "rows" }] } });
           });
         },
       };
     },
   });
-  return { proxy, sent, out, spawned: () => spawned, stored: () => stored, exit: () => exit() };
+  return { proxy, sent, out, spawned: () => spawned, stored: () => stored, exit: () => exit(), exits };
 };
 
 const tick = () => new Promise((r) => setTimeout(r, 5));
@@ -94,6 +97,80 @@ describe("createLazyProxy with a warm cache", () => {
     await tick();
     h.exit();
     expect(h.out.find((m) => m.id === 8)).toMatchObject({ error: { message: expect.stringContaining("exited") } });
+  });
+});
+
+describe("createLazyProxy start and restart", () => {
+  test("a real server that never answers initialize is given up on, failing the request instead of hanging", async () => {
+    const h = harness({ initialize: INIT, tools: TOOLS }, { hang: true, startTimeoutMs: 20 });
+    await h.proxy.handle({ jsonrpc: "2.0", id: 4, method: "tools/call", params: {} });
+    expect(h.out).toEqual([{ jsonrpc: "2.0", id: 4, error: { code: -32603, message: expect.stringContaining("did not initialize") } }]);
+    expect(h.proxy.state().running).toBe(false);
+  });
+
+  test("the next tools/call after the server exited starts it again and succeeds", async () => {
+    const h = harness({ initialize: INIT, tools: TOOLS });
+    await h.proxy.handle({ jsonrpc: "2.0", id: 1, method: "tools/call", params: {} });
+    await tick();
+    h.exit();
+    await h.proxy.handle({ jsonrpc: "2.0", id: 2, method: "tools/call", params: {} });
+    await tick();
+    expect(h.spawned()).toBe(2);
+    expect(h.out.filter((m) => m.id === 2)).toEqual([{ jsonrpc: "2.0", id: 2, result: { content: [{ type: "text", text: "rows" }] } }]);
+  });
+
+  test("a late exit of an old server does not tear down the one that replaced it", async () => {
+    const h = harness({ initialize: INIT, tools: TOOLS });
+    await h.proxy.handle({ jsonrpc: "2.0", id: 1, method: "tools/call", params: {} });
+    await tick();
+    h.exits[0]!();
+    await h.proxy.handle({ jsonrpc: "2.0", id: 2, method: "tools/call", params: {} });
+    await tick();
+    h.exits[0]!(); // the first server's exit reported again, late
+    expect(h.proxy.state().running).toBe(true);
+    expect(h.out.some((m) => m.error !== undefined)).toBe(false);
+  });
+
+  test("two tools/call on a cold start start the server once and are forwarded in order", async () => {
+    const h = harness({ initialize: INIT, tools: TOOLS });
+    await Promise.all([
+      h.proxy.handle({ jsonrpc: "2.0", id: 1, method: "tools/call", params: {} }),
+      h.proxy.handle({ jsonrpc: "2.0", id: 2, method: "tools/call", params: {} }),
+    ]);
+    await tick();
+    expect(h.spawned()).toBe(1);
+    expect(h.sent.filter((m) => m.method === "tools/call").map((m) => m.id)).toEqual([1, 2]);
+  });
+
+  test("a cancellation sent while the server starts reaches it after initialize and after the request it cancels", async () => {
+    const h = harness({ initialize: INIT, tools: TOOLS });
+    await h.proxy.handle({ jsonrpc: "2.0", id: 1, method: "tools/call", params: {} });
+    await h.proxy.handle({ jsonrpc: "2.0", method: "notifications/cancelled", params: { requestId: 1 } });
+    await tick();
+    const order = h.sent.map((m) => String(m.method ?? m.id));
+    expect(order.indexOf("initialize")).toBeLessThan(order.indexOf("tools/call"));
+    expect(order.indexOf("tools/call")).toBeLessThan(order.indexOf("notifications/cancelled"));
+  });
+
+  test("a cancellation with no server running goes nowhere", async () => {
+    const h = harness({ initialize: INIT, tools: TOOLS });
+    await h.proxy.handle({ jsonrpc: "2.0", method: "notifications/cancelled", params: { requestId: 1 } });
+    expect(h.spawned()).toBe(0);
+  });
+
+  test("the real server is initialized with the protocol version the cached answer promised", async () => {
+    const h = harness({ initialize: { ...INIT, protocolVersion: "2024-11-05" }, tools: TOOLS });
+    await h.proxy.handle({ ...initialize, params: { ...initialize.params, protocolVersion: "2026-07-28" } });
+    await h.proxy.handle({ jsonrpc: "2.0", id: 2, method: "tools/call", params: {} });
+    await tick();
+    expect(h.sent[0]).toMatchObject({ method: "initialize", params: { protocolVersion: "2024-11-05" } });
+  });
+
+  test("an empty tool list is not cached, so the next turn asks the real server again", async () => {
+    const h = harness(undefined, { tools: [] });
+    await h.proxy.handle(initialize);
+    await tick();
+    expect(h.stored()).toBeUndefined();
   });
 });
 
@@ -159,12 +236,14 @@ describe("schema cache", () => {
     expect(cache.read()).toBeUndefined();
     cache.write({ initialize: INIT, tools: TOOLS });
     expect(cache.read()).toEqual({ initialize: INIT, tools: TOOLS });
+    // the schema can hold a database's table names: private to this user
+    expect(statSync(join(dir, "nested", "a.json")).mode & 0o077).toBe(0);
   });
 
   test("unreadable cache is a miss, not a crash", () => {
     const dir = mkdtempSync(join(tmpdir(), "lazy-cache-"));
     const path = join(dir, "bad.json");
-    Bun.write(path, "{not json");
+    writeFileSync(path, "{not json");
     expect(createFileSchemaCache(path).read()).toBeUndefined();
   });
 });
@@ -196,7 +275,7 @@ describe("bin/mcp-lazy-proxy.ts end to end", () => {
     const replies: JsonRpc[] = [];
     const parse = createLineParser((m) => replies.push(m));
     const reader = proc.stdout.getReader();
-    const deadline = Date.now() + 15000;
+    const deadline = Date.now() + 40000;
     while (replies.filter((r) => r.id !== undefined).length < waitFor && Date.now() < deadline) {
       const { value, done } = await reader.read();
       if (done) break;
@@ -225,5 +304,5 @@ describe("bin/mcp-lazy-proxy.ts end to end", () => {
     const call = await session(dir, log, [...handshake, { jsonrpc: "2.0", id: 3, method: "tools/call", params: { name: "echo", arguments: { text: "hi" } } }], 3);
     expect(call.find((r) => r.id === 3)).toMatchObject({ result: { content: [{ text: "echo:hi" }] } });
     expect(startCount(log)).toBe(2);
-  }, 60000);
+  }, 150000);
 });

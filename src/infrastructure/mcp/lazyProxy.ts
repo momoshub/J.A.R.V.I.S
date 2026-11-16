@@ -6,10 +6,13 @@ import { join } from "node:path";
  * A stdio MCP proxy that connects lazily. The CLI starts every `--mcp-config`
  * server at turn start, and a database server (dbhub measured 9.7s alone, three
  * of them plus uvx timing out at 30s together) made a trivial chat turn wait for
- * servers it never uses. The proxy answers `initialize` and `tools/list` from a
- * schema cached on disk and starts the real server only on the first request
- * that needs it (`tools/call`, resources, prompts). Every spawn refreshes the
- * cache, so a server whose tools changed is picked up the next turn.
+ * servers it never uses. The proxy answers `initialize` and the list methods
+ * (`tools/list`, `prompts/list`, `resources/list`, `resources/templates/list`)
+ * from a schema cached on disk and starts the real server only on the first
+ * request that needs it (`tools/call`, resource reads, prompt gets). Every spawn
+ * refreshes the cache, so a server whose tools changed is picked up on the next
+ * turn after one that called it. An empty tool list is never cached, since with
+ * no tools nothing would ever call the server to correct it.
  *
  * First run with no cache has nothing to answer from, so it spawns the real
  * server once, exactly like before, and writes the cache.
@@ -56,6 +59,8 @@ export type ProxyDeps = {
   /** To the client (the CLI). */
   out: (msg: JsonRpc) => void;
   log?: (line: string) => void;
+  /** How long the real server may take to answer `initialize` before the start is given up. Default 30s, the CLI's own connect timeout. */
+  startTimeoutMs?: number;
 };
 
 const INIT_ID = "lazy-proxy:init";
@@ -83,6 +88,8 @@ export const createLazyProxy = (deps: ProxyDeps) => {
   const log = deps.log ?? (() => {});
   let clientInit: JsonRpc | undefined;
   let clientReady = false;
+  // The protocol version the client was told, which the real server is then initialized with.
+  let announced: unknown;
   let real: RealServer | undefined;
   let ready: Promise<Ready> | undefined;
   // Responses the proxy itself asked the real server for, by id.
@@ -90,9 +97,18 @@ export const createLazyProxy = (deps: ProxyDeps) => {
   // Client requests forwarded and not yet answered, so a dying server fails them instead of hanging the turn.
   const forwarded = new Set<unknown>();
 
-  const ask = (server: RealServer, id: string, method: string, params?: JsonRpc): Promise<JsonRpc> =>
+  const ask = (server: RealServer, id: string, method: string, params?: JsonRpc, timeoutMs?: number): Promise<JsonRpc> =>
     new Promise((resolve) => {
-      waiting.set(id, resolve);
+      const timer = timeoutMs
+        ? setTimeout(() => {
+            waiting.delete(id);
+            resolve({ jsonrpc: "2.0", error: { code: -32001, message: `no answer to ${method} within ${timeoutMs}ms` } });
+          }, timeoutMs)
+        : undefined;
+      waiting.set(id, (m) => {
+        clearTimeout(timer);
+        resolve(m);
+      });
       server.send({ jsonrpc: "2.0", id, method, ...(params ? { params } : {}) });
     });
 
@@ -133,7 +149,9 @@ export const createLazyProxy = (deps: ProxyDeps) => {
     out(msg);
   };
 
-  const onRealExit = (): void => {
+  const onRealExit = (server: RealServer): void => {
+    // A server already replaced or given up on exits late: that says nothing about the one running now.
+    if (real !== server) return;
     real = undefined;
     ready = undefined;
     for (const resolve of waiting.values()) resolve({ jsonrpc: "2.0", error: { code: -32603, message: "server exited" } });
@@ -148,18 +166,22 @@ export const createLazyProxy = (deps: ProxyDeps) => {
     const server = deps.spawn();
     real = server;
     server.onMessage(onRealMessage);
-    server.onExit(onRealExit);
+    server.onExit(() => onRealExit(server));
     const started = (async (): Promise<Ready> => {
-      const params = isRecord(clientInit?.params)
+      const base = isRecord(clientInit?.params)
         ? clientInit.params
         : { protocolVersion: DEFAULT_PROTOCOL, capabilities: {}, clientInfo: { name: "lazy-proxy", version: "0" } };
-      const res = await ask(server, INIT_ID, "initialize", params);
+      // Speak the version the client was already promised from the cache, not the one it asked for.
+      const params = typeof announced === "string" ? { ...base, protocolVersion: announced } : base;
+      const res = await ask(server, INIT_ID, "initialize", params, deps.startTimeoutMs ?? 30000);
       if (!isRecord(res.result)) throw new Error(`the MCP server did not initialize: ${JSON.stringify(res.error ?? res)}`);
       const initialize = res.result;
       server.send({ jsonrpc: "2.0", method: "notifications/initialized" });
       const schema = readSchema(server, initialize);
       void schema.then(
         (full) => {
+          // No tools means nothing would ever call this server to correct the cache.
+          if (full.tools.length === 0) return log("tool list is empty: cache left alone");
           try {
             cache.write(full);
           } catch (e) {
@@ -189,8 +211,12 @@ export const createLazyProxy = (deps: ProxyDeps) => {
       out(fail(msg.id, String(e instanceof Error ? e.message : e)));
       return;
     }
+    if (!real) {
+      out(fail(msg.id, "the MCP server exited before it could be sent the request"));
+      return;
+    }
     if (hasId(msg)) forwarded.add(msg.id);
-    real?.send(msg);
+    real.send(msg);
   };
 
   const handleRequest = async (msg: JsonRpc): Promise<void> => {
@@ -199,7 +225,10 @@ export const createLazyProxy = (deps: ProxyDeps) => {
     if (msg.method === "initialize") {
       clientInit = msg;
       const cached = cache.read();
-      if (cached) return out(reply(id, cached.initialize));
+      if (cached) {
+        announced = cached.initialize.protocolVersion;
+        return out(reply(id, cached.initialize));
+      }
       try {
         return out(reply(id, (await connect()).initialize));
       } catch (e) {
@@ -237,8 +266,10 @@ export const createLazyProxy = (deps: ProxyDeps) => {
         clientReady = true;
         return Promise.resolve();
       }
-      // Cancellations and the like only mean something to a server that is running.
-      real?.send(msg);
+      // Cancellations and the like only mean something to a server that is running, and must land after the
+      // initialize handshake and the request they refer to, so they queue behind the start in progress.
+      const starting = ready;
+      if (starting) void starting.then(() => real?.send(msg), () => {});
       return Promise.resolve();
     },
     close: (): void => real?.kill(),
@@ -268,9 +299,9 @@ export const createFileSchemaCache = (path: string): SchemaCache => ({
     return undefined;
   },
   write: (schema) => {
-    mkdirSync(join(path, ".."), { recursive: true });
+    mkdirSync(join(path, ".."), { recursive: true, mode: 0o700 });
     const tmp = `${path}.${process.pid}.tmp`;
-    writeFileSync(tmp, JSON.stringify(schema));
+    writeFileSync(tmp, JSON.stringify(schema), { mode: 0o600 });
     renameSync(tmp, path);
   },
 });

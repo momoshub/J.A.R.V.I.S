@@ -73,7 +73,8 @@ const lazyStdio = (name: string, def: unknown, lazy: LazyProxy): unknown => {
     ...d,
     type: "stdio",
     command: lazy.runtime,
-    args: [lazy.script, "--name", name, "--cache-dir", lazy.cacheDir, "--", d.command, ...args],
+    // --no-env-file: bun would otherwise load a .env from the turn's cwd and hand it to the real server.
+    args: ["--no-env-file", lazy.script, "--name", name, "--cache-dir", lazy.cacheDir, "--", d.command, ...args],
   };
 };
 

@@ -56,10 +56,10 @@ describe("mcpConfigFor lazy proxy", () => {
     expect(cfg["pg-prod"]).toEqual({
       type: "stdio",
       command: "/bin/bun",
-      args: ["/repo/bin/mcp-lazy-proxy.ts", "--name", "pg-prod", "--cache-dir", "/cache", "--", "/bin/bunx", "dbhub", "--x"],
+      args: ["--no-env-file", "/repo/bin/mcp-lazy-proxy.ts", "--name", "pg-prod", "--cache-dir", "/cache", "--", "/bin/bunx", "dbhub", "--x"],
       env: { DSN: "secret" },
     });
-    expect(cfg.bare.args).toEqual(["/repo/bin/mcp-lazy-proxy.ts", "--name", "bare", "--cache-dir", "/cache", "--", "tool"]);
+    expect(cfg.bare.args).toEqual(["--no-env-file", "/repo/bin/mcp-lazy-proxy.ts", "--name", "bare", "--cache-dir", "/cache", "--", "tool"]);
     expect(cfg.notion).toEqual({ type: "http", url: "https://example.test/mcp" });
   });
 

@@ -261,7 +261,7 @@ describe("createClaudeCliLlm", () => {
     expect(Object.keys(servers)).toEqual(["notion", "acme-pg-prod"]);
     // the stdio server runs behind the lazy proxy, the http one is untouched
     expect(servers["acme-pg-prod"].args).toEqual([
-      expect.stringContaining("mcp-lazy-proxy.ts"), "--name", "acme-pg-prod", "--cache-dir", expect.stringContaining("mcp-schema-cache"), "--", "x",
+      "--no-env-file", expect.stringContaining("mcp-lazy-proxy.ts"), "--name", "acme-pg-prod", "--cache-dir", expect.stringContaining("mcp-schema-cache"), "--", "x",
     ]);
     expect(servers.notion).toEqual({ type: "http" });
 
