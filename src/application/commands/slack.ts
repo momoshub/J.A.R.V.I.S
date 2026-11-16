@@ -407,7 +407,7 @@ Leaves a short note FOR another thread: what you posted there, why, the facts it
       const where = into ? "in that thread" : `in <#${channel}>`;
       return briefed
         ? `posted ${where} 📮 and filed a brief there so its session knows why. Add what you wait for with \`${prefix} brief <thread-link> <text>\`.`
-        : `posted ${where} 📮 - no brief was filed (${threadTs ? "Slack did not say where it landed" : "no thread to file it from"}); run \`${prefix} brief <thread-link> <text>\` if its session needs the reason.`;
+        : `posted ${where} 📮 - no brief was filed (${!threadTs ? "no thread to file it from" : !deps.briefs ? "briefs are not available right now" : "Slack did not say where it landed"}); run \`${prefix} brief <thread-link> <text>\` if its session needs the reason.`;
     },
   },
   {

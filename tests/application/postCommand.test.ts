@@ -81,9 +81,15 @@ describe("post command", () => {
     const { deps } = withBriefs();
     deps.slack = { ...deps.slack!, post: async () => { throw new Error("not_in_channel"); } };
     expect(await dispatchCommand(deps, actor(), "D0SRC", "post C0TEST00002 hi", HERE)).toContain("not in that channel");
+    // In a thread, but briefs are not wired: say that, not that Slack lost the message.
     const plain = build();
     const out = await dispatchCommand(plain, actor(), "D0SRC", "post C0TEST00002 hi", HERE);
-    expect(out).toContain("no brief was filed");
+    expect(out).toContain("no brief was filed (briefs are not available right now)");
+    // Briefs wired, but the transport returned no ts for a top-level post.
+    const { deps: wired } = withBriefs();
+    expect(await dispatchCommand(wired, actor(), "D0SRC", "post C0TEST00002 hi", HERE)).toContain("no brief was filed (Slack did not say where it landed)");
+    // Not in a thread at all.
+    expect(await dispatchCommand(wired, actor(), "D0SRC", "post C0TEST00002 hi")).toContain("no brief was filed (no thread to file it from)");
   });
 
   test("is listed in help for the owner", async () => {
