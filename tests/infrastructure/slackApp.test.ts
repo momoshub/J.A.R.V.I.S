@@ -819,6 +819,43 @@ describe("createHandler streaming truth table", () => {
       expect(JSON.stringify(r.updates[0])).not.toContain("KEEP_REPLY");
     });
 
+    test("a rolled-over reply with the marker is sent on one message, the marker nowhere", async () => {
+      const selfPosts = createSelfPosts();
+      const big = (id: string): LlmStreamEvent => ({ ...card, id, title: `run: ${id}`, status: "in_progress", details: `log at: ${"d".repeat(250)} - line 1` });
+      const cards = Array.from({ length: 40 }, (_, i) => big(`t${i}`));
+      const closing = `${CORRECTION}\nKEEP_REPLY`;
+      const r = turnBuild(selfPosts, postingLlm(selfPosts, "Staging is green.", closing, [...cards, { type: "text", delta: `${CORRECTION}\n` }, { type: "text", delta: "KEEP_" }, { type: "text", delta: "REPLY" }]));
+      await r.handle(r.msg("is staging green", "000.9"));
+      expect(r.said).toHaveLength(0);
+      expect(r.updates.length).toBeGreaterThan(0);
+      expect(JSON.stringify(r.updates)).toContain("NOT green");
+      expect(JSON.stringify(r.updates)).not.toContain("KEEP_REPLY");
+    });
+
+    test("the marker is stripped without a successful self-post too", async () => {
+      const closing = `${CORRECTION}\nKEEP_REPLY`;
+      const noPost = build({ llm: streamingLlm(closing, [{ type: "text", delta: closing }]), streamUpdates: true });
+      await noPost.handle(noPost.msg("is staging green", "000.9"));
+      expect(JSON.stringify(noPost.updates)).toContain("NOT green");
+      expect(JSON.stringify(noPost.updates)).not.toContain("KEEP_REPLY");
+      const selfPosts = createSelfPosts();
+      const other = turnBuild(selfPosts, postingLlm(selfPosts, "x", closing, [], "555.5"), false);
+      await other.handle(other.msg("is staging green", "000.9"));
+      expect(JSON.stringify(other.said)).toContain("NOT green");
+      expect(JSON.stringify(other.said)).not.toContain("KEEP_REPLY");
+    });
+
+    test("a reply that is only the marker posts nothing", async () => {
+      const selfPosts = createSelfPosts();
+      const r = turnBuild(selfPosts, postingLlm(selfPosts, "Staging is green.", "KEEP_REPLY", [card, { type: "text", delta: "KEEP_REPLY" }]));
+      await r.handle(r.msg("is staging green", "000.9"));
+      expect(r.said).toHaveLength(0);
+      expect(r.updates).toHaveLength(0);
+      const quiet = turnBuild(selfPosts, postingLlm(selfPosts, "Staging is green.", "KEEP_REPLY"), false);
+      await quiet.handle(quiet.msg("is staging green", "000.9"));
+      expect(quiet.said).toHaveLength(0);
+    });
+
     test("with the marker and no streaming the reply is posted without it", async () => {
       const selfPosts = createSelfPosts();
       const r = turnBuild(selfPosts, postingLlm(selfPosts, "Staging is green.", `KEEP_REPLY\n${CORRECTION}`), false);

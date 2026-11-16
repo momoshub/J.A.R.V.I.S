@@ -101,7 +101,9 @@ no classes.
   will be dropped, and how to add something (`chat.update` the post, or put a
   `KEEP_REPLY` line in the closing reply). The Slack handler then sends no closing
   reply for that turn unless it carries the marker (`domain/selfPost.ts`); the drop
-  is logged with thread and length. Files go through
+  is logged with thread and length. The marker is never shown, with or without a
+  self-post: it is filtered from the live stream (`createKeepMarkerFilter`), stripped
+  from the closing reply and from every text the tidy-up writes. Files go through
   `/api/slack/file`. `slack-read`, `slack-react`, `slack-file` and `slack-upload`
   are built on it.
 - **Commands from the brain.** The brain runs real commands through

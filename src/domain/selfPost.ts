@@ -36,12 +36,62 @@ export const stripKeepMarker = (reply: string): string => reply.replace(KEEP_LIN
 
 /**
  * What the Slack handler does with the closing reply of a turn: `send` it as
- * `text` (marker removed), or `drop` it. Only a turn with a post of its own
- * drops; a turn that opted in with the marker, and a turn that posted nothing,
- * send.
+ * `text`, or `drop` it. The marker is an instruction to the bot, so it is
+ * stripped whenever it is there, posts or not, and a reply that was only the
+ * marker says nothing and is dropped. Without the marker, a turn with a post
+ * of its own drops and a turn that posted nothing sends the reply as it is.
  */
-export const closingReply = (reply: string, posts: readonly SelfPost[]): { readonly kind: "send"; readonly text: string } | { readonly kind: "drop" } =>
-  posts.length > 0 && !hasKeepMarker(reply) ? { kind: "drop" } : { kind: "send", text: posts.length > 0 ? stripKeepMarker(reply) : reply };
+export const closingReply = (reply: string, posts: readonly SelfPost[]): { readonly kind: "send"; readonly text: string } | { readonly kind: "drop" } => {
+  if (!hasKeepMarker(reply)) return posts.length > 0 ? { kind: "drop" } : { kind: "send", text: reply };
+  const text = stripKeepMarker(reply);
+  return text ? { kind: "send", text } : { kind: "drop" };
+};
+
+/** Could `line` still grow into a marker line (`KEEP_REPLY` with optional blanks around it)? */
+const mayBecomeMarker = (line: string): boolean => {
+  const body = line.trimStart();
+  const word = body.trimEnd();
+  if (body === "") return true;
+  return word === body ? KEEP_REPLY.startsWith(body) : word === KEEP_REPLY;
+};
+
+/** Filters marker lines out of streamed text, chunk by chunk. */
+export type KeepMarkerFilter = {
+  /** The part of the stream that is safe to show now; may be empty while a line is undecided. */
+  readonly push: (delta: string) => string;
+  /** The held trailing line at the end of the stream, unless it is a marker line. */
+  readonly flush: () => string;
+};
+
+/**
+ * Stream deltas carry the marker before the final reply is tidied, and a chunk
+ * can split the token (`KEEP_` + `REPLY`). Complete lines are released minus the
+ * marker lines; the trailing partial line is held while it could still become a
+ * marker line, and released as soon as it cannot.
+ */
+export const createKeepMarkerFilter = (): KeepMarkerFilter => {
+  let pending = "";
+  const lineOut = (line: string): string => (KEEP_LINE.test(line.replace(/\r?\n$/, "")) ? "" : line);
+  return {
+    push: (delta) => {
+      pending += delta;
+      const cut = pending.lastIndexOf("\n") + 1;
+      const complete = pending.slice(0, cut);
+      pending = pending.slice(cut);
+      let out = complete.split(/(?<=\n)/).map(lineOut).join("");
+      if (pending && !mayBecomeMarker(pending)) {
+        out += pending;
+        pending = "";
+      }
+      return out;
+    },
+    flush: () => {
+      const rest = lineOut(pending);
+      pending = "";
+      return rest;
+    },
+  };
+};
 
 const answerOf = (raw: string): { ok: boolean; ts?: string } => {
   try {

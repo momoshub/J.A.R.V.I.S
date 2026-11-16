@@ -90,7 +90,7 @@ import { collapsedBlocks, collapseSteps } from "../../domain/collapseSteps.ts";
 import { usageFooter } from "../../domain/usageFooter.ts";
 import { footerLine, restamp, signedText, SIGNATURES, withFooter } from "../../domain/messageFooter.ts";
 import { isSilenceNote } from "../../domain/silence.ts";
-import { closingReply } from "../../domain/selfPost.ts";
+import { closingReply, stripKeepMarker } from "../../domain/selfPost.ts";
 import type { SelfPosts } from "../../application/selfPosts.ts";
 import {
   decodeKitMeta,
@@ -527,7 +527,7 @@ export const createHandler =
       const posted = result.kind === "reply" && result.turn ? (deps.selfPosts?.posts(result.turn) ?? []) : [];
       const closing = closingReply(result.text, posted);
       if (closing.kind === "drop" || isSilenceNote(result.text)) {
-        if (closing.kind === "drop" && !isQuiet(result.text)) {
+        if (closing.kind === "drop" && posted.length > 0 && !isQuiet(result.text)) {
           log(`closing reply dropped, the turn posted its own answer channel=${msg.channelId} thread=${msg.threadTs} length=${result.text.length}`);
         }
         return dropQuiet(msg, parts, log);
@@ -544,7 +544,10 @@ export const createHandler =
         undefined,
         result.kind === "reply" ? result.trigger : undefined,
       );
-      const tidy = (text: string, withTail: boolean, asWords = false) => {
+      // Every text the tidy-up writes goes through here, so the KEEP_REPLY marker never reaches Slack
+      // whichever path (single message, merged or split rollover, dead stream) rebuilt it.
+      const tidy = (raw: string, withTail: boolean, asWords = false) => {
+        const text = stripKeepMarker(raw);
         const tailCollapsed = withTail ? collapsed : undefined;
         const tailFooter = withTail ? footer : undefined;
         // `asWords`: Slack refused the blocks, so send what they said - never

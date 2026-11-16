@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { applySelfPostCall, closingReply, hasKeepMarker, KEEP_REPLY, stripKeepMarker, type SelfPost } from "../../src/domain/selfPost.ts";
+import { applySelfPostCall, closingReply, createKeepMarkerFilter, hasKeepMarker, KEEP_REPLY, stripKeepMarker, type SelfPost } from "../../src/domain/selfPost.ts";
 
 const posted: SelfPost[] = [{ ts: "9.1" }];
 
@@ -21,9 +21,13 @@ describe("closingReply", () => {
     expect(closingReply(`${KEEP_REPLY}\nCorrection: staging is NOT green.`, posted)).toEqual({ kind: "send", text: "Correction: staging is NOT green." });
     expect(closingReply(`Correction: staging is NOT green.\n\n  ${KEEP_REPLY}  \n`, posted)).toEqual({ kind: "send", text: "Correction: staging is NOT green." });
   });
-  test("a turn with no self-post sends its reply as it is, even a marker-looking line", () => {
+  test("a turn with no self-post sends its reply as it is, and the marker never goes out", () => {
     expect(closingReply("All done.", [])).toEqual({ kind: "send", text: "All done." });
-    expect(closingReply(`${KEEP_REPLY}\nx`, [])).toEqual({ kind: "send", text: `${KEEP_REPLY}\nx` });
+    expect(closingReply(`${KEEP_REPLY}\nx`, [])).toEqual({ kind: "send", text: "x" });
+  });
+  test("a reply that is only the marker is dropped, posts or not", () => {
+    expect(closingReply(KEEP_REPLY, posted)).toEqual({ kind: "drop" });
+    expect(closingReply(` ${KEEP_REPLY} \n`, [])).toEqual({ kind: "drop" });
   });
 });
 
@@ -58,5 +62,35 @@ describe("applySelfPostCall", () => {
     const updated = applySelfPostCall(first, { method: "chat.update", params: { channel: "C1", ts: "5.5", text: "final" }, answer: ok("5.5") }, "1.1");
     expect(updated).toEqual([{ ts: "5.5" }]);
     expect(applySelfPostCall(updated, { method: "chat.update", params: { channel: "C1", ts: "7.7", text: "x" }, answer: ok("7.7") }, "1.1")).toBe(updated);
+  });
+});
+
+describe("createKeepMarkerFilter", () => {
+  const run = (chunks: string[]): string => {
+    const f = createKeepMarkerFilter();
+    return chunks.map(f.push).join("") + f.flush();
+  };
+  test("drops the marker as its own chunk, after a line, or split in pieces", () => {
+    expect(run(["Correction.\n", KEEP_REPLY])).toBe("Correction.\n");
+    expect(run([`Correction.\n${KEEP_REPLY}`])).toBe("Correction.\n");
+    expect(run(["Correction.\nKEEP_", "REPL", "Y"])).toBe("Correction.\n");
+    expect(run(["KEEP_REPLY\n", "text"])).toBe("text");
+    expect(run(["a\n  KEEP", "_REPLY  \nb"])).toBe("a\nb");
+    expect(run(["a\r\nKEEP_REPLY\r\nb"])).toBe("a\r\nb");
+  });
+  test("holds a trailing partial only while it could still be the marker", () => {
+    const f = createKeepMarkerFilter();
+    expect(f.push("ok\nKEEP_")).toBe("ok\n");
+    expect(f.push("REPLX")).toBe("KEEP_REPLX");
+    expect(f.push(" and more")).toBe(" and more");
+    expect(f.flush()).toBe("");
+  });
+  test("releases a held line that never became the marker at the end", () => {
+    expect(run(["ok\nKEEP"])).toBe("ok\nKEEP");
+    expect(run(["ok\nKEEP_REPLY and more"])).toBe("ok\nKEEP_REPLY and more");
+  });
+  test("text with the token inside a sentence passes whole", () => {
+    expect(run(["I will not write KEEP_REPLY here"])).toBe("I will not write KEEP_REPLY here");
+    expect(run(["a", "b ", "c\n", "d"])).toBe("ab c\nd");
   });
 });
