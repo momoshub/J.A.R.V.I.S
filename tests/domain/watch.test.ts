@@ -114,6 +114,17 @@ describe("the messages a watch sends back", () => {
     expect(m).toContain("what blocked it");
   });
 
+  test("a finished worker's hand-back checks the thread first and relays by the style rules", () => {
+    const m = readyMessage("merge its PR", 600_000, workerEventLine("ctx_abc", { kind: "finished", detail: "outcome succeeded" }));
+    expect(m).toContain("conversations.replies");
+    expect(m).toContain("already posted there, say nothing");
+    expect(m).toContain("NO_REPLY");
+    expect(m).toContain("never paste the worker's output");
+    // a worker still waiting for input has no result to relay
+    const waiting = readyMessage("merge its PR", 600_000, workerEventLine("ctx_abc", { kind: "waiting", detail: "Allow edit?" }));
+    expect(waiting).not.toContain("NO_REPLY");
+  });
+
   test("giving up is explicit that nothing was done", () => {
     const m = gaveUpMessage("promote it", 2_700_000, "the build never finished");
     expect(m).toContain("I have not done it");
@@ -532,7 +543,8 @@ describe("the worker hand-back says which of the three happened", () => {
     const m = readyMessage("merge its PR", 600_000, `${line("finished", "outcome succeeded")}\n${usage}`);
     expect(m).toContain("The worker used 3.0k tokens");
     expect(m).toContain("at list price, claude-opus-5-5 (Claude session sess-1)");
-    expect(m).toContain("Say that in one line in your reply");
+    expect(m).toContain("Leave this out of your reply unless someone asked what it cost");
+    expect(m).not.toContain("Say that in one line");
     expect(m).not.toContain('"models"');
     // no usage line, no sentence
     expect(readyMessage("merge its PR", 600_000, line("finished", "outcome succeeded"))).not.toContain("The worker used");
