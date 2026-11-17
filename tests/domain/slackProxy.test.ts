@@ -172,3 +172,44 @@ describe("chat.update on an approval notice", () => {
     expect(checkSlackCall("conversations.replies", { channel: scope.channel, ts: "55.5" }, scope, isNotice).ok).toBe(true);
   });
 });
+
+describe("chat.update outside the turn's channel", () => {
+  const owner = { channel: "C0TEST00001", threadTs: "1700000000.000100", owner: true };
+  const member = { channel: "C0TEST00001", threadTs: "1700000000.000100" };
+  const away = { channel: "C0OTHER0001", ts: "77.7", text: "fixed" };
+
+  test("an owner's turn passes it through, marked so the proxy checks who wrote the message", () => {
+    const call = checkSlackCall("chat.update", away, owner);
+    expect(call.ok && call.ownMessageIn).toEqual({ channel: "C0OTHER0001", ts: "77.7" });
+    expect(call.ok && call.params).toEqual(away);
+  });
+
+  test("a turn that is not the owner's keeps the channel rule", () => {
+    const call = checkSlackCall("chat.update", away, member);
+    expect(call).toMatchObject({ ok: false, status: 403 });
+    expect(!call.ok && call.error).toContain("channel_not_allowed");
+  });
+
+  test("the same channel is unchanged and needs no lookup", () => {
+    const call = checkSlackCall("chat.update", { channel: owner.channel, ts: "77.7", text: "x" }, owner);
+    expect(call.ok && call.ownMessageIn).toBeUndefined();
+  });
+
+  test("an owner's other writes keep the turn-channel rule", () => {
+    for (const [method, param] of [
+      ["chat.postMessage", "channel"],
+      ["reactions.add", "channel"],
+      ["files.completeUploadExternal", "channel_id"],
+    ] as const) {
+      const call = checkSlackCall(method, { [param]: "C0OTHER0001", text: "hi", ts: "77.7" }, owner);
+      expect(call.ok).toBe(false);
+    }
+  });
+
+  test("it needs a message to point at, and a stored notice elsewhere stays untouchable", () => {
+    expect(checkSlackCall("chat.update", { channel: "C0OTHER0001", text: "x" }, owner).ok).toBe(false);
+    const isNotice = (channel: string, ts: string) => channel === "C0OTHER0001" && ts === "77.7";
+    const call = checkSlackCall("chat.update", away, owner, isNotice);
+    expect(!call.ok && call.error).toContain("message_not_allowed");
+  });
+});

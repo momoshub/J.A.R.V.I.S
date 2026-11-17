@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { SELF_POST_NOTE, capBytes, createSlackProxy } from "../../src/application/slackProxy.ts";
+import { SELF_POST_NOTE, capBytes, createSlackProxy, isBotMessage } from "../../src/application/slackProxy.ts";
 import { createSlackTickets } from "../../src/application/slackTickets.ts";
 import { createSelfPosts } from "../../src/application/selfPosts.ts";
 
@@ -10,6 +10,7 @@ type Seen = { url: string; init: RequestInit };
 const setup = (
   answer: (url: string, init: RequestInit) => Response | Promise<Response> = () => Response.json({ ok: true }),
   isNotice?: (channel: string, ts: string) => boolean,
+  botUserId: (() => Promise<string | undefined>) | undefined = undefined,
 ) => {
   const seen: Seen[] = [];
   const tickets = createSlackTickets(() => 0);
@@ -18,7 +19,7 @@ const setup = (
     seen.push({ url: String(url), init: init ?? {} });
     return answer(String(url), init ?? {});
   }) as typeof fetch;
-  const proxy = createSlackProxy({ tickets, botToken: BOT_TOKEN, isNotice, fetchFn, log: (l) => logs.push(l) });
+  const proxy = createSlackProxy({ tickets, botToken: BOT_TOKEN, isNotice, botUserId, fetchFn, log: (l) => logs.push(l) });
   return { proxy, tickets, seen, logs };
 };
 
@@ -322,5 +323,97 @@ describe("Slack proxy notes what a turn posts into its own thread", () => {
     const ticket = tickets.issue({ channel: "C1", threadTs: "1.1", turn: "run-1" });
     const res = await proxy.call({ ticket, method: "chat.postMessage", params: { channel: "C1", text: "x" } });
     expect(res.body).toBe("<html>");
+  });
+});
+
+describe("Slack proxy: an owner's chat.update of the bot's own message elsewhere", () => {
+  const ME = "U0BOT000001";
+  const edit = { channel: "C0OTHER0001", ts: "77.7", text: "fixed" };
+  /** Slack: history shows `message` at 77.7 (or nothing), chat.update succeeds. */
+  const slack = (message: Record<string, unknown> | undefined, replies = message) => (url: string) => {
+    if (url.endsWith("conversations.history")) return Response.json({ ok: true, messages: message ? [message] : [] });
+    if (url.endsWith("conversations.replies")) return Response.json({ ok: true, messages: replies ? [replies] : [] });
+    return Response.json({ ok: true, ts: "77.7" });
+  };
+  const methods = (seen: Seen[]) => seen.map((s) => s.url.split("/").pop());
+
+  test("owner + a message the bot wrote: read first, then updated, and logged", async () => {
+    const { proxy, tickets, seen, logs } = setup(slack({ ts: "77.7", user: ME }), undefined, async () => ME);
+    const ticket = tickets.issue({ channel: "C0TEST00002", owner: true });
+    const answer = await proxy.call({ ticket, method: "chat.update", params: edit });
+    expect(answer.status).toBe(200);
+    expect(methods(seen)).toEqual(["conversations.history", "chat.update"]);
+    expect(String(seen[1]!.init.body)).toBe("channel=C0OTHER0001&ts=77.7&text=fixed");
+    expect(logs.join("\n")).toContain("chat.update channel=C0OTHER0001 ts=77.7");
+    expect(logs.join("\n")).not.toContain("fixed");
+  });
+
+  test("a thread reply the bot wrote is found through conversations.replies", async () => {
+    const { proxy, tickets, seen } = setup(slack(undefined, { ts: "77.7", user: ME }), undefined, async () => ME);
+    const ticket = tickets.issue({ channel: "C0TEST00002", owner: true });
+    expect((await proxy.call({ ticket, method: "chat.update", params: edit })).status).toBe(200);
+    expect(methods(seen)).toEqual(["conversations.history", "conversations.replies", "chat.update"]);
+  });
+
+  test("owner + a message someone else wrote is refused and never updated", async () => {
+    const { proxy, tickets, seen, logs } = setup(slack({ ts: "77.7", user: "U0PAL0001" }), undefined, async () => ME);
+    const ticket = tickets.issue({ channel: "C0TEST00002", owner: true });
+    const answer = await proxy.call({ ticket, method: "chat.update", params: edit });
+    expect(answer.status).toBe(403);
+    expect(JSON.parse(answer.body).error).toContain("message_not_allowed");
+    expect(methods(seen)).not.toContain("chat.update");
+    expect(logs.join("\n")).toContain("refused chat.update");
+  });
+
+  test("owner + a message Slack cannot show, an unknown bot id, or a failed read are refused", async () => {
+    for (const [answer, me] of [
+      [slack(undefined), async () => ME],
+      [slack({ ts: "77.7", user: ME }), async () => undefined],
+      [() => Response.json({ ok: false, error: "channel_not_found" }), async () => ME],
+    ] as const) {
+      const { proxy, tickets, seen } = setup(answer, undefined, me);
+      const ticket = tickets.issue({ channel: "C0TEST00002", owner: true });
+      expect((await proxy.call({ ticket, method: "chat.update", params: edit })).status).toBe(403);
+      expect(methods(seen)).not.toContain("chat.update");
+    }
+  });
+
+  test("a turn that is not the owner's is refused without any Slack call", async () => {
+    const { proxy, tickets, seen } = setup(slack({ ts: "77.7", user: ME }), undefined, async () => ME);
+    const ticket = tickets.issue({ channel: "C0TEST00002" });
+    const answer = await proxy.call({ ticket, method: "chat.update", params: edit });
+    expect(answer.status).toBe(403);
+    expect(JSON.parse(answer.body).error).toContain("channel_not_allowed");
+    expect(seen).toHaveLength(0);
+  });
+
+  test("the owner's chat.postMessage elsewhere is still refused", async () => {
+    const { proxy, tickets, seen } = setup(slack({ ts: "77.7", user: ME }), undefined, async () => ME);
+    const ticket = tickets.issue({ channel: "C0TEST00002", owner: true });
+    const answer = await proxy.call({ ticket, method: "chat.postMessage", params: { channel: "C0OTHER0001", text: "hi" } });
+    expect(answer.status).toBe(403);
+    expect(seen).toHaveLength(0);
+  });
+
+  test("in the turn's own channel nothing is read first", async () => {
+    const { proxy, tickets, seen } = setup(slack(undefined), undefined, async () => ME);
+    const ticket = tickets.issue({ channel: "C0OTHER0001", owner: true });
+    expect((await proxy.call({ ticket, method: "chat.update", params: edit })).status).toBe(200);
+    expect(methods(seen)).toEqual(["chat.update"]);
+  });
+
+  test("an approval notice in another channel stays refused for the owner too", async () => {
+    const { proxy, tickets, seen } = setup(slack({ ts: "77.7", user: ME }), (c, t) => c === "C0OTHER0001" && t === "77.7", async () => ME);
+    const ticket = tickets.issue({ channel: "C0TEST00002", owner: true });
+    expect((await proxy.call({ ticket, method: "chat.update", params: edit })).status).toBe(403);
+    expect(seen).toHaveLength(0);
+  });
+
+  test("isBotMessage: only the bot's own user id counts", () => {
+    expect(isBotMessage({ user: ME }, ME)).toBe(true);
+    expect(isBotMessage({ user: "U0PAL0001" }, ME)).toBe(false);
+    expect(isBotMessage({ bot_id: "a-bot-id-alone" }, ME)).toBe(false);
+    expect(isBotMessage({ user: ME }, undefined)).toBe(false);
+    expect(isBotMessage(undefined, ME)).toBe(false);
   });
 });

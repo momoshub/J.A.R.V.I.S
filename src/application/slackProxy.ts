@@ -9,6 +9,11 @@
  * as they did when they called Slack themselves.
  *
  * Nothing about a call's content is logged, only who was refused and why.
+ *
+ * One call needs Slack's word before it goes out: an owner's `chat.update`
+ * outside the turn's channel. The bot reads the target message first and only
+ * lets the edit through when its own id wrote it (`isBotMessage`); unreadable,
+ * missing or anyone else's, it is refused.
  */
 import { checkSlackCall, isAuditedMethod, isSlackFileUrl, type IsNotice } from "../domain/slackProxy.ts";
 import { KEEP_REPLY } from "../domain/selfPost.ts";
@@ -29,6 +34,8 @@ export type SlackProxyDeps = {
   botToken: string;
   /** Approval notices the bot posted, which a turn may not `chat.update` (see `domain/slackProxy.ts`). */
   isNotice?: IsNotice;
+  /** The bot's own Slack user id; without it no message can be shown to be the bot's, so no cross-channel edit is allowed. */
+  botUserId?: () => Promise<string | undefined>;
   /** Where a turn's successful posts into its own thread are noted, so the turn's closing reply can be dropped. */
   selfPosts?: SelfPosts;
   fetchFn?: typeof fetch;
@@ -88,6 +95,12 @@ export const capBytes = (body: ReadableStream<Uint8Array>, max: number): Readabl
   );
 };
 
+/** Did the bot write this message? `user` is the bot's own id; a webhook or another app's post carries a different one. */
+export const isBotMessage = (message: unknown, botUserId: string | undefined): boolean => {
+  if (!botUserId || !message || typeof message !== "object") return false;
+  return (message as { user?: unknown }).user === botUserId;
+};
+
 export const createSlackProxy = (deps: SlackProxyDeps): SlackProxy => {
   const doFetch = deps.fetchFn ?? fetch;
   const log = deps.log ?? (() => {});
@@ -95,17 +108,59 @@ export const createSlackProxy = (deps: SlackProxyDeps): SlackProxy => {
   const redeem = (ticket: unknown) =>
     typeof ticket === "string" && ticket ? deps.tickets.redeem(ticket.trim()) : ({ ok: false, reason: "unknown", limit: 0 } as const);
 
+  const readSlack = async (method: string, params: Record<string, string>): Promise<{ ok?: boolean; messages?: unknown[] } | undefined> => {
+    const res = await doFetch(`${SLACK_API}${method}`, {
+      method: "POST",
+      headers: { Authorization: `Bearer ${deps.botToken}`, "Content-Type": "application/x-www-form-urlencoded; charset=utf-8" },
+      body: new URLSearchParams(params).toString(),
+      signal: AbortSignal.timeout(CALL_TIMEOUT_MS),
+    });
+    if (!res.ok) return undefined;
+    return (await res.json().catch(() => undefined)) as { ok?: boolean; messages?: unknown[] } | undefined;
+  };
+
+  /**
+   * True only when Slack shows the message at `ts` and the bot wrote it. A top-level message comes from `conversations.history`,
+   * a thread reply only from `conversations.replies`, so both are tried; any error or an empty answer is "not shown" (fail closed).
+   */
+  const botWrote = async (channel: string, ts: string): Promise<boolean> => {
+    const me = await deps.botUserId?.().catch(() => undefined);
+    if (!me) return false;
+    const found = async (method: string, params: Record<string, string>): Promise<unknown> => {
+      const answer = await readSlack(method, params).catch(() => undefined);
+      return answer?.ok ? answer.messages?.find((m) => (m as { ts?: unknown }).ts === ts) : undefined;
+    };
+    const message =
+      (await found("conversations.history", { channel, latest: ts, oldest: ts, inclusive: "true", limit: "1" })) ??
+      (await found("conversations.replies", { channel, ts, inclusive: "true", limit: "1" }));
+    return isBotMessage(message, me);
+  };
+
   return {
     call: async ({ ticket, method, params }) => {
       const resolved = redeem(ticket);
       if (!resolved.ok) return failure(401, ticketError(resolved.reason, resolved.limit));
-      const checked = checkSlackCall(method, params, { channel: resolved.ctx.channel, threadTs: resolved.ctx.threadTs }, deps.isNotice);
+      const checked = checkSlackCall(
+        method,
+        params,
+        { channel: resolved.ctx.channel, threadTs: resolved.ctx.threadTs, owner: resolved.ctx.owner },
+        deps.isNotice,
+      );
       if (!checked.ok) {
         log(`slack proxy refused ${String(method)}: ${checked.error}`);
         return failure(checked.status, checked.error);
       }
-      // method and channel only, never the content
-      if (isAuditedMethod(checked.method)) log(`slack proxy ${checked.method} channel=${checked.params.channel ?? checked.params.channel_id ?? "-"}`);
+      if (checked.ownMessageIn) {
+        const { channel, ts } = checked.ownMessageIn;
+        if (!(await botWrote(channel, ts))) {
+          log(`slack proxy refused ${checked.method} outside the turn's channel: channel=${channel} ts=${ts} is not shown to be the bot's own message`);
+          return failure(403, "message_not_allowed: chat.update outside this turn's channel only edits a message the bot itself wrote, and Slack did not show that for this one");
+        }
+        log(`slack proxy ${checked.method} channel=${channel} ts=${ts} (owner's turn, the bot's own message outside the turn's channel)`);
+      } else if (isAuditedMethod(checked.method)) {
+        // method and channel only, never the content
+        log(`slack proxy ${checked.method} channel=${checked.params.channel ?? checked.params.channel_id ?? "-"}`);
+      }
       try {
         const res = await doFetch(`${SLACK_API}${checked.method}`, {
           method: "POST",
@@ -126,7 +181,7 @@ export const createSlackProxy = (deps: SlackProxyDeps): SlackProxy => {
           };
         }
         // noted per turn, only what Slack accepted, and only into the turn's own thread
-        if (res.ok && checked.method.startsWith("chat.") && resolved.ctx.turn) {
+        if (res.ok && checked.method.startsWith("chat.") && resolved.ctx.turn && !checked.ownMessageIn) {
           const landed = deps.selfPosts?.record(resolved.ctx.turn, resolved.ctx.threadTs, { method: checked.method, params: checked.params, answer: text });
           if (landed) return { status: res.status, body: withSelfPostNote(text) };
         }
