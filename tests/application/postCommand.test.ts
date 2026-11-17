@@ -27,6 +27,14 @@ describe("post command", () => {
     expect(unread[0]).toMatchObject({ fromChannel: "D0SRC", fromThread: HERE.threadTs, author: OWNER });
   });
 
+  test("the footer never names the requester: `by` is undefined even when the actor has a display name", async () => {
+    const deps = build();
+    const bys: (string | undefined)[] = [];
+    deps.slack = { ...deps.slack!, post: async (channel, _text, _threadTs, by) => (bys.push(by), { channel, ts: "1800000000.000100" }) };
+    await dispatchCommand(deps, actor({ displayName: "Kai" }), "D0SRC", "post C0TEST00002 hi", HERE);
+    expect(bys).toEqual([undefined]);
+  });
+
   test("a thread link posts into that thread and briefs it", async () => {
     const { deps, briefs } = withBriefs();
     const out = await dispatchCommand(deps, actor(), "D0SRC", `post <${LINK}?thread_ts=1787000000.000100&cid=C0TEST00001> hello there`, HERE);
