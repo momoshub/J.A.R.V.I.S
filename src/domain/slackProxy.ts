@@ -12,8 +12,11 @@
  * are, because a prompt-injected turn that could post anywhere would be an
  * exfiltration channel of its own.
  *
- * A write to another channel is deliberately not allowed here, owner or not: the owner's
- * route is the `post` command (role gate + audit log), which the bot runs itself.
+ * A new message in another channel is deliberately not allowed here, owner or not: the owner's
+ * route is the `post` command (role gate + audit log), which the bot runs itself. The one
+ * exception is `chat.update` in an owner's turn: it may edit a message the bot itself wrote
+ * anywhere (a bad `post` has to be fixable from a DM). This file only lets the call through
+ * marked `ownMessageIn`; the proxy then reads the message and refuses unless the bot wrote it.
  *
  * Pure: no I/O, so the whole policy is testable without Slack.
  */
@@ -49,7 +52,12 @@ export const SLACK_PROXY_METHODS = {
 } as const;
 
 /** What the ticket allows: the channel a write may target (none means read-only) and the thread the turn runs in. */
-export type SlackScope = { readonly channel?: string; readonly threadTs?: string };
+export type SlackScope = {
+  readonly channel?: string;
+  readonly threadTs?: string;
+  /** The turn was started by the owner. Nobody else's turn may `chat.update` outside its channel. */
+  readonly owner?: boolean;
+};
 
 /**
  * Writes that post a new message, with the parameter that places it in a thread.
@@ -64,7 +72,13 @@ const THREADED_WRITES: Readonly<Record<string, string>> = {
 export const TOP_LEVEL_THREAD = "none";
 
 export type SlackCallCheck =
-  | { readonly ok: true; readonly method: string; readonly params: Readonly<Record<string, string>> }
+  | {
+      readonly ok: true;
+      readonly method: string;
+      readonly params: Readonly<Record<string, string>>;
+      /** Set on an owner's `chat.update` outside the turn's channel: the proxy must first confirm the bot wrote this message. */
+      readonly ownMessageIn?: { readonly channel: string; readonly ts: string };
+    }
   | { readonly ok: false; readonly status: 400 | 403; readonly error: string };
 
 /** One call carries no more than this, which keeps a runaway loop from posting a book. */
@@ -122,12 +136,18 @@ export const checkSlackCall = (method: unknown, rawParams: unknown, scope: Slack
   }
   if (!scope.channel) return refuse(403, `read_only_ticket: ${method} writes, and this ticket has no channel`);
   const channelParam = WRITE_METHODS[method];
-  if (channelParam && params[channelParam] !== scope.channel) {
-    return refuse(403, `channel_not_allowed: ${method} may only act in the channel this turn runs in (${scope.channel})`);
+  const target = channelParam ? params[channelParam] : undefined;
+  let ownMessageIn: { channel: string; ts: string } | undefined;
+  if (channelParam && target !== scope.channel) {
+    // Only the owner's chat.update, and only with a message named; whose message it is gets checked against Slack by the proxy.
+    if (method !== "chat.update" || !scope.owner || !target || !params.ts) {
+      return refuse(403, `channel_not_allowed: ${method} may only act in the channel this turn runs in (${scope.channel})`);
+    }
+    ownMessageIn = { channel: target, ts: params.ts };
   }
   // A notice's buttons decide things, and a notice can sit in a thread the turn runs in: a turn that could rewrite one
   // could relabel a button so the owner's click means something else. The turn's own messages stay editable.
-  if (method === "chat.update" && params.ts && isNotice?.(scope.channel, params.ts)) {
+  if (method === "chat.update" && params.ts && isNotice?.(params.channel ?? scope.channel, params.ts)) {
     return refuse(403, "message_not_allowed: chat.update may not rewrite an approval notice, only the turn's own messages");
   }
   // `channels` is the older way to share a file into several places at once.
@@ -145,7 +165,7 @@ export const checkSlackCall = (method: unknown, rawParams: unknown, scope: Slack
     // Not given (or blank) and the turn runs in a thread: the reply belongs there. An explicit thread_ts is kept as is.
     if (!given && scope.threadTs) return { ok: true, method, params: { ...params, [threadParam]: scope.threadTs } };
   }
-  return { ok: true, method, params };
+  return { ok: true, method, params, ...(ownMessageIn ? { ownMessageIn } : {}) };
 };
 
 /** Calls worth a log line: everything that writes, and a join (visible to the whole channel). */

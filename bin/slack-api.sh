@@ -19,7 +19,8 @@
 #   write  chat.postMessage, chat.update, reactions.add,
 #          files.getUploadURLExternal, files.completeUploadExternal
 # A write only works in the channel this turn runs in (`channel_not_allowed`
-# otherwise). Values are plain strings; `blocks` and `files` are JSON strings.
+# otherwise). One exception: in the owner's turn, chat.update works in any
+# channel on a message the bot itself wrote (checked against Slack first). Values are plain strings; `blocks` and `files` are JSON strings.
 # When the turn runs in a thread, chat.postMessage and
 # files.completeUploadExternal without `thread_ts` are posted into that thread
 # (the bot fills it in); `thread_ts=none` is the explicit opt-out for a

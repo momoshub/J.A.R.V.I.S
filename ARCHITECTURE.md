@@ -88,14 +88,17 @@ no classes.
   turn's Bash is driven by a model that reads untrusted text. What a turn needs
   from Slack goes through `bin/slack-api.sh`: it presents the turn's
   `JARVIS_SLACK_TICKET` (`slackTickets`, minted when the process starts and
-  revoked when it exits, no actor and no role) to `POST /api/slack/proxy`, where
+  revoked when it exits, no actor and no role, only an owner bit) to `POST /api/slack/proxy`, where
   `slackProxy` checks the ticket, applies the method allowlist
   (`domain/slackProxy.ts`: a fixed set of reads, and writes only into the
   turn's own channel; a new post from a turn in a thread defaults to that
   thread, `thread_ts=none` posts at the top level; `chat.update` on a message
   the bot stored as an approval notice is refused, looked up in the database
   with `db/noticeLookup.ts`) and calls Slack with the
-  token it holds. A post or update that lands in the turn's own thread is also
+  token it holds. In an owner's turn only, `chat.update` may also target a message in
+  another channel, and only when the bot reads it back (`conversations.history`, else
+  `conversations.replies`) and finds its own user id as the author; anything else
+  there is refused, and the call is logged with the channel and ts. A post or update that lands in the turn's own thread is also
   noted per turn (`selfPosts`, keyed by the turn's run ticket carried on the Slack
   ticket) and the answer handed back carries a `jarvis_note` saying the closing reply
   will be dropped, and how to add something (`chat.update` the post, or put a

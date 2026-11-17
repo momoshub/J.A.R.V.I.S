@@ -838,13 +838,14 @@ The helper presents `JARVIS_SLACK_TICKET`, a ticket minted for that one process
 when it starts and revoked when it exits, to the bot's loopback endpoint
 (`POST /api/slack/proxy`). The bot checks the ticket, checks the method against
 an allowlist and calls Slack with the token it holds; Slack's own answer comes
-back unchanged. The ticket names no person and carries no role: it cannot run a
+back unchanged. The ticket names no person and carries no role, only whether the turn is the owner's: it cannot run a
 command or act on GitHub, and a command ticket cannot call Slack.
 
 | | methods |
 |---|---|
 | read, any channel | `conversations.history`, `conversations.replies`, `conversations.info`, `conversations.list` (public channels), `conversations.join` (public channels), `users.info` |
 | write, only the channel the turn runs in | `chat.postMessage`, `chat.update`, `reactions.add`, `files.getUploadURLExternal`, `files.completeUploadExternal` |
+| write, owner's turn, any channel | `chat.update` on a message the bot itself wrote (the bot reads it first and refuses any other author's) |
 | files | a private file is `bin/slack-file.sh`, through `POST /api/slack/file`: Slack file urls only, and the token never follows a redirect off Slack |
 
 A `chat.postMessage` or `files.completeUploadExternal` from a turn that runs in a

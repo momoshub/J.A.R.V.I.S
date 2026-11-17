@@ -331,6 +331,8 @@ const main = async () => {
     botToken: config.slackBotToken,
     // A turn may not rewrite an approval notice: its buttons decide things.
     isNotice: createNoticeLookup(db),
+    // An owner's chat.update outside the turn's channel is allowed only on a message this id wrote.
+    botUserId: () => slackAdmin.botUserId(),
     log: (line) => console.error(`[slack-proxy] ${line}`),
   });
   // Scoped GitHub App tickets for Orca workers; revoked when `watch worker` sees the worker end.
@@ -552,6 +554,7 @@ const main = async () => {
         channel: bill.channel,
         ...(bill.threadTs ? { threadTs: bill.threadTs } : {}),
         ...(turn ? { turn } : {}),
+        ...(bill.actor === config.ownerSlackId ? { owner: true } : {}),
       });
       return { token, end: () => slackTickets.revoke(token) };
     },
