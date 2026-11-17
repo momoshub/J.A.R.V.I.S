@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { openDatabase } from "../../src/infrastructure/db/client.ts";
+import { createBugReportRepo } from "../../src/infrastructure/db/bugReportRepo.ts";
 import { createCommandApprovalRepo } from "../../src/infrastructure/db/commandApprovalRepo.ts";
 import { createLearningsRepo } from "../../src/infrastructure/db/learningsRepo.ts";
 import { createNoticeLookup } from "../../src/infrastructure/db/noticeLookup.ts";
@@ -16,6 +17,14 @@ describe("noticeLookup", () => {
     approvals.setNotice(a.id, "D2", "20.2");
     expect(lookup("C1", "10.1")).toBe(true);
     expect(lookup("D2", "20.2")).toBe(true);
+  });
+
+  test("a bug report's approval notice is found too", () => {
+    const db = openDatabase(":memory:");
+    const bugs = createBugReportRepo(db);
+    const b = bugs.add({ fingerprint: "t|issue", threadLink: "https://acme.slack.com/archives/C1/p1", issue: "issue", summary: "why", plan: "fix", reportedIn: "C1" }, 1);
+    bugs.setNotice(b.id, "C3", "30.3");
+    expect(createNoticeLookup(db)("C3", "30.3")).toBe(true);
   });
 
   test("anything else is not: another ts, the right ts in another channel, empty values", () => {

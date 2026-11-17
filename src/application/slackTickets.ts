@@ -5,7 +5,7 @@
  * names no actor and carries no role, so it cannot run a command or act on
  * GitHub, and a command ticket cannot call Slack. All it can do is ask the
  * Slack proxy for the methods on its allowlist, writing only into the channel
- * it was minted for.
+ * it was minted for (an owner's turn may also edit the bot's own messages elsewhere).
  *
  * A ticket belongs to ONE spawned process: the CLI adapter mints it when the
  * turn starts, puts it in that process's environment and revokes it when the
@@ -35,6 +35,8 @@ export type SlackTicketContext = {
    * the key of what the turn posted itself (`selfPosts`); none, no such record.
    */
   turn?: string;
+  /** The turn was started by the owner: its `chat.update` may reach a message the bot wrote in any channel (`domain/slackProxy.ts`). Never a role or a person, only this one bit. */
+  owner?: boolean;
 };
 
 export type SlackTicketRefusal = "unknown" | "expired" | "spent";
@@ -87,6 +89,7 @@ export const createSlackTickets = (
           ...(entry.channel ? { channel: entry.channel } : {}),
           ...(entry.threadTs ? { threadTs: entry.threadTs } : {}),
           ...(entry.turn ? { turn: entry.turn } : {}),
+          ...(entry.owner ? { owner: true } : {}),
         },
         left: calls - entry.used,
       };

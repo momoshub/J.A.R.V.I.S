@@ -16,6 +16,14 @@ describe("Slack tickets", () => {
     expect(r.ok && r.ctx).toEqual({ channel: "C1", threadTs: "1.1", turn: "run-1" });
   });
 
+  test("the owner bit is carried only when set", () => {
+    const tickets = createSlackTickets(() => 0);
+    const owner = tickets.redeem(tickets.issue({ channel: "C1", owner: true }));
+    expect(owner.ok && owner.ctx).toEqual({ channel: "C1", owner: true });
+    const other = tickets.redeem(tickets.issue({ channel: "C1", owner: false }));
+    expect(other.ok && other.ctx).toEqual({ channel: "C1" });
+  });
+
   test("a read-only ticket carries no channel", () => {
     const tickets = createSlackTickets(() => 0);
     const r = tickets.redeem(tickets.issue({}));
