@@ -348,11 +348,31 @@ describe("Slack proxy: an owner's chat.update of the bot's own message elsewhere
     expect(logs.join("\n")).not.toContain("fixed");
   });
 
-  test("a thread reply the bot wrote is found through conversations.replies", async () => {
-    const { proxy, tickets, seen } = setup(slack(undefined, { ts: "77.7", user: ME }), undefined, async () => ME);
+  /** Slack's thread read: the parent first, then the reply. History shows no thread reply. */
+  const thread = (parentUser: string, replyUser: string) => (url: string) => {
+    if (url.endsWith("conversations.history")) return Response.json({ ok: true, messages: [] });
+    if (url.endsWith("conversations.replies")) {
+      return Response.json({ ok: true, messages: [{ ts: "70.0", user: parentUser }, { ts: "77.7", user: replyUser }] });
+    }
+    return Response.json({ ok: true, ts: "77.7" });
+  };
+
+  test("a thread reply the bot wrote is found through conversations.replies, whoever wrote the parent", async () => {
+    const { proxy, tickets, seen } = setup(thread("U0PAL0001", ME), undefined, async () => ME);
     const ticket = tickets.issue({ channel: "C0TEST00002", owner: true });
     expect((await proxy.call({ ticket, method: "chat.update", params: edit })).status).toBe(200);
     expect(methods(seen)).toEqual(["conversations.history", "conversations.replies", "chat.update"]);
+    const read = new URLSearchParams(String(seen[1]!.init.body));
+    expect(read.get("oldest")).toBe("77.7");
+    expect(read.get("latest")).toBe("77.7");
+    expect(read.get("limit")).not.toBe("1");
+  });
+
+  test("the bot's parent does not vouch for another author's reply: the match is on the exact ts", async () => {
+    const { proxy, tickets, seen } = setup(thread(ME, "U0PAL0001"), undefined, async () => ME);
+    const ticket = tickets.issue({ channel: "C0TEST00002", owner: true });
+    expect((await proxy.call({ ticket, method: "chat.update", params: edit })).status).toBe(403);
+    expect(methods(seen)).not.toContain("chat.update");
   });
 
   test("owner + a message someone else wrote is refused and never updated", async () => {

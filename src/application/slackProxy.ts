@@ -121,7 +121,7 @@ export const createSlackProxy = (deps: SlackProxyDeps): SlackProxy => {
 
   /**
    * True only when Slack shows the message at `ts` and the bot wrote it. A top-level message comes from `conversations.history`,
-   * a thread reply only from `conversations.replies`, so both are tried; any error or an empty answer is "not shown" (fail closed).
+   * a thread reply only from `conversations.replies` (which starts at the thread's parent, so the read is bounded to that ts and the match is on the exact ts, never `messages[0]`), so both are tried; any error or an empty answer is "not shown" (fail closed).
    */
   const botWrote = async (channel: string, ts: string): Promise<boolean> => {
     const me = await deps.botUserId?.().catch(() => undefined);
@@ -132,7 +132,7 @@ export const createSlackProxy = (deps: SlackProxyDeps): SlackProxy => {
     };
     const message =
       (await found("conversations.history", { channel, latest: ts, oldest: ts, inclusive: "true", limit: "1" })) ??
-      (await found("conversations.replies", { channel, ts, inclusive: "true", limit: "1" }));
+      (await found("conversations.replies", { channel, ts, oldest: ts, latest: ts, inclusive: "true", limit: "10" }));
     return isBotMessage(message, me);
   };
 
