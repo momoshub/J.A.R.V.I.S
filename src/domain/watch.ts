@@ -17,6 +17,7 @@
  * that carries on. Polling costs nothing - no model, no session - and the
  * thread stays live the whole time.
  */
+import { NO_REPLY } from "./tellPrompt.ts";
 import { parseWorkerUsageLine, usageSummary } from "./workerUsage.ts";
 
 /** How often a watch may poll at the fastest. Anything tighter is a spin. */
@@ -502,6 +503,14 @@ const workerLead = (output: string, waited: number): { readonly lead: string; re
   return { waiting: true, lead: `Orca worker ${id} is WAITING FOR INPUT after ${humanDuration(waited)} (${detail}) - it has not finished. See what it is asking with ${show} (or its \`ask\` in \`orca orchestration inbox\`). If you can answer or unblock it yourself, do, then set a new \`watch worker ${id}\` for the rest. If only a person can answer, ask them here once, set \`watch reply\` on this thread to unblock it when they answer, and set \`watch worker ${id} --past-wait\` so this same question does not hand the thread back again - it then fires when the worker finishes or dies, or goes idle at its prompt after the person has unblocked it. What you planned for when it is done:` };
 };
 
+/**
+ * What a turn handed a finished (or dead) worker does with its result. A
+ * thread that asked for no spam ("do it in the background, only post the
+ * result here") got the verdict twice: the worker's own post, then a raw
+ * relay of its output - cost line included - from this hand-back.
+ */
+const RELAY_RULES = `The worker's result may already be in this thread (it posts its own, or an earlier turn did). Before you say anything, read the thread (\`"$BOT_SLACK_CALL" conversations.replies\`) and check: if the verdict or result is already posted there, say nothing and end the turn with the single word ${NO_REPLY}. If it is not, relay it by the normal style rules - summarise in your own voice, short, never paste the worker's output - and leave out anything the thread did not ask for.`;
+
 /** A task row the batch check prints: `task_<id> <status>`. */
 const BLOCKED_TASK = /^(task_[A-Za-z0-9_-]+) blocked$/gm;
 
@@ -542,8 +551,9 @@ export const readyMessage = (note: string, waited: number, output?: string): str
     worker?.waiting
       ? "Unblock it or finish its job yourself, now, when you can answer it from what you know or can look up; only when the question is genuinely a person's to answer, ask them here in one line. Do not do the planned part above until the worker has finished."
       : "Do it yourself, now, with the commands and tools you already have. This was agreed before the wait - you are finishing a job, not proposing one, so do not ask whether to go ahead and do not hand the steps back for someone else to type. If something genuinely stops you, say in one line what you tried and what blocked it.",
+    worker && !worker.waiting ? `\n${RELAY_RULES}` : "",
     usage
-      ? `\nThe worker used ${usageSummary(usage)} (Claude session ${usage.sessionId}). Say that in one line in your reply, with the worker's result.`
+      ? `\nThe worker used ${usageSummary(usage)} (Claude session ${usage.sessionId}). Leave this out of your reply unless someone asked what it cost; \`worker-cost\` has it stored.`
       : "",
     tail ? `\nWhat the check last printed:\n${tail}` : "",
   ]
