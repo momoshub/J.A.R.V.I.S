@@ -1223,6 +1223,8 @@ follow-up messages, not for an untagged reply under a followed thread, and not
 for a GitHub review request (the review inbox only announces it, with the line to
 type). A bare PR link typed after the prefix is not a review either.
 
+That closes the command, not reviewing. Asked in plain words to review a PR (no `review`/`approve` tag), the bot treats it as an ordinary task: a standalone reviewer worker (`--model opus`, or the Agent tool for a role without Orca) posts one real review, blockers only, and the bot acts on its verdict, merging only if the person asked and CI is green.
+
 This matters beyond convenience: only the command can offer the box that takes a
 Claude token, so a spoken request used to get a description of the token instead
 of the button that accepts one.
