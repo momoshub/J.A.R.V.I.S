@@ -741,3 +741,29 @@ describe("sandboxed shell note", () => {
     expect(guided).toContain(SANDBOX_SHELL_NOTE);
   });
 });
+
+describe("the Slack methods line", () => {
+  const line = (prompt: string) => prompt.match(/It allows these methods: ([^;]+);/)?.[1] ?? "";
+
+  test("lists the built-in methods by default", () => {
+    expect(line(buildSystemPrompt({ learnings: [] }))).toBe(
+      "conversations.history, conversations.replies, conversations.info, conversations.list, conversations.join, users.info, chat.postMessage, chat.update, reactions.add, files.getUploadURLExternal, files.completeUploadExternal",
+    );
+  });
+
+  test("carries the owner's extra methods too", () => {
+    const methods = line(
+      buildSystemPrompt({
+        learnings: [],
+        slackExtraMethods: [
+          { method: "conversations.setTopic", kind: "write", channelParam: "channel" },
+          { method: "users.list", kind: "read" },
+        ],
+      }),
+    );
+    expect(methods).toContain("users.list");
+    expect(methods.endsWith("conversations.setTopic")).toBe(true);
+    expect(methods).toContain("chat.postMessage");
+  });
+});
+

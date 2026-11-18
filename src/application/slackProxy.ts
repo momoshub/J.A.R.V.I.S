@@ -3,7 +3,7 @@
  * the bot token.
  *
  * A helper in `bin/` presents the turn's ticket and a method; this checks the
- * ticket, applies the allowlist (`domain/slackProxy.ts`), adds the token and
+ * ticket, applies the allowlist (`domain/slackProxy.ts`, the built-in lists plus the owner's extras), adds the token and
  * calls Slack. The token never leaves this closure, and what comes back is
  * Slack's own answer, unchanged, so the helpers read `ok` and `error` exactly
  * as they did when they called Slack themselves.
@@ -15,7 +15,7 @@
  * lets the edit through when its own id wrote it (`isBotMessage`); unreadable,
  * missing or anyone else's, it is refused.
  */
-import { checkSlackCall, isAuditedMethod, isSlackFileUrl, type IsNotice } from "../domain/slackProxy.ts";
+import { checkSlackCall, isAuditedMethod, isSlackFileUrl, type ExtraSlackMethods, type IsNotice } from "../domain/slackProxy.ts";
 import { KEEP_REPLY } from "../domain/selfPost.ts";
 import type { SelfPosts } from "./selfPosts.ts";
 import type { SlackTickets, SlackTicketRefusal } from "./slackTickets.ts";
@@ -38,6 +38,8 @@ export type SlackProxyDeps = {
   botUserId?: () => Promise<string | undefined>;
   /** Where a turn's successful posts into its own thread are noted, so the turn's closing reply can be dropped. */
   selfPosts?: SelfPosts;
+  /** The methods the owner added beyond the built-in lists (`slack-methods`), read per call so a change applies at once. */
+  extraMethods?: () => ExtraSlackMethods;
   fetchFn?: typeof fetch;
   log?: (line: string) => void;
 };
@@ -140,11 +142,13 @@ export const createSlackProxy = (deps: SlackProxyDeps): SlackProxy => {
     call: async ({ ticket, method, params }) => {
       const resolved = redeem(ticket);
       if (!resolved.ok) return failure(401, ticketError(resolved.reason, resolved.limit));
+      const extra = deps.extraMethods?.() ?? [];
       const checked = checkSlackCall(
         method,
         params,
         { channel: resolved.ctx.channel, threadTs: resolved.ctx.threadTs, owner: resolved.ctx.owner },
         deps.isNotice,
+        extra,
       );
       if (!checked.ok) {
         log(`slack proxy refused ${String(method)}: ${checked.error}`);
@@ -157,7 +161,7 @@ export const createSlackProxy = (deps: SlackProxyDeps): SlackProxy => {
           return failure(403, "message_not_allowed: chat.update outside this turn's channel only edits a message the bot itself wrote, and Slack did not show that for this one");
         }
         log(`slack proxy ${checked.method} channel=${channel} ts=${ts} (owner's turn, the bot's own message outside the turn's channel)`);
-      } else if (isAuditedMethod(checked.method)) {
+      } else if (isAuditedMethod(checked.method, extra)) {
         // method and channel only, never the content
         log(`slack proxy ${checked.method} channel=${checked.params.channel ?? checked.params.channel_id ?? "-"}`);
       }

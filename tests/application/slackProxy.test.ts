@@ -2,6 +2,7 @@ import { describe, expect, test } from "bun:test";
 import { SELF_POST_NOTE, capBytes, createSlackProxy, isBotMessage } from "../../src/application/slackProxy.ts";
 import { createSlackTickets } from "../../src/application/slackTickets.ts";
 import { createSelfPosts } from "../../src/application/selfPosts.ts";
+import type { ExtraSlackMethods } from "../../src/domain/slackProxy.ts";
 
 const BOT_TOKEN = "xoxb-the-bots-own-token";
 
@@ -435,5 +436,44 @@ describe("Slack proxy: an owner's chat.update of the bot's own message elsewhere
     expect(isBotMessage({ bot_id: "a-bot-id-alone" }, ME)).toBe(false);
     expect(isBotMessage({ user: ME }, undefined)).toBe(false);
     expect(isBotMessage(undefined, ME)).toBe(false);
+  });
+});
+
+describe("Slack proxy and the owner's extra methods", () => {
+  const live = () => {
+    let extra: ExtraSlackMethods = [];
+    const seen: string[] = [];
+    const logs: string[] = [];
+    const tickets = createSlackTickets(() => 0);
+    const proxy = createSlackProxy({
+      tickets,
+      botToken: BOT_TOKEN,
+      extraMethods: () => extra,
+      fetchFn: (async (url: string | URL | Request, init?: RequestInit) => {
+        seen.push(`${String(url)} ${String(init?.body)}`);
+        return Response.json({ ok: true });
+      }) as typeof fetch,
+      log: (l) => logs.push(l),
+    });
+    return { proxy, tickets, seen, logs, set: (next: ExtraSlackMethods) => (extra = next) };
+  };
+
+  test("an added write works in the turn's channel at once, is logged, and is refused elsewhere; removing it closes it", async () => {
+    const { proxy, tickets, seen, logs, set } = live();
+    const ticket = tickets.issue({ channel: "C0TEST00001", threadTs: "1.1" });
+    const params = { channel: "C0TEST00001", topic: "secret topic" };
+    expect((await proxy.call({ ticket, method: "conversations.setTopic", params })).status).toBe(403);
+
+    set([{ method: "conversations.setTopic", kind: "write", channelParam: "channel" }]);
+    const ok = await proxy.call({ ticket, method: "conversations.setTopic", params });
+    expect(ok.status).toBe(200);
+    expect(seen[0]).toContain("https://slack.com/api/conversations.setTopic");
+    expect(logs.join("\n")).toContain("slack proxy conversations.setTopic channel=C0TEST00001");
+    expect(logs.join("\n")).not.toContain("secret topic");
+    expect((await proxy.call({ ticket, method: "conversations.setTopic", params: { channel: "C0OTHER0001", topic: "x" } })).status).toBe(403);
+
+    set([]);
+    expect((await proxy.call({ ticket, method: "conversations.setTopic", params })).status).toBe(403);
+    expect(seen).toHaveLength(1);
   });
 });

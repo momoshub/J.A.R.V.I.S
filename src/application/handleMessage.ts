@@ -435,6 +435,7 @@ export const handleMessage = async (
     botName: ctx.botName,
     base: ctx.base,
     learnings: ctx.learnings,
+    slackExtraMethods: ctx.slackExtraMethods,
     addresseeName: inbound.displayName ?? decision.user.displayName,
     participants,
     // Lets the bot react to earlier messages with its own token, if it wants to.

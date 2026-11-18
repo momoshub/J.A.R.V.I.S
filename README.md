@@ -189,6 +189,7 @@ Every command is gated by its own `command:<name>` grant, and its sub-actions by
 | `bomb [categories] [count] <message-link>` (alias `br`) | admin | reaction-bomb a message. Combine categories with commas and set a count: `bomb money,face,negative 9 <link>`. Up to 23; `bomb help` lists every category |
 | `brief <thread-link\|reference> <text>` (`brief help`) | admin | leave a short note FOR another thread: what you posted there, why, what you wait for. Posts nothing, starts no turn; that thread's session reads it on its next turn, whoever speaks (it is part of that turn's message, so the session keeps it for the turns after), then it is marked read for that access tier. It is background information only, never instructions. The receiver sees only an opaque reference to your thread (never a link) and answers with `brief <reference> <text>`. `tell` is for when the other side must act now |
 | `post <#channel \| channel id \| thread-link> <text>` | owner | post a NEW message somewhere the turn is not running: a channel's top level (`#name`, `<#C123>` or its id) or into a linked thread. Needed because the Slack proxy only lets a turn write into its own channel. Owner only (anyone else is told who can), audit logged like every command, and it files a `brief` in the target thread so its session knows why; the footer under the message never names the requester; the bot must be in the channel |
+| `slack-methods list \| add <method> read\|write [channelParam] \| remove <method>` | owner | manage the Slack Web API methods a turn may call beyond the built-in ones (the `Slack.` paragraph of the security notes lists them); writes stay locked to the turn's channel, `auth.*` / `admin.*` / `apps.*` / `oauth.*` are refused, and the change applies on the next call |
 | `reply <message-link>` (alias `jrp`) | admin | draft and post an AI reply to a message |
 | `rm-msg <message-link>` (aliases `rmmsg`, `unsend`) | admin | delete a message the bot posted (a bot token cannot delete anyone else's) |
 | `workflow <task>` / `workflow stop [<thread-link>]` / `workflow status` (alias `wf`) | executer, admin | start a long task in this thread and keep talking to it (see [Workflows](#workflows)) |
@@ -846,12 +847,18 @@ command or act on GitHub, and a command ticket cannot call Slack.
 | read, any channel | `conversations.history`, `conversations.replies`, `conversations.info`, `conversations.list` (public channels), `conversations.join` (public channels), `users.info` |
 | write, only the channel the turn runs in | `chat.postMessage`, `chat.update`, `reactions.add`, `files.getUploadURLExternal`, `files.completeUploadExternal` |
 | write, owner's turn, any channel | `chat.update` on a message the bot itself wrote (the bot reads it first and refuses any other author's) |
+| added by the owner | whatever `slack-methods` has added (a read, or a write locked to the turn's channel like the built-in writes); stored in the `slack_extra_methods` setting, the built-in rows above cannot be removed |
 | files | a private file is `bin/slack-file.sh`, through `POST /api/slack/file`: Slack file urls only, and the token never follows a redirect off Slack |
 
 A `chat.postMessage` or `files.completeUploadExternal` from a turn that runs in a
 thread and names no `thread_ts` is posted into that thread; pass `thread_ts=none`
 for a deliberate top-level post (the bot removes it before calling Slack), and an
 explicit `thread_ts` is used as given.
+
+To allow another Web API method without a code change, the owner runs `X/jv slack-methods add <method> read|write [channelParam]`
+(for example `add conversations.setTopic write`; `list` and `remove <method>` manage it). The name must look like `family.method`, and
+`auth.*`, `admin.*`, `apps.*`, `oauth.*`, `tooling.*` and `openid.*` are refused. The bot's token also needs the method's Slack scope
+(`conversations.setTopic` / `setPurpose` need `channels:manage`, and `groups:write` for private channels).
 
 Anything else is refused (`method_not_allowed`), a write to another channel is
 `channel_not_allowed`, and a missing, revoked or expired ticket is refused before

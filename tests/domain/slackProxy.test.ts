@@ -1,5 +1,16 @@
 import { describe, expect, test } from "bun:test";
-import { SLACK_PROXY_METHODS, TOP_LEVEL_THREAD, checkSlackCall, isSlackFileUrl } from "../../src/domain/slackProxy.ts";
+import {
+  SLACK_PROXY_METHODS,
+  TOP_LEVEL_THREAD,
+  allowedMethodNames,
+  checkSlackCall,
+  isAuditedMethod,
+  isSlackFileUrl,
+  parseExtraMethods,
+  refuseExtraMethod,
+  serializeExtraMethods,
+  type ExtraSlackMethods,
+} from "../../src/domain/slackProxy.ts";
 
 const own = { channel: "C0TEST00001" };
 
@@ -211,5 +222,102 @@ describe("chat.update outside the turn's channel", () => {
     const isNotice = (channel: string, ts: string) => channel === "C0OTHER0001" && ts === "77.7";
     const call = checkSlackCall("chat.update", away, owner, isNotice);
     expect(!call.ok && call.error).toContain("message_not_allowed");
+  });
+});
+
+describe("methods the owner added", () => {
+  const extra: ExtraSlackMethods = [
+    { method: "users.list", kind: "read" },
+    { method: "conversations.setTopic", kind: "write", channelParam: "channel" },
+    { method: "conversations.setPurpose", kind: "write", channelParam: "channel" },
+  ];
+
+  test("an extra read passes in any channel, and is refused without being added", () => {
+    expect(checkSlackCall("users.list", { limit: "5" }, own, undefined, extra).ok).toBe(true);
+    const call = checkSlackCall("users.list", {}, own);
+    expect(!call.ok && call.status).toBe(403);
+    expect(!call.ok && call.error).toContain("method_not_allowed");
+  });
+
+  test("an extra write passes in the turn's channel only", () => {
+    expect(checkSlackCall("conversations.setTopic", { channel: own.channel, topic: "x" }, own, undefined, extra).ok).toBe(true);
+    const elsewhere = checkSlackCall("conversations.setPurpose", { channel: "C0OTHER0001", purpose: "x" }, own, undefined, extra);
+    expect(!elsewhere.ok && elsewhere.error).toContain("channel_not_allowed");
+    // no channel named at all is not "no channel to check"
+    expect(checkSlackCall("conversations.setTopic", { topic: "x" }, own, undefined, extra).ok).toBe(false);
+  });
+
+  test("an extra write needs a ticket with a channel, and the owner's edit exception does not extend to it", () => {
+    const readOnly = checkSlackCall("conversations.setTopic", { channel: "C0TEST00001" }, {}, undefined, extra);
+    expect(!readOnly.ok && readOnly.error).toContain("read_only_ticket");
+    const owner = { ...own, owner: true };
+    expect(checkSlackCall("conversations.setTopic", { channel: "C0OTHER0001", ts: "1.1" }, owner, undefined, extra).ok).toBe(false);
+  });
+
+  test("the channel parameter is the one the entry names", () => {
+    const byId: ExtraSlackMethods = [{ method: "conversations.mark", kind: "write", channelParam: "channel_id" }];
+    expect(checkSlackCall("conversations.mark", { channel_id: own.channel }, own, undefined, byId).ok).toBe(true);
+    expect(checkSlackCall("conversations.mark", { channel_id: "C0OTHER0001" }, own, undefined, byId).ok).toBe(false);
+  });
+
+  test("tokens and bad parameter names are refused for extras as for built-ins", () => {
+    expect(checkSlackCall("users.list", { token: "xoxb-x" }, own, undefined, extra).ok).toBe(false);
+    expect(checkSlackCall("users.list", { "bad name": "x" }, own, undefined, extra).ok).toBe(false);
+  });
+
+  test("a dangerous family is refused at add time and ignored even if the stored value names it", () => {
+    for (const method of ["auth.test", "auth.revoke", "admin.teams", "apps.uninstall", "oauth.access", "tooling.tokens", "openid.connect"]) {
+      expect(refuseExtraMethod(method)).toBeDefined();
+    }
+    const tampered: ExtraSlackMethods = [{ method: "auth.revoke", kind: "read" }, { method: "admin.teams", kind: "write", channelParam: "channel" }];
+    expect(checkSlackCall("auth.revoke", {}, own, undefined, tampered).ok).toBe(false);
+    expect(checkSlackCall("admin.teams", { channel: own.channel }, own, undefined, tampered).ok).toBe(false);
+    expect(parseExtraMethods(JSON.stringify(tampered))).toEqual([]);
+  });
+
+  test("the name format is checked", () => {
+    for (const bad of ["setTopic", "conversations.set.Topic", "Conversations.setTopic", "conversations.set_topic", "conversations.", "a b.c", ""]) {
+      expect(refuseExtraMethod(bad)).toBeDefined();
+    }
+    expect(refuseExtraMethod("conversations.setTopic")).toBeUndefined();
+  });
+
+  test("a built-in cannot be redefined: an extra write named like a built-in read stays a read", () => {
+    expect(refuseExtraMethod("users.info")).toContain("already built in");
+    const sneaky: ExtraSlackMethods = [{ method: "chat.postMessage", kind: "read" }];
+    // still the built-in write, still locked to the turn's channel
+    expect(checkSlackCall("chat.postMessage", { channel: "C0OTHER0001", text: "x" }, own, undefined, sneaky).ok).toBe(false);
+    const readOverWrite: ExtraSlackMethods = [{ method: "conversations.history", kind: "write", channelParam: "channel" }];
+    expect(checkSlackCall("conversations.history", { channel: "C0OTHER0001" }, own, undefined, readOverWrite).ok).toBe(true);
+  });
+
+  test("removing an extra takes it away again; the built-ins stay", () => {
+    const after = extra.filter((m) => m.method !== "conversations.setTopic");
+    expect(checkSlackCall("conversations.setTopic", { channel: own.channel }, own, undefined, after).ok).toBe(false);
+    expect(checkSlackCall("conversations.setPurpose", { channel: own.channel }, own, undefined, after).ok).toBe(true);
+    expect(checkSlackCall("chat.postMessage", { channel: own.channel, text: "x" }, own, undefined, []).ok).toBe(true);
+  });
+
+  test("an extra write is audited, an extra read is not", () => {
+    expect(isAuditedMethod("conversations.setTopic", extra)).toBe(true);
+    expect(isAuditedMethod("conversations.setTopic")).toBe(false);
+    expect(isAuditedMethod("users.list", extra)).toBe(false);
+  });
+
+  test("the stored value round-trips, and junk reads as empty", () => {
+    expect(parseExtraMethods(serializeExtraMethods(extra))).toEqual(extra);
+    expect(serializeExtraMethods([])).toBe("");
+    for (const junk of [undefined, "", "not json", "{}", "[1,null,\"x\"]", '[{"method":"users.list","kind":"nope"}]', '[{"method":"x.y","kind":"write"}]', '[{"method":"x.y","kind":"write","channelParam":"Bad Name"}]']) {
+      expect(parseExtraMethods(junk)).toEqual([]);
+    }
+    expect(parseExtraMethods('[{"method":"users.list","kind":"read"},{"method":"users.list","kind":"read"}]')).toHaveLength(1);
+  });
+
+  test("the prompt's list is built-in first, then the extras by kind", () => {
+    expect(allowedMethodNames()).toEqual([...SLACK_PROXY_METHODS.read, ...SLACK_PROXY_METHODS.write]);
+    const names = allowedMethodNames(extra);
+    expect(names).toContain("conversations.setTopic");
+    expect(names.indexOf("users.list")).toBe(SLACK_PROXY_METHODS.read.length);
+    expect(names.slice(-2)).toEqual(["conversations.setTopic", "conversations.setPurpose"]);
   });
 });

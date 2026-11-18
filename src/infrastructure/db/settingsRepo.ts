@@ -83,6 +83,8 @@ export const SETTING_KEYS = {
   cloudwatchRegion: "cloudwatch_region",
   /** Log group(s) `cloudwatch` queries when none is given, comma separated. Empty = must be named. */
   cloudwatchGroup: "cloudwatch_default_group",
+  /** JSON list of Slack Web API methods a turn may call beyond the built-in ones (`slack-methods`); see `domain/slackProxy.ts`. */
+  slackExtraMethods: "slack_extra_methods",
 } as const;
 
 /** Model override for one role, e.g. `model:pal`. Empty means "use the default". */

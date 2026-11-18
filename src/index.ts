@@ -138,6 +138,7 @@ import { createCommandTickets, refusalMessage } from "./application/commandTicke
 import { createSlackTickets } from "./application/slackTickets.ts";
 import { createNoticeLookup } from "./infrastructure/db/noticeLookup.ts";
 import { createSlackProxy } from "./application/slackProxy.ts";
+import { parseExtraMethods } from "./domain/slackProxy.ts";
 import { createSelfPosts } from "./application/selfPosts.ts";
 import { scrubSecretEnv } from "./domain/turnEnv.ts";
 import { createWorkerTickets, revokeOnWorkerEnd } from "./application/workerTickets.ts";
@@ -331,6 +332,8 @@ const main = async () => {
     botToken: config.slackBotToken,
     // A turn may not rewrite an approval notice: its buttons decide things.
     isNotice: createNoticeLookup(db),
+    // The owner's extra methods (`slack-methods`), read per call; the built-in lists stay the floor.
+    extraMethods: () => parseExtraMethods(settings.get(SETTING_KEYS.slackExtraMethods)),
     // An owner's chat.update outside the turn's channel is allowed only on a message this id wrote.
     botUserId: () => slackAdmin.botUserId(),
     log: (line) => console.error(`[slack-proxy] ${line}`),
@@ -580,6 +583,8 @@ const main = async () => {
     // Active learnings only: a pending one is the owner's to approve first.
     learnings: injectedLearnings(learnings),
     adapter: adapterReader.read(),
+    // The prompt lists the methods the Slack proxy allows, so it reads the same live setting.
+    slackExtraMethods: parseExtraMethods(settings.get(SETTING_KEYS.slackExtraMethods)),
   });
   const draft = createDraftReply({ llm, promptContext, ownerSlackId: config.ownerSlackId });
 
