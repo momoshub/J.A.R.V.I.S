@@ -11,6 +11,7 @@ import {
   type JsonRpc,
   type RealServer,
 } from "../../src/infrastructure/mcp/lazyProxy.ts";
+import type { ApprovalState } from "../../src/domain/mcpApproval.ts";
 
 const INIT: JsonRpc = { protocolVersion: "2025-06-18", capabilities: { tools: {} }, serverInfo: { name: "real", version: "1" } };
 const TOOLS = [{ name: "run_query" }];
@@ -305,4 +306,106 @@ describe("bin/mcp-lazy-proxy.ts end to end", () => {
     expect(call.find((r) => r.id === 3)).toMatchObject({ result: { content: [{ text: "echo:hi" }] } });
     expect(startCount(log)).toBe(2);
   }, 150000);
+});
+
+describe("createLazyProxy tool approvals", () => {
+  const memoryStore = (initial?: ApprovalState) => {
+    let state = initial;
+    return {
+      store: {
+        read: () => state,
+        create: (s: ApprovalState) => (state ? false : ((state = s), true)),
+        write: (s: ApprovalState) => void (state = s),
+      },
+      state: () => state,
+    };
+  };
+  const gated = (cached: CachedSchema | undefined, approvals: ReturnType<typeof memoryStore>, tools: unknown[] = [{ name: "run_query" }, { name: "drop_table" }]) => {
+    const sent: JsonRpc[] = [];
+    const out: JsonRpc[] = [];
+    let stored = cached;
+    const proxy = createLazyProxy({
+      cache: { read: () => stored, write: (s) => void (stored = s) },
+      out: (m) => void out.push(m),
+      server: "pg",
+      approvals: approvals.store,
+      spawn: (): RealServer => {
+        let on: (m: JsonRpc) => void = () => {};
+        return {
+          onMessage: (cb) => void (on = cb),
+          onExit: () => {},
+          kill: () => {},
+          send: (m) => {
+            sent.push(m);
+            queueMicrotask(() => {
+              if (m.method === "initialize") on({ jsonrpc: "2.0", id: m.id, result: INIT });
+              if (m.method === "tools/list") on({ jsonrpc: "2.0", id: m.id, result: { tools } });
+              if (m.method === "tools/call") on({ jsonrpc: "2.0", id: m.id, result: { content: [{ type: "text", text: "rows" }] } });
+            });
+          },
+        };
+      },
+    });
+    return { proxy, sent, out };
+  };
+
+  test("the first run baselines the tools it lists, so nothing existing is hidden", async () => {
+    const approvals = memoryStore();
+    const g = gated({ initialize: INIT, tools: [{ name: "run_query" }, { name: "drop_table" }] }, approvals);
+    await g.proxy.handle({ jsonrpc: "2.0", id: 1, method: "tools/list" });
+    expect(g.out[0]).toEqual({ jsonrpc: "2.0", id: 1, result: { tools: [{ name: "run_query" }, { name: "drop_table" }] } });
+    expect(approvals.state()).toEqual({ approved: ["drop_table", "run_query"], denied: [] });
+  });
+
+  test("a tool that shows up after the baseline is hidden from tools/list", async () => {
+    const approvals = memoryStore({ approved: ["run_query"], denied: [] });
+    const g = gated({ initialize: INIT, tools: [{ name: "run_query" }, { name: "drop_table" }] }, approvals);
+    await g.proxy.handle({ jsonrpc: "2.0", id: 1, method: "tools/list" });
+    expect(g.out[0]).toEqual({ jsonrpc: "2.0", id: 1, result: { tools: [{ name: "run_query" }] } });
+  });
+
+  test("calling an unapproved tool is refused as a tool error and never reaches the server", async () => {
+    const approvals = memoryStore({ approved: ["run_query"], denied: [] });
+    const g = gated({ initialize: INIT, tools: [{ name: "run_query" }, { name: "drop_table" }] }, approvals);
+    await g.proxy.handle({ jsonrpc: "2.0", id: 7, method: "tools/call", params: { name: "drop_table" } });
+    await tick();
+    const reply = g.out.find((m) => m.id === 7) as { result: { isError: boolean; content: { text: string }[] } };
+    expect(reply.result.isError).toBe(true);
+    expect(reply.result.content[0]!.text).toContain("mcp-tools approve pg drop_table");
+    expect(g.sent).toEqual([]);
+  });
+
+  test("a denied tool is refused too, and an approved one goes through", async () => {
+    const approvals = memoryStore({ approved: ["run_query"], denied: ["drop_table"] });
+    const g = gated({ initialize: INIT, tools: [{ name: "run_query" }] }, approvals);
+    await g.proxy.handle({ jsonrpc: "2.0", id: 1, method: "tools/call", params: { name: "drop_table" } });
+    await g.proxy.handle({ jsonrpc: "2.0", id: 2, method: "tools/call", params: { name: "run_query" } });
+    await tick();
+    expect((g.out.find((m) => m.id === 1) as { result: { isError: boolean } }).result.isError).toBe(true);
+    expect(g.out.find((m) => m.id === 2)).toMatchObject({ result: { content: [{ text: "rows" }] } });
+  });
+
+  test("with no cache the first call baselines from the real server's own list", async () => {
+    const approvals = memoryStore();
+    const g = gated(undefined, approvals);
+    await g.proxy.handle({ jsonrpc: "2.0", id: 3, method: "tools/call", params: { name: "run_query" } });
+    await tick();
+    expect(approvals.state()?.approved).toEqual(["drop_table", "run_query"]);
+    expect(g.out.find((m) => m.id === 3)).toMatchObject({ result: { content: [{ text: "rows" }] } });
+  });
+
+  test("an approval made later is picked up without a restart", async () => {
+    const approvals = memoryStore({ approved: ["run_query"], denied: [] });
+    const g = gated({ initialize: INIT, tools: [{ name: "run_query" }, { name: "drop_table" }] }, approvals);
+    await g.proxy.handle({ jsonrpc: "2.0", id: 1, method: "tools/list" });
+    approvals.store.write({ approved: ["drop_table", "run_query"], denied: [] });
+    await g.proxy.handle({ jsonrpc: "2.0", id: 2, method: "tools/list" });
+    expect((g.out[1] as { result: { tools: unknown[] } }).result.tools).toHaveLength(2);
+  });
+
+  test("without a store every tool is exposed, as before", async () => {
+    const h = harness({ initialize: INIT, tools: [{ name: "a" }, { name: "b" }] });
+    await h.proxy.handle({ jsonrpc: "2.0", id: 1, method: "tools/list" });
+    expect((h.out[0] as { result: { tools: unknown[] } }).result.tools).toHaveLength(2);
+  });
 });

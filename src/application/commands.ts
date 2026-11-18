@@ -47,6 +47,7 @@ import { REVIEW_COMMANDS } from "./commands/review.ts";
 import { INNER_CHILD_COMMANDS } from "./commands/innerChild.ts";
 import { RUNTIME_COMMANDS } from "./commands/runtime.ts";
 import { SLACK_COMMANDS } from "./commands/slack.ts";
+import { MCP_TOOLS_COMMANDS } from "./commands/mcpTools.ts";
 import { SLACK_METHODS_COMMANDS } from "./commands/slackMethods.ts";
 import { CLOUDWATCH_COMMANDS } from "./commands/cloudwatch.ts";
 import { ROLE_COMMANDS } from "./commands/roles.ts";
@@ -125,6 +126,7 @@ export const COMMANDS: readonly CommandDef[] = [
   ...RUNTIME_COMMANDS,
   ...SLACK_COMMANDS,
   ...SLACK_METHODS_COMMANDS,
+  ...MCP_TOOLS_COMMANDS,
   ...CLOUDWATCH_COMMANDS,
 ];
 

@@ -7,15 +7,17 @@
 //
 // Speaks MCP on stdin/stdout, answers initialize and the list methods (tools, prompts,
 // resources) from the schema cache in <dir>, and starts <command> only for the first request that needs the
-// real server. The environment it runs with is the real server's.
+// real server. The environment it runs with is the real server's. A tool the server lists that the owner has not
+// approved (`mcp-tools approve`) is hidden and refused; the server's first run is its baseline.
 import {
   createFileSchemaCache,
   createLazyProxy,
   createLineParser,
   schemaCachePath,
+  spawnStdioServer,
   type JsonRpc,
-  type RealServer,
 } from "../src/infrastructure/mcp/lazyProxy.ts";
+import { approvalsPath, createFileApprovalStore } from "../src/infrastructure/mcp/approvals.ts";
 
 const argv = process.argv.slice(2);
 const split = argv.indexOf("--");
@@ -36,30 +38,11 @@ const write = (msg: JsonRpc): void => {
   process.stdout.write(`${JSON.stringify(msg)}\n`);
 };
 
-const spawnReal = (): RealServer => {
-  const proc = Bun.spawn({ cmd: command, stdin: "pipe", stdout: "pipe", stderr: "inherit", env: process.env });
-  let listener: (msg: JsonRpc) => void = () => {};
-  const parse = createLineParser((m) => listener(m));
-  const decoder = new TextDecoder();
-  void (async () => {
-    for await (const chunk of proc.stdout) parse(decoder.decode(chunk, { stream: true }));
-  })();
-  return {
-    send: (msg) => {
-      proc.stdin.write(`${JSON.stringify(msg)}\n`);
-      void proc.stdin.flush();
-    },
-    onMessage: (cb) => {
-      listener = cb;
-    },
-    onExit: (cb) => void proc.exited.then(cb),
-    kill: () => proc.kill(),
-  };
-};
-
 const proxy = createLazyProxy({
   cache: createFileSchemaCache(schemaCachePath(cacheDir, name, command)),
-  spawn: spawnReal,
+  spawn: () => spawnStdioServer(command),
+  server: name,
+  approvals: createFileApprovalStore(approvalsPath(cacheDir, name)),
   out: write,
   log: (line) => console.error(`[mcp-lazy-proxy ${name}] ${line}`),
 });

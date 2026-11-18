@@ -1,5 +1,6 @@
 /** Shared types and helpers for the command registry and its groups. */
 
+import type { McpToolsPort } from "../../infrastructure/mcp/approvals.ts";
 import type { ReviewGuard } from "../reviewGuard.ts";
 import type { WorkerUsagePort } from "../workerCost.ts";
 import type { WorkerTickets } from "../workerTickets.ts";
@@ -172,6 +173,8 @@ export type CommandDeps = {
   commandApprovals?: CommandApprovalRepo;
   /** Settings, for per-person command allowances. */
   settings?: SettingsRepo;
+  /** Owner approval of the tools MCP servers list (`mcp-tools`). Absent: the command says it is unavailable. */
+  mcpTools?: McpToolsPort;
   /** AI reply drafting, for reply. */
   draft?: DraftReply;
   /** Per-role CLI tool policy (sandbox/allow-list), for ask + review. */

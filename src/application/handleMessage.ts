@@ -56,6 +56,7 @@ import type { CloudwatchDeps } from "./cloudwatch.ts";
 import type { LoopApprovalDeps } from "./loopApproval.ts";
 import type { LearningApprovalDeps } from "./learningApproval.ts";
 import type { BugReportApprovalDeps } from "./bugReportApproval.ts";
+import type { McpToolsPort } from "../infrastructure/mcp/approvals.ts";
 import type { SettingsRepo } from "../infrastructure/db/settingsRepo.ts";
 import { requestAccess } from "./accessRequests.ts";
 import type { CommandTickets } from "./commandTickets.ts";
@@ -238,6 +239,8 @@ export type HandleMessageDeps = {
   cloudwatch?: CloudwatchDeps;
   /** Settings, for per-person command allowances. */
   settings?: SettingsRepo;
+  /** Owner approval of new MCP tools, for `mcp-tools` (see `CommandDeps`). */
+  mcpTools?: McpToolsPort;
   /** Observability backends in preference order; empty means none configured. */
   logSources?: () => readonly string[];
   /** Whether a ticket tracker is configured, so chat bug reports can be raised. */

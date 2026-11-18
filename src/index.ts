@@ -97,6 +97,8 @@ import { createAccessRequestRepo } from "./infrastructure/db/accessRequestRepo.t
 import { createCommandApprovalRepo } from "./infrastructure/db/commandApprovalRepo.ts";
 import { createCloudwatchRepo } from "./infrastructure/db/cloudwatchRepo.ts";
 import { createCloudwatchCli } from "./infrastructure/aws/cloudwatchCli.ts";
+import { createMcpToolsPort } from "./infrastructure/mcp/approvals.ts";
+import { DEFAULT_MCP_SCHEMA_CACHE_DIR } from "./infrastructure/llm/mcpConfig.ts";
 import { createSettingsRepo, modelKey, SETTING_KEYS } from "./infrastructure/db/settingsRepo.ts";
 import { agentModelEnv, agentModelsOf, builtinAgentOverrides } from "./domain/agentModels.ts";
 import { workerMcpEnv } from "./domain/workerMcp.ts";
@@ -531,6 +533,8 @@ const main = async () => {
     // Where a turn finds the Slack helper and the bot's local endpoint for it. Paths and a
     // loopback URL, no secret: the credential is the per-turn ticket.
     BOT_SLACK_CALL: slackCallScript,
+    // The code-mode MCP CLI (`bun "$BOT_MCP_CLI" call ...`): a big result goes to a file, not the context.
+    BOT_MCP_CLI: join(import.meta.dir, "..", "bin", "mcp.ts"),
     JARVIS_SLACK_API_URL: `http://127.0.0.1:${config.dashboardPort}/api/slack`,
     // The servers kept out of Orca workers and the helper the worker-start prompts run first.
     ...workerMcpEnv(config.workerMcpDeny, workerMcpTrimScript, workerHome),
@@ -745,6 +749,8 @@ const main = async () => {
     },
     // Per-person allowances live here, set with the `limit` command.
     settings,
+    // The owner's approval of new MCP tools, in the files next to the lazy proxy's schema cache.
+    mcpTools: createMcpToolsPort(DEFAULT_MCP_SCHEMA_CACHE_DIR),
     // Where to look for logs, in order. Read per call so a change needs no restart.
     logSources: () => logSourceOrder(settings.get(SETTING_KEYS.logSources)),
     // A bug reported in chat becomes a ticket, but only once there is a tracker.

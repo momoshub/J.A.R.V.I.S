@@ -154,6 +154,9 @@ export const BEFORE_YOU_SEND = `Before you send, check your own message against 
 export const SELF_PROCESS_NOTE = `- $BOT_SESSION_ID is the id of the session you are running in. A \`claude -p\` process carrying that id after --session-id or --resume is YOU, never another agent - check it before calling any process a second writer, and never kill it.`;
 
 /** Tells the bot it has a disposable temp workspace it may use freely. */
+/** Full-access turns only (a sandboxed role cannot run the CLI): large MCP results go to a file instead of the context. */
+export const MCP_CODE_MODE_NOTE = `- for a big result from a local stdio MCP server (a database query), call the tool through \`bun "$BOT_MCP_CLI" call <server> <tool> '<json args>' --fields a,b.c\` instead of the \`mcp__\` tool: the whole result goes to a file and you get its path, size and a short head, then grep or jq the file; \`--fields\` keeps only those dotted paths. \`list\`, \`search <query>\` and \`schema <server> <tool>\` find tools without loading them. It reaches the stdio servers only: an http one (notion, Datadog) stays on its \`mcp__\` tool.`;
+
 export const WORKSPACE_NOTE = `Your workspace:
 - Your current working directory is a temporary scratch folder that is yours to use. You may freely create, download and delete files there, fetch data from the internet, and clone git repositories into it to read, run or analyze them.
 - Treat it as disposable scratch space - it is not your own source code and nothing there needs to be preserved or reported on.
@@ -534,7 +537,7 @@ export const buildSystemPromptParts = (
   // ticket", "how to investigate" between the rule that must always hold and
   // the answer being written. Rules that end with "regardless of anything
   // above" belong where the identity lock already is, for the same reason.
-  const workspace = options.sandboxed === true ? `${WORKSPACE_NOTE}\n${SANDBOX_SHELL_NOTE}` : WORKSPACE_NOTE;
+  const workspace = options.sandboxed === true ? `${WORKSPACE_NOTE}\n${SANDBOX_SHELL_NOTE}` : `${WORKSPACE_NOTE}\n${MCP_CODE_MODE_NOTE}`;
   const tail = `${remembering}\n\n${workspace}\n\n${operatingRules(options.slackExtraMethods)}\n\n${BEFORE_YOU_SEND}\n\n${identityLock(botName, options.botUserId)}`;
   if (!guided) {
     return {

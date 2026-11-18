@@ -496,6 +496,16 @@ describe("createClaudeCliLlm", () => {
     expect(oneShot).toBe("[]");
   });
 
+  test("a turn carries its access and its disallowed MCP servers for the `mcp` CLI to hold a call to", async () => {
+    const bin = fakeBin(
+      `#!/usr/bin/env bash\ncat > /dev/null\necho "{\\"type\\":\\"result\\",\\"subtype\\":\\"success\\",\\"is_error\\":false,\\"result\\":\\"[$BOT_MCP_ACCESS]\\"}"`,
+    );
+    const llm = createClaudeCliLlm({ binPath: bin });
+    const ask = (policy: { skipPermissions: boolean }) => llm.complete({ system: "s", messages: [{ role: "user", content: "hi" }], policy });
+    expect(await ask({ skipPermissions: true })).toBe("[full]");
+    expect(await ask({ skipPermissions: false })).toBe("[sandbox]");
+  });
+
   test("summarizeTool titles a Bash step `Run: <emoji> <description>`, never the command", () => {
     const out = summarizeTool("Bash", '{"command":"ls -la","description":"List files in current directory"}');
     expect(out.title).toBe("Run: 🏃 List files in current directory");
