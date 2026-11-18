@@ -154,7 +154,7 @@ export const CHAT_COMMANDS: readonly CommandDef[] = [
       if (!question) return `Ask me something: \`${prefix} ask <question>\``;
       if (!deps.llm) return "My brain is not wired up right now.";
       const ctx = deps.promptContext?.() ?? { learnings: [] };
-      const system = buildSystemPrompt({ botName: ctx.botName, base: ctx.base, learnings: ctx.learnings });
+      const system = buildSystemPrompt({ botName: ctx.botName, base: ctx.base, learnings: ctx.learnings, slackExtraMethods: ctx.slackExtraMethods });
       const reply = await deps.llm.complete({
         system,
         messages: [{ role: "user", content: question }],
@@ -183,7 +183,7 @@ export const CHAT_COMMANDS: readonly CommandDef[] = [
         ? deps.messages.recentForThread(channelId, threadTs, BTW_WINDOW)
         : deps.messages.recentForChannel(channelId, BTW_WINDOW);
       const system =
-        buildSystemPrompt({ botName: ctx.botName, base: ctx.base, learnings: ctx.learnings }) + btwRules();
+        buildSystemPrompt({ botName: ctx.botName, base: ctx.base, learnings: ctx.learnings, slackExtraMethods: ctx.slackExtraMethods }) + btwRules();
       // No tools, by DENIAL. An allow-list pre-approves what is on it and does
       // not refuse what is off it (measured), so an empty allow-list would be
       // no restriction at all - and the running turn shares this machine.

@@ -18,6 +18,10 @@
  * anywhere (a bad `post` has to be fixable from a DM). This file only lets the call through
  * marked `ownMessageIn`; the proxy then reads the message and refuses unless the bot wrote it.
  *
+ * The built-in lists below are the floor: settings cannot remove from them. The owner may add more
+ * (`slack-methods`), each a read or a channel-scoped write, and they reach this file as an argument
+ * (`ExtraSlackMethods`), so the policy stays pure. An extra never overrides a built-in's kind.
+ *
  * Pure: no I/O, so the whole policy is testable without Slack.
  */
 
@@ -50,6 +54,86 @@ export const SLACK_PROXY_METHODS = {
   read: [...READ_METHODS],
   write: Object.keys(WRITE_METHODS),
 } as const;
+
+/** One method the owner added beyond the built-in lists: a read, or a write with the parameter that names its channel. */
+export type ExtraSlackMethod =
+  | { readonly method: string; readonly kind: "read" }
+  | { readonly method: string; readonly kind: "write"; readonly channelParam: string };
+
+export type ExtraSlackMethods = readonly ExtraSlackMethod[];
+
+/** `family.name`, one dot: that already leaves out the nested admin and tooling families. */
+export const EXTRA_METHOD_NAME = /^[a-z]+\.[A-Za-z]+$/;
+
+/** Families that hand out or change tokens, apps, installs and the workspace itself: never allowed, whatever the setting says. */
+export const REFUSED_METHOD_FAMILIES: readonly string[] = ["auth", "admin", "apps", "oauth", "tooling", "openid"];
+
+const PARAM_NAME = /^[a-z][a-z0-9_]{0,63}$/;
+
+const isBuiltIn = (method: string): boolean => READ_METHODS.has(method) || Object.hasOwn(WRITE_METHODS, method);
+
+/** Why this method cannot be added, or `undefined` when it can. */
+export const refuseExtraMethod = (method: string): string | undefined => {
+  if (!EXTRA_METHOD_NAME.test(method)) return `\`${method}\` is not a Slack method name (\`family.method\`, like \`conversations.setTopic\`)`;
+  const family = method.slice(0, method.indexOf("."));
+  if (REFUSED_METHOD_FAMILIES.includes(family)) return `\`${family}.*\` is never allowed: it touches tokens, apps or the workspace's admin`;
+  if (isBuiltIn(method)) return `\`${method}\` is already built in`;
+  return undefined;
+};
+
+/** Verbs that mean a method changes something: adding such a method as a `read` is almost certainly a mistake, and a read is not channel-locked. */
+const WRITING_VERB = /^(set|delete|kick|archive|unarchive|invite|remove|create|rename|close|open|leave|mark|join|add|update|post|upload|pin|unpin|revoke|schedule|start|end|send|edit|clear|reset|lock|unlock)/;
+
+/** Why this method may not be added as a read, or `undefined`. */
+export const refuseAsRead = (method: string): string | undefined =>
+  WRITING_VERB.test(method.slice(method.indexOf(".") + 1)) ? `\`${method}\` reads like a method that changes something: add it as a \`write\` (locked to the turn's channel), since a read is not` : undefined;
+
+/** The parameter an allowed write names its channel by, for the audit line; `undefined` when it has none. */
+export const channelParamOf = (method: string, extra: ExtraSlackMethods = []): string | undefined => {
+  const added = isBuiltIn(method) ? undefined : extra.find((m) => m.method === method);
+  return added?.kind === "write" ? added.channelParam : WRITE_METHODS[method];
+};
+
+/** Whether this is a valid write parameter name, for the one that names the channel. */
+export const isChannelParam = (name: string): boolean => PARAM_NAME.test(name);
+
+/** The stored value, as JSON. */
+export const serializeExtraMethods = (methods: ExtraSlackMethods): string => (methods.length === 0 ? "" : JSON.stringify(methods));
+
+/**
+ * The stored value, read back. Never throws, and every entry is checked again: a hand-edited setting
+ * naming `auth.test` or a write with no channel parameter is dropped, not trusted.
+ */
+export const parseExtraMethods = (raw: string | undefined): ExtraSlackMethods => {
+  if (!raw?.trim()) return [];
+  let data: unknown;
+  try {
+    data = JSON.parse(raw);
+  } catch {
+    return [];
+  }
+  if (!Array.isArray(data)) return [];
+  const out: ExtraSlackMethod[] = [];
+  for (const item of data) {
+    if (!item || typeof item !== "object") continue;
+    const { method, kind, channelParam } = item as Record<string, unknown>;
+    if (typeof method !== "string" || refuseExtraMethod(method) || out.some((m) => m.method === method)) continue;
+    if (kind === "read") out.push({ method, kind });
+    else if (kind === "write" && typeof channelParam === "string" && PARAM_NAME.test(channelParam)) out.push({ method, kind, channelParam });
+  }
+  return out;
+};
+
+/** Every method a turn may call right now, built-in then extra, as the prompt lists them. */
+export const allowedMethodNames = (extra: ExtraSlackMethods = []): string[] => {
+  const added = extra.filter((m) => !isBuiltIn(m.method));
+  return [
+    ...SLACK_PROXY_METHODS.read,
+    ...added.filter((m) => m.kind === "read").map((m) => m.method),
+    ...SLACK_PROXY_METHODS.write,
+    ...added.filter((m) => m.kind === "write").map((m) => m.method),
+  ];
+};
 
 /** What the ticket allows: the channel a write may target (none means read-only) and the thread the turn runs in. */
 export type SlackScope = {
@@ -84,7 +168,6 @@ export type SlackCallCheck =
 /** One call carries no more than this, which keeps a runaway loop from posting a book. */
 export const MAX_PARAMS_BYTES = 1_000_000;
 
-const PARAM_NAME = /^[a-z][a-z0-9_]{0,63}$/;
 const METHOD_NAME = /^[a-zA-Z][a-zA-Z0-9.]{0,63}$/;
 
 const refuse = (status: 400 | 403, error: string): SlackCallCheck => ({ ok: false, status, error });
@@ -113,10 +196,18 @@ const toParams = (raw: unknown): Record<string, string> | undefined => {
 export type IsNotice = (channel: string, ts: string) => boolean;
 
 /** Decide whether this call may go to Slack. Never throws. */
-export const checkSlackCall = (method: unknown, rawParams: unknown, scope: SlackScope, isNotice?: IsNotice): SlackCallCheck => {
+export const checkSlackCall = (
+  method: unknown,
+  rawParams: unknown,
+  scope: SlackScope,
+  isNotice?: IsNotice,
+  extra: ExtraSlackMethods = [],
+): SlackCallCheck => {
   if (typeof method !== "string" || !METHOD_NAME.test(method)) return refuse(400, "method is required");
-  const isRead = READ_METHODS.has(method);
-  const isWrite = Object.hasOwn(WRITE_METHODS, method);
+  // The built-ins decide first; an extra only matters for a method they do not know, and only if it still passes the name rules.
+  const added = isBuiltIn(method) || refuseExtraMethod(method) ? undefined : extra.find((m) => m.method === method);
+  const isRead = READ_METHODS.has(method) || added?.kind === "read";
+  const isWrite = Object.hasOwn(WRITE_METHODS, method) || added?.kind === "write";
   if (!isRead && !isWrite) {
     return refuse(403, `method_not_allowed: ${method} is not one of the Slack methods a turn may call`);
   }
@@ -135,8 +226,19 @@ export const checkSlackCall = (method: unknown, rawParams: unknown, scope: Slack
     return { ok: true, method, params };
   }
   if (!scope.channel) return refuse(403, `read_only_ticket: ${method} writes, and this ticket has no channel`);
-  const channelParam = WRITE_METHODS[method];
+  const channelParam = added?.kind === "write" ? added.channelParam : WRITE_METHODS[method];
   const target = channelParam ? params[channelParam] : undefined;
+  if (added) {
+    // An owner's entry can name the wrong parameter (`channel_id` for a method that takes `channel`), and then the lock below
+    // would check nothing. So an extra write also may not carry any other channel-ish parameter that points elsewhere, and
+    // `channels` (a list) is refused outright, as for the built-in upload completion.
+    if (params.channels !== undefined) return refuse(403, `param_not_allowed: ${method} may not take channels`);
+    for (const name of ["channel", "channel_id"]) {
+      if (params[name] !== undefined && params[name] !== scope.channel) {
+        return refuse(403, `channel_not_allowed: ${method} may only act in the channel this turn runs in (${scope.channel})`);
+      }
+    }
+  }
   let ownMessageIn: { channel: string; ts: string } | undefined;
   if (channelParam && target !== scope.channel) {
     // Only the owner's chat.update, and only with a message named; whose message it is gets checked against Slack by the proxy.
@@ -168,8 +270,9 @@ export const checkSlackCall = (method: unknown, rawParams: unknown, scope: Slack
   return { ok: true, method, params, ...(ownMessageIn ? { ownMessageIn } : {}) };
 };
 
-/** Calls worth a log line: everything that writes, and a join (visible to the whole channel). */
-export const isAuditedMethod = (method: string): boolean => Object.hasOwn(WRITE_METHODS, method) || method === "conversations.join";
+/** Calls worth a log line: everything that writes (extra writes too), and a join (visible to the whole channel). */
+export const isAuditedMethod = (method: string, extra: ExtraSlackMethods = []): boolean =>
+  Object.hasOwn(WRITE_METHODS, method) || method === "conversations.join" || extra.some((m) => m.method === method && m.kind === "write");
 
 /** Where Slack serves a private file from: files.slack.com, or a workspace's files-pri path. */
 export const isSlackFileUrl = (raw: unknown): boolean => {

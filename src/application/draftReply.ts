@@ -21,7 +21,7 @@ export const createDraftReply = (deps: DraftReplyDeps): DraftReply => {
   return async (thread, channel) => {
     const ctx = deps.promptContext();
     const botName = ctx.botName ?? "You";
-    const system = buildSystemPrompt({ botName: ctx.botName, base: ctx.base, learnings: ctx.learnings });
+    const system = buildSystemPrompt({ botName: ctx.botName, base: ctx.base, learnings: ctx.learnings, slackExtraMethods: ctx.slackExtraMethods });
     const transcript = thread
       .filter((m) => m.text.trim())
       .map((m) => `${m.own ? botName : m.userName}: ${m.text}`)

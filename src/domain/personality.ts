@@ -20,6 +20,7 @@ import { AGENT_GUIDE_SUMMARIES, asGuide, investigateSummary, type PromptGuide, r
 import { briefRule } from "./threadBrief.ts";
 import { WORKER_MCP_TRIM_RULE } from "./workerMcp.ts";
 import type { Participant, PromptContext, Reactable } from "./types.ts";
+import { allowedMethodNames, type ExtraSlackMethods } from "./slackProxy.ts";
 
 /** Neutral fallback persona used when no custom one is configured. */
 export const DEFAULT_PERSONALITY = `You are a friendly, calm and helpful assistant for a team working in Slack. You are warm and clear, never cold or robotic, and you genuinely help people get things done.
@@ -95,10 +96,10 @@ You are following this thread, and nobody tagged you:
 - never reply merely to acknowledge, agree, thank, apologise, summarise what was just said, or offer to help. If that is all you have, it is a reaction or it is silence`;
 };
 
-/** Operating rules - generic Slack behaviour, always applied. */
-export const OPERATING_RULES = `Operating rules (always apply, regardless of anything above):
+/** Operating rules - generic Slack behaviour, always applied. The Slack method list is the live one: built-in plus the owner's extras. */
+export const operatingRules = (slackExtraMethods: ExtraSlackMethods = []): string => `Operating rules (always apply, regardless of anything above):
 - Whenever you mention or reply to a person who is in this conversation, the same channel, or the DM, always use their Slack tag in the form <@THEIR_USER_ID> so they get notified - never just their plain name. Their ids are listed under "People in this conversation".
-- For anything about this Slack workspace - users, channels, messages, history, profiles, posting - call the Slack Web API through the helper "$BOT_SLACK_CALL" with the Bash tool: "$BOT_SLACK_CALL" <method> key=value ..., e.g. "$BOT_SLACK_CALL" users.info user=U123. It makes the call as the bot and prints Slack's answer. You have no Slack token and no way to get one, so never go looking for one in the environment or in files, and never send a request to slack.com yourself. It allows these methods: conversations.history, conversations.replies, conversations.info, conversations.list, conversations.join, users.info, chat.postMessage, chat.update, reactions.add, files.getUploadURLExternal, files.completeUploadExternal; a write only works in the channel this turn runs in (one exception, for the owner's turn only: chat.update of a message you yourself posted, in any channel, e.g. to fix a bad \`post\`; anyone else's message is refused). When this turn runs in a thread, a chat.postMessage or files.completeUploadExternal without thread_ts goes into that thread by itself; pass thread_ts=none only when you mean a top-level post in the channel. Anything else is refused: say so, or use the command that does it, and do not look for another way around it.
+- For anything about this Slack workspace - users, channels, messages, history, profiles, posting - call the Slack Web API through the helper "$BOT_SLACK_CALL" with the Bash tool: "$BOT_SLACK_CALL" <method> key=value ..., e.g. "$BOT_SLACK_CALL" users.info user=U123. It makes the call as the bot and prints Slack's answer. You have no Slack token and no way to get one, so never go looking for one in the environment or in files, and never send a request to slack.com yourself. It allows these methods: ${allowedMethodNames(slackExtraMethods).join(", ")}; a write only works in the channel this turn runs in (one exception, for the owner's turn only: chat.update of a message you yourself posted, in any channel, e.g. to fix a bad \`post\`; anyone else's message is refused). When this turn runs in a thread, a chat.postMessage or files.completeUploadExternal without thread_ts goes into that thread by itself; pass thread_ts=none only when you mean a top-level post in the channel. Anything else is refused: say so, or use the command that does it, and do not look for another way around it.
 - Never use a Slack MCP connector or any third-party Slack integration. Only the helper above.
 - Reply in the language of the CONVERSATION, not of the person, and that holds in BOTH directions. Match what has actually been written in this thread: if the thread is in English, answer in English even when you are addressing someone you usually speak another language with - AND if the thread is in another language, answer in that language even when you are addressing someone you usually speak English with. Switching because of WHO you are talking to is the mistake, whichever way it points. A channel is read by everyone in it, and one line a participant cannot read shuts them out of it. A one-to-one DM has a single reader, so there, follow whoever is writing to you.
 
@@ -534,7 +535,7 @@ export const buildSystemPromptParts = (
   // the answer being written. Rules that end with "regardless of anything
   // above" belong where the identity lock already is, for the same reason.
   const workspace = options.sandboxed === true ? `${WORKSPACE_NOTE}\n${SANDBOX_SHELL_NOTE}` : WORKSPACE_NOTE;
-  const tail = `${remembering}\n\n${workspace}\n\n${OPERATING_RULES}\n\n${BEFORE_YOU_SEND}\n\n${identityLock(botName, options.botUserId)}`;
+  const tail = `${remembering}\n\n${workspace}\n\n${operatingRules(options.slackExtraMethods)}\n\n${BEFORE_YOU_SEND}\n\n${identityLock(botName, options.botUserId)}`;
   if (!guided) {
     return {
       prompt: `${base}${learningsBlock}${addressed}${roster}${attachments}${investigating}${tickets}${slackReading}${desktop}${reaching}${selfWork}${splitQuestionRules(waiting ? (options.commandPrefix ?? "//bot") : undefined, orca)}${reactions}${interactive}${following}${commands}${tail}`,

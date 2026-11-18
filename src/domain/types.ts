@@ -93,6 +93,8 @@ export type PromptContext = {
   readonly learnings: readonly string[];
   /** The memory adapter, when one is configured; replaces `learnings`. */
   readonly adapter?: import("./adapter.ts").Adapter;
+  /** Slack methods the owner added beyond the built-in ones, so the prompt lists what the proxy really allows. */
+  readonly slackExtraMethods?: import("./slackProxy.ts").ExtraSlackMethods;
 };
 
 /** Outcome of an access-control check. */
