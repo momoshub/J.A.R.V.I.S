@@ -105,6 +105,16 @@ describe("a call is held to the turn's role", () => {
     expect(mcpCallRefusal(env, "ch", "run_query")).toBeUndefined();
   });
 
+  test("wildcard entries of the deny list hold too", () => {
+    const wild = (...d: string[]) => turnMcpEnv({ skipPermissions: true, disallowedTools: d });
+    expect(mcpCallRefusal(wild("mcp__db__*"), "db", "drop_table")).toContain("may not call");
+    expect(mcpCallRefusal(wild("mcp__db__drop_*"), "db", "drop_table")).toContain("may not call");
+    expect(mcpCallRefusal(wild("mcp__db__drop_*"), "db", "run_query")).toBeUndefined();
+    expect(mcpCallRefusal(wild("mcp__db__*"), "other", "drop_table")).toBeUndefined();
+    expect(mcpCallRefusal(wild("mcp__d*"), "db", "q")).toContain("may not use");
+    expect(mcpCallRefusal(wild("mcp__pg.prod__*"), "pgXprod", "q")).toBeUndefined();
+  });
+
   test("a deny list that cannot be read refuses", () => {
     expect(mcpCallRefusal({ [MCP_ACCESS_ENV]: "full", [MCP_DENY_ENV]: "{" }, "a", "b")).toContain("unreadable");
   });

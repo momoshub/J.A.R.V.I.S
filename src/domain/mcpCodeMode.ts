@@ -38,10 +38,15 @@ export const mcpCallRefusal = (env: Readonly<Record<string, string | undefined>>
   }
   if (!Array.isArray(denied)) return "this turn's MCP deny list is unreadable, so the call is refused";
   const names = [server, server.replace(/[^A-Za-z0-9_-]/g, "_")];
-  if (denied.some((d) => names.some((n) => d === `mcp__${n}`))) return `this turn may not use the \`${server}\` MCP server (it is in the turn's disallowed tools)`;
-  if (denied.some((d) => names.some((n) => d === `mcp__${n}__${tool}`))) return `this turn may not call \`${tool}\` of \`${server}\` (it is in the turn's disallowed tools)`;
+  const matches = (candidates: readonly string[]): boolean => denied.some((d) => typeof d === "string" && candidates.some((c) => denyPatternMatches(d, c)));
+  if (matches(names.map((n) => `mcp__${n}`))) return `this turn may not use the \`${server}\` MCP server (it is in the turn's disallowed tools)`;
+  if (matches(names.map((n) => `mcp__${n}__${tool}`))) return `this turn may not call \`${tool}\` of \`${server}\` (it is in the turn's disallowed tools)`;
   return undefined;
 };
+
+/** A `--disallowedTools` entry against a tool name: exact, or with `*` standing for any run of characters (`mcp__db__*`, `mcp__db__drop_*`). */
+const denyPatternMatches = (pattern: string, name: string): boolean =>
+  pattern === name || (pattern.includes("*") && new RegExp(`^${pattern.split("*").map((p) => p.replace(/[.+?^${}()|[\]\\]/g, "\\$&")).join(".*")}$`).test(name));
 
 /** Dotted paths from a `--fields a,b.c` value. */
 export const parseFields = (raw: string): string[] => raw.split(",").map((f) => f.trim()).filter(Boolean);

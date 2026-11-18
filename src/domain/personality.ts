@@ -155,7 +155,7 @@ export const SELF_PROCESS_NOTE = `- $BOT_SESSION_ID is the id of the session you
 
 /** Tells the bot it has a disposable temp workspace it may use freely. */
 /** Full-access turns only (a sandboxed role cannot run the CLI): large MCP results go to a file instead of the context. */
-export const MCP_CODE_MODE_NOTE = `- for a big MCP result (a database query, Datadog), call the tool through \`bun "$BOT_MCP_CLI" call <server> <tool> '<json args>' --fields a,b.c\` instead of the \`mcp__\` tool: the whole result goes to a file and you get its path, size and a short head, then grep or jq the file; \`--fields\` keeps only those dotted paths. \`list\`, \`search <query>\` and \`schema <server> <tool>\` find tools without loading them.`;
+export const MCP_CODE_MODE_NOTE = `- for a big result from a local stdio MCP server (a database query), call the tool through \`bun "$BOT_MCP_CLI" call <server> <tool> '<json args>' --fields a,b.c\` instead of the \`mcp__\` tool: the whole result goes to a file and you get its path, size and a short head, then grep or jq the file; \`--fields\` keeps only those dotted paths. \`list\`, \`search <query>\` and \`schema <server> <tool>\` find tools without loading them. It reaches the stdio servers only: an http one (notion, Datadog) stays on its \`mcp__\` tool.`;
 
 export const WORKSPACE_NOTE = `Your workspace:
 - Your current working directory is a temporary scratch folder that is yours to use. You may freely create, download and delete files there, fetch data from the internet, and clone git repositories into it to read, run or analyze them.
