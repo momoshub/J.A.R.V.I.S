@@ -387,7 +387,15 @@ describe("quick-review is never the brain's to run", () => {
     expect(prompt).toContain("`quick-review` is NOT yours to run, ever");
     expect(prompt).toContain("`review <pr-url>` or `approve <pr-url>`");
     expect(prompt).toContain("`//bot quick-review <pr-url>`");
-    expect(prompt).toContain("never review a PR by hand in its place");
+    expect(prompt).toContain("That closes the command, not reviewing");
+    expect(prompt).not.toContain("never review a PR by hand");
+  });
+
+  test("a plain-words review ask is an ordinary reviewer-worker task, not a refusal", () => {
+    expect(prompt).toContain("asks in plain words to review a PR");
+    expect(prompt).toContain("standalone Orca reviewer worker on `--model opus`");
+    expect(prompt).toContain("merge only if they asked for it and CI is green");
+    expect(prompt).toContain("Agent tool for that reviewer");
   });
 });
 
