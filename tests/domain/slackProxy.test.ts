@@ -3,10 +3,12 @@ import {
   SLACK_PROXY_METHODS,
   TOP_LEVEL_THREAD,
   allowedMethodNames,
+  channelParamOf,
   checkSlackCall,
   isAuditedMethod,
   isSlackFileUrl,
   parseExtraMethods,
+  refuseAsRead,
   refuseExtraMethod,
   serializeExtraMethods,
   type ExtraSlackMethods,
@@ -319,5 +321,33 @@ describe("methods the owner added", () => {
     expect(names).toContain("conversations.setTopic");
     expect(names.indexOf("users.list")).toBe(SLACK_PROXY_METHODS.read.length);
     expect(names.slice(-2)).toEqual(["conversations.setTopic", "conversations.setPurpose"]);
+  });
+
+  test("a wrong channel parameter on an entry does not open other channels", () => {
+    const wrong: ExtraSlackMethods = [{ method: "conversations.mark", kind: "write", channelParam: "channel_id" }];
+    // the entry names channel_id, the method takes channel: the other channel must not slip through in `channel`
+    const call = checkSlackCall("conversations.mark", { channel_id: own.channel, channel: "C0OTHER0001" }, own, undefined, wrong);
+    expect(!call.ok && call.error).toContain("channel_not_allowed");
+    expect(checkSlackCall("conversations.mark", { channel_id: own.channel, channel: own.channel }, own, undefined, wrong).ok).toBe(true);
+    const wrongBoth: ExtraSlackMethods = [{ method: "conversations.mark", kind: "write", channelParam: "target" }];
+    expect(checkSlackCall("conversations.mark", { target: own.channel, channel_id: "C0OTHER0001" }, own, undefined, wrongBoth).ok).toBe(false);
+  });
+
+  test("an extra write refuses `channels`", () => {
+    const call = checkSlackCall("conversations.setTopic", { channel: own.channel, channels: "C0OTHER0001" }, own, undefined, extra);
+    expect(!call.ok && call.error).toContain("param_not_allowed");
+  });
+
+  test("the audit line names the entry's own channel parameter", () => {
+    expect(channelParamOf("conversations.mark", [{ method: "conversations.mark", kind: "write", channelParam: "channel_id" }])).toBe("channel_id");
+    expect(channelParamOf("chat.postMessage")).toBe("channel");
+    expect(channelParamOf("users.list", extra)).toBeUndefined();
+  });
+
+  test("a read that reads like a change is refused", () => {
+    expect(refuseAsRead("chat.delete")).toBeDefined();
+    expect(refuseAsRead("conversations.kick")).toBeDefined();
+    expect(refuseAsRead("users.list")).toBeUndefined();
+    expect(refuseAsRead("conversations.members")).toBeUndefined();
   });
 });

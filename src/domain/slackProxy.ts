@@ -81,6 +81,19 @@ export const refuseExtraMethod = (method: string): string | undefined => {
   return undefined;
 };
 
+/** Verbs that mean a method changes something: adding such a method as a `read` is almost certainly a mistake, and a read is not channel-locked. */
+const WRITING_VERB = /^(set|delete|kick|archive|unarchive|invite|remove|create|rename|close|open|leave|mark|join|add|update|post|upload|pin|unpin|revoke|schedule|start|end|send|edit|clear|reset|lock|unlock)/;
+
+/** Why this method may not be added as a read, or `undefined`. */
+export const refuseAsRead = (method: string): string | undefined =>
+  WRITING_VERB.test(method.slice(method.indexOf(".") + 1)) ? `\`${method}\` reads like a method that changes something: add it as a \`write\` (locked to the turn's channel), since a read is not` : undefined;
+
+/** The parameter an allowed write names its channel by, for the audit line; `undefined` when it has none. */
+export const channelParamOf = (method: string, extra: ExtraSlackMethods = []): string | undefined => {
+  const added = isBuiltIn(method) ? undefined : extra.find((m) => m.method === method);
+  return added?.kind === "write" ? added.channelParam : WRITE_METHODS[method];
+};
+
 /** Whether this is a valid write parameter name, for the one that names the channel. */
 export const isChannelParam = (name: string): boolean => PARAM_NAME.test(name);
 
@@ -215,6 +228,17 @@ export const checkSlackCall = (
   if (!scope.channel) return refuse(403, `read_only_ticket: ${method} writes, and this ticket has no channel`);
   const channelParam = added?.kind === "write" ? added.channelParam : WRITE_METHODS[method];
   const target = channelParam ? params[channelParam] : undefined;
+  if (added) {
+    // An owner's entry can name the wrong parameter (`channel_id` for a method that takes `channel`), and then the lock below
+    // would check nothing. So an extra write also may not carry any other channel-ish parameter that points elsewhere, and
+    // `channels` (a list) is refused outright, as for the built-in upload completion.
+    if (params.channels !== undefined) return refuse(403, `param_not_allowed: ${method} may not take channels`);
+    for (const name of ["channel", "channel_id"]) {
+      if (params[name] !== undefined && params[name] !== scope.channel) {
+        return refuse(403, `channel_not_allowed: ${method} may only act in the channel this turn runs in (${scope.channel})`);
+      }
+    }
+  }
   let ownMessageIn: { channel: string; ts: string } | undefined;
   if (channelParam && target !== scope.channel) {
     // Only the owner's chat.update, and only with a message named; whose message it is gets checked against Slack by the proxy.

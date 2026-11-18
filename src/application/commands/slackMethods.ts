@@ -4,6 +4,7 @@ import {
   SLACK_PROXY_METHODS,
   isChannelParam,
   parseExtraMethods,
+  refuseAsRead,
   refuseExtraMethod,
   serializeExtraMethods,
   type ExtraSlackMethod,
@@ -23,12 +24,13 @@ export const SLACK_METHODS_COMMANDS: readonly CommandDef[] = [
     ownHelp: true,
     usage: "list | add <method> read|write [channelParam] | remove <method> | help",
     summary: "list, add or remove the Slack Web API methods a turn may call beyond the built-in ones; owner only",
-    run: async ({ deps, args, prefix }) => {
+    run: async ({ deps, args, prefix, fromBrainRun }) => {
       const usage = `\`${prefix} slack-methods list | add <method> read|write [channelParam] | remove <method>\``;
       const help = `${usage}
 Slack methods a turn may call through its Slack helper, beyond the built-in ones (those cannot be removed here).
 - \`add conversations.setTopic write\` - a *write* is locked to the channel the turn runs in, exactly like the built-in writes. \`channelParam\` is the parameter that names the channel (default \`${DEFAULT_CHANNEL_PARAM}\`; \`channel_id\` for some methods) and must be one the method really takes.
 - \`add users.list read\` - a *read* may look at any channel and cannot be locked to one, so add only methods that change nothing.
+- Only a line you type changes the list: when I run commands for a turn, \`add\` and \`remove\` are refused, so a prompt-injected turn cannot widen its own access.
 - Method names look like \`family.method\`. \`${REFUSED_METHOD_FAMILIES.map((f) => `${f}.*`).join("\`, \`")}\` are refused: they touch tokens, apps or the workspace admin.
 - The bot's token needs the matching Slack scope too (\`conversations.setTopic\` needs \`channels:manage\`, plus \`groups:write\` for private channels); the call fails with \`missing_scope\` otherwise.`;
       const first = (args[0] ?? "list").toLowerCase();
@@ -43,6 +45,11 @@ Slack methods a turn may call through its Slack helper, beyond the built-in ones
       }
 
       const method = args[1] ?? "";
+      // A turn reads untrusted text and runs commands as whoever it serves, owner included: letting it widen its own gate
+      // would make the allowlist advisory. Only a typed line changes the list (like `learn approve`).
+      if ((first === "add" || first === "remove") && fromBrainRun) {
+        return `I do not change this list myself: a turn that reads untrusted text must not widen what turns may call. Type the \`${prefix} slack-methods ${first}\` line yourself.`;
+      }
       if (first === "add") {
         const kind = (args[2] ?? "").toLowerCase();
         if (!method || (kind !== "read" && kind !== "write")) return `Name the method and whether it reads or writes: ${usage}`;
@@ -50,6 +57,8 @@ Slack methods a turn may call through its Slack helper, beyond the built-in ones
         if (refused) return `Not added: ${refused}.`;
         let entry: ExtraSlackMethod;
         if (kind === "read") {
+          const verb = refuseAsRead(method);
+          if (verb) return `Not added: ${verb}.`;
           if (args[3]) return "A read has no channel parameter: it is not locked to a channel. Leave it off, or add it as a `write`.";
           entry = { method, kind };
         } else {

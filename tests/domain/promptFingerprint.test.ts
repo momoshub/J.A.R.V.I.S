@@ -66,6 +66,15 @@ describe("the fingerprint sees every guide body", () => {
   });
 });
 
+describe("the fingerprint and the owner's extra Slack methods", () => {
+  test("it never hashes them: adding a method must not reset every open thread's session", () => {
+    const seen: Record<string, unknown>[] = [];
+    promptFingerprint(((o: Record<string, unknown>) => (seen.push(o), "x")) as never, "persona");
+    expect(seen.length).toBeGreaterThan(0);
+    for (const o of seen) expect(o).not.toHaveProperty("slackExtraMethods");
+  });
+});
+
 describe("the fingerprint sees the sandbox shell note", () => {
   test("a sentinel build renders SANDBOX_SHELL_NOTE, so editing it reopens live threads", () => {
     const builds: string[] = [];

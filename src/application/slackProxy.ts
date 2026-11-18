@@ -15,7 +15,7 @@
  * lets the edit through when its own id wrote it (`isBotMessage`); unreadable,
  * missing or anyone else's, it is refused.
  */
-import { checkSlackCall, isAuditedMethod, isSlackFileUrl, type ExtraSlackMethods, type IsNotice } from "../domain/slackProxy.ts";
+import { channelParamOf, checkSlackCall, isAuditedMethod, isSlackFileUrl, type ExtraSlackMethods, type IsNotice } from "../domain/slackProxy.ts";
 import { KEEP_REPLY } from "../domain/selfPost.ts";
 import type { SelfPosts } from "./selfPosts.ts";
 import type { SlackTickets, SlackTicketRefusal } from "./slackTickets.ts";
@@ -163,7 +163,8 @@ export const createSlackProxy = (deps: SlackProxyDeps): SlackProxy => {
         log(`slack proxy ${checked.method} channel=${channel} ts=${ts} (owner's turn, the bot's own message outside the turn's channel)`);
       } else if (isAuditedMethod(checked.method, extra)) {
         // method and channel only, never the content
-        log(`slack proxy ${checked.method} channel=${checked.params.channel ?? checked.params.channel_id ?? "-"}`);
+        const param = channelParamOf(checked.method, extra);
+        log(`slack proxy ${checked.method} channel=${(param && checked.params[param]) || checked.params.channel || checked.params.channel_id || "-"}`);
       }
       try {
         const res = await doFetch(`${SLACK_API}${checked.method}`, {

@@ -85,4 +85,23 @@ describe("slack-methods command", () => {
     const deps = build();
     expect(await dispatchCommand(deps, actor(), "D0SRC", "slack-methods add users.list read")).toContain("Settings are not available");
   });
+
+  test("a turn (the run bridge) may list but never add or remove, even as the owner", async () => {
+    const { deps, stored } = setup();
+    await dispatchCommand(deps, actor(), "D0SRC", "slack-methods add conversations.setTopic write");
+    const viaTurn = (line: string) => dispatchCommand(deps, actor(), "D0SRC", `slack-methods ${line}`, { fromBrainRun: true });
+    expect(await viaTurn("add chat.delete write")).toContain("Type the");
+    expect(await viaTurn("add users.list read")).toContain("yourself");
+    expect(await viaTurn("remove conversations.setTopic")).toContain("yourself");
+    expect(stored().map((m) => m.method)).toEqual(["conversations.setTopic"]);
+    expect(await viaTurn("list")).toContain("conversations.setTopic");
+  });
+
+  test("a method that reads like a change is refused as a read", async () => {
+    const { run, stored } = setup();
+    for (const m of ["chat.delete", "conversations.kick", "conversations.archive", "conversations.setTopic", "conversations.invite"]) {
+      expect(await run(`add ${m} read`)).toContain("add it as a `write`");
+    }
+    expect(stored()).toEqual([]);
+  });
 });

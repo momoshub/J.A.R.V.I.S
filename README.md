@@ -856,7 +856,7 @@ for a deliberate top-level post (the bot removes it before calling Slack), and a
 explicit `thread_ts` is used as given.
 
 To allow another Web API method without a code change, the owner runs `X/jv slack-methods add <method> read|write [channelParam]`
-(for example `add conversations.setTopic write`; `list` and `remove <method>` manage it). The name must look like `family.method`, and
+(for example `add conversations.setTopic write`; `list` and `remove <method>` manage it). Only a line the owner types changes the list: it is refused when Jarvis runs it for a turn, so a turn cannot widen its own access. The name must look like `family.method`, and
 `auth.*`, `admin.*`, `apps.*`, `oauth.*`, `tooling.*` and `openid.*` are refused. The bot's token also needs the method's Slack scope
 (`conversations.setTopic` / `setPurpose` need `channels:manage`, and `groups:write` for private channels).
 
