@@ -715,6 +715,22 @@ describe("sandboxed shell note", () => {
     expect(out).toContain("try again before you say the shell was denied");
   });
 
+  test("a sandboxed turn is told the allow-list matches by prefix: no git -C, no sed -i, quote shell characters, a denial is one command", () => {
+    const out = buildSystemPrompt({ learnings: [], sandboxed: true });
+    expect(out).toContain("matches a command by its PREFIX");
+    expect(out).toContain("never `git -C <dir> ...`");
+    expect(out).toContain("never `sed -i`");
+    expect(out).toContain("quote every argument that holds spaces or shell characters");
+    expect(out).toContain('do not say "Bash is denied"');
+  });
+
+  test("a full-access turn does not carry the prefix rules", () => {
+    const out = buildSystemPrompt({ learnings: [], sandboxed: false });
+    expect(out).not.toContain("matches a command by its PREFIX");
+    expect(out).not.toContain("quote every argument that holds spaces");
+    expect(out).not.toContain('do not say "Bash is denied"');
+  });
+
   test("a full-access turn does not carry it", () => {
     expect(buildSystemPrompt({ learnings: [] })).not.toContain(SANDBOX_SHELL_NOTE);
     expect(buildSystemPrompt({ learnings: [], sandboxed: false })).not.toContain(SANDBOX_SHELL_NOTE);
