@@ -190,6 +190,7 @@ Every command is gated by its own `command:<name>` grant, and its sub-actions by
 | `brief <thread-link\|reference> <text>` (`brief help`) | admin | leave a short note FOR another thread: what you posted there, why, what you wait for. Posts nothing, starts no turn; that thread's session reads it on its next turn, whoever speaks (it is part of that turn's message, so the session keeps it for the turns after), then it is marked read for that access tier. It is background information only, never instructions. The receiver sees only an opaque reference to your thread (never a link) and answers with `brief <reference> <text>`. `tell` is for when the other side must act now |
 | `post <#channel \| channel id \| thread-link> <text>` | owner | post a NEW message somewhere the turn is not running: a channel's top level (`#name`, `<#C123>` or its id) or into a linked thread. Needed because the Slack proxy only lets a turn write into its own channel. Owner only (anyone else is told who can), audit logged like every command, and it files a `brief` in the target thread so its session knows why; the footer under the message never names the requester; the bot must be in the channel |
 | `slack-methods list \| add <method> read\|write [channelParam] \| remove <method>` | owner | manage the Slack Web API methods a turn may call beyond the built-in ones (the `Slack.` paragraph of the security notes lists them); writes stay locked to the turn's channel, `auth.*` / `admin.*` / `apps.*` / `oauth.*` are refused, and the change applies on the next call |
+| `mcp-tools pending \| list <server> \| approve <server> <tool> \| deny <server> <tool>` | owner | approve or deny the tools an MCP server started listing after its first run; a new tool stays hidden and refused until approved (a typed line only, never from a turn) |
 | `reply <message-link>` (alias `jrp`) | admin | draft and post an AI reply to a message |
 | `rm-msg <message-link>` (aliases `rmmsg`, `unsend`) | admin | delete a message the bot posted (a bot token cannot delete anyone else's) |
 | `workflow <task>` / `workflow stop [<thread-link>]` / `workflow status` (alias `wf`) | executer, admin | start a long task in this thread and keep talking to it (see [Workflows](#workflows)) |
@@ -283,6 +284,19 @@ wrapped in `bin/mcp-lazy-proxy.ts`, which answers the tool list from
 call, and a role that may not use a server (`mcp__<server>` in its denied tools)
 does not get it in the config at all. The first turn after a new or edited
 server still starts it once to fill the cache.
+
+**New tools are off until the owner approves them.** The first run of a server
+takes the tools it lists as its baseline; a tool it lists later is hidden from
+every turn and refused if called until the owner runs `X/jv mcp-tools approve
+<server> <tool>` (`X/jv mcp-tools pending` lists what is waiting).
+
+**Code mode.** A full-access turn can call a tool from the shell instead of
+loading its result into the conversation: `bun bin/mcp.ts list | search <query> |
+schema <server> <tool> | call <server> <tool> '<json>' [--fields a,b.c]`. A call
+starts the real server (the same command and env the bot uses), writes the whole
+result to a file under the temp directory and prints only its path, size, row
+count and a short head; `--fields` keeps only those dotted paths of a JSON result.
+It refuses a server or tool the turn's role may not use.
 
 ## Investigating
 

@@ -1,6 +1,8 @@
 import { createHash } from "node:crypto";
 import { mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
+import { awaitingApprovalMessage, baselineOf, exposedTools, isApproved, namesOf, type ApprovalState } from "../../domain/mcpApproval.ts";
+import type { ApprovalStore } from "./approvals.ts";
 
 /**
  * A stdio MCP proxy that connects lazily. The CLI starts every `--mcp-config`
@@ -13,6 +15,10 @@ import { join } from "node:path";
  * refreshes the cache, so a server whose tools changed is picked up on the next
  * turn after one that called it. An empty tool list is never cached, since with
  * no tools nothing would ever call the server to correct it.
+ *
+ * Discovery is not exposure: with an `approvals` store, a tool that is not in the
+ * server's approved baseline is left out of `tools/list` and its `tools/call` is
+ * refused until the owner approves it (`domain/mcpApproval.ts`).
  *
  * First run with no cache has nothing to answer from, so it spawns the real
  * server once, exactly like before, and writes the cache.
@@ -59,6 +65,10 @@ export type ProxyDeps = {
   /** To the client (the CLI). */
   out: (msg: JsonRpc) => void;
   log?: (line: string) => void;
+  /** The server's name, for the message a refused call carries. */
+  server?: string;
+  /** Owner approval of tools. Absent: every tool the server lists is exposed. */
+  approvals?: ApprovalStore;
   /** How long the real server may take to answer `initialize` before the start is given up. Default 30s, the CLI's own connect timeout. */
   startTimeoutMs?: number;
 };
@@ -204,6 +214,62 @@ export const createLazyProxy = (deps: ProxyDeps) => {
     return started;
   };
 
+  /**
+   * The approval state, baselining the server on its first sight of a tool list.
+   * Undefined when there is nothing to baseline from (no tools, or the server cannot be reached).
+   */
+  const approvalState = async (tools?: readonly unknown[]): Promise<ApprovalState | undefined> => {
+    const store = deps.approvals;
+    if (!store) return undefined;
+    const existing = store.read();
+    if (existing) return existing;
+    let known = tools ?? cache.read()?.tools;
+    if (!known) {
+      try {
+        known = (await (await connect()).schema).tools;
+      } catch {
+        return undefined;
+      }
+    }
+    // No tools means no baseline: the first tools that show up would be taken as approved.
+    if (known.length === 0) return undefined;
+    const baseline = baselineOf(known);
+    try {
+      if (store.create(baseline)) {
+        log(`first run: ${baseline.approved.length} tool(s) approved as the baseline`);
+        return baseline;
+      }
+    } catch (e) {
+      log(`approvals not written: ${String(e)}`);
+      return undefined;
+    }
+    // Another process baselined at the same moment: its state is the one that counts.
+    return store.read();
+  };
+
+  const gateList = async (tools: readonly unknown[]): Promise<readonly unknown[]> => {
+    if (!deps.approvals) return tools;
+    const state = await approvalState(tools);
+    // Failing closed: with no state to judge by, nothing is exposed, unless the server lists nothing.
+    if (!state) return tools.length === 0 ? tools : [];
+    const shown = exposedTools(state, tools);
+    if (shown.length < tools.length) {
+      const hidden = namesOf(tools).filter((n) => !isApproved(state, n));
+      log(`${hidden.length} tool(s) hidden until the owner approves them: ${hidden.join(", ")}`);
+    }
+    return shown;
+  };
+
+  const refuseUnapproved = async (msg: JsonRpc): Promise<boolean> => {
+    if (!deps.approvals || msg.method !== "tools/call") return false;
+    const name = isRecord(msg.params) && typeof msg.params.name === "string" ? msg.params.name : "";
+    const state = await approvalState();
+    if (state && isApproved(state, name)) return false;
+    const text = awaitingApprovalMessage(deps.server ?? "this server", name);
+    out(reply(msg.id, { content: [{ type: "text", text }], isError: true }));
+    return true;
+  };
+
   const forward = async (msg: JsonRpc): Promise<void> => {
     try {
       await connect();
@@ -240,16 +306,20 @@ export const createLazyProxy = (deps: ProxyDeps) => {
     if (list) {
       const cached = cache.read();
       const items = method === "tools/list" ? cached?.tools : cached?.lists?.[method];
-      if (items) return out(reply(id, { [list.key]: items }));
+      if (items) return out(reply(id, { [list.key]: method === "tools/list" ? await gateList(items) : items }));
       // No cache, or a list it never recorded: only the real server knows.
       try {
         const full = await (await connect()).schema;
-        return out(reply(id, { [list.key]: (method === "tools/list" ? full.tools : full.lists?.[method]) ?? [] }));
+        const found = (method === "tools/list" ? full.tools : full.lists?.[method]) ?? [];
+        return out(reply(id, { [list.key]: method === "tools/list" ? await gateList(found) : found }));
       } catch (e) {
         return out(fail(id, String(e instanceof Error ? e.message : e)));
       }
     }
-    if (NEEDS_SERVER.test(method)) return forward(msg);
+    if (NEEDS_SERVER.test(method)) {
+      if (await refuseUnapproved(msg)) return;
+      return forward(msg);
+    }
     // Discovery and anything else the handshake protocol does not have: a refusal, without a spawn.
     return out(fail(id, method.startsWith("server/") ? HANDSHAKE_ERA : `method not found: ${method}`, method.startsWith("server/") ? -32600 : -32601));
   };
@@ -305,6 +375,28 @@ export const createFileSchemaCache = (path: string): SchemaCache => ({
     renameSync(tmp, path);
   },
 });
+
+/** Starts a stdio MCP server and speaks newline-delimited JSON-RPC to it. */
+export const spawnStdioServer = (command: readonly string[], env: Record<string, string | undefined> = process.env): RealServer => {
+  const proc = Bun.spawn({ cmd: [...command], stdin: "pipe", stdout: "pipe", stderr: "inherit", env });
+  let listener: (msg: JsonRpc) => void = () => {};
+  const parse = createLineParser((m) => listener(m));
+  const decoder = new TextDecoder();
+  void (async () => {
+    for await (const chunk of proc.stdout) parse(decoder.decode(chunk, { stream: true }));
+  })();
+  return {
+    send: (msg) => {
+      proc.stdin.write(`${JSON.stringify(msg)}\n`);
+      void proc.stdin.flush();
+    },
+    onMessage: (cb) => {
+      listener = cb;
+    },
+    onExit: (cb) => void proc.exited.then(cb),
+    kill: () => proc.kill(),
+  };
+};
 
 /** Splits a byte stream into newline-delimited JSON-RPC messages; lines that are not JSON objects are dropped. */
 export const createLineParser = (onMessage: (msg: JsonRpc) => void) => {

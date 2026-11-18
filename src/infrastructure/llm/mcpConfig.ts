@@ -18,6 +18,9 @@ export const NO_CLAUDEAI_CONNECTORS_ENV = { ENABLE_CLAUDEAI_MCP_SERVERS: "false"
 
 type Servers = Record<string, unknown>;
 
+/** Where each stdio server's cached schema (and its tool approvals) lives unless the host says otherwise. */
+export const DEFAULT_MCP_SCHEMA_CACHE_DIR = join(homedir(), ".jarvis", "mcp-schema-cache");
+
 /** How a stdio server is wrapped in the lazy proxy (`bin/mcp-lazy-proxy.ts`). */
 export type LazyProxy = {
   /** The runtime that runs the proxy script (bun). */
@@ -37,6 +40,44 @@ export type McpConfigOptions = {
 const asRecord = (v: unknown): Record<string, unknown> | undefined =>
   v && typeof v === "object" && !Array.isArray(v) ? (v as Record<string, unknown>) : undefined;
 
+/** User-scope servers plus the project-scope ones for `cwd`, minus `deny`. Undefined when the file holds no server list. */
+const mergedServers = (claudeJson: unknown, cwd: string | undefined, deny: readonly string[]): Servers | undefined => {
+  const root = asRecord(claudeJson);
+  if (!root) return undefined;
+  const user = asRecord(root.mcpServers);
+  const project = cwd ? asRecord(asRecord(asRecord(root.projects)?.[cwd])?.mcpServers) : undefined;
+  if (!user && !project) return undefined;
+  const merged: Servers = { ...user, ...project };
+  for (const name of deny) delete merged[name];
+  return merged;
+};
+
+/** A stdio server as the bot launches it: the same command, args and env the lazy proxy wraps. */
+export type StdioServer = { readonly command: string; readonly args: readonly string[]; readonly env: Readonly<Record<string, string>> };
+
+/**
+ * The stdio servers a turn would get (`mcpConfigFor` without the proxy and the role filter), by name, plus the names
+ * of the ones it cannot run itself (http, sse: their auth lives in the CLI). Used by the `mcp` code-mode CLI.
+ */
+export const stdioServersFor = (
+  claudeJson: unknown,
+  cwd: string | undefined,
+  deny: readonly string[] = UNAUTHENTICATED_MCP_SERVERS,
+): { stdio: Record<string, StdioServer>; other: string[] } => {
+  const stdio: Record<string, StdioServer> = {};
+  const other: string[] = [];
+  for (const [name, def] of Object.entries(mergedServers(claudeJson, cwd, deny) ?? {})) {
+    const d = asRecord(def);
+    if (!d || typeof d.command !== "string" || (d.type !== undefined && d.type !== "stdio")) {
+      other.push(name);
+      continue;
+    }
+    const env = Object.fromEntries(Object.entries(asRecord(d.env) ?? {}).map(([k, v]) => [k, String(v)]));
+    stdio[name] = { command: d.command, args: Array.isArray(d.args) ? d.args.map(String) : [], env };
+  }
+  return { stdio, other };
+};
+
 /**
  * The `--mcp-config` JSON for a turn: every user-scope server in `~/.claude.json`
  * plus the project-scope ones for `cwd`, minus `deny`. A denylist rather than an
@@ -50,13 +91,8 @@ export const mcpConfigFor = (
   deny: readonly string[] = UNAUTHENTICATED_MCP_SERVERS,
   opts: McpConfigOptions = {},
 ): string | undefined => {
-  const root = asRecord(claudeJson);
-  if (!root) return undefined;
-  const user = asRecord(root.mcpServers);
-  const project = cwd ? asRecord(asRecord(asRecord(root.projects)?.[cwd])?.mcpServers) : undefined;
-  if (!user && !project) return undefined;
-  const merged: Servers = { ...user, ...project };
-  for (const name of deny) delete merged[name];
+  const merged = mergedServers(claudeJson, cwd, deny);
+  if (!merged) return undefined;
   // A server the role may not call has no business being started: drop it, not just its tools.
   for (const tool of opts.disallowedTools ?? []) if (tool.startsWith("mcp__") && !tool.includes("__", 5)) delete merged[tool.slice(5)];
   const { lazy } = opts;

@@ -13,7 +13,6 @@
  * - `stream` uses `--output-format stream-json --include-partial-messages` and
  *   forwards text deltas and tool-call progress to a sink as they arrive.
  */
-import { homedir } from "node:os";
 import { join } from "node:path";
 import type {
   BillingContext,
@@ -36,7 +35,8 @@ import { isNoiseTool, redactPaths, redactSecrets } from "../../domain/toolVisibi
 import { scrubSecretEnv } from "../../domain/turnEnv.ts";
 import { stopProcess } from "./killTree.ts";
 import { ignoreQuietly } from "../../application/ignoredError.ts";
-import { NO_CLAUDEAI_CONNECTORS_ENV, createClaudeJsonReader, mcpConfigFor } from "./mcpConfig.ts";
+import { turnMcpEnv } from "../../domain/mcpCodeMode.ts";
+import { DEFAULT_MCP_SCHEMA_CACHE_DIR, NO_CLAUDEAI_CONNECTORS_ENV, createClaudeJsonReader, mcpConfigFor } from "./mcpConfig.ts";
 
 export type ClaudeCliConfig = {
   /** Path or name of the claude binary. Default "claude". */
@@ -443,7 +443,7 @@ const buildArgs = (
 
   // A per-call policy overrides the adapter default. skipPermissions -> full
   // access; otherwise sandbox with an explicit allow/deny tool list.
-  const skip = policy ? policy.skipPermissions : config.skipPermissions !== false;
+  const skip = skipsPermissions(config, policy);
   if (skip) {
     args.push("--dangerously-skip-permissions");
   } else {
@@ -462,6 +462,9 @@ const buildArgs = (
   }
   return args;
 };
+
+/** A per-call policy overrides the adapter default. */
+const skipsPermissions = (config: ClaudeCliConfig, policy?: ToolPolicy): boolean => (policy ? policy.skipPermissions : config.skipPermissions !== false);
 
 const spawnClaude = (
   config: ClaudeCliConfig,
@@ -496,6 +499,8 @@ const spawnClaude = (
     env: {
       ...hostLoginEnv(oauthToken, useHostLogin, config.envPassthrough),
       ...extraEnv,
+      // What the `mcp` code-mode CLI needs to hold a call to the turn's role (full access, disallowed servers).
+      ...turnMcpEnv({ skipPermissions: skipsPermissions(config, policy), disallowedTools: policy?.disallowedTools }),
       ...(runTicket ? { JARVIS_RUN_TICKET: runTicket } : {}),
       // undefined removes one inherited from a parent turn: a ticket is never borrowed
       JARVIS_SLACK_TICKET: slackTicket?.token,
@@ -549,7 +554,7 @@ const connectorArgs = (config: ClaudeCliConfig, policy?: ToolPolicy, useHostLogi
     lazy: {
       runtime: process.execPath,
       script: LAZY_PROXY_SCRIPT,
-      cacheDir: config.mcpSchemaCacheDir ?? join(homedir(), ".jarvis", "mcp-schema-cache"),
+      cacheDir: config.mcpSchemaCacheDir ?? DEFAULT_MCP_SCHEMA_CACHE_DIR,
     },
     disallowedTools: policy?.disallowedTools,
   });
