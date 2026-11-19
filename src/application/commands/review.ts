@@ -396,12 +396,14 @@ export const runReview = async (ctx: ReviewCtx, opts: ReviewRunOptions = {}): Pr
           await reply(`🚫 not approving ${url} - changes are requested`);
           continue;
         }
-        const snap = gate ? await gate.inspect(url, gateAs) : undefined;
+        const gateSnap = gate ? await gate.inspect(url, gateAs) : undefined;
+        let snap = gateSnap;
         if (asApp) {
           // The app's own change request counts even where GitHub's decision does not (no required
           // reviews). Its state is read from the gate, else straight from the app's adapter; a PR
-          // whose state cannot be read gets no approval.
-          const appState = snap ?? (await deps.reviewApp?.github.snapshot?.(url));
+          // whose state cannot be read gets no approval. The adapter's read also stands in for the
+          // gate's when only the gate's failed, so the CI checks below never go unseen.
+          const appState = gateSnap ?? (await deps.reviewApp?.github.snapshot?.(url));
           if (!appState) {
             await reply(`⚠️ not approving ${url} - I could not read where the app's review stands`);
             continue;
@@ -410,6 +412,7 @@ export const runReview = async (ctx: ReviewCtx, opts: ReviewRunOptions = {}): Pr
             await reply(`🚫 not approving ${url} - the app requested changes`);
             continue;
           }
+          snap = appState;
         }
         if (gate && snap?.state === "OPEN" && snap.ci.verdict === "red") {
           const res = await gate.requestChanges(url, snap, "after", gateAs);

@@ -147,6 +147,22 @@ describe("a review as the GitHub App", () => {
     expect(lines.some((l) => l.includes("could not read where the app's review stands"))).toBe(true);
   });
 
+  test("when only the gate's read of the app fails and the adapter's succeeds, a red CI is still seen: changes requested, no approval", async () => {
+    const { deps, start } = setup();
+    let reads = 0;
+    const flaky: GitHubPort = {
+      ...deps.reviewApp!.github,
+      // the gate's two reads (before the review, after it) fail; the adapter's own read after them succeeds
+      snapshot: async () => (reads++ < 2 ? undefined : { state: "OPEN", ci: RED, mine: undefined }),
+    };
+    deps.reviewApp = { ...deps.reviewApp!, github: flaky };
+    deps.ciGate = createCiGate({ github: { ...deps.github!, snapshot: async () => ({ state: "OPEN", ci: GREEN }) }, appGithub: flaky, clock: () => 1_000 });
+    await start();
+    expect(log).toContain("brain");
+    expect(log.filter((l) => l.endsWith(":approve"))).toEqual([]);
+    expect(log.some((l) => l.startsWith("app:request-changes:"))).toBe(true);
+  });
+
   test("a running CI keeps its watcher on the app's identity", async () => {
     ci = { verdict: "running", failed: [] };
     const { start, watches } = setup();
