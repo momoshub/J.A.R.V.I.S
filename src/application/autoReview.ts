@@ -43,6 +43,7 @@ import type { ReviewRun, ReviewRunRepo } from "../infrastructure/db/reviewRunRep
 import { logAndIgnore } from "./ignoredError.ts";
 import type { ReviewStart } from "./commands.ts";
 import type { Clock } from "./ports.ts";
+import { githubLinkKey } from "../domain/reviewInbox.ts";
 import { slackIdOfGithub, type GithubIdentityDeps } from "./reviewInbox.ts";
 import type { InteractiveAction } from "./slackAdmin.ts";
 
@@ -114,7 +115,7 @@ const errText = (e: unknown): string => (e instanceof Error ? e.message : String
 
 export const askLineOf = (run: ReviewRun, ownerSlackId: string): AskLine => ({
   asker: { login: run.requester, ...(run.requesterSlack ? { slackId: run.requesterSlack } : {}) },
-  reason: run.askReason === "unknown" ? "unknown" : "no-token",
+  reason: run.askReason === "unknown" || run.askReason === "unlinked" ? run.askReason : "no-token",
   ownerSlackId,
   identity: run.identity,
   url: run.url,
@@ -168,8 +169,11 @@ export const createAutoReview = (deps: AutoReviewDeps): AutoReview => {
         reply: say,
         prefix: deps.prefix,
       });
+      // `runReview` returns nothing once it has delivered its own lines to the thread. Text coming
+      // back means it did not run (a refused role, a busy PR, no credential): say it, and leave the
+      // head free to be asked for again.
       if (out.trim()) await say(out.trim());
-      deps.runs.move(run.id, ["running"], "done", deps.clock());
+      deps.runs.move(run.id, ["running"], out.trim() ? "failed" : "done", deps.clock());
     } catch (e) {
       log(`${run.url}: review failed: ${errText(e)}`);
       deps.runs.move(run.id, ["running"], "failed", deps.clock());
@@ -203,6 +207,9 @@ export const createAutoReview = (deps: AutoReviewDeps): AutoReview => {
 
     const slackId = await slackIdOfGithub(deps.identity, ask.requester);
     if (slackId) deps.runs.setRequesterSlack(run.id, slackId, deps.clock());
+    // Whose token is spent is decided by an explicit link only: a name match is good enough to tag
+    // somebody, never to bill them. Matched-by-name-only asks the owner like an unknown requester.
+    const linked = deps.identity.settings.get(githubLinkKey(ask.requester))?.trim();
     const account = (await deps.account(ask.identity).catch(logAndIgnore("review account") as () => undefined)) ?? "me";
     const opened = await thread(
       channel,
@@ -224,7 +231,7 @@ export const createAutoReview = (deps: AutoReviewDeps): AutoReview => {
       return "unposted";
     }
 
-    const actor = slackId ? deps.users.get(slackId) : undefined;
+    const actor = linked ? deps.users.get(linked) : undefined;
     if (actor && deps.hasToken(actor.slackId)) {
       if (!deps.runs.move(run.id, ["claimed"], "running", deps.clock())) return "duplicate";
       // Not awaited: a review takes minutes and the next request should not wait on it.
@@ -233,7 +240,7 @@ export const createAutoReview = (deps: AutoReviewDeps): AutoReview => {
     }
 
     // Nobody known, or nobody with a token: nothing runs until the owner says so.
-    const reason = actor ? "no-token" : "unknown";
+    const reason = actor ? "no-token" : slackId && !linked ? "unlinked" : "unknown";
     deps.runs.move(run.id, ["claimed"], "asking", deps.clock());
     const asked = await deps
       .postInteractive(

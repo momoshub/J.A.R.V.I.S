@@ -199,8 +199,10 @@ export const runReview = async (ctx: ReviewCtx, opts: ReviewRunOptions = {}): Pr
     if (loosened && !ctx.can(PERM.manageSettings)) {
       return "That repo or author is set to approve only after a clean review, and only someone who manages settings can override that for a run.";
     }
+    // An app review is always approve-after: its comments are the app's and its approval the host
+    // account's, so an up-front approval could never be reversed by a blocker the app finds.
     const policyFor = (url: string): ReviewPolicy =>
-      palOnly ? "approve-after" : (override ?? configured.get(url) ?? DEFAULT_REVIEW_POLICY);
+      palOnly || asApp ? "approve-after" : (override ?? configured.get(url) ?? DEFAULT_REVIEW_POLICY);
     // One review per PR. Two asks for the same PR
     // both land in this command, and two runs mean two approvals and two
     // comments on the same PR. A PR already in hand is pointed at, not redone.
@@ -395,6 +397,20 @@ export const runReview = async (ctx: ReviewCtx, opts: ReviewRunOptions = {}): Pr
           continue;
         }
         const snap = gate ? await gate.inspect(url, gateAs) : undefined;
+        if (asApp) {
+          // The app's own change request counts even where GitHub's decision does not (no required
+          // reviews). Its state is read from the gate, else straight from the app's adapter; a PR
+          // whose state cannot be read gets no approval.
+          const appState = snap ?? (await deps.reviewApp?.github.snapshot?.(url));
+          if (!appState) {
+            await reply(`⚠️ not approving ${url} - I could not read where the app's review stands`);
+            continue;
+          }
+          if (appState.mine === "CHANGES_REQUESTED") {
+            await reply(`🚫 not approving ${url} - the app requested changes`);
+            continue;
+          }
+        }
         if (gate && snap?.state === "OPEN" && snap.ci.verdict === "red") {
           const res = await gate.requestChanges(url, snap, "after", gateAs);
           await reply(

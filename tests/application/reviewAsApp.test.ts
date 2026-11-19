@@ -146,6 +146,45 @@ describe("a review as the GitHub App", () => {
     expect(rows[0]?.check).toContain('"identity":"app"');
   });
 
+  test("a repo set to approve-first is still approve-after for an app review: no human approval before the review, none if the mint fails", async () => {
+    const { deps, start } = setup();
+    deps.settings?.set("review_policy:o/r", "approve-first");
+    await start();
+    // the only approval comes after the brain, never before it
+    expect(log.indexOf("brain")).toBeGreaterThanOrEqual(0);
+    expect(log.indexOf("human:approve")).toBeGreaterThan(log.indexOf("brain"));
+
+    log = [];
+    const failing = setup(false);
+    failing.deps.settings?.set("review_policy:o/r", "approve-first");
+    await failing.start();
+    expect(log.filter((l) => l.endsWith(":approve"))).toEqual([]);
+    expect(log).not.toContain("brain");
+  });
+
+  test("the app's own change request blocks the human approval even where GitHub's decision says nothing", async () => {
+    // reviewDecision is undefined on a repo without required reviews; the app's latest review is the signal
+    appMine = "CHANGES_REQUESTED";
+    const { start, lines } = setup();
+    await start();
+    expect(log).toContain("brain");
+    expect(log.filter((l) => l.endsWith(":approve"))).toEqual([]);
+    expect(lines.some((l) => l.includes("the app requested changes"))).toBe(true);
+  });
+
+  test("with no CI gate wired the app's review is read straight from the app's adapter, and an unreadable one is no approval", async () => {
+    const { deps, start, lines } = setup();
+    deps.ciGate = undefined;
+    appMine = "CHANGES_REQUESTED";
+    await start();
+    expect(log.filter((l) => l.endsWith(":approve"))).toEqual([]);
+    log = [];
+    deps.reviewApp = { ...deps.reviewApp!, github: { ...deps.reviewApp!.github, snapshot: async () => undefined } };
+    await start();
+    expect(log.filter((l) => l.endsWith(":approve"))).toEqual([]);
+    expect(lines.some((l) => l.includes("could not read where the app's review stands"))).toBe(true);
+  });
+
   test("no credential for the app on that repo: nothing runs and it is said", async () => {
     const { start } = setup(false);
     const out = await start();

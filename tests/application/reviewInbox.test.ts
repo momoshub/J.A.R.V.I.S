@@ -155,6 +155,29 @@ describe("review inbox", () => {
       expect(asked).toHaveLength(1);
     });
 
+    test("a head that could not be read is asked for again on the next poll, and the cursor stays", async () => {
+      let outcome: "unreadable" | "started" = "unreadable";
+      const asked: Req[] = [];
+      const i = inbox({ review: { request: async (a) => (asked.push(a), outcome) } });
+      await i.tick();
+      expect(store.get(KEY)).toBe("2026-11-06T10:00:00Z");
+      outcome = "started";
+      now += POLL_MS;
+      await i.tick();
+      expect(asked).toHaveLength(2);
+      expect(store.get(KEY)).toBe("2026-11-06T10:00:30Z");
+    });
+
+    test("a request that keeps failing is dropped after an hour so it cannot block the ones behind it", async () => {
+      const asked: Req[] = [];
+      const i = inbox({ review: { request: async (a) => (asked.push(a), "unposted") } });
+      await i.tick();
+      expect(store.get(KEY)).toBe("2026-11-06T10:00:00Z");
+      now += 61 * 60_000;
+      await i.tick();
+      expect(store.get(KEY)).toBe("2026-11-06T10:00:30Z");
+    });
+
     test("with the auto review switched off the old announcement is posted, saying nothing runs by itself", async () => {
       await inbox({ review: { request: async () => "off" } }).tick();
       expect(posts).toHaveLength(1);

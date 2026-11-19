@@ -83,7 +83,11 @@ export const createReviewInbox = (deps: ReviewInboxDeps): ReviewInbox => {
 
   const slackIdOf = (login: string) => slackIdOfGithub(deps, login);
 
-  const handle = async (channel: string, account: string, r: ReviewRequest): Promise<void> => {
+  /** A request that failed for a reason that may pass (an unreadable head, a post that did not land) is asked for again on the next poll, for this long. */
+  const RETRY_WINDOW_MS = 60 * 60_000;
+
+  /** Whether the request is settled, so the cursor may move past it. */
+  const handle = async (channel: string, account: string, r: ReviewRequest): Promise<boolean> => {
     if (deps.review) {
       const outcome = await deps.review.request({
         identity: "human",
@@ -93,12 +97,18 @@ export const createReviewInbox = (deps: ReviewInboxDeps): ReviewInbox => {
         title: r.title,
         requester: r.requester,
       });
-      // Anything but "off" was settled there (run, asked, deduped or logged); the cursor moves on.
-      if (outcome !== "off") return;
+      // "off" falls through to the announcement; a transient failure is retried on the next poll for an
+      // hour (the cursor stays); everything else (run, asked, deduped, refused) was settled there.
+      if ((outcome === "unreadable" || outcome === "unposted" || outcome === "no-channel") && deps.clock() - Date.parse(r.requestedAt) < RETRY_WINDOW_MS) {
+        log(`${r.prUrl}: ${outcome}, asking again on the next poll`);
+        return false;
+      }
+      if (outcome !== "off") return true;
     }
     const slackId = await slackIdOf(r.requester);
     const ts = await deps.post(channel, announceRequest(r, slackId, account, deps.prefix));
     if (!ts) log(`could not post ${r.prUrl} into ${channel}`);
+    return true;
   };
 
   const tick = async (): Promise<void> => {
@@ -120,7 +130,7 @@ export const createReviewInbox = (deps: ReviewInboxDeps): ReviewInbox => {
       if (fresh.length === 0) return;
       const account = (await deps.account()) ?? "me";
       for (const r of fresh) {
-        await handle(channel, account, r);
+        if (!(await handle(channel, account, r))) break;
         // Moved per request, so a crash halfway never posts the first ones twice.
         deps.settings.set(deps.cursorKey, advanceCursor(deps.settings.get(deps.cursorKey) ?? cursor, [r]));
       }

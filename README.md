@@ -1238,18 +1238,20 @@ blocks and CI is green). Who the comments are written as depends on who was aske
 
 | asked | how it arrives | comments and change requests | approval |
 |---|---|---|---|
-| the GitHub App | a mention of it asking for a review on a PR (`@<slug> please review`), the trigger label on a PR, or a review requested from the app's bot | the app | the host's GitHub account |
+| the GitHub App | a mention of it asking for a review on a PR (`@<slug> please review` - the text next to the mention has to open with review / re-review / approve, so "address the review comments" stays an ordinary call), the trigger label on a PR, or a review requested from the app's bot | the app | the host's GitHub account |
 | the host's own GitHub account | a review requested from it (found by the review inbox poll) | that account | that account |
 
-The approval is never the app's. The model's `gh` writes as the app through a
-token minted for that one repository and revoked when the review ends.
+The approval is never the app's, and a review asked of the app is always
+approved only after the review (never up front), and not at all while the app's own
+change request stands. The model's `gh` writes as the app through a token minted
+for that one repository, limited to what a review needs and revoked when it ends.
 
 - **One thread per PR**, in the review inbox channel (`review-inbox channel
   #channel`): the first event opens it, every later one - another request, a
   comment, a change request, an approval - goes into it, and the review runs in it.
-- **Whose token**: the requester's own Claude token (GitHub login matched to
-  Slack as in [Calling it from GitHub](#calling-it-from-github)). If that person has
-  none, or cannot be placed, nothing runs: the thread asks the owner, with
+- **Whose token**: the requester's own Claude token, for a GitHub login linked to
+  them with `review-inbox link <login>` (a name match tags them in the thread but
+  never bills them). If that person has no token, or the login is not linked, nothing runs: the thread asks the owner, with
   Approve / Reject buttons. Only the owner's press counts. Approve runs it on the
   owner's token (the bot's own credential if the owner has none); Reject leaves a
   short note and nothing runs.

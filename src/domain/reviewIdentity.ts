@@ -50,13 +50,18 @@ export const sameLogin = (a: string, b: string): boolean => !!a && !!b && bareLo
 /**
  * Whether a comment on a PR asks the app to review it, rather than to do
  * something else. The mention is taken out first, so the app's own name (which
- * may contain the word) never counts. Words only: `review`, `re-review`,
- * `approve`, `lgtm?` - a mention that says anything else stays a general call.
+ * may contain the word) never counts. The ask is a request: the text opens with
+ * `review`, `re-review` or `approve` (after an optional "please" / "can you"),
+ * so "address the review comments" and "don't approve yet" stay the general
+ * calls they always were.
  */
 export const asksForReview = (body: string, slug: string): boolean => {
   const escaped = slug.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-  const text = body.replace(new RegExp(`@${escaped}(\\[bot\\])?`, "gi"), " ");
-  return /\b(re-?review|review|approve)\b/i.test(text);
+  const text = body
+    .replace(new RegExp(`@${escaped}(\\[bot\\])?`, "gi"), " ")
+    .replace(/\s+/g, " ")
+    .trim();
+  return /^(?:(?:please|pls|kindly|hey|hi)[ ,]+)*(?:(?:can|could|would|will) you (?:please )?)?(?:re-?review|review|approve)\b/i.test(text);
 };
 
 /** What the person said next to the mention, as a steering note for the review. */
@@ -106,7 +111,7 @@ export const alreadyReviewedText = (headSha: string): string =>
   `↩️ \`${headSha.slice(0, 7)}\` already has a review this way - a new push, asked for again, gets another`;
 
 /** Why a review waits on the owner instead of running. */
-export type AskReason = "no-token" | "unknown";
+export type AskReason = "no-token" | "unknown" | "unlinked";
 
 export type AskLine = {
   readonly asker: Asker;
@@ -123,7 +128,9 @@ export const askText = (a: AskLine): string =>
   [
     a.reason === "unknown"
       ? `🔑 \`${a.asker.login}\` asked for a review of ${prLink(a.url, a.repo, a.number)} and I cannot tell who that is on Slack, so there is no Claude Code token to run it on.`
-      : `🔑 ${who(a.asker)} asked for a review of ${prLink(a.url, a.repo, a.number)} but has no Claude Code token on file, so it did not start.`,
+      : a.reason === "unlinked"
+        ? `🔑 \`${a.asker.login}\` asked for a review of ${prLink(a.url, a.repo, a.number)}. They look like ${who(a.asker)} by name, but the login is not linked, and I do not spend anyone's Claude Code token on a name match.`
+        : `🔑 ${who(a.asker)} asked for a review of ${prLink(a.url, a.repo, a.number)} but has no Claude Code token on file, so it did not start.`,
     `<@${a.ownerSlackId}> run it anyway, on your credential or the bot's? Comments go out as ${a.identity === "app" ? "the app" : "the GitHub account"}, the approval (if it is clean) as the GitHub account.`,
     "Approve and I review it. Reject and nothing runs.",
   ].join("\n");

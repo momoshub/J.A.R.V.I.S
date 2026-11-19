@@ -35,6 +35,15 @@ describe("a mention that asks for a review", () => {
     expect(asksForReview("@jv-app approve if it is fine", "jv-app")).toBe(true);
     expect(asksForReview("@jv-app what does this do?", "jv-app")).toBe(false);
     expect(asksForReview("@jv-app summarise the PR", "jv-app")).toBe(false);
+    expect(asksForReview("hey @jv-app, can you review this?", "jv-app")).toBe(true);
+    expect(asksForReview("@jv-app\nreview", "jv-app")).toBe(true);
+  });
+
+  test("a mention that only talks about reviews is not a request for one", () => {
+    expect(asksForReview("@jv-app address the review comments", "jv-app")).toBe(false);
+    expect(asksForReview("@jv-app don't approve yet, check the migration", "jv-app")).toBe(false);
+    expect(asksForReview("@jv-app why was this reviewed twice?", "jv-app")).toBe(false);
+    expect(asksForReview("@jv-app", "jv-app")).toBe(false);
   });
 
   test("the app's own name never counts, even when it holds the word", () => {
@@ -66,6 +75,9 @@ describe("what the thread says", () => {
     expect(noToken).toContain("<@U1>");
     expect(noToken).toContain("no Claude Code token on file");
     expect(noToken).toContain("<@UOWNER>");
+    const unlinked = askText({ ...line, asker: { login: "dev", slackId: "U1" }, reason: "unlinked" });
+    expect(unlinked).toContain("the login is not linked");
+    expect(unlinked).toContain("do not spend anyone's Claude Code token on a name match");
     expect(noToken).toContain("the approval (if it is clean) as the GitHub account");
     const unknown = askText({ ...line, asker: { login: "stranger" }, reason: "unknown" });
     expect(unknown).toContain("`stranger`");

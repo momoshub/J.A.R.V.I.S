@@ -56,6 +56,41 @@ describe("createGithubAppClient", () => {
     expect(calls.length).toBe(2);
   });
 
+  describe("review tokens", () => {
+    const setupReview = (permissions: Record<string, string>) => {
+      const calls: { url: string; method: string; body?: string }[] = [];
+      const fetchFn: FetchLike = async (url, init) => {
+        calls.push({ url, method: String(init.method), body: init.body as string | undefined });
+        if (url.endsWith("/app/installations/42")) return Response.json({ permissions });
+        if (url.endsWith("/access_tokens")) return Response.json({ token: `ghs_${calls.length}`, expires_at: new Date(NOW + 3_600_000).toISOString() }, { status: 201 });
+        return Response.json({});
+      };
+      return { calls, client: createGithubAppClient({ appId: "1", privateKey, userAgent: "t", fetch: fetchFn, clock: () => NOW }) };
+    };
+    const minted = (calls: { url: string; body?: string }[]) => JSON.parse(calls.find((c) => c.url.endsWith("/access_tokens"))?.body ?? "{}");
+
+    test("one repository, write on pull requests and issues, read on the rest - never contents write", async () => {
+      const { client, calls } = setupReview({ contents: "write", pull_requests: "write", issues: "write", checks: "write", statuses: "read", actions: "write" });
+      expect((await client.mintRepoToken(42, "Acme/Repo")).token).toStartWith("ghs_");
+      expect(minted(calls)).toEqual({
+        repositories: ["Repo"],
+        permissions: { metadata: "read", pull_requests: "write", issues: "write", contents: "read", checks: "read", statuses: "read" },
+      });
+    });
+
+    test("asks only for what the installation holds, so GitHub never answers 422", async () => {
+      const { client, calls } = setupReview({ pull_requests: "write", contents: "read" });
+      await client.mintRepoToken(42, "a/b");
+      expect(minted(calls).permissions).toEqual({ metadata: "read", pull_requests: "write", contents: "read" });
+    });
+
+    test("an installation that cannot write pull requests is a plain error and no token is minted", async () => {
+      const { client, calls } = setupReview({ pull_requests: "read", issues: "write" });
+      await expect(client.mintRepoToken(42, "a/b")).rejects.toThrow("no write access to pull requests");
+      expect(calls.some((c) => c.url.endsWith("/access_tokens"))).toBe(false);
+    });
+  });
+
   describe("worker tokens", () => {
     const setupWorker = (contents: unknown = "read", status = 200) => {
       const calls: { url: string; method: string; auth: string; body?: string }[] = [];

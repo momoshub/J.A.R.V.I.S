@@ -134,6 +134,17 @@ describe("a request whose requester has a token", () => {
     expect(inThread).toContain("That command needs *admin* access.");
   });
 
+  test("text coming back from the review means it did not run: it is said in the thread and the head can be asked for again", async () => {
+    reviewOut = "I could not get a credential for the GitHub App on that repository, so nothing ran.";
+    const review = make();
+    await review.request(ask());
+    await settle();
+    expect(posts.some((p) => p.threadTs === "ts1" && p.text.includes("could not get a credential"))).toBe(true);
+    expect(runs.find("acme/web#7", "abcdef1234567", "app")?.state).toBe("failed");
+    reviewOut = "";
+    expect(await review.request(ask())).toBe("started");
+  });
+
   test("a review that throws is said in the thread and can be asked for again", async () => {
     reviewOut = new Error("boom");
     const review = make();
@@ -216,6 +227,14 @@ describe("nobody to run it on", () => {
     expect(asks[0]?.text).toContain("cannot tell who that is on Slack");
     expect(started).toHaveLength(0);
     expect(runs.find("acme/web#7", "abcdef1234567", "app")?.askReason).toBe("unknown");
+  });
+
+  test("a requester matched to Slack by name only is not billed: the owner is asked, and the thread says why", async () => {
+    links.clear(); // no explicit link, but exactly one person is named "Dev Person"
+    expect(await make({ identity: { settings: { get: (k) => links.get(k) }, users: { list: () => people }, githubName: async () => "Dev Person" } }).request(ask())).toBe("asked");
+    expect(started).toHaveLength(0);
+    expect(asks[0]?.text).toContain("the login is not linked");
+    expect(runs.find("acme/web#7", "abcdef1234567", "app")).toMatchObject({ askReason: "unlinked", requesterSlack: "U1" });
   });
 
   test("a second request on the same head does not ask the owner twice", async () => {
