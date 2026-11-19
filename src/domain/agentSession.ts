@@ -14,13 +14,18 @@
  * way back. `streaming_message_ts` is how Slack says which ones were open; it
  * is empty when none were.
  *
- * Deliberately NOT applying the "your own turn, or an admin" rule that guards
- * the bot's own stop button. That rule exists because a turn is somebody's work
- * and often their money, and it is right for a button the bot drew. This button
- * is Slack's: it appears in the client to whoever can see the session, and an
- * agent that leaves it inert has broken the platform's own affordance. So a
- * press is honoured, and the notice names whose turn it was when it was not the
- * presser's - visible rather than refused.
+ * The press is gated by the same rule as the bot's own stop button and the
+ * `stop` command (`mayStopRun`): the turn's own actor, or someone allowed to
+ * stop other people's turns (admin, owner). A turn is somebody's work and often
+ * their money, and in a public channel Slack draws this button for everyone who
+ * can see the session - honouring every press would let anyone kill someone
+ * else's long turn. A press that is not allowed stops nothing: the run keeps
+ * going, its streams stay open (the turn is still writing into them), the
+ * session stays `processing`, the presser gets an ephemeral notice saying whose
+ * turn it is (`sessionStopIgnoredNotice`) and the log channel gets one line
+ * (`sessionStopIgnoredLog`). With nothing running in the thread there is no
+ * turn to protect, so the press still closes the named streams and idles the
+ * session - it must never stick in `processing`.
  *
  * What ends the session: `agents.sessions.setStatus` and nothing else. Slack
  * documents that the streaming methods (`chat.startStream`/`appendStream`/
@@ -100,6 +105,21 @@ export const sessionStoppedLog = (
   const whose = press.by === run.actor ? "" : ` (<@${run.actor}>'s)`;
   const where = press.link ? `<${press.link}|thread>` : `<#${press.channel}> \`${press.threadTs}\``;
   return `⏹ <@${press.by}> pressed stop in ${where}: stopped *${run.what}*${whose} after ${forHowLong(now - run.startedAt)}`;
+};
+
+/** What a presser who may not stop this turn is told, privately: the press changed nothing. */
+export const sessionStopIgnoredNotice = (run: { readonly actor: string }): string =>
+  `I ignored that stop: it is <@${run.actor}>'s turn, and only they or an admin can stop it.`;
+
+/** The log-channel line for a press on Slack's own stop button that was refused. */
+export const sessionStopIgnoredLog = (
+  run: { readonly what: string; readonly startedAt: number; readonly actor: string },
+  press: { readonly by: string; readonly channel: string; readonly threadTs: string; readonly link?: string },
+  now: number,
+  forHowLong: (ms: number) => string,
+): string => {
+  const where = press.link ? `<${press.link}|thread>` : `<#${press.channel}> \`${press.threadTs}\``;
+  return `⏹ <@${press.by}> pressed stop in ${where}: ignored, *${run.what}* is <@${run.actor}>'s (running ${forHowLong(now - run.startedAt)}) and keeps going`;
 };
 
 /** The method that moves an agent session between `processing` and `active`. */

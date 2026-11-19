@@ -899,7 +899,9 @@ that is going the wrong way instead of waiting it out.
 Send anything while a turn is running and the thread says nothing: the message
 queues silently and runs when its turn comes. There is no "still working on ...
 yours is next" notice. To end the running turn, press Slack's own stop button on
-the session, or use `//bot stop`.
+the session, or use `//bot stop`. Both follow one rule: your own turn, or an admin
+or the owner for someone else's. Anyone else's press is ignored (they get a
+private notice) and the turn keeps going.
 
 `//bot stop` ends the turn from a thread without needing a new message: a turn
 going wrong while you have nothing to add.

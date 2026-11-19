@@ -25,7 +25,7 @@ import { REVIEW_RUN_ACTION_PREFIX } from "../../domain/reviewIdentity.ts";
 import { decideReviewRunPress, reviewRunPressNoticeOf, type ReviewRunApprovalDeps } from "../../application/reviewRunApproval.ts";
 import { LEARNING_ACTION_PREFIX, refusalText } from "../../domain/learning.ts";
 import { CODE_ACTION_PREFIX } from "../../domain/cloudwatch.ts";
-import { forHowLong } from "../../domain/runControl.ts";
+import { forHowLong, mayStopRun } from "../../domain/runControl.ts";
 import { frontKeyOf } from "../../domain/workflowFront.ts";
 import { streamsToClose } from "../../application/runRegistry.ts";
 import {
@@ -35,6 +35,8 @@ import {
   mayIdleSession,
   type AgentSessionStoppedEvent,
   planSessionStop,
+  sessionStopIgnoredLog,
+  sessionStopIgnoredNotice,
   sessionStoppedLog,
 } from "../../domain/agentSession.ts";
 import {
@@ -54,7 +56,7 @@ import {
   TOTP_VIEW,
 } from "../../application/totp.ts";
 import { tokenGuide, tokenHint, TOKEN_PREFIX } from "../../domain/claudeToken.ts";
-import { commandLineOf, dispatchCommand, listCommandInfo } from "../../application/commands.ts";
+import { bookOf, commandLineOf, dispatchCommand, listCommandInfo } from "../../application/commands.ts";
 import {
   clip,
   decodeMenuRequest,
@@ -83,6 +85,8 @@ import {
 import { rankOf as roleRank } from "../../domain/roles.ts";
 import { seededBook } from "../../domain/roleSeed.ts";
 import { decideAccess } from "../../domain/access.ts";
+import { can } from "../../domain/roles.ts";
+import { PERM } from "../../domain/permissions.ts";
 import { opensWithBotTag, reviewRequestIn } from "../../domain/reviewRequest.ts";
 import { createFollowGate } from "../../application/followGate.ts";
 import { createGateModel } from "../../application/followGateModel.ts";
@@ -1064,14 +1068,46 @@ export const retireOpenKit = async (
 /**
  * What a press on Slack's own stop button does: stop the work, close the
  * streams no live run owns, and put the session idle unless a run that was not
- * stopped is still going in the thread. Exported so it can be tested without Bolt.
+ * stopped is still going in the thread. Only the turn's own actor or someone
+ * allowed to stop other people's turns (`mayStopRun`, the `stop` command's
+ * rule) may stop it: any other press changes nothing - the run goes on, its
+ * streams stay open - and the presser is told privately. With nothing running
+ * the press still closes streams and idles the session. Exported so it can be
+ * tested without Bolt.
  */
 export const createSessionStopHandler =
-  (deps: Pick<Deps, "runs" | "slack" | "stopLogChannel">, log: (m: string) => void) =>
+  (deps: Pick<Deps, "runs" | "slack" | "stopLogChannel" | "users" | "ownerSlackId" | "roles">, log: (m: string) => void) =>
   async ({ event, client }: { event: unknown; client: unknown }): Promise<void> => {
     const plan = planSessionStop(event as AgentSessionStoppedEvent);
     if (plan.kind === "ignored") {
       log(`agent session stop ignored: ${plan.why}`);
+      return;
+    }
+
+    const api = client as { apiCall: (method: string, args: Record<string, unknown>) => Promise<unknown> };
+    const logChannel = deps.stopLogChannel?.() ?? "";
+
+    // The same rule as the `stop` command: your own turn, or admin/owner. A
+    // press that fails it touches nothing - not the run, not its streams (it is
+    // still writing into them), not the session - and is told so, privately.
+    const user = decideAccess(plan.by, deps.ownerSlackId, deps.users.get);
+    const mayStopOthers = user.allowed && can(bookOf(deps), user.user.role, PERM.stopAny);
+    const running = [deps.runs?.current(plan.key), deps.runs?.current(frontKeyOf(plan.key))].filter((r) => r !== undefined);
+    const refused = running.find((r) => !mayStopRun(r, plan.by, mayStopOthers));
+    if (refused) {
+      const link = logChannel ? await deps.slack?.permalink?.(plan.channel, plan.threadTs).catch(logAndIgnore("stop log permalink")) : undefined;
+      if (logChannel) {
+        await deps.slack
+          ?.post(
+            logChannel,
+            sessionStopIgnoredLog(refused, { by: plan.by, channel: plan.channel, threadTs: plan.threadTs, ...(link ? { link } : {}) }, Date.now(), forHowLong),
+          )
+          .catch(logAndIgnore("stop log post"));
+      }
+      await (client as Partial<Pick<KitClient, "chat">>).chat
+        ?.postEphemeral?.({ channel: plan.channel, user: plan.by, thread_ts: plan.threadTs, text: sessionStopIgnoredNotice(refused) })
+        .catch(logAndIgnore("stop ignored notice"));
+      log(`agent session stop by ${plan.by} ignored: ${refused.id} is ${refused.actor}'s`);
       return;
     }
 
@@ -1081,7 +1117,6 @@ export const createSessionStopHandler =
     const front = deps.runs?.stopThread(frontKeyOf(plan.key), plan.by);
     const stopped = worker ?? front;
 
-    const api = client as { apiCall: (method: string, args: Record<string, unknown>) => Promise<unknown> };
     // Only the streams of what was stopped (or of nothing): a queued
     // message's reply is in the same session, and Slack names it too.
     const streams = deps.runs ? streamsToClose(deps.runs, plan.streams) : plan.streams;
@@ -1109,7 +1144,6 @@ export const createSessionStopHandler =
     // Nothing goes into the thread: Slack's UI already showed the presser it
     // stopped. The context goes to the log channel, and only when something
     // was actually stopped (a press with nothing running has nothing to say).
-    const logChannel = deps.stopLogChannel?.() ?? "";
     if (stopped && logChannel) {
       const link = await deps.slack?.permalink?.(plan.channel, plan.threadTs).catch(logAndIgnore("stop log permalink"));
       await deps.slack
