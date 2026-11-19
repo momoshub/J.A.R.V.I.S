@@ -2,6 +2,7 @@ import { describe, expect, test } from "bun:test";
 import { SELF_POST_NOTE, capBytes, createSlackProxy, isBotMessage } from "../../src/application/slackProxy.ts";
 import { createSlackTickets } from "../../src/application/slackTickets.ts";
 import { createSelfPosts } from "../../src/application/selfPosts.ts";
+import { KEEP_REPLY } from "../../src/domain/selfPost.ts";
 import type { ExtraSlackMethods } from "../../src/domain/slackProxy.ts";
 
 const BOT_TOKEN = "xoxb-the-bots-own-token";
@@ -45,6 +46,52 @@ describe("Slack proxy and approval notices", () => {
     expect(answer.status).toBe(200);
     expect(seen).toHaveLength(1);
     expect(String(seen[0]!.init.body)).toBe("channel=C0TEST00001&ts=56.6&text=progress+2%2F3");
+  });
+});
+
+describe("Slack proxy and the keep-reply marker", () => {
+  const body = (seen: { init: RequestInit }[], i = 0) => new URLSearchParams(String(seen[i]!.init.body));
+
+  test("a marker on its own line or closing the text never reaches Slack, in a post or an update", async () => {
+    const { proxy, tickets, seen } = setup();
+    const ticket = tickets.issue({ channel: "C0TEST00001", threadTs: "1.1" });
+    await proxy.call({ ticket, method: "chat.postMessage", params: { channel: "C0TEST00001", text: `own line\n${KEEP_REPLY}` } });
+    await proxy.call({ ticket, method: "chat.postMessage", params: { channel: "C0TEST00001", text: `inline ${KEEP_REPLY}` } });
+    await proxy.call({ ticket, method: "chat.update", params: { channel: "C0TEST00001", ts: "5.5", text: `edited ${KEEP_REPLY}` } });
+    expect(seen.map((s) => body([s]).get("text"))).toEqual(["own line", "inline", "edited"]);
+  });
+
+  test("text fields inside blocks are stripped too", async () => {
+    const { proxy, tickets, seen } = setup();
+    const ticket = tickets.issue({ channel: "C0TEST00001", threadTs: "1.1" });
+    const blocks = [{ type: "section", text: { type: "mrkdwn", text: `hello ${KEEP_REPLY}` } }];
+    await proxy.call({ ticket, method: "chat.postMessage", params: { channel: "C0TEST00001", text: "hello", blocks: JSON.stringify(blocks) } });
+    expect(JSON.parse(body(seen).get("blocks")!)).toEqual([{ type: "section", text: { type: "mrkdwn", text: "hello" } }]);
+    expect(String(seen[0]!.init.body)).not.toContain(KEEP_REPLY);
+  });
+
+  test("a message that is only the marker is not posted, the turn is told, and nothing is noted as a self-post", async () => {
+    const selfPosts = createSelfPosts(() => 0);
+    const seen: string[] = [];
+    const tickets = createSlackTickets(() => 0);
+    const fetchFn = (async (url: string | URL | Request) => {
+      seen.push(String(url));
+      return Response.json({ ok: true, ts: "9.9" });
+    }) as typeof fetch;
+    const proxy = createSlackProxy({ tickets, botToken: BOT_TOKEN, selfPosts, fetchFn });
+    const ticket = tickets.issue({ channel: "C0TEST00001", threadTs: "1.1", turn: "run-1" });
+    const answer = await proxy.call({ ticket, method: "chat.postMessage", params: { channel: "C0TEST00001", text: ` ${KEEP_REPLY} ` } });
+    expect(answer.status).toBe(400);
+    expect(JSON.parse(answer.body).error).toContain("no_text");
+    expect(seen).toHaveLength(0);
+    expect(selfPosts.posts("run-1")).toEqual([]);
+  });
+
+  test("text that only mentions similar words is sent as it is", async () => {
+    const { proxy, tickets, seen } = setup();
+    const ticket = tickets.issue({ channel: "C0TEST00001", threadTs: "1.1" });
+    await proxy.call({ ticket, method: "chat.postMessage", params: { channel: "C0TEST00001", text: `a line ${KEEP_REPLY} inside, and keep_reply` } });
+    expect(body(seen).get("text")).toBe(`a line ${KEEP_REPLY} inside, and keep_reply`);
   });
 });
 

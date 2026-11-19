@@ -6,7 +6,7 @@
  * answer, usually reworded, and no comparison of words tells a reword from a
  * correction reliably. So the default is inverted: once the turn has put a
  * message into its own thread, its closing reply is dropped, unless the turn
- * opts in with `KEEP_REPLY` on a line of its own in that reply.
+ * opts in with `KEEP_REPLY` on a line of its own (or as the closing token) in that reply.
  *
  * Pure: no I/O. The record of what a turn posted lives in `application/selfPosts.ts`.
  */
@@ -27,12 +27,73 @@ export const KEEP_REPLY = "KEEP_REPLY";
 
 const KEEP_LINE = /^[ \t]*KEEP_REPLY[ \t]*$/m;
 const KEEP_LINES = /^[ \t]*KEEP_REPLY[ \t]*(?:\r?\n|$)/gm;
+// the same token closing a text after other words on its line; a longer word that merely ends in it does not count
+const KEEP_TRAILING = /(?<![A-Za-z0-9_])KEEP_REPLY[ \t]*$/;
 
-/** Does the closing reply carry the `KEEP_REPLY` marker line? */
-export const hasKeepMarker = (reply: string): boolean => KEEP_LINE.test(reply);
+/** Does the text carry the `KEEP_REPLY` marker: on a line of its own, or as the token that closes it? */
+export const hasKeepMarker = (reply: string): boolean => KEEP_LINE.test(reply) || KEEP_TRAILING.test(reply.trimEnd());
 
-/** The reply without its marker lines, trimmed. */
-export const stripKeepMarker = (reply: string): string => reply.replace(KEEP_LINES, "").trim();
+/** The text without its marker lines and closing marker token, trimmed. */
+export const stripKeepMarker = (reply: string): string => reply.replace(KEEP_LINES, "").trimEnd().replace(KEEP_TRAILING, "").trim();
+
+/**
+ * Walks Slack blocks and removes the marker from every `text` string. An object whose own `text` was only the
+ * marker says nothing and is dropped from its parent (an array entry, or the property holding it, which drops
+ * that parent in turn). `undefined` means "this node is gone".
+ */
+const cleanNode = (node: unknown): unknown => {
+  if (Array.isArray(node)) return node.map(cleanNode).filter((n) => n !== undefined);
+  if (!node || typeof node !== "object") return node;
+  const out: Record<string, unknown> = {};
+  for (const [key, value] of Object.entries(node)) {
+    if (key === "text" && typeof value === "string" && hasKeepMarker(value)) {
+      const text = stripKeepMarker(value);
+      if (!text) return undefined;
+      out[key] = text;
+      continue;
+    }
+    const cleaned = cleanNode(value);
+    if (cleaned === undefined && value !== undefined) return undefined;
+    out[key] = cleaned;
+  }
+  return out;
+};
+
+/** What the proxy sends for a `chat.postMessage` / `chat.update` after the marker is taken out: the params, or nothing left to say. */
+export type MarkerStrip = { readonly kind: "send"; readonly params: Readonly<Record<string, string>> } | { readonly kind: "empty" };
+
+/**
+ * The marker is an instruction to the bot, so it never goes into a message the turn writes itself. Taken out of `text`
+ * and of the `text` fields in `blocks` of `chat.postMessage` and `chat.update`; any other call, any text without the
+ * marker and any blocks that are not JSON go through as they came. A call whose text and blocks held only the marker
+ * (and that has no attachments) is `empty`: it must not post or blank a message.
+ */
+export const stripKeepMarkerFromCall = (method: string, params: Readonly<Record<string, string>>): MarkerStrip => {
+  if (method !== "chat.postMessage" && method !== "chat.update") return { kind: "send", params };
+  const out: Record<string, string> = { ...params };
+  let touched = false;
+  if (out.text !== undefined && hasKeepMarker(out.text)) {
+    touched = true;
+    const text = stripKeepMarker(out.text);
+    if (text) out.text = text;
+    else delete out.text;
+  }
+  if (out.blocks !== undefined && out.blocks.includes(KEEP_REPLY)) {
+    try {
+      const blocks = JSON.parse(out.blocks) as unknown;
+      const cleaned = cleanNode(blocks);
+      if (JSON.stringify(cleaned) !== JSON.stringify(blocks)) {
+        touched = true;
+        if (Array.isArray(cleaned) && cleaned.length > 0) out.blocks = JSON.stringify(cleaned);
+        else delete out.blocks;
+      }
+    } catch {
+      // not JSON: Slack will say so
+    }
+  }
+  if (touched && !out.text?.trim() && out.blocks === undefined && !out.attachments) return { kind: "empty" };
+  return { kind: "send", params: touched ? out : params };
+};
 
 /**
  * What the Slack handler does with the closing reply of a turn: `send` it as
