@@ -56,6 +56,7 @@ import type { CloudwatchDeps } from "./cloudwatch.ts";
 import type { LoopApprovalDeps } from "./loopApproval.ts";
 import type { LearningApprovalDeps } from "./learningApproval.ts";
 import type { BugReportApprovalDeps } from "./bugReportApproval.ts";
+import type { ReviewRunApprovalDeps } from "./reviewRunApproval.ts";
 import type { McpToolsPort } from "../infrastructure/mcp/approvals.ts";
 import type { SettingsRepo } from "../infrastructure/db/settingsRepo.ts";
 import { requestAccess } from "./accessRequests.ts";
@@ -69,6 +70,7 @@ import type { ThreadBriefRepo } from "../infrastructure/db/threadBriefRepo.ts";
 import { BRIEF_RECENT_LOOKBACK, pickBriefs, renderBriefs } from "../domain/threadBrief.ts";
 import type { SlackAdminPort, SlackMessage } from "./slackAdmin.ts";
 import type { GitHubPort } from "./github.ts";
+import type { ReviewApp } from "./commands/shared.ts";
 import type { CiGate } from "./ciGate.ts";
 import type { DraftReply } from "./draftReply.ts";
 import type { SelfPrAccounts } from "../domain/selfUpdate.ts";
@@ -120,6 +122,8 @@ export type HandleMessageDeps = {
   selfIssues?: SelfIssueRepo;
   /** The owner's Approve / Reject on a bug report, decided by the Slack listener in code. */
   bugReportApproval?: BugReportApprovalDeps;
+  /** The owner's Approve / Reject on a review with nobody's token to run on, decided in code. */
+  reviewRunApproval?: ReviewRunApprovalDeps;
   /** Recurring prompts, for the `loop` command. */
   loops?: LoopRepo;
   /** Owner approval of a script loop a turn wrote, and its Approve / Reject buttons. */
@@ -172,6 +176,8 @@ export type HandleMessageDeps = {
   slack?: SlackAdminPort;
   /** GitHub actions the bot takes itself - the up-front approve in `quick-review`. */
   github?: GitHubPort;
+  /** The GitHub App as the identity a review's comments go out as (see `CommandDeps`). */
+  reviewApp?: ReviewApp;
   /** CI gate of `quick-review` (see `CommandDeps`). */
   ciGate?: CiGate;
   /** AI reply drafting, for jrp. */

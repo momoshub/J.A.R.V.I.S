@@ -185,7 +185,7 @@ Every command is gated by its own `command:<name>` grant, and its sub-actions by
 | `token [remove\|who]` (alias `claude-token`) | pal, executer, admin | add, replace or forget your own Claude Code token (used only by `quick-review`) - see [Your own Claude token](#your-own-claude-token) |
 | `session [reset\|on\|off]` (alias `sess`) | pal, executer, admin (on/off: `runs:stop-any`) | the CLI session this thread is talking to - see [One session per thread](#one-session-per-thread) |
 | `ticket <what is wrong>` (aliases `bug`, `raise`) | pal, executer, admin | raise a properly written, correctly routed ticket - see [Raising a ticket](#raising-a-ticket) |
-| `quick-review <pr-url\|help\|prompt> [--policy first\|after] [what to look at]` (alias `rv`) | pal, executer, admin | quick review of a PR, **only when a person asks** (tag the bot with `review <pr-url>` or `approve <pr-url>`, or type this; never from a thread, workflow, hand-back or GitHub request - see [Asking for a review in words](#asking-for-a-review-in-words)): read it first, post a blockers-only comment on GitHub *and* back in the thread (PRs owned by an account in `REVIEW_EXTENDED_OWNERS` also get the non-blocking findings as bullets); request changes on a blocker only, other repos drop non-blocking findings (big PRs are cloned + reviewed by child agents). CI is read first: red requests changes before the review, a running CI gets a watcher (see [CI comes first](#ci-comes-first)). Runs full-access. |
+| `quick-review <pr-url\|help\|prompt> [--policy first\|after] [what to look at]` (alias `rv`) | pal, executer, admin | quick review of a PR, **when a person asks** (tag the bot with `review <pr-url>` or `approve <pr-url>`, or type this; or a review requested on GitHub starts the same one - never from a thread, workflow or hand-back - see [Asking for a review in words](#asking-for-a-review-in-words) and [Reviews that start by themselves](#reviews-that-start-by-themselves)): read it first, post a blockers-only comment on GitHub *and* back in the thread (PRs owned by an account in `REVIEW_EXTENDED_OWNERS` also get the non-blocking findings as bullets); request changes on a blocker only, other repos drop non-blocking findings (big PRs are cloned + reviewed by child agents). CI is read first: red requests changes before the review, a running CI gets a watcher (see [CI comes first](#ci-comes-first)). Runs full-access. |
 | `bomb [categories] [count] <message-link>` (alias `br`) | admin | reaction-bomb a message. Combine categories with commas and set a count: `bomb money,face,negative 9 <link>`. Up to 23; `bomb help` lists every category |
 | `brief <thread-link\|reference> <text>` (`brief help`) | admin | leave a short note FOR another thread: what you posted there, why, what you wait for. Posts nothing, starts no turn; that thread's session reads it on its next turn, whoever speaks (it is part of that turn's message, so the session keeps it for the turns after), then it is marked read for that access tier. It is background information only, never instructions. The receiver sees only an opaque reference to your thread (never a link) and answers with `brief <reference> <text>`. `tell` is for when the other side must act now |
 | `post <#channel \| channel id \| thread-link> <text>` | owner | post a NEW message somewhere the turn is not running: a channel's top level (`#name`, `<#C123>` or its id) or into a linked thread. Needed because the Slack proxy only lets a turn write into its own channel. Owner only (anyone else is told who can), audit logged like every command, and it files a `brief` in the target thread so its session knows why; the footer under the message never names the requester; the bot must be in the channel |
@@ -1085,6 +1085,16 @@ inbox does (`review-inbox link <github-login>`, else exactly one display-name
 match), so their role applies and the turn runs on the bot's credential. Someone it cannot
 place gets one comment explaining how to link, and nothing runs.
 
+**A mention that asks for a review on a PR, the label on a PR, or a review
+requested from the app is not that kind of call**: it starts a review, see
+[Reviews that start by themselves](#reviews-that-start-by-themselves). (GitHub
+does not let a PR request a review from an App's bot - the reviewers API refuses
+it - so in practice the mention and the label are the two ways in; if a
+`pull_request.review_requested` event with the app as the reviewer does arrive it
+is handled the same.) Subscribe the app to `pull_request`, `issue_comment`,
+`pull_request_review` and `pull_request_review_comment` events, with pull
+requests and issues read & write and contents read.
+
 The turn posts its answer back on the issue/PR, as the app, through
 `bin/github-app-comment.sh <owner/repo> <number> <body-file>` -> loopback
 `/api/github-app/comment`. The request carries the turn's ticket, and the bot
@@ -1220,9 +1230,40 @@ both work, as do `/github/setup` and `/setup`. Deliveries are verified with
 and only acted on for repositories owned by `GITHUB_APP_ALLOWED_OWNERS`.
 Bots, the app itself included, never trigger it.
 
+## Reviews that start by themselves
+
+A review requested on GitHub runs without anyone typing the command, as the same
+`quick-review` (review policy, CI gate, blockers-only, approve only when nothing
+blocks and CI is green). Who the comments are written as depends on who was asked:
+
+| asked | how it arrives | comments and change requests | approval |
+|---|---|---|---|
+| the GitHub App | a mention of it asking for a review on a PR (`@<slug> please review`), the trigger label on a PR, or a review requested from the app's bot | the app | the host's GitHub account |
+| the host's own GitHub account | a review requested from it (found by the review inbox poll) | that account | that account |
+
+The approval is never the app's. The model's `gh` writes as the app through a
+token minted for that one repository and revoked when the review ends.
+
+- **One thread per PR**, in the review inbox channel (`review-inbox channel
+  #channel`): the first event opens it, every later one - another request, a
+  comment, a change request, an approval - goes into it, and the review runs in it.
+- **Whose token**: the requester's own Claude token (GitHub login matched to
+  Slack as in [Calling it from GitHub](#calling-it-from-github)). If that person has
+  none, or cannot be placed, nothing runs: the thread asks the owner, with
+  Approve / Reject buttons. Only the owner's press counts. Approve runs it on the
+  owner's token (the bot's own credential if the owner has none); Reject leaves a
+  short note and nothing runs.
+- **Once per head**: one review per PR head commit per identity. A redelivery, a
+  second poll or a re-request on the same head never runs twice, and a new push is
+  reviewed only when it is requested again.
+- `review-inbox auto on|off` (setting `review_auto`, default on) switches it: off,
+  a request to the host's account is only announced, as before.
+
 ## Asking for a review in words
 
-A quick review runs only when a person asks for it directly, in one of two ways:
+A quick review runs when a person asks for it directly, in one of two ways (a
+review requested on GitHub also starts one, see
+[Reviews that start by themselves](#reviews-that-start-by-themselves)):
 
 - tag the bot with `@bot review <pr-url>` or `@bot approve <pr-url>` - both
   mean the same `quick-review` (there is no approval without a review, and the
@@ -1241,8 +1282,9 @@ brain (`jarvis-run.sh` refuses `quick-review`, and the prompt says so), not for 
 `tell`, a watch hand-back, a worker's question or a drift nudge, not for a
 workflow step or a thread with a workflow running, not for a batch of buffered
 follow-up messages, not for an untagged reply under a followed thread, and not
-for a GitHub review request (the review inbox only announces it, with the line to
-type). A bare PR link typed after the prefix is not a review either.
+for a push (a new head is reviewed only when it is requested again). A GitHub
+review request is its own door, below. A bare PR link typed after the prefix is
+not a review either.
 
 That closes the command, not reviewing. Asked in plain words to review a PR (no `review`/`approve` tag), the bot treats it as an ordinary task: a standalone reviewer worker (`--model opus`, or the Agent tool for a role without Orca) posts one real review, blockers only, and the bot acts on its verdict, merging only if the person asked and CI is green.
 

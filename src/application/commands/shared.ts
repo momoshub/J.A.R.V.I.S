@@ -58,6 +58,15 @@ import { logAndIgnore } from "../ignoredError.ts";
 export const DEFAULT_COMMAND_PREFIX = "//bot";
 export const DEFAULT_SLASH_COMMAND = "/bot";
 
+/** The GitHub App as the identity a review's comments and change requests go out as. */
+export type ReviewApp = {
+  /** `<slug>[bot]`. */
+  login: string;
+  github: GitHubPort;
+  /** A token for one repository, revoked by `revoke` when the review ends. Throws when the app is not installed there. */
+  mintToken: (repo: string) => Promise<{ token: string; revoke: () => Promise<void> }>;
+};
+
 export type CommandDeps = {
   users: UserRepo;
   messages: MessageRepo;
@@ -199,6 +208,12 @@ export type CommandDeps = {
   threadQueue?: ThreadQueue;
   /** One review per PR at a time, across every `quick-review` ask. */
   reviewGuard?: ReviewGuard;
+  /**
+   * The GitHub App as a review identity: its own `gh` adapter (for change
+   * requests and reads) and a minted token, scoped to one repo, for the model's
+   * `gh` in a review asked of the app. Absent where the app is not set up.
+   */
+  reviewApp?: ReviewApp;
   /** Read-only Grafana helper, so an investigation can reach a non-Loki datasource. */
   grafanaGetScript?: string;
   /** One CLI session per thread, for the `session` command to inspect and reset. */
@@ -352,7 +367,7 @@ export const parseWindow = (token?: string): number | undefined => {
  * when there is nowhere to put a button - a slash invocation, or no Slack wired
  * up at all. Either way the user is told exactly how to mint one.
  */
-export const askForToken = async (ctx: Context, line: string, force = false, lapsed = false): Promise<string> => {
+export const askForToken = async (ctx: Pick<Context, "deps" | "actor" | "channelId" | "threadTs" | "slash" | "reply">, line: string, force = false, lapsed = false): Promise<string> => {
   const { deps, actor, channelId, threadTs, slash } = ctx;
   const ask = lapsed
     ? `🔑 <@${actor.slackId}> your Claude Code token no longer works, so I could not run that - add a new one to replace it.\n\n${tokenGuide(slash)}`

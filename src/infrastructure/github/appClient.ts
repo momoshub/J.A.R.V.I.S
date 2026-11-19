@@ -47,6 +47,13 @@ export type GithubAppClient = {
    * plainly when the installation has no contents permission at all.
    */
   mintWorkerToken: (installationId: number, repo: string) => Promise<{ token: string; expiresAt: number }>;
+  /**
+   * A token for ONE review, never cached or shared: limited to `repo` but with
+   * everything the installation holds there (a review writes comments and
+   * requests changes, which is not contents). Handed to a model's `gh`, so it is
+   * revoked when the review ends.
+   */
+  mintRepoToken: (installationId: number, repo: string) => Promise<{ token: string; expiresAt: number }>;
   /** `DELETE /installation/token`: GitHub stops honouring that token now. Never throws on an already-dead one. */
   revokeInstallationToken: (token: string) => Promise<void>;
   /** Add a reaction at `path` (e.g. `repos/o/r/issues/comments/1/reactions`). */
@@ -124,6 +131,19 @@ export const createGithubAppClient = (config: GithubAppClientConfig): GithubAppC
     return { token, expiresAt: Number.isFinite(expiresAt) ? expiresAt : clock() + 60 * 60_000 };
   };
 
+  const mintRepoToken = async (installationId: number, repo: string): Promise<{ token: string; expiresAt: number }> => {
+    const name = repo.split("/")[1];
+    if (!name) throw new Error("a repo token needs owner/repo");
+    const jwt = createAppJwt(config.appId, config.privateKey, clock());
+    const out = (await call(jwt, "POST", `app/installations/${installationId}/access_tokens`, { repositories: [name] })) as
+      | { token?: unknown; expires_at?: unknown }
+      | undefined;
+    const token = typeof out?.token === "string" ? out.token : "";
+    if (!token) throw new Error("GitHub returned no installation token");
+    const expiresAt = typeof out?.expires_at === "string" ? Date.parse(out.expires_at) : NaN;
+    return { token, expiresAt: Number.isFinite(expiresAt) ? expiresAt : clock() + 60 * 60_000 };
+  };
+
   const revokeInstallationToken = async (token: string): Promise<void> => {
     try {
       await call(token, "DELETE", "installation/token");
@@ -148,6 +168,7 @@ export const createGithubAppClient = (config: GithubAppClientConfig): GithubAppC
   return {
     installationToken,
     mintWorkerToken,
+    mintRepoToken,
     revokeInstallationToken,
     installationOfRepo,
     request: async (installationId, method, path, body) => call(await installationToken(installationId), method, path, body),

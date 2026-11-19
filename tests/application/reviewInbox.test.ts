@@ -131,4 +131,34 @@ describe("review inbox", () => {
     await inbox({ requests: async () => Promise.reject(new Error("rate limited")), onError: (e) => errors.push(e) }).tick();
     expect(errors).toHaveLength(1);
   });
+
+  describe("with the auto review wired", () => {
+    type Req = Parameters<NonNullable<ReviewInboxDeps["review"]>["request"]>[0];
+
+    test("a request to the host's account goes to the review as the human identity, and is not announced twice", async () => {
+      const asked: Req[] = [];
+      await inbox({ review: { request: async (a) => (asked.push(a), "started") } }).tick();
+      expect(asked).toEqual([
+        { identity: "human", url: "https://github.com/o/r/pull/7", repo: "o/r", number: 7, title: "add thing", requester: "dev-gh" },
+      ]);
+      expect(posts).toHaveLength(0); // the review opens the PR's thread itself
+    });
+
+    test("the cursor still moves, so a duplicate or a settled request is not asked for every minute", async () => {
+      const asked: Req[] = [];
+      const i = inbox({ review: { request: async (a) => (asked.push(a), "duplicate") } });
+      await i.tick();
+      expect(store.get(KEY)).toBe("2026-11-06T10:00:30Z");
+      now += POLL_MS;
+      pending = [];
+      await i.tick();
+      expect(asked).toHaveLength(1);
+    });
+
+    test("with the auto review switched off the old announcement is posted, saying nothing runs by itself", async () => {
+      await inbox({ review: { request: async () => "off" } }).tick();
+      expect(posts).toHaveLength(1);
+      expect(posts[0]?.text).toContain("automatic reviews are off");
+    });
+  });
 });

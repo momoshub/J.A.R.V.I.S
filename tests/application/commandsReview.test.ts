@@ -341,7 +341,7 @@ describe("reviews run on the caller's own Claude token", () => {
     const { deps, token } = withTokens({ [OWNER]: TOKEN });
     const out = await dispatchCommand(deps, actor(), "C1", "rv help");
     expect(out).toContain("How I review a PR");
-    expect(out).toContain("your own");
+    expect(out).toContain("asker's own* Claude token");
     expect(token()).toBeUndefined();
 
     const prompt = await dispatchCommand(deps, actor(), "C1", "rv prompt");

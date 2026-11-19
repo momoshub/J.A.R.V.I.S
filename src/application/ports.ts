@@ -167,6 +167,12 @@ export type LlmCompleteParams = {
    */
   readonly useHostLogin?: boolean;
   /**
+   * Extra environment for this run's process (CLI adapter only), set after the
+   * bot's own is scrubbed of secrets. Used to hand a review ONE short-lived,
+   * repo-scoped credential (`GH_TOKEN`) so its `gh` writes as the GitHub App.
+   */
+  readonly env?: Readonly<Record<string, string>>;
+  /**
    * Ends the run when aborted (CLI adapter only): the child process is killed,
    * exactly as the timeout does. A turn can last the better part of an hour, so
    * there has to be a way to stop one that is going the wrong way.

@@ -183,3 +183,141 @@ describe("github app", () => {
     expect(turns).toEqual([]);
   });
 });
+
+describe("github app - reviews asked of the app, and a PR's thread", () => {
+  type Asked = Parameters<NonNullable<GithubAppDeps["review"]>["request"]>[0];
+  let requests: Asked[];
+  let activity: Parameters<NonNullable<GithubAppDeps["review"]>["activity"]>[0][];
+  let outcome: Awaited<ReturnType<NonNullable<GithubAppDeps["review"]>["request"]>>;
+
+  beforeEach(() => {
+    requests = [];
+    activity = [];
+    outcome = "started";
+  });
+
+  const withReview = () =>
+    app({
+      review: {
+        request: async (a) => {
+          requests.push(a);
+          return outcome;
+        },
+        activity: async (a) => {
+          activity.push(a);
+          return true;
+        },
+      },
+    });
+
+  const prComment = (body: string, login = "dev-gh") => ({
+    ...comment(body, login),
+    issue: { number: 7, title: "add thing", html_url: "https://github.com/acme/api/pull/7", pull_request: {} },
+  });
+
+  test("a mention on a PR that asks for a review is a review as the app, not a general call", async () => {
+    withReview().receive({ id: "d1", event: "issue_comment", payload: prComment("@jarvis-at-acme please review, the migration is risky") });
+    await settle();
+    expect(requests).toEqual([
+      {
+        identity: "app",
+        url: "https://github.com/acme/api/pull/7",
+        repo: "acme/api",
+        number: 7,
+        title: "add thing",
+        requester: "dev-gh",
+        installationId: 42,
+        note: "please review, the migration is risky",
+      },
+    ]);
+    expect(reactions).toEqual(["eyes@repos/acme/api/issues/comments/99/reactions"]);
+    expect(turns).toEqual([]);
+    expect(posts).toEqual([]); // the review's own thread is its business
+    expect(repo.state("d1")).toBe("done");
+  });
+
+  test("a mention that asks for something else, or on a plain issue, stays a general call", async () => {
+    withReview().receive({ id: "d1", event: "issue_comment", payload: prComment("@jarvis-at-acme why is it slow?") });
+    withReview().receive({ id: "d2", event: "issue_comment", payload: comment("@jarvis-at-acme please review") });
+    await settle();
+    expect(requests).toEqual([]);
+    expect(turns).toHaveLength(2);
+  });
+
+  test("the trigger label on a PR is a review request too, with no note", async () => {
+    withReview().receive({
+      id: "d1",
+      event: "pull_request",
+      payload: {
+        action: "labeled",
+        repository: { full_name: "acme/api", owner: { login: "acme" } },
+        installation: { id: 42 },
+        sender: { login: "dev-gh", type: "User" },
+        label: { name: "jarvis" },
+        pull_request: { number: 7, title: "add thing", html_url: "https://github.com/acme/api/pull/7" },
+      },
+    });
+    await settle();
+    expect(requests).toHaveLength(1);
+    expect(requests[0]).toMatchObject({ identity: "app", number: 7, requester: "dev-gh" });
+    expect(requests[0]?.note).toBeUndefined();
+  });
+
+  test("a review requested from the app itself is a review request", async () => {
+    withReview().receive({
+      id: "d1",
+      event: "pull_request",
+      payload: {
+        action: "review_requested",
+        repository: { full_name: "acme/api", owner: { login: "acme" } },
+        installation: { id: 42 },
+        sender: { login: "dev-gh", type: "User" },
+        requested_reviewer: { login: "jarvis-at-acme[bot]" },
+        pull_request: { number: 7, title: "add thing", html_url: "https://github.com/acme/api/pull/7" },
+      },
+    });
+    await settle();
+    expect(requests).toHaveLength(1);
+  });
+
+  test("a redelivery of the same call asks for one review, not two", async () => {
+    const a = withReview();
+    a.receive({ id: "d1", event: "issue_comment", payload: prComment("@jarvis-at-acme review") });
+    a.receive({ id: "d1", event: "issue_comment", payload: prComment("@jarvis-at-acme review") });
+    await settle();
+    expect(requests).toHaveLength(1);
+  });
+
+  test("with the auto review off a review ask is the old general call again", async () => {
+    outcome = "off";
+    withReview().receive({ id: "d1", event: "issue_comment", payload: prComment("@jarvis-at-acme review") });
+    await settle();
+    expect(requests).toHaveLength(1);
+    expect(turns).toHaveLength(1);
+  });
+
+  test("with no channel the call fails and is recorded failed", async () => {
+    outcome = "no-channel";
+    withReview().receive({ id: "d1", event: "issue_comment", payload: prComment("@jarvis-at-acme review") });
+    await settle();
+    expect(repo.state("d1")).toBe("failed");
+    expect(turns).toEqual([]);
+  });
+
+  test("a comment with no mention is news for the PR's thread, never a call", async () => {
+    withReview().receive({ id: "d1", event: "issue_comment", payload: prComment("looks risky to me") });
+    await settle();
+    expect(activity).toEqual([
+      { kind: "comment", login: "dev-gh", url: "https://github.com/acme/api/pull/7", body: "looks risky to me", repo: "acme/api", number: 7 },
+    ]);
+    expect(turns).toEqual([]);
+    expect(requests).toEqual([]);
+    expect(repo.state("d1")).toBe("done");
+  });
+
+  test("without reviews wired, a plain comment is ignored as before", async () => {
+    app().receive({ id: "d1", event: "issue_comment", payload: prComment("looks risky to me") });
+    await settle();
+    expect(repo.state("d1")).toBeUndefined();
+  });
+});

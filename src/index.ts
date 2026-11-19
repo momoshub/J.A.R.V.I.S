@@ -135,7 +135,10 @@ import { can as roleCan } from "./domain/roles.ts";
 import { logSourceOrder } from "./domain/investigation.ts";
 import { createDashboard } from "./infrastructure/dashboard/server.ts";
 import { runForBrain } from "./application/brainRun.ts";
-import { dispatchCommand, isQuietCommand, listCommandInfo } from "./application/commands.ts";
+import { dispatchCommand, isQuietCommand, listCommandInfo, startReview } from "./application/commands.ts";
+import type { ReviewApp } from "./application/commands/shared.ts";
+import { createAutoReview, type AutoReview } from "./application/autoReview.ts";
+import { createReviewRunRepo } from "./infrastructure/db/reviewRunRepo.ts";
 import { createCommandTickets, refusalMessage } from "./application/commandTickets.ts";
 import { createSlackTickets } from "./application/slackTickets.ts";
 import { createNoticeLookup } from "./infrastructure/db/noticeLookup.ts";
@@ -248,6 +251,9 @@ const main = async () => {
   const reminders = createReminderRepo(db);
   const journeys = createJourneyRepo(db);
   const bugReports = createBugReportRepo(db);
+  const reviewRuns = createReviewRunRepo(db);
+  // Filled in below, once `deps` exists: the owner's press on a review with nobody's token resolves through it.
+  let autoReview: AutoReview | undefined;
   const selfIssues = createSelfIssueRepo(db);
   const loops = createLoopRepo(db);
   const follows = createFollowRepo(db);
@@ -575,8 +581,37 @@ const main = async () => {
   // `quick-review` approves, requests changes and reads CI through this one gh port; the
   // gate puts a running CI on the watcher's timer (see the watcher below).
   const github = createGhCli();
+  // The GitHub App as a second voice for a review: its comments and change
+  // requests go out as the app, its approvals never do (those are `github`'s).
+  // The app's own gh adapter never falls back to the host's account - if no
+  // token can be had the call fails - and the model's `gh` gets a token minted
+  // for one repository and revoked when the review ends.
+  const appCreds = loadGithubAppCredentials(config.githubApp);
+  const appClient =
+    appCreds.ok
+      ? createGithubAppClient({
+          appId: appCreds.creds.appId,
+          privateKey: appCreds.creds.privateKey,
+          userAgent: config.githubApp.slug || "github-app",
+        })
+      : undefined;
+  const reviewApp: ReviewApp | undefined =
+    appClient && config.githubApp.slug
+      ? {
+          login: `${config.githubApp.slug}[bot]`,
+          github: createGhCli({
+            account: { login: `${config.githubApp.slug}[bot]` },
+            tokenFor: async (repo) => appClient.installationToken(await appClient.installationOfRepo(repo)),
+          }),
+          mintToken: async (repo) => {
+            const { token } = await appClient.mintRepoToken(await appClient.installationOfRepo(repo), repo);
+            return { token, revoke: () => appClient.revokeInstallationToken(token) };
+          },
+        }
+      : undefined;
   const ciGate = createCiGate({
     github,
+    appGithub: reviewApp?.github,
     watches,
     clock,
     say: async (channel, text, thread) => void (await slackAdmin.post(channel, text, thread, SIGNATURES.watch)),
@@ -666,6 +701,14 @@ const main = async () => {
     bugReports,
     selfIssues,
     bugReportApproval: { bugReports, slack: slackAdmin, clock, ownerSlackId: config.ownerSlackId },
+    reviewRunApproval: {
+      runs: reviewRuns,
+      slack: slackAdmin,
+      clock,
+      ownerSlackId: config.ownerSlackId,
+      resolve: async (run, decision, by) => void (await autoReview?.resolve(run, decision, by)),
+      log: (msg) => console.error(`[review] ${msg}`),
+    },
     loops,
     loopApproval,
     learningApproval,
@@ -701,6 +744,7 @@ const main = async () => {
     slack: slackAdmin,
     // `quick-review` approves through this directly, before the brain starts.
     github,
+    reviewApp,
     ciGate,
     // Long tasks driven from a thread, each holding its own CLI session.
     workflows,
@@ -1189,9 +1233,32 @@ const main = async () => {
     log: (msg) => console.error(`[loop] ${msg}`),
     onError: onDbError,
   });
-  // GitHub review requests of the bot's account, announced in a channel. Nothing
-  // is reviewed from here: a quick review runs only when a person asks for it.
+  // Reviews that start by themselves: a request on GitHub (to the app, or to the
+  // host's own account) opens the PR's one thread in the inbox channel and runs
+  // the quick review in it on the requester's own Claude token. See
+  // application/autoReview.ts.
   const ghRequests = createGhReviewRequests();
+  const reviewChannel = (): string =>
+    settings.get(SETTING_KEYS.reviewInboxChannel)?.trim() || settings.get(SETTING_KEYS.githubAppChannel)?.trim() || "";
+  autoReview = createAutoReview({
+    clock,
+    runs: reviewRuns,
+    enabled: () => settings.get(SETTING_KEYS.reviewAuto)?.trim().toLowerCase() !== "off",
+    channel: reviewChannel,
+    identity: { settings, users, githubName: ghRequests.githubName },
+    users,
+    hasToken: (slackId) => claudeTokens?.has(slackId) ?? false,
+    ownerSlackId: config.ownerSlackId,
+    allowedOwners: config.githubApp.allowedOwners,
+    headSha: async (url) => github.headSha?.(url),
+    account: async (identity) => (identity === "app" ? reviewApp?.login : (await github.whoami())?.login),
+    ownLogins: async () => [(await github.whoami())?.login, reviewApp?.login].filter((l): l is string => !!l),
+    post: async (channel, text, thread) => (await slackAdmin.post(channel, text, thread, SIGNATURES.reviewInbox))?.ts,
+    postInteractive: async (channel, text, actions, thread) => slackAdmin.postInteractive(channel, text, actions, thread, SIGNATURES.reviewInbox),
+    review: (start) => startReview(deps, start),
+    prefix: config.commandPrefix,
+    log: (msg) => console.error(`[review] ${msg}`),
+  });
   const reviewInbox = createReviewInbox({
     clock,
     settings,
@@ -1202,6 +1269,7 @@ const main = async () => {
     githubName: ghRequests.githubName,
     users,
     post: async (channel, text) => (await slackAdmin.post(channel, text, undefined, SIGNATURES.reviewInbox))?.ts,
+    review: autoReview,
     prefix: config.commandPrefix,
     log: (msg) => console.error(`[review-inbox] ${msg}`),
   });
@@ -1209,15 +1277,9 @@ const main = async () => {
   // Calls from GitHub (a mention of the app, or its label) over a loopback
   // webhook that Tailscale Funnel exposes. Off unless the app's id, key and
   // webhook secret are all on disk / in env.
-  const appCreds = loadGithubAppCredentials(config.githubApp);
   let webhookServer: { stop: () => void } | undefined;
-  if (appCreds.ok) {
+  if (appCreds.ok && appClient) {
     const creds = appCreds.creds;
-    const appClient = createGithubAppClient({
-      appId: creds.appId,
-      privateKey: creds.privateKey,
-      userAgent: config.githubApp.slug || "github-app",
-    });
     const app = createGithubApp({
       clock,
       repo: createGithubAppRepo(db),
@@ -1229,6 +1291,7 @@ const main = async () => {
         settings.get(SETTING_KEYS.githubAppChannel)?.trim() || settings.get(SETTING_KEYS.reviewInboxChannel)?.trim() || "",
       settings,
       users,
+      review: autoReview,
       post: async (channel, text, thread) => (await slackAdmin.post(channel, text, thread, SIGNATURES.githubApp))?.ts,
       // The ordinary respond path as the caller: same queue, session, role
       // and token. Its reply goes in the thread like any turn's, and back to
@@ -1286,8 +1349,11 @@ const main = async () => {
     });
     console.log(`[github-app] listening on 127.0.0.1:${config.githubApp.port} as @${config.githubApp.slug}`);
   } else {
-    console.log(`[github-app] off - missing ${appCreds.missing.join(", ")}`);
+    console.log(`[github-app] off - missing ${appCreds.ok ? "client" : appCreds.missing.join(", ")}`);
   }
+  // A review a dead process was in the middle of cannot finish: asking for it again retries it.
+  const interrupted = autoReview.recover();
+  if (interrupted) console.log(`[review] ${interrupted} review(s) were cut off by the restart; asking again retries them`);
   const pendingReminders = reminders.waiting().length;
   if (pendingReminders > 0) console.log(`[remind] ${pendingReminders} reminder(s) waiting from before the restart`);
   const pendingLoops = loops.active().length;

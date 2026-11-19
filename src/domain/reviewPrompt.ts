@@ -15,6 +15,7 @@
  * a post-merge review is still useful. The posted body is relayed to Slack.
  */
 
+import type { ReviewIdentity } from "./reviewIdentity.ts";
 import { SLACK_FORMAT } from "./slackFormat.ts";
 import type { Reviewer } from "./types.ts";
 
@@ -146,6 +147,8 @@ export const reviewPrompt = (
   extendedOwners: readonly string[] = [],
   /** Which of `prUrls` already have a change request, submitted because their CI is red. */
   changesRequested: readonly string[] = [],
+  /** Who the comments and change requests are posted as; the approval is never the app's. */
+  identity: ReviewIdentity = "human",
 ): string => {
   const many = prUrls.length > 1;
   const extended = prUrls.filter((u) => isExtendedOwnerPr(u, extendedOwners));
@@ -153,11 +156,16 @@ export const reviewPrompt = (
   // voice - the bot's own name stays on the Slack side of the job.
   const who = reviewer?.name?.trim() || reviewer?.login || botName;
   const account = reviewer?.login ? ` from your own account (${reviewer.login})` : " from your own account";
+  // A review asked of the GitHub App writes as the app: its `gh` credential is the app's, for this one repository.
+  const asApp =
+    identity === "app"
+      ? `\nYour gh credential is the GitHub App's${reviewer?.login ? ` (${reviewer.login})` : ""}, limited to this one repository and revoked when you finish: every comment and change request you post lands under the app's name. The approval is never yours and never the app's: a person's account places it after a clean review, so never refer to one.\n`
+      : "";
   return `You are ${botName}, doing a real code review on ${many ? "these GitHub pull requests" : "this GitHub pull request"} and acting on it:
 ${prUrls.join("\n")}
 
 Tools: gh (read and write), git, a shell, the Task tool for child agents. Your directory is a scratch workspace you may clone into. Take only the actions below: comment, request changes. Never open an issue. Never approve, push or edit a real repo.
-
+${asApp}
 Work quietly: every action already posts its own progress line, so no running commentary, no "waiting on the agents". The only text before the close-out is one optional line when a big-PR checkout starts, saying how many agents review it.
 
 ${steer(note)}Decide, never ask: this runs unattended, so a question is a finding left unposted. Never end on "say the word" or an offer to do what you could have done.
@@ -226,7 +234,7 @@ export const reviewHelp = (
   if (full) return reviewPrompt([sampleUrl], botName, undefined, [], maxAgents, undefined, extendedOwners);
   return [
     `*How I review a PR* - \`${prefix} quick-review <pr-url>\` (or tag me: \`review <pr-url>\` / \`approve <pr-url>\`)`,
-    "*when*: only when a person asks - tagging me or typing the command. never because of a GitHub review request, a workflow, a thread I am working in or anything I started myself",
+    "*when*: when a person asks - tagging me or typing the command - or when a review is requested from me on GitHub: from the GitHub account I run on (comments as that account) or from the GitHub App (a mention of the app asking for a review, or its label on a PR; comments as the app). either way the approval is the GitHub account's, never the app's. never because of a workflow, a thread I am working in or anything I started myself, and a push after a review is only reviewed again when it is asked for again",
     "",
     "*0.* CI first: red and I request changes on the spot, saying which checks failed, then review and comment anyway. green or still running goes on, and a running CI gets a watcher that runs outside the review (up to an hour): it requests changes if CI goes red, and under approve-after it approves once CI is green",
     "*1.* I gather it: `gh pr view`, the diff, and the checks. a merged or closed PR gets the same treatment as an open one, never skipped",
@@ -242,7 +250,7 @@ export const reviewHelp = (
     "",
     "*approval* only after a clean review by default, and never while CI is red or still running; a repo can opt in to up front (CI not red), reversed if I find a blocker or CI goes red. `--policy first|after` changes it for one run. a merged or closed PR never gets a change request from the CI watcher",
     "*steering*: anything typed next to the url aims the review, e.g. `quick-review <url> the migration is the risky bit`",
-    `*cost*: it runs on *your own* Claude token, never mine - \`${prefix} token\` adds one`,
+    `*cost*: it runs on *the asker's own* Claude token, never mine - \`${prefix} token\` adds one. a review requested on GitHub runs on the requester's token; without one it waits in the PR's thread for the owner to approve or reject it`,
     "",
     `\`${prefix} quick-review prompt\` prints the actual system prompt I run on`,
   ].join("\n");

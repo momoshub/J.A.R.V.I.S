@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { createHmac } from "node:crypto";
 import {
+  detectActivity,
   detectTrigger,
   githubTurnPrompt,
   isAllowedOwner,
@@ -177,5 +178,54 @@ describe("what it writes", () => {
 
   test("an unknown caller is told how to link", () => {
     expect(unknownSenderComment("dev-gh", "X/jv")).toContain("`X/jv review-inbox link dev-gh`");
+  });
+});
+
+describe("a review asked of the app, and what else happens on a PR", () => {
+  const opts = { slug: "jarvis-at-acme", label: "jarvis" };
+  const repoPart = { repository: { full_name: "acme/api", owner: { login: "acme" } }, installation: { id: 42 } };
+  const pr = { number: 7, title: "add thing", html_url: "https://github.com/acme/api/pull/7" };
+
+  test("a review requested from the app's bot is a call, from anyone else it is not", () => {
+    const requested = (login: string) => ({
+      action: "review_requested",
+      ...repoPart,
+      sender: { login: "dev-gh", type: "User" },
+      pull_request: pr,
+      requested_reviewer: { login },
+    });
+    const d = detectTrigger("pull_request", "d1", requested("jarvis-at-acme[bot]"), opts);
+    expect(d.kind).toBe("trigger");
+    if (d.kind === "trigger") expect(d.trigger).toMatchObject({ via: "review-request", isPr: true, number: 7, sender: "dev-gh", url: pr.html_url });
+    expect(detectTrigger("pull_request", "d2", requested("someone-else"), opts).kind).toBe("ignore");
+    // a team request names no reviewer
+    expect(detectTrigger("pull_request", "d3", { ...requested(""), requested_reviewer: undefined, requested_team: { slug: "t" } }, opts).kind).toBe("ignore");
+    // the app requesting a review of itself is never a call
+    expect(
+      detectTrigger("pull_request", "d4", { ...requested("jarvis-at-acme[bot]"), sender: { login: "jarvis-at-acme[bot]", type: "Bot" } }, opts).kind,
+    ).toBe("ignore");
+  });
+
+  test("comments and reviews of other people on a PR are activity, bots and plain issues are not", () => {
+    const a = detectActivity("issue_comment", "d1", { action: "created", ...repoPart, sender: { login: "dev-gh", type: "User" }, issue: { ...pr, pull_request: {} }, comment: { id: 1, body: "hmm", html_url: "https://c" } }, opts);
+    expect(a.kind).toBe("trigger");
+    if (a.kind === "trigger") expect(a.trigger).toMatchObject({ via: "activity", activity: "comment", body: "hmm", commentUrl: "https://c", sender: "dev-gh" });
+    expect(detectActivity("issue_comment", "d2", { action: "created", ...repoPart, sender: { login: "dev-gh", type: "User" }, issue: pr, comment: { body: "x" } }, opts).kind).toBe("ignore");
+    expect(detectActivity("issue_comment", "d3", { action: "created", ...repoPart, sender: { login: "ci[bot]", type: "Bot" }, issue: { ...pr, pull_request: {} }, comment: { body: "x" } }, opts).kind).toBe("ignore");
+    const inline = detectActivity("pull_request_review_comment", "d4", { action: "created", ...repoPart, sender: { login: "dev-gh", type: "User" }, pull_request: pr, comment: { body: "nit" } }, opts);
+    expect(inline.kind === "trigger" && inline.trigger.activity).toBe("comment");
+  });
+
+  test("a submitted review is approved, changes or reviewed; an empty comment-only one and a dismissal are not news", () => {
+    const review = (state: string, body = "text") => ({ action: "submitted", ...repoPart, sender: { login: "dev-gh", type: "User" }, pull_request: pr, review: { state, body } });
+    const kinds = (state: string, body?: string) => {
+      const d = detectActivity("pull_request_review", "d", review(state, body), opts);
+      return d.kind === "trigger" ? d.trigger.activity : d.kind;
+    };
+    expect(kinds("approved", "")).toBe("approved");
+    expect(kinds("changes_requested")).toBe("changes");
+    expect(kinds("commented")).toBe("reviewed");
+    expect(kinds("commented", "  ")).toBe("ignore");
+    expect(kinds("dismissed")).toBe("ignore");
   });
 });

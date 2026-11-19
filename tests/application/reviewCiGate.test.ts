@@ -6,7 +6,7 @@ import { createCiGate, type CiGate } from "../../src/application/ciGate.ts";
 import { createWatcher, type Watcher } from "../../src/application/watcher.ts";
 import type { GitHubPort, PrSnapshot } from "../../src/application/github.ts";
 import type { LlmPort } from "../../src/application/ports.ts";
-import { GATE_DEADLINE_MS, GATE_EVERY_MS, type CiStatus, type PrState } from "../../src/domain/ciGate.ts";
+import { decodeGate, encodeGate, GATE_DEADLINE_MS, GATE_EVERY_MS, GATE_PREFIX, type CiStatus, type PrState } from "../../src/domain/ciGate.ts";
 import { actor, build, db } from "./commandsFixture.ts";
 
 const PR = "https://github.com/o/r/pull/1";
@@ -442,5 +442,50 @@ describe("without a CI gate or a readable PR, review is what it was", () => {
     const { run } = setup();
     await run("after");
     expect(rcs()).toHaveLength(0);
+  });
+});
+
+describe("the gate's identity", () => {
+  test("a spec carries the app's identity through the watch row, and a plain one carries none", () => {
+    expect(decodeGate(encodeGate({ url: PR, policy: "approve-after", identity: "app" }))).toEqual({ url: PR, policy: "approve-after", identity: "app" });
+    expect(decodeGate(encodeGate({ url: PR, policy: "approve-first" }))).toEqual({ url: PR, policy: "approve-first" });
+    // anything but "app" is read as the host's own account
+    expect(decodeGate(`${GATE_PREFIX}${JSON.stringify({ url: PR, policy: "approve-first", identity: "root" })}`)).toEqual({ url: PR, policy: "approve-first" });
+  });
+
+  test("a change request goes through the port of its identity; the approval is always the host's", async () => {
+    const calls: string[] = [];
+    const mk = (who: string, mine?: string): GitHubPort => ({
+      whoami: async () => ({ login: who }),
+      reviewDecision: async () => undefined,
+      approve: async () => (calls.push(`${who}:approve`), { ok: true }),
+      requestChanges: async () => (calls.push(`${who}:request-changes`), { ok: true }),
+      snapshot: async () => ({ state: "OPEN", ci: RED, mine }),
+    });
+    const g = createCiGate({ github: mk("human", "APPROVED"), appGithub: mk("app", "CHANGES_REQUESTED"), clock: () => 1 });
+
+    const snap = await g.inspect(PR, "app");
+    // `mine` speaks for the app's comments, `mineApproval` for the host's approval
+    expect(snap).toMatchObject({ mine: "CHANGES_REQUESTED", mineApproval: "APPROVED" });
+    expect(await g.requestChanges(PR, snap!, "after", "app")).toBe("already");
+    expect(await g.approve(PR, snap!)).toBe("blocked");
+    expect(calls).toEqual([]);
+
+    const fresh = { state: "OPEN" as const, ci: RED, mine: undefined };
+    expect(await g.requestChanges(PR, fresh, "after", "app")).toBe("submitted");
+    expect(await g.requestChanges(PR, fresh, "after")).toBe("submitted");
+    expect(await g.approve(PR, { ...fresh, ci: GREEN })).toBe("approved");
+    expect(calls).toEqual(["app:request-changes", "human:request-changes", "human:approve"]);
+  });
+
+  test("the app's identity with no app wired is an error, never a change request as someone else", async () => {
+    const human: GitHubPort = {
+      whoami: async () => ({ login: "human" }),
+      reviewDecision: async () => undefined,
+      approve: async () => ({ ok: true }),
+      requestChanges: async () => ({ ok: true }),
+    };
+    const g = createCiGate({ github: human, clock: () => 1 });
+    expect(await g.requestChanges(PR, { state: "OPEN", ci: RED }, "after", "app")).toEqual({ error: "no way to request changes here" });
   });
 });

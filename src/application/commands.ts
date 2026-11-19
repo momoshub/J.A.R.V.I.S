@@ -43,7 +43,8 @@ import { LEARNINGS_COMMANDS } from "./commands/learnings.ts";
 import { JOURNEY_COMMANDS } from "./commands/journeys.ts";
 import { BUG_REPORT_COMMANDS } from "./commands/bugReport.ts";
 import { ERRANDS_COMMANDS } from "./commands/errands.ts";
-import { REVIEW_COMMANDS } from "./commands/review.ts";
+import { REVIEW_COMMANDS, runReview } from "./commands/review.ts";
+import type { ReviewIdentity } from "../domain/reviewIdentity.ts";
 import { INNER_CHILD_COMMANDS } from "./commands/innerChild.ts";
 import { RUNTIME_COMMANDS } from "./commands/runtime.ts";
 import { SLACK_COMMANDS } from "./commands/slack.ts";
@@ -366,6 +367,75 @@ export const dispatchCommand = async (
       ? `\`${command.name}\` ran past its time limit and I killed it, so nothing came back. Narrow it down and try again.`
       : `That command failed: ${e instanceof Error ? e.message : String(e)}`;
     log(command.name, false, msg);
+    return msg;
+  }
+};
+
+export type ReviewStart = {
+  /** Who the review runs as: their role decides what it may do, their token pays for it. */
+  actor: AllowedUser;
+  channelId: string;
+  threadTs: string;
+  url: string;
+  /** What the asker added next to the request; steers the review. */
+  note?: string;
+  identity: ReviewIdentity;
+  /** The owner said yes to running without the actor's own token. */
+  botCredentialOk?: boolean;
+  /** Where progress and the result go. */
+  reply: (text: string) => Promise<void>;
+  prefix?: string;
+  slash?: string;
+};
+
+/**
+ * Start a quick review nobody typed (a request on GitHub). The same command a
+ * person runs, on the same rules - role grant, disabled switch, command log -
+ * parameterised by who the comments are written as. The brain's run bridge is
+ * still refused `quick-review` in `dispatchCommand`: only the application's own
+ * trigger gets here.
+ */
+export const startReview = async (deps: CommandDeps, start: ReviewStart): Promise<string> => {
+  const { actor } = start;
+  const book = bookOf(deps);
+  const args = [start.url, ...(start.note ? start.note.split(/\s+/).filter(Boolean) : [])];
+  const log = (ok: boolean, result: string) =>
+    deps.commandLog?.add(
+      { slackUserId: actor.slackId, command: "quick-review", args: `${start.url} (${start.identity})`, channelId: start.channelId, ok, result: redactSecrets(result) },
+      deps.clock(),
+    );
+  if (!mayRun(book, actor.role, "quick-review")) {
+    const msg = `That command needs *${holders(book, "quick-review")}* access. You are *${actor.role}*.`;
+    log(false, msg);
+    return msg;
+  }
+  if (deps.disabledCommands?.().has("quick-review")) {
+    const msg = "`quick-review` is currently disabled.";
+    log(false, msg);
+    return msg;
+  }
+  try {
+    const out = await runReview(
+      {
+        deps,
+        actor,
+        args,
+        prefix: start.prefix ?? DEFAULT_COMMAND_PREFIX,
+        slash: start.slash ?? DEFAULT_SLASH_COMMAND,
+        reply: start.reply,
+        channelId: start.channelId,
+        threadTs: start.threadTs,
+        can: (permission) => can(book, actor.role, permission),
+      },
+      { identity: start.identity, botCredentialOk: start.botCredentialOk },
+    );
+    log(true, out);
+    return out;
+  } catch (e) {
+    const msg = isTimeout(e)
+      ? "`quick-review` ran past its time limit and I killed it, so nothing came back."
+      : `That command failed: ${e instanceof Error ? e.message : String(e)}`;
+    log(false, msg);
     return msg;
   }
 };
