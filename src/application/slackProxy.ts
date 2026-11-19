@@ -16,7 +16,7 @@
  * missing or anyone else's, it is refused.
  */
 import { channelParamOf, checkSlackCall, isAuditedMethod, isSlackFileUrl, type ExtraSlackMethods, type IsNotice } from "../domain/slackProxy.ts";
-import { KEEP_REPLY } from "../domain/selfPost.ts";
+import { KEEP_REPLY, stripKeepMarkerFromCall } from "../domain/selfPost.ts";
 import type { SelfPosts } from "./selfPosts.ts";
 import type { SlackTickets, SlackTicketRefusal } from "./slackTickets.ts";
 
@@ -154,6 +154,13 @@ export const createSlackProxy = (deps: SlackProxyDeps): SlackProxy => {
         log(`slack proxy refused ${String(method)}: ${checked.error}`);
         return failure(checked.status, checked.error);
       }
+      // the keep-reply marker is an instruction to the bot: it never goes into a message the turn writes itself
+      const stripped = stripKeepMarkerFromCall(checked.method, checked.params);
+      if (stripped.kind === "empty") {
+        log(`slack proxy refused ${checked.method}: nothing left after the keep-reply marker was removed`);
+        return failure(400, "no_text: the message was only the closing-reply marker, which is never posted, so nothing was sent");
+      }
+      const sendParams = stripped.params;
       if (checked.ownMessageIn) {
         const { channel, ts } = checked.ownMessageIn;
         if (!(await botWrote(channel, ts))) {
@@ -164,7 +171,7 @@ export const createSlackProxy = (deps: SlackProxyDeps): SlackProxy => {
       } else if (isAuditedMethod(checked.method, extra)) {
         // method and channel only, never the content
         const param = channelParamOf(checked.method, extra);
-        log(`slack proxy ${checked.method} channel=${(param && checked.params[param]) || checked.params.channel || checked.params.channel_id || "-"}`);
+        log(`slack proxy ${checked.method} channel=${(param && sendParams[param]) || sendParams.channel || sendParams.channel_id || "-"}`);
       }
       try {
         const res = await doFetch(`${SLACK_API}${checked.method}`, {
@@ -173,7 +180,7 @@ export const createSlackProxy = (deps: SlackProxyDeps): SlackProxy => {
             Authorization: `Bearer ${deps.botToken}`,
             "Content-Type": "application/x-www-form-urlencoded; charset=utf-8",
           },
-          body: new URLSearchParams(checked.params).toString(),
+          body: new URLSearchParams(sendParams).toString(),
           signal: AbortSignal.timeout(CALL_TIMEOUT_MS),
         });
         const text = await res.text();
@@ -187,7 +194,7 @@ export const createSlackProxy = (deps: SlackProxyDeps): SlackProxy => {
         }
         // noted per turn, only what Slack accepted, and only into the turn's own thread
         if (res.ok && checked.method.startsWith("chat.") && resolved.ctx.turn && !checked.ownMessageIn) {
-          const landed = deps.selfPosts?.record(resolved.ctx.turn, resolved.ctx.threadTs, { method: checked.method, params: checked.params, answer: text });
+          const landed = deps.selfPosts?.record(resolved.ctx.turn, resolved.ctx.threadTs, { method: checked.method, params: sendParams, answer: text });
           if (landed) return { status: res.status, body: withSelfPostNote(text) };
         }
         return { status: res.status, body: text };
