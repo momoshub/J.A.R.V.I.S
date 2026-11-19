@@ -120,6 +120,12 @@ export type GateSpec = {
   readonly url: string;
   /** What the run is on: first approves before the review, after approves once it is clean. */
   readonly policy: "approve-first" | "approve-after";
+  /**
+   * Who a change request is posted as. `app` only for a review asked of the
+   * GitHub App; absent is the host's own account. Approvals are the host's
+   * account either way.
+   */
+  readonly identity?: "app";
 };
 
 /**
@@ -159,10 +165,10 @@ export const decodeGate = (check: string): GateSpec | undefined => {
   try {
     const raw: unknown = JSON.parse(check.slice(GATE_PREFIX.length));
     if (typeof raw !== "object" || raw === null) return undefined;
-    const { url, policy } = raw as { url?: unknown; policy?: unknown };
+    const { url, policy, identity } = raw as { url?: unknown; policy?: unknown; identity?: unknown };
     if (typeof url !== "string" || !url) return undefined;
     if (policy !== "approve-first" && policy !== "approve-after") return undefined;
-    return { url, policy };
+    return { url, policy, ...(identity === "app" ? { identity } : {}) };
   } catch {
     return undefined;
   }

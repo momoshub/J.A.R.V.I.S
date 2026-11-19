@@ -642,8 +642,8 @@ export const createClaudeCliLlm = (config: ClaudeCliConfig = {}): LlmPort => {
     }
   };
 
-  const completeOneShot = async ({ system, messages, assistantName, policy, session, oauthToken, useHostLogin, signal, runTicket, bill, onUsage }: LlmCompleteParams) => {
-    const proc = spawnClaude(config, [...buildArgs(config, false, policy, session), "--append-system-prompt", system], renderPrompt(messages, assistantName), policy, oauthToken, useHostLogin, signal, runTicket, session, await turnEnv(), bill);
+  const completeOneShot = async ({ system, messages, assistantName, policy, session, oauthToken, useHostLogin, signal, runTicket, bill, onUsage, env }: LlmCompleteParams) => {
+    const proc = spawnClaude(config, [...buildArgs(config, false, policy, session), "--append-system-prompt", system], renderPrompt(messages, assistantName), policy, oauthToken, useHostLogin, signal, runTicket, session, { ...(await turnEnv()), ...env }, bill);
     const [stdout, stderr, exitCode] = await Promise.all([
       new Response(proc.stdout).text(),
       new Response(proc.stderr).text(),
@@ -678,8 +678,8 @@ export const createClaudeCliLlm = (config: ClaudeCliConfig = {}): LlmPort => {
    * output carries only the final answer, so a run made that way left no
    * record of what it ran.
    */
-  const runStreaming = async ({ system, messages, assistantName, policy, session, oauthToken, useHostLogin, signal, runTicket, bill, onUsage, onBackgroundTasks, onBackgroundCutOff, onBashCommand }: LlmCompleteParams, sink: LlmStreamSink) => {
-    const proc = spawnClaude(config, [...buildArgs(config, true, policy, session), "--append-system-prompt", system], renderPrompt(messages, assistantName), policy, oauthToken, useHostLogin, signal, runTicket, session, await turnEnv(), bill);
+  const runStreaming = async ({ system, messages, assistantName, policy, session, oauthToken, useHostLogin, signal, runTicket, bill, onUsage, onBackgroundTasks, onBackgroundCutOff, onBashCommand, env }: LlmCompleteParams, sink: LlmStreamSink) => {
+    const proc = spawnClaude(config, [...buildArgs(config, true, policy, session), "--append-system-prompt", system], renderPrompt(messages, assistantName), policy, oauthToken, useHostLogin, signal, runTicket, session, { ...(await turnEnv()), ...env }, bill);
     const stderrPromise = new Response(proc.stderr).text();
 
     /**

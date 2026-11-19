@@ -394,3 +394,10 @@ describe("code-handled bug report buttons", () => {
     expect(hasLiveKit(blocks)).toBe(false);
   });
 });
+
+describe("code-handled review run buttons", () => {
+  test("jv:review-run: buttons are not an open question a typed reply retires", () => {
+    const blocks = [{ type: "actions", elements: [{ type: "button", action_id: "jv:review-run:approve" }, { type: "button", action_id: "jv:review-run:reject" }] }];
+    expect(hasLiveKit(blocks)).toBe(false);
+  });
+});

@@ -21,6 +21,8 @@ import { LOOP_ACTION_PREFIX } from "../../domain/loop.ts";
 import { decideLearningPress } from "../../application/learningApproval.ts";
 import { bugPressNotice, decideBugReportPress, type BugReportApprovalDeps } from "../../application/bugReportApproval.ts";
 import { BUG_REPORT_ACTION_PREFIX } from "../../domain/bugReport.ts";
+import { REVIEW_RUN_ACTION_PREFIX } from "../../domain/reviewIdentity.ts";
+import { decideReviewRunPress, reviewRunPressNoticeOf, type ReviewRunApprovalDeps } from "../../application/reviewRunApproval.ts";
 import { LEARNING_ACTION_PREFIX, refusalText } from "../../domain/learning.ts";
 import { CODE_ACTION_PREFIX } from "../../domain/cloudwatch.ts";
 import { forHowLong } from "../../domain/runControl.ts";
@@ -738,6 +740,7 @@ export const createKitListeners = (
   log: (msg: string) => void,
   inboxOf: (context: InboxContext) => Incoming["inbox"] = () => undefined,
   bugReportApproval?: BugReportApprovalDeps,
+  reviewRunApproval?: ReviewRunApprovalDeps,
 ) => {
   type Context = InboxContext & { teamId?: string };
   const kitTurn = async (client: unknown, context: Context | undefined, userId: string, thread: KitThread, text: string) => {
@@ -820,6 +823,37 @@ export const createKitListeners = (
     }
   };
 
+  /**
+   * Approve / Reject on a review that has no token to run on. Decided HERE and
+   * never handed to the model (`onKitAction` skips `REVIEW_RUN_ACTION_PREFIX`):
+   * only the owner's press counts, checked in `decideReviewRunPress`.
+   */
+  const onReviewRunPress = async ({ ack, body, action, client }: KitActionArgs) => {
+    await ack();
+    const by = body.user?.id;
+    const value = action.value;
+    if (!by || !value || !reviewRunApproval) return;
+    try {
+      const outcome = await decideReviewRunPress(reviewRunApproval, {
+        slackUserId: by,
+        actionId: action.action_id ?? "",
+        value,
+        channel: body.channel?.id,
+        messageTs: body.message?.ts,
+      });
+      log(`review run press ${outcome.kind} by ${by}`);
+      const notice = reviewRunPressNoticeOf(outcome);
+      const channel = body.channel?.id;
+      if (notice && channel) {
+        await (client as KitClient).chat
+          .postEphemeral?.({ channel, user: by, thread_ts: body.message?.thread_ts ?? body.message?.ts, text: notice })
+          .catch(logAndIgnore("review run press notice"));
+      }
+    } catch (err) {
+      log(`review run press failed: ${err instanceof Error ? err.message : String(err)}`);
+    }
+  };
+
   const onKitAction = async ({ ack, body, action, client, context }: KitActionArgs) => {
     await ack();
     const by = body.user?.id;
@@ -830,7 +864,8 @@ export const createKitListeners = (
       actionId.startsWith(CODE_ACTION_PREFIX) ||
       actionId.startsWith(LOOP_ACTION_PREFIX) ||
       actionId.startsWith(LEARNING_ACTION_PREFIX) ||
-      actionId.startsWith(BUG_REPORT_ACTION_PREFIX)
+      actionId.startsWith(BUG_REPORT_ACTION_PREFIX) ||
+      actionId.startsWith(REVIEW_RUN_ACTION_PREFIX)
     ) return;
     const modal = body.view;
     const thread: KitThread | undefined = modal
@@ -981,7 +1016,7 @@ export const createKitListeners = (
     await kitTurn(client, context, by, thread, text);
   };
 
-  return { onKitAction, onKitView, onBugReportPress };
+  return { onKitAction, onKitView, onBugReportPress, onReviewRunPress };
 };
 
 /** The calls retiring open questions makes. */
@@ -1687,8 +1722,9 @@ export const createSlackApp = (config: SlackAppConfig, deps: Deps) => {
   }) as never);
 
 
-  const { onKitAction, onKitView, onBugReportPress } = createKitListeners(deps.kitViews, handle, log, inboxOf, deps.bugReportApproval);
+  const { onKitAction, onKitView, onBugReportPress, onReviewRunPress } = createKitListeners(deps.kitViews, handle, log, inboxOf, deps.bugReportApproval, deps.reviewRunApproval);
   app.action(new RegExp(`^${BUG_REPORT_ACTION_PREFIX}`), onBugReportPress as never);
+  app.action(new RegExp(`^${REVIEW_RUN_ACTION_PREFIX}`), onReviewRunPress as never);
   app.action(KIT_PATTERN, onKitAction as never);
   app.view({ callback_id: KIT_PATTERN, type: "view_submission" }, onKitView as never);
   app.view({ callback_id: KIT_PATTERN, type: "view_closed" }, onKitView as never);

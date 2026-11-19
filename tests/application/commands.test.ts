@@ -147,7 +147,8 @@ describe("dispatchCommand", () => {
   test("quick-review keeps its own, better help", async () => {
     const out = await dispatchCommand(build(), actor(), "C1", "quick-review help");
     expect(out).toContain("quick-review");
-    expect(out).toContain("only when a person asks");
+    expect(out).toContain("when a person asks");
+    expect(out).toContain("review is requested from me on GitHub");
     expect(out).not.toContain("needs *pal* access");
   });
 

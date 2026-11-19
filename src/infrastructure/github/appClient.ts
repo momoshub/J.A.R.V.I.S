@@ -28,6 +28,15 @@ export const createAppJwt = (appId: string, privateKeyPem: string, nowMs: number
 /** Refresh an installation token this long before GitHub says it expires. */
 export const TOKEN_MARGIN_MS = 5 * 60_000;
 
+/** What a review's token may do, as `[permission, 2 write | 1 read]`; see `mintRepoToken`. */
+const REVIEW_TOKEN_PERMISSIONS: readonly (readonly [string, 1 | 2])[] = [
+  ["pull_requests", 2],
+  ["issues", 2],
+  ["contents", 1],
+  ["checks", 1],
+  ["statuses", 1],
+];
+
 export type GithubAppClientConfig = {
   appId: string;
   privateKey: string;
@@ -47,6 +56,14 @@ export type GithubAppClient = {
    * plainly when the installation has no contents permission at all.
    */
   mintWorkerToken: (installationId: number, repo: string) => Promise<{ token: string; expiresAt: number }>;
+  /**
+   * A token for ONE review, never cached or shared: limited to `repo` and to
+   * what a review needs (write on pull requests and issues, read on contents,
+   * checks and statuses - never more than the installation holds, never contents
+   * write). Handed to a model's `gh` that reads untrusted text, so it is revoked
+   * when the review ends.
+   */
+  mintRepoToken: (installationId: number, repo: string) => Promise<{ token: string; expiresAt: number }>;
   /** `DELETE /installation/token`: GitHub stops honouring that token now. Never throws on an already-dead one. */
   revokeInstallationToken: (token: string) => Promise<void>;
   /** Add a reaction at `path` (e.g. `repos/o/r/issues/comments/1/reactions`). */
@@ -124,6 +141,31 @@ export const createGithubAppClient = (config: GithubAppClientConfig): GithubAppC
     return { token, expiresAt: Number.isFinite(expiresAt) ? expiresAt : clock() + 60 * 60_000 };
   };
 
+  const mintRepoToken = async (installationId: number, repo: string): Promise<{ token: string; expiresAt: number }> => {
+    const name = repo.split("/")[1];
+    if (!name) throw new Error("a repo token needs owner/repo");
+    const jwt = createAppJwt(config.appId, config.privateKey, clock());
+    // What a review needs and nothing more: write on pull requests (and issues, for plain comments),
+    // read on the rest. Asked for only as far as the installation holds it (asking for more is a 422),
+    // so a token never carries contents:write even where the installation has it.
+    const held =
+      ((await call(jwt, "GET", `app/installations/${installationId}`)) as { permissions?: Record<string, unknown> } | undefined)?.permissions ?? {};
+    const rank = (v: unknown): number => (v === "write" ? 2 : v === "read" ? 1 : 0);
+    if (rank(held.pull_requests) < 2) throw new Error("the app has no write access to pull requests on this installation, so it cannot post a review");
+    const permissions: Record<string, string> = { metadata: "read" };
+    for (const [perm, want] of REVIEW_TOKEN_PERMISSIONS) {
+      const level = Math.min(rank(held[perm]), want);
+      if (level > 0) permissions[perm] = level === 2 ? "write" : "read";
+    }
+    const out = (await call(jwt, "POST", `app/installations/${installationId}/access_tokens`, { repositories: [name], permissions })) as
+      | { token?: unknown; expires_at?: unknown }
+      | undefined;
+    const token = typeof out?.token === "string" ? out.token : "";
+    if (!token) throw new Error("GitHub returned no installation token");
+    const expiresAt = typeof out?.expires_at === "string" ? Date.parse(out.expires_at) : NaN;
+    return { token, expiresAt: Number.isFinite(expiresAt) ? expiresAt : clock() + 60 * 60_000 };
+  };
+
   const revokeInstallationToken = async (token: string): Promise<void> => {
     try {
       await call(token, "DELETE", "installation/token");
@@ -148,6 +190,7 @@ export const createGithubAppClient = (config: GithubAppClientConfig): GithubAppC
   return {
     installationToken,
     mintWorkerToken,
+    mintRepoToken,
     revokeInstallationToken,
     installationOfRepo,
     request: async (installationId, method, path, body) => call(await installationToken(installationId), method, path, body),

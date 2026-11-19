@@ -129,8 +129,13 @@ no classes.
   turn: `watcher` calls `application/ciGate.ts` instead, which polls the PR's
   checks once a minute and approves or requests changes itself (the CI gate of
   `quick-review`, deadline one hour; see "CI comes first" in the README);
-  `reviewInbox` polls GitHub for review requests and only announces them in a
-  channel (a quick review starts only when a person asks, never from here); `orcaQuestions` reads the Orca mailbox of every Run a thread
+  `reviewInbox` polls GitHub for review requests of the host's own account and
+  hands each to `autoReview`, which opens the PR's one Slack thread in the
+  review inbox channel and runs the quick review in it on the requester's token
+  (a request to the GitHub App arrives on its webhook and takes the same road,
+  answered as the app; the approval is always the host account's, see
+  "Reviews that start by themselves" in CLAUDE.md; with `review_auto` off the
+  inbox only announces); `orcaQuestions` reads the Orca mailbox of every Run a thread
   started a worker in (linked from the turn's tool trace as `worker-start`
   prints it) and hands each question a worker is still blocked on to that
   thread as a turn that answers it with `orca orchestration reply`, once per

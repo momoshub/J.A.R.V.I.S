@@ -26,6 +26,12 @@ export type PrSnapshot = {
   readonly decision?: string;
   /** The state of the latest review by the authenticated account, if it has one. */
   readonly mine?: string;
+  /**
+   * The state of the latest review by the account that APPROVES, when that is
+   * not the account `mine` speaks for (a review whose comments go out as the
+   * app and whose approval as the human). Absent: `mine` is both.
+   */
+  readonly mineApproval?: string;
 };
 
 export type GitHubPort = {
@@ -54,6 +60,11 @@ export type GitHubPort = {
    * read. Never throws. Absent: `quick-review` has no CI gate.
    */
   snapshot?: (prUrl: string) => Promise<PrSnapshot | undefined>;
+  /**
+   * The commit the PR's head is at, or undefined when it cannot be read. Never
+   * throws. What a review that starts by itself is deduped on: one per head.
+   */
+  headSha?: (prUrl: string) => Promise<string | undefined>;
   /** The authenticated account, or undefined if it cannot be resolved. Never throws. */
   whoami: () => Promise<Reviewer | undefined>;
 };

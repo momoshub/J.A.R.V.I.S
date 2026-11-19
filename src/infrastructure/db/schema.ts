@@ -114,6 +114,54 @@ export const migrate = (db: Database): void => {
   migrateLearningNoticeFingerprint(db);
   migrateBugReports(db);
   migrateBackgroundJobs(db);
+  migrateReviewRuns(db);
+};
+
+/**
+ * Migration v43: reviews that start by themselves.
+ *
+ * `review_threads` is the one Slack thread of a PR (its first event opened it,
+ * every later one goes into it). `review_runs` is one review per PR head sha
+ * per identity: the unique key is the dedupe, and the row also carries what a
+ * pending owner approval needs (who asked, what for) until it is decided. New
+ * tables, so a rerun is a no-op.
+ */
+const migrateReviewRuns = (db: Database): void => {
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS review_threads (
+      pr_key     TEXT PRIMARY KEY,
+      channel_id TEXT NOT NULL,
+      thread_ts  TEXT NOT NULL,
+      created_at INTEGER NOT NULL
+    );
+  `);
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS review_runs (
+      id              INTEGER PRIMARY KEY AUTOINCREMENT,
+      pr_key          TEXT NOT NULL,
+      head_sha        TEXT NOT NULL,
+      identity        TEXT NOT NULL,
+      state           TEXT NOT NULL DEFAULT 'claimed',
+      url             TEXT NOT NULL,
+      repo            TEXT NOT NULL,
+      number          INTEGER NOT NULL,
+      title           TEXT NOT NULL DEFAULT '',
+      requester       TEXT NOT NULL DEFAULT '',
+      requester_slack TEXT NOT NULL DEFAULT '',
+      note            TEXT NOT NULL DEFAULT '',
+      installation_id INTEGER NOT NULL DEFAULT 0,
+      ask_channel     TEXT NOT NULL DEFAULT '',
+      ask_ts          TEXT NOT NULL DEFAULT '',
+      ask_reason      TEXT NOT NULL DEFAULT '',
+      created_at      INTEGER NOT NULL,
+      updated_at      INTEGER NOT NULL,
+      UNIQUE (pr_key, head_sha, identity)
+    );
+  `);
+  const { user_version } = db.query<{ user_version: number }, []>("PRAGMA user_version").get() ?? {
+    user_version: 0,
+  };
+  if (user_version < 43) db.exec("PRAGMA user_version = 43;");
 };
 
 /**

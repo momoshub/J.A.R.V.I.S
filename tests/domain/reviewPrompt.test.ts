@@ -224,11 +224,13 @@ describe("reviewHelp", () => {
     expect(h).toContain("out of scope per the description");
   });
 
-  test("the help names quick-review and says it only runs when a person asks", () => {
+  test("the help names quick-review and says when it runs: a person asks, or a review is requested on GitHub", () => {
     const h = reviewHelp("//bot", false, 3, "Bot");
     expect(h).toContain("`//bot quick-review <pr-url>`");
     expect(h).toContain("`review <pr-url>` / `approve <pr-url>`");
-    expect(h).toContain("only when a person asks");
+    expect(h).toContain("when a person asks");
+    expect(h).toContain("requested from me on GitHub");
+    expect(h).toContain("the approval is the GitHub account's, never the app's");
     expect(h).toContain("`//bot quick-review prompt`");
   });
 

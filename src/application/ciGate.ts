@@ -31,7 +31,10 @@ import type { ApproveResult, GitHubPort, PrSnapshot } from "./github.ts";
 import type { Clock } from "./ports.ts";
 
 export type CiGateDeps = {
+  /** The host's own account: reads, approves, and comments when the review is its own. */
   github: GitHubPort;
+  /** The GitHub App: where a review asked of the app writes its change requests. Absent: no such review. */
+  appGithub?: GitHubPort;
   watches?: WatchRepo;
   clock: Clock;
   /** Say something in the review's thread. Without it the gate acts silently. */
@@ -50,9 +53,9 @@ export type ApprovalResult = "approved" | "already" | "blocked" | "closed" | { r
 
 export type CiGate = {
   /** The PR as it is now, or undefined when GitHub cannot say (then there is no gate). */
-  inspect: (url: string) => Promise<PrSnapshot | undefined>;
+  inspect: (url: string, identity?: "app") => Promise<PrSnapshot | undefined>;
   /** Request changes because CI is red. Idempotent; never on a merged or closed PR. */
-  requestChanges: (url: string, snap: PrSnapshot, when: "before" | "after") => Promise<ChangeResult>;
+  requestChanges: (url: string, snap: PrSnapshot, when: "before" | "after", identity?: "app") => Promise<ChangeResult>;
   /** Approve. Idempotent; never over a change request, never on a merged or closed PR. */
   approve: (url: string, snap: PrSnapshot) => Promise<ApprovalResult>;
   /** Watch the CI of a PR on the watcher's timer. False when no watch can be kept. */
@@ -78,18 +81,32 @@ export const createCiGate = (deps: CiGateDeps): CiGate => {
   const failure = (res: ApproveResult): { readonly error: string } =>
     res.ok ? { error: "unknown" } : { error: res.error };
 
-  const requestChanges: CiGate["requestChanges"] = async (url, snap, when) => {
+  /** The port a change request goes out through: the app's for an app review, the host's otherwise. */
+  const commenter = (identity?: "app"): GitHubPort | undefined => (identity === "app" ? deps.appGithub : deps.github);
+
+  const inspect: CiGate["inspect"] = async (url, identity) => {
+    const own = await deps.github.snapshot?.(url);
+    if (identity !== "app" || !own) return own;
+    // `mine` speaks for the account that comments (the app); the approval is the host's. An app
+    // snapshot that cannot be read is no snapshot: "no review of the app's" and "could not look"
+    // must never read alike, or an approval could go out over a change request nobody saw.
+    const app = await deps.appGithub?.snapshot?.(url);
+    return app ? { ...own, mineApproval: own.mine, mine: app.mine } : undefined;
+  };
+
+  const requestChanges: CiGate["requestChanges"] = async (url, snap, when, identity) => {
     if (snap.state !== "OPEN") return "closed";
     if (snap.mine === "CHANGES_REQUESTED") return "already";
-    if (!deps.github.requestChanges) return { error: "no way to request changes here" };
-    const res = await deps.github.requestChanges(url, redChangesBody(snap.ci.failed, when));
+    const port = commenter(identity);
+    if (!port?.requestChanges) return { error: "no way to request changes here" };
+    const res = await port.requestChanges(url, redChangesBody(snap.ci.failed, when));
     return res.ok ? "submitted" : failure(res);
   };
 
   const approve: CiGate["approve"] = async (url, snap) => {
     if (snap.state !== "OPEN") return "closed";
-    if (snap.decision === "CHANGES_REQUESTED" || snap.mine === "CHANGES_REQUESTED") return "blocked";
-    if (snap.mine === "APPROVED") return "already";
+    if (snap.decision === "CHANGES_REQUESTED" || snap.mine === "CHANGES_REQUESTED" || snap.mineApproval === "CHANGES_REQUESTED") return "blocked";
+    if ((snap.mineApproval ?? snap.mine) === "APPROVED") return "already";
     const res = await deps.github.approve(url);
     return res.ok ? "approved" : failure(res);
   };
@@ -98,7 +115,7 @@ export const createCiGate = (deps: CiGateDeps): CiGate => {
     (deps.watches?.waiting(200) ?? []).filter((w) => decodeGate(w.check)?.url === url);
 
   return {
-    inspect: async (url) => deps.github.snapshot?.(url),
+    inspect,
     requestChanges,
     approve,
 
@@ -108,7 +125,7 @@ export const createCiGate = (deps: CiGateDeps): CiGate => {
       const now = deps.clock();
       const alive = rows(spec.url);
       // One watcher per PR. The same one is kept; a different policy replaces it.
-      if (alive.some((w) => decodeGate(w.check)?.policy === spec.policy)) return true;
+      if (alive.some((w) => decodeGate(w.check)?.policy === spec.policy && decodeGate(w.check)?.identity === spec.identity)) return true;
       for (const w of alive) deps.watches.settle(w.id, "cancelled", now);
       deps.watches.add(
         {
@@ -136,7 +153,7 @@ export const createCiGate = (deps: CiGateDeps): CiGate => {
     },
 
     step: async (spec, where) => {
-      const snap = await deps.github.snapshot?.(spec.url);
+      const snap = await inspect(spec.url, spec.identity);
       if (!snap) return "pending"; // unreadable right now: the deadline bounds it
       const action = gateAction(spec, snap, phases.get(spec.url));
       if (action.do !== "wait") phases.delete(spec.url);
@@ -147,7 +164,7 @@ export const createCiGate = (deps: CiGateDeps): CiGate => {
           await say(where, `🛑 ${spec.url} is ${action.why} - stopped watching its CI`);
           return "done";
         case "request-changes": {
-          const res = await requestChanges(spec.url, snap, "after");
+          const res = await requestChanges(spec.url, snap, "after", spec.identity);
           if (res === "submitted") {
             await say(where, `⚠️ CI went red on ${spec.url} (${failedList(snap.ci.failed)}) - requested changes`);
           } else if (typeof res === "object") {

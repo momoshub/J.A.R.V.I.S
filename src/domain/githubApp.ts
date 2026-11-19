@@ -35,10 +35,16 @@ export type GithubTrigger = {
   readonly reactionPath?: string;
   /** What was asked: the comment / review body, or the issue body for a label. */
   readonly body: string;
-  /** How it was called: a mention, or the trigger label. */
-  readonly via: "mention" | "label";
+  /**
+   * How it was called: a mention, the trigger label, a review requested from
+   * the app itself, or - not a call at all - something other people did on a PR
+   * (`activity`), which only ever becomes a line in that PR's review thread.
+   */
+  readonly via: "mention" | "label" | "review-request" | "activity";
   /** GitHub login of whoever called. */
   readonly sender: string;
+  /** `activity` only: what was done, and the review state when it was a review. */
+  readonly activity?: "comment" | "changes" | "approved" | "reviewed";
 };
 
 export type TriggerOptions = {
@@ -186,6 +192,30 @@ export const detectTrigger = (
         },
       };
     }
+    case "pull_request.review_requested": {
+      // Only a request addressed to the app counts. GitHub's reviewers API
+      // refuses a bot as a reviewer, so this rarely arrives - but when it does
+      // (a team the app stands in for, a client that allows it) it is a call.
+      const pr = obj(p.pull_request);
+      const reviewer = str(obj(p.requested_reviewer)?.login).toLowerCase();
+      const number = num(pr?.number);
+      const me = opts.slug.toLowerCase();
+      if (number === undefined || (reviewer !== `${me}[bot]` && reviewer !== me)) {
+        return { kind: "ignore", reason: `${name} for another reviewer (${reviewer || "none"})` };
+      }
+      return {
+        kind: "trigger",
+        trigger: {
+          ...base,
+          number,
+          isPr: true,
+          title: str(pr?.title),
+          url: str(pr?.html_url),
+          body: "",
+          via: "review-request",
+        },
+      };
+    }
     case "issues.labeled":
     case "pull_request.labeled": {
       const isPr = event === "pull_request";
@@ -211,6 +241,100 @@ export const detectTrigger = (
     }
     default:
       return { kind: "ignore", reason: `${name} is not a trigger` };
+  }
+};
+
+/**
+ * What other people did on a PR - a comment, a review - as a trigger that only
+ * ever feeds that PR's review thread. Bots (the app included) never count, so
+ * nothing the app writes echoes back. Whether the PR has a thread at all is for
+ * the caller to say: this only reads the payload.
+ */
+export const detectActivity = (
+  event: string,
+  deliveryId: string,
+  payload: unknown,
+  opts: TriggerOptions,
+): TriggerDecision => {
+  const p = obj(payload);
+  if (!p) return { kind: "ignore", reason: "no payload" };
+  const name = `${event}.${str(p.action)}`;
+  const sender = obj(p.sender);
+  const login = str(sender?.login);
+  if (str(sender?.type) === "Bot" || login.toLowerCase() === `${opts.slug.toLowerCase()}[bot]`) {
+    return { kind: "ignore", reason: `${name} from a bot (${login})` };
+  }
+  const repository = obj(p.repository);
+  const repo = str(repository?.full_name);
+  const owner = str(obj(repository?.owner)?.login) || str(obj(obj(p.installation)?.account)?.login);
+  const installationId = num(obj(p.installation)?.id);
+  if (!repo || !owner || installationId === undefined || !login) {
+    return { kind: "ignore", reason: `${name} without repository, installation or sender` };
+  }
+  const base = { deliveryId, event: name, installationId, owner, repo, sender: login, via: "activity" as const, isPr: true };
+  switch (name) {
+    case "issue_comment.created": {
+      const issue = obj(p.issue);
+      const comment = obj(p.comment);
+      const number = num(issue?.number);
+      if (number === undefined || !obj(issue?.pull_request)) return { kind: "ignore", reason: `${name} on an issue` };
+      return {
+        kind: "trigger",
+        trigger: {
+          ...base,
+          number,
+          title: str(issue?.title),
+          url: str(issue?.html_url),
+          commentUrl: str(comment?.html_url) || undefined,
+          body: str(comment?.body),
+          activity: "comment",
+        },
+      };
+    }
+    case "pull_request_review_comment.created": {
+      const pr = obj(p.pull_request);
+      const comment = obj(p.comment);
+      const number = num(pr?.number);
+      if (number === undefined) return { kind: "ignore", reason: `${name} without a pull request` };
+      return {
+        kind: "trigger",
+        trigger: {
+          ...base,
+          number,
+          title: str(pr?.title),
+          url: str(pr?.html_url),
+          commentUrl: str(comment?.html_url) || undefined,
+          body: str(comment?.body),
+          activity: "comment",
+        },
+      };
+    }
+    case "pull_request_review.submitted": {
+      const pr = obj(p.pull_request);
+      const review = obj(p.review);
+      const number = num(pr?.number);
+      if (number === undefined) return { kind: "ignore", reason: `${name} without a pull request` };
+      const state = str(review?.state).toLowerCase();
+      const activity = state === "approved" ? "approved" : state === "changes_requested" ? "changes" : state === "commented" ? "reviewed" : undefined;
+      if (!activity) return { kind: "ignore", reason: `${name} is ${state || "stateless"}` };
+      const body = str(review?.body);
+      // A review that only carries inline comments has no text of its own, and each of those comes as its own event.
+      if (activity === "reviewed" && !body.trim()) return { kind: "ignore", reason: `${name} without text` };
+      return {
+        kind: "trigger",
+        trigger: {
+          ...base,
+          number,
+          title: str(pr?.title),
+          url: str(pr?.html_url),
+          commentUrl: str(review?.html_url) || undefined,
+          body,
+          activity,
+        },
+      };
+    }
+    default:
+      return { kind: "ignore", reason: `${name} is not activity` };
   }
 };
 

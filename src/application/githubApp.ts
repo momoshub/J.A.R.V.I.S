@@ -18,6 +18,7 @@
  */
 import {
   announceTrigger,
+  detectActivity,
   detectTrigger,
   failedRunComment,
   type GithubTrigger,
@@ -26,7 +27,9 @@ import {
   toGithubComment,
   unknownSenderComment,
 } from "../domain/githubApp.ts";
+import { asksForReview, reviewNoteOf } from "../domain/reviewIdentity.ts";
 import { isSilenceNote } from "../domain/silence.ts";
+import type { AutoReview } from "./autoReview.ts";
 import type { AllowedUser } from "../domain/types.ts";
 import type { Clock } from "./ports.ts";
 import { slackIdOfGithub } from "./reviewInbox.ts";
@@ -67,6 +70,12 @@ export type GithubAppDeps = {
   post: (channel: string, text: string, threadTs?: string) => Promise<string | undefined>;
   /** Run a turn as `actor` in a thread; resolves with its final reply. */
   runTurn: (req: { actor: AllowedUser; channelId: string; threadTs: string; text: string }) => Promise<string>;
+  /**
+   * Reviews asked of the app, and what others do on a PR that has a review
+   * thread. Absent: a mention or label on a PR is an ordinary call, and
+   * nothing is mirrored into Slack.
+   */
+  review?: Pick<AutoReview, "request" | "activity">;
   /** Absolute path of `bin/github-app-comment.sh`, named in the prompt. */
   helperPath: string;
   prefix: string;
@@ -103,7 +112,45 @@ export const createGithubApp = (deps: GithubAppDeps): GithubApp => {
   const log = deps.log ?? (() => {});
   let running = false;
 
+  /** A comment on a PR, a mention that asks for a review, the trigger label on a PR or a review requested from the app. */
+  const asksForReviewOf = (t: GithubTrigger): boolean =>
+    t.isPr && (t.via === "label" || t.via === "review-request" || (t.via === "mention" && asksForReview(t.body, deps.slug)));
+
   const handle = async (id: string, t: GithubTrigger): Promise<void> => {
+    if (t.via === "activity") {
+      // Not a call: a line in the PR's review thread when it has one, nothing otherwise.
+      await deps.review?.activity({
+        kind: t.activity ?? "comment",
+        login: t.sender,
+        url: t.url,
+        body: t.body,
+        ...(t.commentUrl ? { link: t.commentUrl } : {}),
+        repo: t.repo,
+        number: t.number,
+      });
+      deps.repo.finish(id, "done", deps.clock());
+      return;
+    }
+    if (deps.review && asksForReviewOf(t)) {
+      if (t.reactionPath) {
+        await deps.github.react(t.installationId, t.reactionPath, "eyes").catch((e) => log(`eyes on ${id}: ${errText(e)}`));
+      }
+      const outcome = await deps.review.request({
+        identity: "app",
+        url: t.url,
+        repo: t.repo,
+        number: t.number,
+        title: t.title,
+        requester: t.sender,
+        installationId: t.installationId,
+        ...(t.via === "mention" && reviewNoteOf(t.body, deps.slug) ? { note: reviewNoteOf(t.body, deps.slug) } : {}),
+      });
+      // Switched off: a review asked for here is an ordinary call again, answered the old way.
+      if (outcome !== "off") {
+        deps.repo.finish(id, outcome === "no-channel" || outcome === "unposted" || outcome === "unreadable" ? "failed" : "done", deps.clock());
+        return;
+      }
+    }
     if (t.reactionPath) {
       await deps.github.react(t.installationId, t.reactionPath, "eyes").catch((e) => log(`eyes on ${id}: ${errText(e)}`));
     }
@@ -193,7 +240,13 @@ export const createGithubApp = (deps: GithubAppDeps): GithubApp => {
 
   return {
     receive: ({ id, event, payload }) => {
-      const decision = detectTrigger(event, id, payload, { slug: deps.slug, label: deps.label });
+      const opts = { slug: deps.slug, label: deps.label };
+      let decision = detectTrigger(event, id, payload, opts);
+      // Not a call, but possibly news for a PR's review thread (only read when reviews are wired).
+      if (decision.kind === "ignore" && deps.review) {
+        const news = detectActivity(event, id, payload, opts);
+        if (news.kind === "trigger") decision = news;
+      }
       if (decision.kind === "ignore") {
         log(`ignored ${id}: ${decision.reason}`);
         return;

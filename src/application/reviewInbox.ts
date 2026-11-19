@@ -1,15 +1,16 @@
 /**
  * Review inbox - a timer that asks GitHub which PRs requested a review from the
- * bot's account and posts each new request into a channel, with the line a
- * person types to have it reviewed.
+ * bot's own (human) account and hands each new request to the auto review,
+ * which opens the PR's thread in the inbox channel, runs the quick review in it
+ * as that account and approves as that account when the review is clean.
  *
- * It only ANNOUNCES. A quick review runs when a human asks for it in Slack
- * (`@bot review <pr>` or `quick-review <pr>`), never because GitHub said so:
- * a review spends the asker's own Claude token and nobody asked here. It used
- * to start one in the post's thread as the requester; that auto-run is gone.
+ * With the auto review switched off (`review_auto`), or not wired, it only
+ * ANNOUNCES, with the line a person types to have it reviewed - the way it
+ * worked before reviews could start by themselves.
  *
- * Polling, not a webhook: the bot runs on a laptop with no public address, and
- * a minute of delay on an announcement is nothing.
+ * Polling, not a webhook: a request to the human account needs no app and no
+ * public address, and a minute of delay is nothing. (A request to the GitHub
+ * App arrives on its webhook instead, see application/githubApp.ts.)
  */
 import {
   advanceCursor,
@@ -21,6 +22,7 @@ import {
 } from "../domain/reviewInbox.ts";
 import type { AllowedUser } from "../domain/types.ts";
 import type { Clock } from "./ports.ts";
+import type { AutoReview } from "./autoReview.ts";
 import { logAndIgnore } from "./ignoredError.ts";
 
 /** How often GitHub is asked. Search allows 30 a minute; this uses one. */
@@ -42,8 +44,10 @@ export type ReviewInboxDeps = {
   /** A GitHub account's display name, for matching to Slack. */
   githubName: (login: string) => Promise<string | undefined>;
   users: { get: (slackId: string) => AllowedUser | undefined; list: () => AllowedUser[] };
-  /** Post the announcement into the channel. */
+  /** Post the announcement into the channel (only when the auto review is off or absent). */
   post: (channel: string, text: string) => Promise<string | undefined>;
+  /** The review that starts by itself. Absent: requests are only announced. */
+  review?: Pick<AutoReview, "request">;
   prefix: string;
   log?: (msg: string) => void;
   onError?: (e: unknown) => void;
@@ -79,10 +83,32 @@ export const createReviewInbox = (deps: ReviewInboxDeps): ReviewInbox => {
 
   const slackIdOf = (login: string) => slackIdOfGithub(deps, login);
 
-  const handle = async (channel: string, account: string, r: ReviewRequest): Promise<void> => {
+  /** A request that failed for a reason that may pass (an unreadable head, a post that did not land) is asked for again on the next poll, for this long. */
+  const RETRY_WINDOW_MS = 60 * 60_000;
+
+  /** Whether the request is settled, so the cursor may move past it. */
+  const handle = async (channel: string, account: string, r: ReviewRequest): Promise<boolean> => {
+    if (deps.review) {
+      const outcome = await deps.review.request({
+        identity: "human",
+        url: r.prUrl,
+        repo: r.repo,
+        number: r.number,
+        title: r.title,
+        requester: r.requester,
+      });
+      // "off" falls through to the announcement; a transient failure is retried on the next poll for an
+      // hour (the cursor stays); everything else (run, asked, deduped, refused) was settled there.
+      if ((outcome === "unreadable" || outcome === "unposted" || outcome === "no-channel") && deps.clock() - Date.parse(r.requestedAt) < RETRY_WINDOW_MS) {
+        log(`${r.prUrl}: ${outcome}, asking again on the next poll`);
+        return false;
+      }
+      if (outcome !== "off") return true;
+    }
     const slackId = await slackIdOf(r.requester);
     const ts = await deps.post(channel, announceRequest(r, slackId, account, deps.prefix));
     if (!ts) log(`could not post ${r.prUrl} into ${channel}`);
+    return true;
   };
 
   const tick = async (): Promise<void> => {
@@ -104,7 +130,7 @@ export const createReviewInbox = (deps: ReviewInboxDeps): ReviewInbox => {
       if (fresh.length === 0) return;
       const account = (await deps.account()) ?? "me";
       for (const r of fresh) {
-        await handle(channel, account, r);
+        if (!(await handle(channel, account, r))) break;
         // Moved per request, so a crash halfway never posts the first ones twice.
         deps.settings.set(deps.cursorKey, advanceCursor(deps.settings.get(deps.cursorKey) ?? cursor, [r]));
       }

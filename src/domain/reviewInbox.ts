@@ -1,6 +1,8 @@
 /**
  * Review inbox - the pure half of "somebody asked the bot's GitHub account for
- * a review, so post it and review it".
+ * a review, so post it and review it" (the review itself is
+ * application/autoReview.ts; this is what is left of the announcement when it
+ * is switched off).
  *
  * Nothing here talks to GitHub or Slack. It decides which requests are new,
  * who on Slack asked, and what each line says. A review spends the
@@ -77,8 +79,8 @@ export const matchByName = (
 };
 
 /**
- * The channel post for a review request. It says how to have it reviewed
- * instead of doing it: a quick review runs only when a person asks.
+ * The channel post for a review request when the auto review is off. It says
+ * how to have it reviewed instead of doing it.
  */
 export const announceRequest = (
   r: ReviewRequest,
@@ -86,4 +88,4 @@ export const announceRequest = (
   account: string,
   prefix: string,
 ): string =>
-  `👀 ${requesterSlackId ? `<@${requesterSlackId}>` : `\`${r.requester}\``} requested a review from \`${account}\` on <${r.prUrl}|${r.repo}#${r.number}> - ${r.title}\n_nothing runs by itself - tag me with \`review ${r.prUrl}\` or type \`${prefix} quick-review ${r.prUrl}\` for a quick one_`;
+  `👀 ${requesterSlackId ? `<@${requesterSlackId}>` : `\`${r.requester}\``} requested a review from \`${account}\` on <${r.prUrl}|${r.repo}#${r.number}> - ${r.title}\n_automatic reviews are off, so nothing runs by itself - tag me with \`review ${r.prUrl}\` or type \`${prefix} quick-review ${r.prUrl}\` for a quick one_`;
