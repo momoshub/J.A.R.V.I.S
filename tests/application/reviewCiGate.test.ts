@@ -478,6 +478,22 @@ describe("the gate's identity", () => {
     expect(calls).toEqual(["app:request-changes", "human:request-changes", "human:approve"]);
   });
 
+  test("an app snapshot that cannot be read is no snapshot at all, so nothing is approved or watched on a guess", async () => {
+    const mk = (snapshot: GitHubPort["snapshot"]): GitHubPort => ({
+      whoami: async () => ({ login: "x" }),
+      reviewDecision: async () => undefined,
+      approve: async () => ({ ok: true }),
+      requestChanges: async () => ({ ok: true }),
+      snapshot,
+    });
+    const own = async () => ({ state: "OPEN" as const, ci: GREEN, mine: "APPROVED" });
+    const unreadable = createCiGate({ github: mk(own), appGithub: mk(async () => undefined), clock: () => 1 });
+    expect(await unreadable.inspect(PR, "app")).toBeUndefined();
+    expect(await unreadable.inspect(PR)).toMatchObject({ mine: "APPROVED" }); // the host's own review is read as before
+    const none = createCiGate({ github: mk(own), clock: () => 1 });
+    expect(await none.inspect(PR, "app")).toBeUndefined();
+  });
+
   test("the app's identity with no app wired is an error, never a change request as someone else", async () => {
     const human: GitHubPort = {
       whoami: async () => ({ login: "human" }),

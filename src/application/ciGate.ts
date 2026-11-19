@@ -87,9 +87,11 @@ export const createCiGate = (deps: CiGateDeps): CiGate => {
   const inspect: CiGate["inspect"] = async (url, identity) => {
     const own = await deps.github.snapshot?.(url);
     if (identity !== "app" || !own) return own;
-    // `mine` speaks for the account that comments (the app); the approval is the host's.
+    // `mine` speaks for the account that comments (the app); the approval is the host's. An app
+    // snapshot that cannot be read is no snapshot: "no review of the app's" and "could not look"
+    // must never read alike, or an approval could go out over a change request nobody saw.
     const app = await deps.appGithub?.snapshot?.(url);
-    return { ...own, mineApproval: own.mine, mine: app?.mine };
+    return app ? { ...own, mineApproval: own.mine, mine: app.mine } : undefined;
   };
 
   const requestChanges: CiGate["requestChanges"] = async (url, snap, when, identity) => {

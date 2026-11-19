@@ -137,6 +137,16 @@ describe("a review as the GitHub App", () => {
     expect(log.some((l) => l.includes("request-changes"))).toBe(false);
   });
 
+  test("with the gate wired and the app's review unreadable, nothing is approved", async () => {
+    const { deps, start, lines } = setup();
+    deps.reviewApp = { ...deps.reviewApp!, github: { ...deps.reviewApp!.github, snapshot: async () => undefined } };
+    deps.ciGate = createCiGate({ github: deps.github!, appGithub: deps.reviewApp.github, clock: () => 1_000 });
+    await start();
+    expect(log).toContain("brain");
+    expect(log.filter((l) => l.endsWith(":approve"))).toEqual([]);
+    expect(lines.some((l) => l.includes("could not read where the app's review stands"))).toBe(true);
+  });
+
   test("a running CI keeps its watcher on the app's identity", async () => {
     ci = { verdict: "running", failed: [] };
     const { start, watches } = setup();
