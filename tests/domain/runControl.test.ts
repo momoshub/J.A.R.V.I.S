@@ -1,7 +1,9 @@
 import { describe, expect, test } from "bun:test";
 import {
   forHowLong,
+  mayStopRun,
   nameOfRequest,
+  stopRefusal,
   stoppedNotice,
   stillStoppingNotice,
 } from "../../src/domain/runControl.ts";
@@ -50,5 +52,19 @@ describe("stillStoppingNotice", () => {
 
   test("it still reads sensibly when the stop time is unknown", () => {
     expect(stillStoppingNotice({ what: "a job" }, 0)).toContain("already stopping");
+  });
+});
+
+describe("mayStopRun", () => {
+  test("your own turn is yours to stop", () => {
+    expect(mayStopRun({ actor: "U1" }, "U1", false)).toBe(true);
+  });
+  test("someone else's takes the permission to stop other people's turns", () => {
+    expect(mayStopRun({ actor: "U1" }, "U2", false)).toBe(false);
+    expect(mayStopRun({ actor: "U1" }, "U2", true)).toBe(true);
+  });
+  test("the refusal names whose turn it is and how long it has run", () => {
+    expect(stopRefusal({ actor: "U1", startedAt: 0 }, 120_000)).toContain("<@U1>");
+    expect(stopRefusal({ actor: "U1", startedAt: 0 }, 120_000)).toContain("2m");
   });
 });

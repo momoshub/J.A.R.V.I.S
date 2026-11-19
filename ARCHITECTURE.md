@@ -80,7 +80,7 @@ no classes.
   v34, handed to that thread's next turn inside the turn's MESSAGE so it stays
   in the resumed session's transcript, as untrusted background and never as
   instructions; read state is per access tier and set only once the turn ran).
-  `runRegistry` holds a handle on each running turn so it can be stopped.
+  `runRegistry` holds a handle on each running turn so it can be stopped, by its own actor or an admin/owner (`mayStopRun`), through the `stop` command or Slack's own stop button (`agent_session_stopped`, same rule).
 - **A turn holds no secret.** The CLI is spawned with the bot's environment
   minus every credential-shaped variable (`domain/turnEnv.ts`: by name -
   `*_TOKEN`, `*_SECRET`, `*_API_KEY`... - except the CLI's own
@@ -277,7 +277,7 @@ No I/O, no frameworks. Just data shapes and functions of their inputs.
 - `roles.ts` + `permissions.ts` + `roleSeed.ts` - roles are data: only `owner` is code (holds every permission, never stored); every other role is a stored row of the permissions it grants (`command:<name>`, `github:<action>`, `mcp:<server>`, tool tiers, guarded sub-actions), and `can(book, role, permission)` is the one question every role check asks. `roleSeed` holds what the built-in `pal`/`executer`/`admin` start with (reproducing the old hard-coded behaviour); `rolePolicy.ts` keeps what surrounds a role record (a switched-off role is off the allowlist, extra denied tool patterns)
 - `slackNames.ts` - how a person or conversation is shown: always name and id
 - `personality.ts`, `promptGuides.ts`, `conversation.ts`, `mentions.ts` - the system prompt from generic defaults + injected identity (procedure blocks as on-demand guide files for turns that can read them), context windowing, `<@ID>` annotation
-- `threadSession.ts`, `agentSession.ts` - one CLI session per thread and when it may be resumed
+- `threadSession.ts`, `agentSession.ts` - one CLI session per thread and when it may be resumed; also Slack's own stop button: what a press does, and the notices when it is refused
 - `threadBrief.ts` - briefs between threads: the opaque source reference (an HMAC), the nonce-delimited, escaped block a turn's message carries, its caps, the prompt rule
 - `internalMessages.ts` - the console's hidden messages: which stored `user` turn is a tell / nudge / watch hand-back / orca question / loop fire (by the prompt's own opening), a brief as one, secrets redacted, oldest first
 - `adapter.ts`, `adapterCheck.ts` - memory as a checked, versioned directory (facts + skills) instead of an ever-growing list; a skill's optional `model:` / `worker:` frontmatter says which model and worker mode runs it (absent = the turn's model; `model` alone runs `foreground`; `orca` needs the turn's Orca grant, else `background`)

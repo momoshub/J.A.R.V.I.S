@@ -4,6 +4,8 @@ import {
   idleSessionArgs,
   mayIdleSession,
   planSessionStop,
+  sessionStopIgnoredLog,
+  sessionStopIgnoredNotice,
   sessionStoppedLog,
   sessionThreadKey,
 } from "../../src/domain/agentSession.ts";
@@ -122,5 +124,25 @@ describe("mayIdleSession", () => {
   test("only when no run is still tracked in the thread", () => {
     expect(mayIdleSession(0)).toBe(true);
     expect(mayIdleSession(1)).toBe(false);
+  });
+});
+
+describe("sessionStopIgnoredNotice / sessionStopIgnoredLog", () => {
+  const run = { what: "deploy", startedAt: 1000, actor: "U1" };
+
+  test("the notice names whose turn it is and who can stop it", () => {
+    const text = sessionStopIgnoredNotice(run);
+    expect(text).toContain("<@U1>");
+    expect(text).toContain("only they or an admin");
+  });
+
+  test("the log line says who pressed, whose turn kept going and for how long", () => {
+    const text = sessionStopIgnoredLog(run, { by: "U9", channel: "C123", threadTs: "100.5" }, 61_000, () => "1m");
+    expect(text).toContain("<@U9>");
+    expect(text).toContain("<@U1>");
+    expect(text).toContain("ignored");
+    expect(text).toContain("*deploy*");
+    expect(text).toContain("1m");
+    expect(text).toContain("<#C123>");
   });
 });

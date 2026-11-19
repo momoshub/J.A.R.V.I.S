@@ -14,6 +14,19 @@ export const forHowLong = (ms: number): string => {
   return mins < 60 ? `${mins}m` : `${Math.round((mins / 60) * 10) / 10}h`;
 };
 
+/**
+ * Whose turn may `by` stop? Your own, or anyone's when allowed to stop other
+ * people's turns (`PERM.stopAny`: admin, owner). A turn is somebody's work and
+ * often their money. The one rule behind the `stop` command and Slack's own stop
+ * button, so the two cannot drift apart.
+ */
+export const mayStopRun = (run: { actor: string }, by: string, mayStopOthers: boolean): boolean =>
+  mayStopOthers || run.actor === by;
+
+/** What the `stop` command answers when the turn is someone else's and the caller may not stop it. */
+export const stopRefusal = (run: { actor: string; startedAt: number }, now: number): string =>
+  `That one is <@${run.actor}>'s, and it has been going ${forHowLong(now - run.startedAt)}. Only they or someone allowed to stop other people's turns can.`;
+
 /** What the thread is told once a turn has been stopped. */
 export const stoppedNotice = (
   run: { what: string; startedAt: number; actor: string },

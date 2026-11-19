@@ -6,7 +6,7 @@ import { tokenHint } from "../../domain/claudeToken.ts";
 import { encodeTotpRequest, TOTP_ACTION } from "../totp.ts";
 import { normaliseLabel, secondsLeft, totpCode } from "../../domain/totp.ts";
 import { tierOf } from "../../domain/threadSession.ts";
-import { forHowLong, stillStoppingNotice, stoppedNotice } from "../../domain/runControl.ts";
+import { mayStopRun, stillStoppingNotice, stopRefusal, stoppedNotice } from "../../domain/runControl.ts";
 import { NOTHING_IN_BACKGROUND, stopReply } from "../../domain/threadBackground.ts";
 import { SETTING_KEYS } from "../../infrastructure/db/settingsRepo.ts";
 import { SIGNATURES } from "../../domain/messageFooter.ts";
@@ -69,9 +69,7 @@ export const RUNTIME_COMMANDS: readonly CommandDef[] = [
       // Your own turn is yours to stop; someone else's takes an admin, since a
       // turn is their work and often their money. Refused, nothing is touched -
       // the background agents included.
-      if (running && running.actor !== actor.slackId && !isAdmin) {
-        return `That one is <@${running.actor}>'s, and it has been going ${forHowLong(deps.clock() - running.startedAt)}. Only they or someone allowed to stop other people's turns can.`;
-      }
+      if (running && !mayStopRun(running, actor.slackId, isAdmin)) return stopRefusal(running, deps.clock());
       // A stop is a REQUEST. Asking twice must not read as two successful
       // stops - that is the lie the `stopping` state exists to prevent, and
       // this path had it too: the result of `stop` was thrown away and the

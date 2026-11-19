@@ -1436,24 +1436,40 @@ describe("a Block Kit reply that carries its own words", () => {
 });
 
 describe("agent_session_stopped press", () => {
+  // U9 presses; U1 owns every tracked run. U9 is a plain pal unless a test says otherwise.
   const press = { channel: "C1", thread_ts: "100.5", user: "U9", streaming_message_ts: [] as string[] };
-  const setup = () => {
+  const person = (slackId: string, role: "pal" | "admin") => ({ slackId, role, displayName: "", addedBy: "x", createdAt: 0 });
+  const setup = (opts: { roles?: Record<string, "pal" | "admin">; withEphemeral?: boolean } = {}) => {
     const runs = createRunRegistry();
     const calls: { method: string; args: Record<string, unknown> }[] = [];
+    const ephemeral: Record<string, unknown>[] = [];
+    const posted: string[] = [];
+    const roles = { U1: "pal", U9: "pal", ...opts.roles } as Record<string, "pal" | "admin">;
     const client = {
       apiCall: async (method: string, args: Record<string, unknown>) => {
         calls.push({ method, args });
         return {};
       },
+      ...(opts.withEphemeral === false ? {} : { chat: { postMessage: async () => ({}), postEphemeral: async (a: Record<string, unknown>) => void ephemeral.push(a) } }),
     };
-    const handle = createSessionStopHandler({ runs }, () => {});
+    const handle = createSessionStopHandler(
+      {
+        runs,
+        users: { get: (id: string) => (roles[id] ? person(id, roles[id]!) : undefined) } as never,
+        ownerSlackId: "UOWNER",
+        stopLogChannel: () => "CLOG",
+        slack: { post: async (_c: string, text: string) => void posted.push(text) } as never,
+      },
+      () => {},
+    );
     const idles = () => calls.filter((c) => c.method === "agents.sessions.setStatus");
+    const stopStreams = () => calls.filter((c) => c.method === "chat.stopStream");
     const track = (id: string, messageTs: string, state: "running" | "queued") => {
       const t = runs.track({ id, key: "C1:100.5", channelId: "C1", threadTs: "100.5", actor: "U1", what: id, messageTs, startedAt: 1 });
       if (state === "running") t.running();
       return t;
     };
-    return { runs, handle, client, idles, track };
+    return { runs, handle, client, idles, stopStreams, ephemeral, posted, track };
   };
 
   test("nothing running: the session is idled", async () => {
@@ -1467,7 +1483,7 @@ describe("agent_session_stopped press", () => {
   test("it stopped the only run: the session is idled", async () => {
     const { runs, handle, client, idles, track } = setup();
     track("a", "100.5", "running");
-    await handle({ event: press, client });
+    await handle({ event: { ...press, user: "U1" }, client });
     expect(runs.byId("a")?.state).toBe("stopping"); // still registered until its turn unwinds
     expect(idles()).toHaveLength(1);
   });
@@ -1476,7 +1492,7 @@ describe("agent_session_stopped press", () => {
     const { runs, handle, client, idles, track } = setup();
     track("a", "100.5", "running");
     track("b", "100.6", "queued");
-    await handle({ event: press, client });
+    await handle({ event: { ...press, user: "U1" }, client });
     expect(runs.byId("a")?.state).toBe("stopping");
     expect(idles()).toHaveLength(0);
   });
@@ -1487,11 +1503,82 @@ describe("agent_session_stopped press", () => {
     const a = track("a", "100.5", "running");
     const bRun = track("b", "100.6", "queued");
     runs.streamOpened("C1", "100.5", "200.2");
-    await handle({ event: press, client });
+    await handle({ event: { ...press, user: "U1" }, client });
     a.done(); // the stopped turn unwinds first
     expect(idles()).toHaveLength(0);
     bRun.done();
     expect(idles()).toHaveLength(1);
+  });
+
+  test("the turn's own actor presses: it is stopped, its streams are closed, the session idles, the log line names it", async () => {
+    const { runs, handle, client, idles, stopStreams, ephemeral, posted, track } = setup();
+    track("a", "100.5", "running");
+    runs.streamOpened("C1", "100.5", "200.2");
+    await handle({ event: { ...press, user: "U1", streaming_message_ts: ["200.2"] }, client });
+    expect(runs.byId("a")?.state).toBe("stopping");
+    expect(stopStreams()).toHaveLength(1);
+    expect(idles()).toHaveLength(1);
+    expect(ephemeral).toHaveLength(0);
+    expect(posted).toHaveLength(1);
+    expect(posted[0]).toContain("stopped *a*");
+  });
+
+  test("an admin presses someone else's turn: it is stopped", async () => {
+    const { runs, handle, client, idles, track } = setup({ roles: { U9: "admin" } });
+    track("a", "100.5", "running");
+    await handle({ event: press, client });
+    expect(runs.byId("a")?.state).toBe("stopping");
+    expect(idles()).toHaveLength(1);
+  });
+
+  test("the owner presses someone else's turn: it is stopped, with no row of their own", async () => {
+    const { runs, handle, client, track } = setup();
+    track("a", "100.5", "running");
+    await handle({ event: { ...press, user: "UOWNER" }, client });
+    expect(runs.byId("a")?.state).toBe("stopping");
+  });
+
+  test("someone else presses: the run keeps going, no stream is closed, the session is not idled, they are told privately, the log channel hears of it", async () => {
+    const { runs, handle, client, idles, stopStreams, ephemeral, posted, track } = setup();
+    track("a", "100.5", "running");
+    runs.streamOpened("C1", "100.5", "200.2");
+    await handle({ event: { ...press, streaming_message_ts: ["200.2"] }, client });
+    expect(runs.byId("a")?.state).toBe("running");
+    expect(runs.current("C1:100.5")?.id).toBe("a");
+    expect(stopStreams()).toHaveLength(0);
+    expect(idles()).toHaveLength(0);
+    expect(ephemeral).toEqual([
+      { channel: "C1", user: "U9", thread_ts: "100.5", text: "I ignored that stop: it is <@U1>'s turn, and only they or an admin can stop it." },
+    ]);
+    expect(posted).toHaveLength(1);
+    expect(posted[0]).toContain("ignored");
+    expect(posted[0]).toContain("<@U9>");
+    expect(posted[0]).toContain("<@U1>");
+  });
+
+  test("someone not on the access list presses: ignored like any other non-actor", async () => {
+    const { runs, handle, client, idles, track } = setup();
+    track("a", "100.5", "running");
+    await handle({ event: { ...press, user: "USTRANGER" }, client });
+    expect(runs.byId("a")?.state).toBe("running");
+    expect(idles()).toHaveLength(0);
+  });
+
+  test("a client that cannot post ephemerally: the press is still ignored, log only", async () => {
+    const { runs, handle, client, idles, track } = setup({ withEphemeral: false });
+    track("a", "100.5", "running");
+    await handle({ event: press, client });
+    expect(runs.byId("a")?.state).toBe("running");
+    expect(idles()).toHaveLength(0);
+  });
+
+  test("nothing running and a stranger presses: streams are closed and the session idles, so it never sticks in processing", async () => {
+    const { handle, client, idles, stopStreams, ephemeral, posted } = setup();
+    await handle({ event: { ...press, streaming_message_ts: ["200.2"] }, client });
+    expect(stopStreams()).toHaveLength(1);
+    expect(idles()).toHaveLength(1);
+    expect(ephemeral).toHaveLength(0);
+    expect(posted).toHaveLength(0);
   });
 });
 
