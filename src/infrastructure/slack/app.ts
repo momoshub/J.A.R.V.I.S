@@ -392,6 +392,12 @@ export type Incoming = {
   /** A person tagged the bot in this message (`app_mention`). */
   mentioned?: boolean;
   /**
+   * What `text` carries was typed by a person and came in as a Slack message event (a tag, a DM, a followed thread's reply or
+   * batch). Not set for a turn the bot builds from a button press, a reaction or an approved replay; only a typed one is
+   * handed on as `humanMessages`, which is what the linked-thread relay reads.
+   */
+  typed?: boolean;
+  /**
    * The messages a followed thread buffered, oldest first, when the turn is
    * for several at once. `text`, `userId` and `messageTs` are the newest's.
    */
@@ -498,6 +504,10 @@ export const createHandler =
           following: msg.following === true,
           ...(msg.mentioned ? { mentioned: true } : {}),
           ...(batched ? { batched: true } : {}),
+          // what people actually typed, for the linked-thread relay: the buffered batch item by item, else this message
+          ...(msg.typed
+            ? { humanMessages: msg.batch?.length ? msg.batch : [{ userId: msg.userId, text: msg.text, messageTs: msg.messageTs }] }
+            : {}),
           interrupted: (msg.inbox?.attempt ?? 1) > 1,
           ...(msg.inbox ? { inboxRowId: msg.inbox.rowId } : {}),
         },
@@ -1306,6 +1316,7 @@ export const createSlackApp = (config: SlackAppConfig, deps: Deps) => {
         messageTs: last.ts,
         client: last.client,
         following: true,
+        typed: true,
         batch: items.map((i) => ({ userId: i.userId, text: i.text, messageTs: i.ts })),
         say: last.say,
       });
@@ -1339,6 +1350,7 @@ export const createSlackApp = (config: SlackAppConfig, deps: Deps) => {
       inbox: inboxOf(context as InboxContext),
       text: e.text,
       mentioned: true,
+      typed: true,
       threadTs: threadKeyOf(e),
       messageTs: e.ts,
       client: asClient(client),
@@ -2031,6 +2043,7 @@ export const createSlackApp = (config: SlackAppConfig, deps: Deps) => {
         messageTs: m.ts,
         client: asClient(client),
         following: true,
+        typed: true,
         say: say as Incoming["say"],
       });
       return;
@@ -2043,6 +2056,7 @@ export const createSlackApp = (config: SlackAppConfig, deps: Deps) => {
       text: m.text!,
       threadTs: threadKeyOf(m),
       messageTs: m.ts,
+      typed: true,
       client: asClient(client),
       // Slack never sends `app_mention` for a DM, so a tag that opens the text
       // is the only sign the bot was addressed - which `respond` needs before a

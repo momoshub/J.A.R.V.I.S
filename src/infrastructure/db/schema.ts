@@ -115,6 +115,40 @@ export const migrate = (db: Database): void => {
   migrateBugReports(db);
   migrateBackgroundJobs(db);
   migrateReviewRuns(db);
+  migrateLinkedThreads(db);
+};
+
+/**
+ * Migration v44: linked threads.
+ *
+ * `thread_relays` is the one-way link "thread A wrote INTO thread B" that lets B's
+ * human messages come back to A as briefs (`domain/threadBrief.ts`, `relay`). It is
+ * kept apart from `thread_brief_links` on purpose: those links are symmetric (B can
+ * answer A by reference), so they cannot say which side may be told what the other
+ * side's people say. Only an owner-started cross-thread write (the proxy's auto-brief,
+ * `post`) creates a row, and `last_write_at` is what the TTL counts from.
+ * `thread_briefs.source_ts` is the Slack ts of the message a relay brief quotes, the
+ * dedupe key for a retried message. New table and column, so a rerun is a no-op.
+ */
+const migrateLinkedThreads = (db: Database): void => {
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS thread_relays (
+      source_channel TEXT NOT NULL,
+      source_thread  TEXT NOT NULL,
+      target_channel TEXT NOT NULL,
+      target_thread  TEXT NOT NULL,
+      last_write_at  INTEGER NOT NULL,
+      PRIMARY KEY (source_channel, source_thread, target_channel, target_thread)
+    );
+    CREATE INDEX IF NOT EXISTS idx_thread_relays_target ON thread_relays (target_channel, target_thread);
+  `);
+  const cols = db.query<{ name: string }, []>("PRAGMA table_info(thread_briefs)").all().map((c) => c.name);
+  if (!cols.includes("source_ts")) db.exec("ALTER TABLE thread_briefs ADD COLUMN source_ts TEXT");
+  db.exec("CREATE INDEX IF NOT EXISTS idx_thread_briefs_source ON thread_briefs (from_channel, from_thread, source_ts) WHERE source_ts IS NOT NULL;");
+  const { user_version } = db.query<{ user_version: number }, []>("PRAGMA user_version").get() ?? {
+    user_version: 0,
+  };
+  if (user_version < 44) db.exec("PRAGMA user_version = 44;");
 };
 
 /**

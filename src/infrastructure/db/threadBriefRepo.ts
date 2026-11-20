@@ -9,6 +9,11 @@
  * turn carried is in THAT session's transcript and nowhere else. `recent` is for
  * a session with no transcript yet (cold start, a dropped session), which has
  * seen none of them whatever was read before.
+ *
+ * The relay half (`noteWrite`, `relaySources`, `addRelay`): a one-way record that
+ * thread A wrote into thread B, so B's human messages can come back to A as briefs
+ * for a while. Separate from the symmetric reference links on purpose, see
+ * `migrateLinkedThreads`.
  */
 import { randomBytes } from "node:crypto";
 import type { DbClient } from "./client.ts";
@@ -28,6 +33,9 @@ export type ThreadBrief = {
 
 export type NewBrief = Omit<ThreadBrief, "id" | "createdAt">;
 
+/** A thread-keyed pair, for the relay link. */
+export type ThreadRef = { channelId: string; threadTs: string };
+
 export type ThreadPeer = { channelId: string; threadTs: string };
 
 export type ThreadBriefRepo = {
@@ -45,6 +53,25 @@ export type ThreadBriefRepo = {
   ref: (channelId: string, threadTs: string) => string;
   /** The thread a reference names, among those this thread is linked to. */
   peer: (channelId: string, threadTs: string, ref: string) => ThreadPeer | undefined;
+  /**
+   * Record that `source` wrote into `target` (a cross-thread post or upload), starting or renewing the relay link that
+   * lets the target's human messages come back to the source. False, and no link, for the same thread or when `target`
+   * already relays to `source` within `ttlMs` (never both ways: that would carry the source's own people's words into the target).
+   */
+  noteWrite: (source: ThreadRef, target: ThreadRef, now: number, ttlMs: number) => boolean;
+  /**
+   * Renew a relay link that is still live (a `brief` is also a write into the target). Never creates one and never revives an
+   * expired one, and does nothing while `target` relays to `source`, so it cannot bring both directions back to life.
+   */
+  touchWrite: (source: ThreadRef, target: ThreadRef, now: number, ttlMs: number) => void;
+  /** The threads that wrote into this one no earlier than `since`, i.e. where its human messages relay to. */
+  relaySources: (channelId: string, threadTs: string, since: number) => ThreadRef[];
+  /**
+   * File a relay brief (`from` is the thread the message was said in, `to` the one it is told to) unless this message was
+   * already relayed there, or `maxPerWindow` relays from `from` to `to` were filed within `windowMs`. Returns its id, or
+   * `undefined` when it was a duplicate or over the cap.
+   */
+  addRelay: (brief: NewBrief & { sourceTs: string }, now: number, cap: { windowMs: number; maxPerWindow: number }) => number | undefined;
 };
 
 type Row = {
@@ -70,9 +97,9 @@ const toBrief = (r: Row): ThreadBrief => ({
 });
 
 export const createThreadBriefRepo = (db: DbClient): ThreadBriefRepo => {
-  const insert = db.query<{ id: number }, Record<string, string | number>>(
-    `INSERT INTO thread_briefs (from_channel, from_thread, to_channel, to_thread, author, text, created_at)
-     VALUES ($fromChannel, $fromThread, $toChannel, $toThread, $author, $text, $now)
+  const insert = db.query<{ id: number }, Record<string, string | number | null>>(
+    `INSERT INTO thread_briefs (from_channel, from_thread, to_channel, to_thread, author, text, created_at, source_ts)
+     VALUES ($fromChannel, $fromThread, $toChannel, $toThread, $author, $text, $now, $sourceTs)
      RETURNING id`,
   );
   const link = db.query(
@@ -109,7 +136,37 @@ export const createThreadBriefRepo = (db: DbClient): ThreadBriefRepo => {
     "SELECT peer_channel, peer_thread FROM thread_brief_links WHERE channel_id = ? AND thread_ts = ? AND ref = ?",
   );
 
-  const addAll = db.transaction((b: NewBrief, now: number): number => {
+  const relayUpsert = db.query(
+    `INSERT INTO thread_relays (source_channel, source_thread, target_channel, target_thread, last_write_at)
+     VALUES ($sc, $st, $tc, $tt, $now)
+     ON CONFLICT(source_channel, source_thread, target_channel, target_thread) DO UPDATE SET last_write_at = excluded.last_write_at`,
+  );
+  const relayTouch = db.query(
+    `UPDATE thread_relays SET last_write_at = $now
+     WHERE source_channel = $sc AND source_thread = $st AND target_channel = $tc AND target_thread = $tt
+       AND last_write_at >= $since
+       AND NOT EXISTS (
+         SELECT 1 FROM thread_relays r
+         WHERE r.source_channel = $tc AND r.source_thread = $tt AND r.target_channel = $sc AND r.target_thread = $st AND r.last_write_at >= $since
+       )`,
+  );
+  const relayLive = db.query<{ n: number }, [string, string, string, string, number]>(
+    `SELECT COUNT(*) AS n FROM thread_relays
+     WHERE source_channel = ? AND source_thread = ? AND target_channel = ? AND target_thread = ? AND last_write_at >= ?`,
+  );
+  const relaySourcesStmt = db.query<{ source_channel: string; source_thread: string }, [string, string, number]>(
+    "SELECT source_channel, source_thread FROM thread_relays WHERE target_channel = ? AND target_thread = ? AND last_write_at >= ? ORDER BY last_write_at DESC",
+  );
+  const relayedStmt = db.query<{ n: number }, [string, string, string, string, string]>(
+    `SELECT COUNT(*) AS n FROM thread_briefs
+     WHERE from_channel = ? AND from_thread = ? AND to_channel = ? AND to_thread = ? AND source_ts = ?`,
+  );
+  const relayCountStmt = db.query<{ n: number }, [string, string, string, string, number]>(
+    `SELECT COUNT(*) AS n FROM thread_briefs
+     WHERE from_channel = ? AND from_thread = ? AND to_channel = ? AND to_thread = ? AND source_ts IS NOT NULL AND created_at >= ?`,
+  );
+
+  const addAll = db.transaction((b: NewBrief & { sourceTs?: string }, now: number): number => {
     const row = insert.get({
       $fromChannel: b.fromChannel,
       $fromThread: b.fromThread,
@@ -118,6 +175,7 @@ export const createThreadBriefRepo = (db: DbClient): ThreadBriefRepo => {
       $author: b.author,
       $text: b.text,
       $now: now,
+      $sourceTs: b.sourceTs ?? null,
     });
     // Each side learns the other by the reference it will be shown.
     link.run({
@@ -142,8 +200,28 @@ export const createThreadBriefRepo = (db: DbClient): ThreadBriefRepo => {
     for (const id of ids) readStmt.run({ $id: id, $tier: tier, $now: now });
   });
 
+  const relayAll = db.transaction(
+    (b: NewBrief & { sourceTs: string }, now: number, cap: { windowMs: number; maxPerWindow: number }): number | undefined => {
+      if ((relayedStmt.get(b.fromChannel, b.fromThread, b.toChannel, b.toThread, b.sourceTs)?.n ?? 0) > 0) return undefined;
+      if ((relayCountStmt.get(b.fromChannel, b.fromThread, b.toChannel, b.toThread, now - cap.windowMs)?.n ?? 0) >= cap.maxPerWindow) return undefined;
+      return addAll(b, now);
+    },
+  );
+
   return {
     add: (brief, now) => addAll(brief, now),
+    noteWrite: (source, target, now, ttlMs) => {
+      if (source.channelId === target.channelId && source.threadTs === target.threadTs) return false;
+      if ((relayLive.get(target.channelId, target.threadTs, source.channelId, source.threadTs, now - ttlMs)?.n ?? 0) > 0) return false;
+      relayUpsert.run({ $sc: source.channelId, $st: source.threadTs, $tc: target.channelId, $tt: target.threadTs, $now: now });
+      return true;
+    },
+    touchWrite: (source, target, now, ttlMs) => {
+      relayTouch.run({ $sc: source.channelId, $st: source.threadTs, $tc: target.channelId, $tt: target.threadTs, $now: now, $since: now - ttlMs });
+    },
+    relaySources: (channelId, threadTs, since) =>
+      relaySourcesStmt.all(channelId, threadTs, since).map((r) => ({ channelId: r.source_channel, threadTs: r.source_thread })),
+    addRelay: (brief, now, cap) => relayAll(brief, now, cap),
     unread: (channelId, threadTs, tier) => unreadStmt.all(channelId, threadTs, tier).map(toBrief),
     recent: (channelId, threadTs, limit) => recentStmt.all(channelId, threadTs, Math.max(0, limit)).map(toBrief),
     toChannel: (channelId, limit, threadTs, range) => {

@@ -14,6 +14,7 @@ import {
 } from "../../src/infrastructure/slack/app.ts";
 import type { Streamer } from "../../src/infrastructure/slack/stream.ts";
 import { openDatabase } from "../../src/infrastructure/db/client.ts";
+import { createThreadBriefRepo } from "../../src/infrastructure/db/threadBriefRepo.ts";
 import { createBugReportRepo } from "../../src/infrastructure/db/bugReportRepo.ts";
 import type { SlackAdminPort } from "../../src/application/slackAdmin.ts";
 import { createUserRepo } from "../../src/infrastructure/db/userRepo.ts";
@@ -87,6 +88,8 @@ const build = (opts: {
   runs?: RunRegistry;
   /** What the turn posted into its own thread itself; the handler drops a closing reply that repeats it. */
   selfPosts?: SelfPosts;
+  /** Thread briefs, to see what the intake hands over for the linked-thread relay. */
+  withBriefs?: boolean;
 }) => {
   const db = openDatabase(":memory:");
   const users = createUserRepo(db);
@@ -99,6 +102,7 @@ const build = (opts: {
     llm: opts.llm,
     clock: () => t++,
     ownerSlackId: OWNER,
+    ...(opts.withBriefs ? { briefs: createThreadBriefRepo(db) } : {}),
     ...(opts.threadQueue ? { threadQueue: opts.threadQueue } : {}),
     ...(opts.runs ? { runs: opts.runs } : {}),
     // a turn's run ticket is what its self-posts are keyed by
@@ -158,7 +162,7 @@ const build = (opts: {
       said.push({ text: m.text, ...(m.reply_broadcast ? { reply_broadcast: true } : {}) });
     },
   });
-  return { handle, msg, said, updates, deletes, apiCalls, rec, messages, logs, opened: () => streams };
+  return { handle, msg, said, updates, deletes, apiCalls, rec, messages, logs, opened: () => streams, briefs: deps.briefs };
 };
 
 const streamingLlm = (final: string, events: LlmStreamEvent[] = []): LlmPort => ({
@@ -1652,5 +1656,28 @@ describe("bug report press listener", () => {
     });
     expect(r.turns).toHaveLength(0);
     expect(r.bugReports.get(r.id)?.state).toBe("pending");
+  });
+});
+
+describe("createHandler marks what people typed, for the linked-thread relay", () => {
+  test("a message in a thread another thread wrote into reaches that thread as a relay brief; a batch relays item by item", async () => {
+    const { handle, msg, briefs } = build({ llm: { complete: async () => "ok" }, streamUpdates: false, withBriefs: true });
+    const here = { channelId: "C1", threadTs: "111.1" };
+    const there = { channelId: "D0DM000001", threadTs: "1.1" };
+    briefs!.noteWrite(there, here, 1, 1000);
+    // a turn the bot builds from a button press or a reaction is not typed, so it is not relayed
+    await handle(msg("Button pressed: approve", "111.1", "111.9"));
+    await handle({ ...msg("is it deployed?", "111.1", "111.2"), typed: true });
+    await handle({
+      ...msg("joined", "111.1", "111.4"),
+      typed: true,
+      following: true,
+      batch: [
+        { userId: OWNER, text: "one", messageTs: "111.3" },
+        { userId: OWNER, text: "two", messageTs: "111.4" },
+      ],
+    });
+    const quotes = briefs!.recent(there.channelId, there.threadTs, 10).map((b) => b.text.match(/Quote: "(.*)"/)?.[1]);
+    expect(quotes).toEqual(["is it deployed?", "one", "two"]);
   });
 });
