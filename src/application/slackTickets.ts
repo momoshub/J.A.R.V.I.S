@@ -5,7 +5,8 @@
  * names no actor and carries no role, so it cannot run a command or act on
  * GitHub, and a command ticket cannot call Slack. All it can do is ask the
  * Slack proxy for the methods on its allowlist, writing only into the channel
- * it was minted for (an owner's turn may also edit the bot's own messages elsewhere).
+ * it was minted for (an owner's turn may also write into any other channel by
+ * its id, and edit the bot's own messages there).
  *
  * A ticket belongs to ONE spawned process: the CLI adapter mints it when the
  * turn starts, puts it in that process's environment and revokes it when the
@@ -14,7 +15,7 @@
  *
  * Tickets live in memory; a restart ends every turn anyway.
  */
-import type { Clock } from "./ports.ts";
+import type { BillingContext, Clock } from "./ports.ts";
 
 /** Longer than any turn the bot allows, so a long investigation keeps its Slack access. */
 export const SLACK_TICKET_TTL_MS = 3 * 60 * 60_000;
@@ -35,8 +36,23 @@ export type SlackTicketContext = {
    * the key of what the turn posted itself (`selfPosts`); none, no such record.
    */
   turn?: string;
-  /** The turn was started by the owner: its `chat.update` may reach a message the bot wrote in any channel (`domain/slackProxy.ts`). Never a role or a person, only this one bit. */
+  /**
+   * The owner started this turn with their own message or command: its channel-scoped writes may name any channel id and its
+   * `chat.update` may reach a message the bot wrote anywhere (`domain/slackProxy.ts`). Not "billed to the owner": a run charged to
+   * them over other people's text (the dashboard draft, a triage) never gets it. Never a role or a person, only this one bit.
+   */
   owner?: boolean;
+};
+
+/** The ticket a run gets: its channel and thread, its turn, and the owner bit only when the owner's own message started it. */
+export const slackTicketContext = (bill: BillingContext | undefined, turn: string | undefined, ownerSlackId: string): SlackTicketContext | undefined => {
+  if (!bill?.channel) return undefined;
+  return {
+    channel: bill.channel,
+    ...(bill.threadTs ? { threadTs: bill.threadTs } : {}),
+    ...(turn ? { turn } : {}),
+    ...(bill.ownMessage && bill.actor === ownerSlackId ? { owner: true } : {}),
+  };
 };
 
 export type SlackTicketRefusal = "unknown" | "expired" | "spent";

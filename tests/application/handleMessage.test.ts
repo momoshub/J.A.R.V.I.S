@@ -3,7 +3,7 @@ import { SANDBOX_SHELL_NOTE } from "../../src/domain/personality.ts";
 import { openDatabase, type DbClient } from "../../src/infrastructure/db/client.ts";
 import { createUserRepo } from "../../src/infrastructure/db/userRepo.ts";
 import { createMessageRepo } from "../../src/infrastructure/db/messageRepo.ts";
-import { handleMessage, type HandleMessageDeps } from "../../src/application/handleMessage.ts";
+import { handleMessage, typedByPerson, type HandleMessageDeps } from "../../src/application/handleMessage.ts";
 import type { LlmPort } from "../../src/application/ports.ts";
 import type { PromptMessage } from "../../src/domain/types.ts";
 import type { SlackAdminPort, SlackMessage } from "../../src/application/slackAdmin.ts";
@@ -995,5 +995,19 @@ describe("how-to guides in a chat turn", () => {
     await handleMessage(deps, { channelId: "C1", slackUserId: user, text: "why is it slow" });
     expect(calls[0]?.system).toContain(INLINE);
     expect(calls[0]?.system).not.toContain("read: /gd/");
+  });
+});
+
+describe("typedByPerson", () => {
+  const typed = { channelId: "C0TEST00001", slackUserId: "U0OWNER0001", text: "hi" };
+
+  test("a plain message is, and anything the bot started or buffered is not", () => {
+    expect(typedByPerson(typed)).toBe(true);
+    expect(typedByPerson({ ...typed, trigger: "tell" })).toBe(false);
+    expect(typedByPerson({ ...typed, trigger: "loop" })).toBe(false);
+    expect(typedByPerson({ ...typed, unprompted: true })).toBe(false);
+    expect(typedByPerson({ ...typed, autoContinue: true })).toBe(false);
+    expect(typedByPerson({ ...typed, following: true })).toBe(false);
+    expect(typedByPerson({ ...typed, batched: true })).toBe(false);
   });
 });

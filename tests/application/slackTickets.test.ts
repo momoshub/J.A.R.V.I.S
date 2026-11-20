@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { SLACK_TICKET_TTL_MS, createSlackTickets } from "../../src/application/slackTickets.ts";
+import { SLACK_TICKET_TTL_MS, createSlackTickets, slackTicketContext } from "../../src/application/slackTickets.ts";
 
 describe("Slack tickets", () => {
   test("a ticket resolves to its channel and thread, and spends a call", () => {
@@ -54,5 +54,35 @@ describe("Slack tickets", () => {
     expect(tickets.redeem(token).ok).toBe(true);
     expect(tickets.redeem(token).ok).toBe(true);
     expect(tickets.redeem(token)).toMatchObject({ ok: false, reason: "spent", limit: 2 });
+  });
+});
+
+describe("which run gets the owner bit", () => {
+  const OWNER = "U0OWNER0001";
+  const chat = { actor: OWNER, kind: "chat", channel: "C0TEST00001", threadTs: "1.1" };
+
+  test("the owner's own message (chat, ask, btw) does", () => {
+    expect(slackTicketContext({ ...chat, ownMessage: true }, "run-1", OWNER)).toEqual({ channel: "C0TEST00001", threadTs: "1.1", turn: "run-1", owner: true });
+  });
+
+  test("the dashboard draft is billed to the owner but never gets it: its prompt is a third party's thread", () => {
+    const draft = { actor: OWNER, kind: "draft", channel: "C0TEST00001" };
+    expect(slackTicketContext(draft, undefined, OWNER)).toEqual({ channel: "C0TEST00001" });
+  });
+
+  test("the inner child and any other owner-billed run without the flag do not either", () => {
+    for (const kind of ["inner-child", "review", "investigate", "stale-promise", "follow-gate", "adapter", "chat"]) {
+      const ctx = slackTicketContext({ actor: OWNER, kind, channel: "C0TEST00001" }, "run-1", OWNER);
+      expect(ctx?.owner).toBeUndefined();
+    }
+  });
+
+  test("the flag alone is not enough: someone else's message never gets it", () => {
+    expect(slackTicketContext({ ...chat, actor: "U0USER0001", ownMessage: true }, undefined, OWNER)?.owner).toBeUndefined();
+  });
+
+  test("a run with no channel gets no ticket", () => {
+    expect(slackTicketContext({ actor: OWNER, kind: "chat", ownMessage: true }, undefined, OWNER)).toBeUndefined();
+    expect(slackTicketContext(undefined, undefined, OWNER)).toBeUndefined();
   });
 });

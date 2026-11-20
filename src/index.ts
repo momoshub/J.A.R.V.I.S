@@ -140,7 +140,7 @@ import type { ReviewApp } from "./application/commands/shared.ts";
 import { createAutoReview, type AutoReview } from "./application/autoReview.ts";
 import { createReviewRunRepo } from "./infrastructure/db/reviewRunRepo.ts";
 import { createCommandTickets, refusalMessage } from "./application/commandTickets.ts";
-import { createSlackTickets } from "./application/slackTickets.ts";
+import { createSlackTickets, slackTicketContext } from "./application/slackTickets.ts";
 import { createNoticeLookup } from "./infrastructure/db/noticeLookup.ts";
 import { createSlackProxy } from "./application/slackProxy.ts";
 import { parseExtraMethods } from "./domain/slackProxy.ts";
@@ -562,13 +562,9 @@ const main = async () => {
     // One ticket per spawned turn, only when the run belongs to a channel; it ends with the process.
     // The turn's run ticket rides along, so what the turn posts itself is told apart from any other turn's in the thread.
     (bill, turn) => {
-      if (!bill?.channel) return undefined;
-      const token = slackTickets.issue({
-        channel: bill.channel,
-        ...(bill.threadTs ? { threadTs: bill.threadTs } : {}),
-        ...(turn ? { turn } : {}),
-        ...(bill.actor === config.ownerSlackId ? { owner: true } : {}),
-      });
+      const ctx = slackTicketContext(bill, turn, config.ownerSlackId);
+      if (!ctx) return undefined;
+      const token = slackTickets.issue(ctx);
       return { token, end: () => slackTickets.revoke(token) };
     },
   );

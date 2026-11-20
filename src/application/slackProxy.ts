@@ -171,7 +171,8 @@ export const createSlackProxy = (deps: SlackProxyDeps): SlackProxy => {
       } else if (isAuditedMethod(checked.method, extra)) {
         // method and channel only, never the content
         const param = channelParamOf(checked.method, extra);
-        log(`slack proxy ${checked.method} channel=${(param && sendParams[param]) || sendParams.channel || sendParams.channel_id || "-"}`);
+        const where = (param && sendParams[param]) || sendParams.channel || sendParams.channel_id || "-";
+        log(`slack proxy ${checked.method} channel=${where}${checked.crossChannel ? " (owner's turn, outside the turn's channel)" : ""}`);
       }
       try {
         const res = await doFetch(`${SLACK_API}${checked.method}`, {
@@ -192,8 +193,8 @@ export const createSlackProxy = (deps: SlackProxyDeps): SlackProxy => {
             body: JSON.stringify({ ok: false, error: "ratelimited", ...(Number.isFinite(retryAfter) ? { retry_after: retryAfter } : {}) }),
           };
         }
-        // noted per turn, only what Slack accepted, and only into the turn's own thread
-        if (res.ok && checked.method.startsWith("chat.") && resolved.ctx.turn && !checked.ownMessageIn) {
+        // noted per turn, only what Slack accepted, and only into the turn's own thread (an owner's post in another channel is not)
+        if (res.ok && checked.method.startsWith("chat.") && resolved.ctx.turn && !checked.ownMessageIn && !checked.crossChannel) {
           const landed = deps.selfPosts?.record(resolved.ctx.turn, resolved.ctx.threadTs, { method: checked.method, params: sendParams, answer: text });
           if (landed) return { status: res.status, body: withSelfPostNote(text) };
         }

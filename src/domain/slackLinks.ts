@@ -29,6 +29,8 @@ export type PostTarget =
   | { readonly kind: "thread"; readonly channel: string; readonly threadTs: string };
 
 const CHANNEL_ID = /^[CGD][A-Z0-9]{8,}$/;
+/** A Slack channel id (public, private or DM; never a user id): what `post` accepts, and the only cross-channel write target of an owner's turn. */
+export const isChannelId = (s: string): boolean => CHANNEL_ID.test(s);
 const CHANNEL_NAME = /^[a-z0-9][a-z0-9._-]{0,79}$/;
 
 /**

@@ -293,6 +293,17 @@ describe("Slack proxy notes what a turn posts into its own thread", () => {
     expect(selfPosts.posts("run-1")).toEqual([{ ts: "5.5" }]);
   });
 
+  test("an owner's post into another channel goes through and is not noted as the turn's own thread", async () => {
+    const { proxy, tickets, selfPosts } = withLog(() => Response.json({ ok: true, ts: "1.1" }));
+    const ticket = tickets.issue({ channel: "C1", threadTs: "1.1", turn: "run-1", owner: true });
+    const answer = await proxy.call({ ticket, method: "chat.postMessage", params: { channel: "C0OTHER0002", thread_ts: "1.1", text: "hi" } });
+    expect(answer.status).toBe(200);
+    expect(answer.body).not.toContain(SELF_POST_NOTE);
+    expect(selfPosts.posts("run-1")).toEqual([]);
+    const other = tickets.issue({ channel: "C1", threadTs: "1.1", turn: "run-2" });
+    expect((await proxy.call({ ticket: other, method: "chat.postMessage", params: { channel: "C0OTHER0002", text: "hi" } })).status).toBe(403);
+  });
+
   test("two processes of one turn share the record; another turn in the thread does not", async () => {
     let n = 0;
     const { proxy, tickets, selfPosts } = withLog(() => Response.json({ ok: true, ts: `5.${++n}` }));
@@ -318,7 +329,7 @@ describe("Slack proxy notes what a turn posts into its own thread", () => {
     const { proxy, tickets, selfPosts } = withLog(() => Response.json({ ok: true, ts: "5.5" }));
     const ticket = tickets.issue({ channel: "C1", threadTs: "1.1", turn: "run-1" });
     await proxy.call({ ticket, method: "chat.postMessage", params: { channel: "C1", text: "x", thread_ts: "none" } });
-    await proxy.call({ ticket, method: "chat.postMessage", params: { channel: "C2", text: "x" } });
+    await proxy.call({ ticket, method: "chat.postMessage", params: { channel: "C0OTHER0002", text: "x" } });
     expect(selfPosts.posts("run-1")).toEqual([]);
     const failing = withLog(() => Response.json({ ok: false, error: "channel_not_found" }));
     const t2 = failing.tickets.issue({ channel: "C1", threadTs: "1.1", turn: "run-1" });
@@ -455,9 +466,9 @@ describe("Slack proxy: an owner's chat.update of the bot's own message elsewhere
     expect(seen).toHaveLength(0);
   });
 
-  test("the owner's chat.postMessage elsewhere is still refused", async () => {
+  test("a non-owner's chat.postMessage elsewhere is still refused", async () => {
     const { proxy, tickets, seen } = setup(slack({ ts: "77.7", user: ME }), undefined, async () => ME);
-    const ticket = tickets.issue({ channel: "C0TEST00002", owner: true });
+    const ticket = tickets.issue({ channel: "C0TEST00002" });
     const answer = await proxy.call({ ticket, method: "chat.postMessage", params: { channel: "C0OTHER0001", text: "hi" } });
     expect(answer.status).toBe(403);
     expect(seen).toHaveLength(0);
@@ -522,5 +533,24 @@ describe("Slack proxy and the owner's extra methods", () => {
     set([]);
     expect((await proxy.call({ ticket, method: "conversations.setTopic", params })).status).toBe(403);
     expect(seen).toHaveLength(1);
+  });
+
+  test("an owner's extra write and reaction elsewhere go through with an audit row (method + target channel, never content); a non-owner's do not", async () => {
+    const { proxy, tickets, seen, logs, set } = live();
+    set([{ method: "conversations.setTopic", kind: "write", channelParam: "channel" }]);
+    const owner = tickets.issue({ channel: "C0TEST00001", threadTs: "1.1", owner: true });
+    const topic = await proxy.call({ ticket: owner, method: "conversations.setTopic", params: { channel: "C0OTHER0001", topic: "secret topic" } });
+    expect(topic.status).toBe(200);
+    const react = await proxy.call({ ticket: owner, method: "reactions.add", params: { channel: "C0OTHER0001", name: "eyes", timestamp: "5.5" } });
+    expect(react.status).toBe(200);
+    expect(seen).toHaveLength(2);
+    const log = logs.join("\n");
+    expect(log).toContain("slack proxy conversations.setTopic channel=C0OTHER0001 (owner's turn, outside the turn's channel)");
+    expect(log).toContain("slack proxy reactions.add channel=C0OTHER0001 (owner's turn, outside the turn's channel)");
+    expect(log).not.toContain("secret topic");
+    const member = tickets.issue({ channel: "C0TEST00001", threadTs: "1.1" });
+    expect((await proxy.call({ ticket: member, method: "conversations.setTopic", params: { channel: "C0OTHER0001", topic: "x" } })).status).toBe(403);
+    expect((await proxy.call({ ticket: member, method: "reactions.add", params: { channel: "C0OTHER0001", name: "eyes", timestamp: "5.5" } })).status).toBe(403);
+    expect(seen).toHaveLength(2);
   });
 });

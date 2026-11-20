@@ -346,6 +346,9 @@ export type InboundMessage = {
   trigger?: InternalKind;
 };
 
+/** The message was typed by the person it is from: not started by the bot (`trigger`, `unprompted`, `autoContinue`), not a followed thread's chatter. */
+export const typedByPerson = (m: InboundMessage): boolean => !m.trigger && !m.unprompted && !m.autoContinue && !m.following && !m.batched;
+
 /** What a turn says when the model said nothing. A placeholder, not an answer. */
 export const EMPTY_REPLY_FALLBACK = "I do not have anything useful to add there.";
 
@@ -590,6 +593,9 @@ export const handleMessage = async (
       kind: "chat",
       channel: inbound.channelId,
       threadTs: inbound.threadTs ?? inbound.messageTs,
+      // Typed by the person themselves: not a bot-started turn (watch, loop, tell, nudge, a queued step), not a followed
+      // thread's buffered chatter, and not the bot's own continuation of a workflow.
+      ...(typedByPerson(inbound) ? { ownMessage: true as const } : {}),
     },
     onUsage: (u: LlmUsage) => {
       usage = u;
