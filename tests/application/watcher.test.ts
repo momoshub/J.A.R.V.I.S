@@ -7,7 +7,7 @@ import {
   createWatcher,
   type CheckResult,
 } from "../../src/application/watcher.ts";
-import { MAX_CONSECUTIVE_ERRORS } from "../../src/domain/watch.ts";
+import { MAX_CONSECUTIVE_ERRORS, MAX_DEADLINE_MS } from "../../src/domain/watch.ts";
 
 let db: DbClient;
 let watches: WatchRepo;
@@ -149,6 +149,24 @@ describe("watcher", () => {
     await w.tick();
     expect(turns[0]?.text).toContain("I have not done it");
     expect(watches.get(created.id)?.state).toBe("expired");
+  });
+
+  test("a watch that ran its full 30 days is closed with one last line and nothing re-arms it", async () => {
+    const created = add({ deadlineAt: now + MAX_DEADLINE_MS, everyMs: 6 * 3_600_000 });
+    const w = build(async () => ({ code: 1, output: "" }));
+    // a month of polling by tick, never a timer sized by the deadline
+    while (now < created.deadlineAt) {
+      now += 6 * 3_600_000;
+      await w.tick();
+    }
+    expect(turns).toHaveLength(1);
+    expect(turns[0]?.text).toContain(`watch #${created.id} ran its full 30 days with nothing happening, closed`);
+    expect(turns[0]?.text).toContain("Do NOT set a new watch");
+    expect(watches.get(created.id)?.state).toBe("expired");
+    expect(watches.waiting()).toHaveLength(0);
+    now += MAX_DEADLINE_MS;
+    await w.tick();
+    expect(turns).toHaveLength(1);
   });
 
   test("a check that will not run gives up eventually, rather than retrying forever", async () => {

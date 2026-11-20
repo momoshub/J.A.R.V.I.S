@@ -2,7 +2,9 @@ import { describe, expect, test } from "bun:test";
 import { workerUsage, workerUsageLine } from "../../src/domain/workerUsage.ts";
 import {
   DEFAULT_EVERY_MS,
+  capReachedMessage,
   gaveUpMessage,
+  hitMaxCap,
   humanDuration,
   MAX_DEADLINE_MS,
   MIN_EVERY_MS,
@@ -26,6 +28,10 @@ describe("parseDuration", () => {
     expect(parseDuration("1h")).toBe(3_600_000);
     expect(parseDuration("5")).toBe(300_000); // a bare number is minutes
     expect(parseDuration("90 sec")).toBe(90_000);
+    expect(parseDuration("1d")).toBe(86_400_000);
+    expect(parseDuration("30d")).toBe(MAX_DEADLINE_MS);
+    expect(parseDuration("2 days")).toBe(172_800_000);
+    expect(parseDuration("1.5day")).toBe(129_600_000);
   });
 
   test("nonsense is nonsense", () => {
@@ -68,7 +74,7 @@ describe("parseWatchArgs", () => {
   });
 
   test("it refuses to wait forever", () => {
-    const a = parseWatchArgs("--until 48h do it");
+    const a = parseWatchArgs("--until 31d do it");
     expect(a.ok).toBe(false);
     expect(!a.ok && a.error).toContain("at most");
   });
@@ -136,7 +142,27 @@ describe("humanDuration", () => {
   test("round trips the way it reads", () => {
     expect(humanDuration(MIN_EVERY_MS)).toBe("15s");
     expect(humanDuration(600_000)).toBe("10m");
-    expect(humanDuration(MAX_DEADLINE_MS)).toBe("6h00m");
+    expect(humanDuration(6 * 3_600_000)).toBe("6h00m");
+    expect(humanDuration(MAX_DEADLINE_MS)).toBe("30d");
+    expect(humanDuration(26 * 3_600_000)).toBe("1d02h");
+    expect(humanDuration(86_400_000)).toBe("1d");
+    expect(humanDuration(MAX_DEADLINE_MS - 60_000)).toBe("30d");
+  });
+  test("a month is the cap: 30d parses, 31d is refused", () => {
+    const ok = parseWatchArgs("--until 30d check it again");
+    expect(ok.ok && ok.deadlineMs).toBe(MAX_DEADLINE_MS);
+    const bad = parseWatchArgs("--until 31d check it again");
+    expect(bad.ok).toBe(false);
+    expect(!bad.ok && bad.error).toContain("at most 30d");
+  });
+  test("a watch set for the full cap is told to close with one last line and not re-arm", () => {
+    expect(hitMaxCap({ createdAt: 1_000, deadlineAt: 1_000 + MAX_DEADLINE_MS })).toBe(true);
+    expect(hitMaxCap({ createdAt: 1_000, deadlineAt: 1_000 + MAX_DEADLINE_MS - 1 })).toBe(false);
+    const m = capReachedMessage(7, "reply to Linh", MAX_DEADLINE_MS);
+    expect(m.startsWith("I stopped waiting after 30d")).toBe(true);
+    expect(m).toContain("watch #7 ran its full 30 days with nothing happening, closed");
+    expect(m).toContain("Do NOT set a new watch");
+    expect(m).toContain("I have not done it");
   });
 });
 

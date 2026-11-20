@@ -42,7 +42,7 @@ export const LIMITS: Limit[] = [
   { label: "offline notice lead", value: 600_000, unit: "ms", source: "src/domain/offlineAlarm.ts:OFFLINE_ALARM_LEAD_MS", why: "kept armed on Slack's side; Slack ignores a cancel within ~5 min of due" },
   { label: "stuck-work sweep", value: 15 * 60_000, unit: "ms", source: "src/domain/stuckWork.ts:SWEEP_TICK_MS", why: "dead Orca workers and quiet PRs DMed to the owner; one item at most every 4h" },
   { label: "fastest watch poll", value: 15_000, unit: "ms", source: "src/domain/watch.ts:MIN_EVERY_MS", why: "a watch is a shell command on a timer" },
-  { label: "longest watch", value: 6 * 60 * 60_000, unit: "ms", source: "src/domain/watch.ts:MAX_DEADLINE_MS", why: "a watch nobody ends is a leak with a timer" },
+  { label: "longest watch", value: 30 * 24 * 60 * 60_000, unit: "ms", source: "src/domain/watch.ts:MAX_DEADLINE_MS", why: "a month, then closed with one last message and never re-armed" },
   { label: "always-on memory budget", value: 8_000, unit: "bytes", source: "src/domain/adapterCheck.ts:ALWAYS_ON_BUDGET", why: "what loads into every prompt; refine must get under it" },
   { label: "cold-session context window", value: 20, unit: "count", source: "src/domain/conversation.ts:DEFAULT_CONTEXT_WINDOW", why: "turns replayed when a session reopens cold" },
   { label: "workflow steps without a human", value: 30, unit: "count", source: "src/domain/workflowContinue.ts:AUTO_CONTINUE_CAP", why: "auto-continue pauses and asks after this many" },
@@ -54,7 +54,9 @@ export const fmtLimit = (l: Limit): string => {
     const s = l.value / 1000;
     if (s < 60) return `${s}s`;
     const m = s / 60;
-    return m < 60 ? `${m} min` : `${m / 60} h`;
+    if (m < 60) return `${m} min`;
+    const h = m / 60;
+    return h < 48 ? `${h} h` : `${h / 24} d`;
   }
   if (l.unit === "chars") return `${l.value.toLocaleString("en")} chars`;
   if (l.unit === "bytes") return `${l.value.toLocaleString("en")} B`;

@@ -128,7 +128,7 @@ describe("worker-ticket renew", () => {
     const { id, out } = await mintBound(deps, rig);
     expect(out).toContain("ticket-renew");
     expect(out).toContain(`worker-ticket renew ${id}`);
-    expect(out).toContain("24h");
+    expect(out).toContain("1d at most");
     expect(out).not.toContain("jvwk_");
   });
 
