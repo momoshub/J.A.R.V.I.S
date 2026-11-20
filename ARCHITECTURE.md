@@ -80,7 +80,7 @@ no classes.
   v34, handed to that thread's next turn inside the turn's MESSAGE so it stays
   in the resumed session's transcript, as untrusted background and never as
   instructions; read state is per access tier and set only once the turn ran).
-  Linked threads: an owner's cross-thread write through the Slack proxy (or `post`) files that brief by itself and opens a one-way link in `thread_relays` (migration v44); while it is fresh (7 days since the last write) a human message that reaches the bot in the target thread is filed back to the writing thread as a relay brief (who wrote, a cut quote), with no turn and no Slack post. The target keeps its own session and role; only the brief text crosses, and everything that crosses is untrusted data.
+  Linked threads: an owner's cross-thread write through the Slack proxy (or `post`) files that brief by itself and opens a one-way link in `thread_relays` (migration v44); while it is fresh (7 days since the last write) a human message that the Slack intake marked as typed by a person and that reaches the bot in the target thread (never a turn the bot builds itself) is filed back to the writing thread as a relay brief (who wrote, a cut quote), with no turn and no Slack post. The target keeps its own session and role; only the brief text crosses, and everything that crosses is untrusted data.
   `runRegistry` holds a handle on each running turn so it can be stopped, by its own actor or an admin/owner (`mayStopRun`), through the `stop` command or Slack's own stop button (`agent_session_stopped`, same rule).
 - **A turn holds no secret.** The CLI is spawned with the bot's environment
   minus every credential-shaped variable (`domain/turnEnv.ts`: by name -

@@ -335,6 +335,13 @@ export type InboundMessage = {
    * workflow it changes nothing.
    */
   workerLane?: boolean;
+  /**
+   * The human messages this turn stands for, exactly as people typed them (author, text, ts): one for a message, several for a
+   * followed thread's buffered batch. Set ONLY by the Slack event intake. It is the one thing `relayToLinkedThreads` reads, so a
+   * turn the bot builds itself (`reply`, `mindful`, a GitHub mention, a flagged-format nudge) can never be relayed as if a person
+   * had said it, whatever else its inbound carries.
+   */
+  humanMessages?: readonly { userId: string; text: string; messageTs: string }[];
   /** Forces the turn's model, over the role and channel model (a loop's fire). */
   model?: string;
   /**
@@ -367,31 +374,37 @@ export type HandleResult =
   | { kind: "ignored" };
 
 /**
- * A human message that reached the bot in a thread another thread wrote into (a cross-thread post or upload, `post`) is told
- * back to that thread as a brief: who wrote and a cut quote, as data for its next turn. Nothing is posted and no turn starts,
- * exactly like `brief`. Only what reached the bot counts (a tag, a DM, or a thread it follows, which includes the ones it
- * opened), never the bot's own words nor a turn the bot started itself, and only while the link is fresh (`RELAY_TTL_MS`).
+ * Human messages that reached the bot in a thread another thread wrote into (a cross-thread post or upload, `post`) are told
+ * back to that thread as briefs: who wrote and a cut quote, as data for its next turn. Nothing is posted and no turn starts,
+ * exactly like `brief`. Opt-in: only what the Slack intake marked as typed by a person (`humanMessages`: a tag, a DM, or a
+ * thread the bot follows, which includes the ones it opened), never a turn the bot built itself, never the bot's own words, and
+ * only while the link is fresh (`RELAY_TTL_MS`). The access decision has already passed, so a stranger is never relayed.
  */
-const relayToLinkedThreads = (deps: HandleMessageDeps, inbound: InboundMessage, text: string, botUserId: string | undefined): void => {
-  if (!deps.briefs || !inbound.threadTs || !inbound.messageTs) return;
-  if (inbound.trigger || inbound.unprompted || inbound.autoContinue || inbound.slackUserId === botUserId) return;
+const relayToLinkedThreads = (deps: HandleMessageDeps, inbound: InboundMessage, botUserId: string | undefined): void => {
+  if (!deps.briefs || !inbound.threadTs || !inbound.humanMessages?.length) return;
   try {
     const now = deps.clock();
     const here = { channelId: inbound.channelId, threadTs: inbound.threadTs };
-    for (const source of deps.briefs.relaySources(here.channelId, here.threadTs, now - RELAY_TTL_MS)) {
-      deps.briefs.addRelay(
-        {
-          fromChannel: here.channelId,
-          fromThread: here.threadTs,
-          toChannel: source.channelId,
-          toThread: source.threadTs,
-          author: inbound.slackUserId,
-          text: relayNote(inbound.slackUserId, text),
-          sourceTs: inbound.messageTs,
-        },
-        now,
-        { windowMs: RELAY_WINDOW_MS, maxPerWindow: RELAY_MAX_PER_WINDOW },
-      );
+    const sources = deps.briefs.relaySources(here.channelId, here.threadTs, now - RELAY_TTL_MS);
+    if (sources.length === 0) return;
+    for (const said of inbound.humanMessages) {
+      const quote = cleanInboundText(said.text);
+      if (!said.messageTs || !hasContent(quote) || said.userId === botUserId) continue;
+      for (const source of sources) {
+        deps.briefs.addRelay(
+          {
+            fromChannel: here.channelId,
+            fromThread: here.threadTs,
+            toChannel: source.channelId,
+            toThread: source.threadTs,
+            author: said.userId,
+            text: relayNote(said.userId, quote),
+            sourceTs: said.messageTs,
+          },
+          now,
+          { windowMs: RELAY_WINDOW_MS, maxPerWindow: RELAY_MAX_PER_WINDOW },
+        );
+      }
     }
   } catch (e) {
     console.error(`[relay] could not relay a message to its linked threads: ${e instanceof Error ? e.message : String(e)}`);
@@ -451,7 +464,7 @@ export const handleMessage = async (
 
   // Its own id, so a mention of itself is recognised as itself.
   const botUserId = await deps.slack?.botUserId().catch(logAndIgnore("bot user id lookup"));
-  relayToLinkedThreads(deps, inbound, text, botUserId);
+  relayToLinkedThreads(deps, inbound, botUserId);
   // Minted once for this turn. It reaches the CLI through its environment, not
   // its prompt: a thread's session remembers every prompt it was ever handed,
   // and a remembered ticket is both dead and somebody else's.

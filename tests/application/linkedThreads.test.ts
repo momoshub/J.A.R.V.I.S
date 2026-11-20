@@ -39,15 +39,11 @@ const world = (now = { t: 1_000 }) => {
   return { db, briefs, deps, prompts, now };
 };
 
-const inB = (text: string, over: Record<string, unknown> = {}) => ({
-  channelId: B.channelId,
-  slackUserId: OWNER,
-  text,
-  threadTs: B.threadTs,
-  messageTs: "9.10",
-  mentioned: true,
-  ...over,
-});
+/** A message as the Slack intake hands it over: marked as typed by a person. */
+const inB = (text: string, over: Record<string, unknown> = {}) => {
+  const base = { channelId: B.channelId, slackUserId: OWNER, text, threadTs: B.threadTs, messageTs: "9.10", mentioned: true, ...over };
+  return { humanMessages: [{ userId: String(base.slackUserId), text, messageTs: String(base.messageTs) }], ...base };
+};
 
 const relays = (briefs: ReturnType<typeof createThreadBriefRepo>) => briefs.recent(A.channelId, A.threadTs, 20);
 
@@ -77,8 +73,12 @@ describe("relay: B's human messages come back to A as briefs", () => {
     now.t += RELAY_TTL_MS + 1;
     await respond(deps, inB("still there?", { messageTs: "9.12" }));
     expect(relays(briefs)).toHaveLength(0);
-    briefs.touchWrite(A, B, now.t);
+    // an expired link is not revived by a brief, only a new write starts it again
+    briefs.touchWrite(A, B, now.t, RELAY_TTL_MS);
     await respond(deps, inB("ping", { messageTs: "9.13" }));
+    expect(relays(briefs)).toHaveLength(0);
+    briefs.noteWrite(A, B, now.t, RELAY_TTL_MS);
+    await respond(deps, inB("ping again", { messageTs: "9.14" }));
     expect(relays(briefs)).toHaveLength(1);
   });
 
@@ -92,12 +92,28 @@ describe("relay: B's human messages come back to A as briefs", () => {
     expect(briefs.toChannel(A.channelId, 500, A.threadTs)).toHaveLength(RELAY_MAX_PER_WINDOW);
   });
 
-  test("a turn the bot started itself, and the bot's own words, never relay", async () => {
+  test("a turn the bot builds itself never relays, whatever flags it carries (reply-style, watch, tell)", async () => {
     const { deps, briefs, now } = world();
     briefs.noteWrite(A, B, now.t, RELAY_TTL_MS);
-    await respond(deps, inB("[watch hand-back] done", { unprompted: true, messageTs: "9.11" }));
-    await respond(deps, inB("[tell] go", { trigger: "tell", messageTs: "9.12" }));
+    // no `humanMessages`: not typed by a person, so nothing is relayed even with no internal flag set
+    await respond(deps, { ...inB("What to tell them: the private detail", { messageTs: "9.10" }), humanMessages: undefined });
+    await respond(deps, { ...inB("[watch hand-back] done", { unprompted: true, messageTs: "9.11" }), humanMessages: undefined });
+    await respond(deps, { ...inB("[tell] go", { trigger: "tell", messageTs: "9.12" }), humanMessages: undefined });
     expect(relays(briefs)).toHaveLength(0);
+  });
+
+  test("a buffered batch relays item by item under each author", async () => {
+    const { deps, briefs, now } = world();
+    briefs.noteWrite(A, B, now.t, RELAY_TTL_MS);
+    await respond(deps, {
+      ...inB("joined text", { batched: true, following: true, mentioned: undefined, messageTs: "9.12" }),
+      humanMessages: [
+        { userId: OWNER, text: "first", messageTs: "9.11" },
+        { userId: OWNER, text: "second", messageTs: "9.12" },
+      ],
+    });
+    const got = relays(briefs);
+    expect(got.map((b) => b.text.match(/Quote: "(.*)"/)?.[1])).toEqual(["first", "second"]);
   });
 
   test("a message from someone who may not talk to the bot is not relayed", async () => {
@@ -114,7 +130,7 @@ describe("relay: B's human messages come back to A as briefs", () => {
     expect(briefs.noteWrite(B, A, now.t, RELAY_TTL_MS)).toBe(false);
     // and an explicit brief from B to A (an answer by reference) never opens one
     briefs.add({ fromChannel: B.channelId, fromThread: B.threadTs, toChannel: A.channelId, toThread: A.threadTs, author: OWNER, text: "answer" }, now.t);
-    briefs.touchWrite(B, A, now.t);
+    briefs.touchWrite(B, A, now.t, RELAY_TTL_MS);
     await respond(deps, { ...inB(SECRET), channelId: A.channelId, threadTs: A.threadTs, messageTs: "1.2" });
     expect(briefs.toChannel(B.channelId, 20, B.threadTs).filter((b) => b.text.includes(SECRET))).toHaveLength(0);
   });
@@ -151,10 +167,24 @@ describe("repo: relay links", () => {
     expect(briefs.relaySources(B.channelId, B.threadTs, 5)).toEqual([A]);
     expect(briefs.relaySources(B.channelId, B.threadTs, 11)).toEqual([]);
     expect(briefs.relaySources(A.channelId, A.threadTs, 0)).toEqual([]);
-    briefs.touchWrite(A, B, 50);
+    briefs.touchWrite(A, B, 50, 100);
     expect(briefs.relaySources(B.channelId, B.threadTs, 11)).toEqual([A]);
-    briefs.touchWrite(B, A, 50);
+    briefs.touchWrite(B, A, 50, 100);
     expect(briefs.relaySources(A.channelId, A.threadTs, 0)).toEqual([]);
+  });
+
+  test("an expired link is not revived by touchWrite, so both directions cannot come back to life", () => {
+    const { briefs } = world();
+    const ttl = 100;
+    expect(briefs.noteWrite(A, B, 0, ttl)).toBe(true);
+    // A -> B expired; B writes into A and opens B -> A
+    expect(briefs.noteWrite(B, A, 500, ttl)).toBe(true);
+    // a brief from A to B must not bring A -> B back
+    briefs.touchWrite(A, B, 510, ttl);
+    expect(briefs.relaySources(B.channelId, B.threadTs, 410)).toEqual([]);
+    expect(briefs.relaySources(A.channelId, A.threadTs, 410)).toEqual([B]);
+    // and a live link is not touched while its reverse is live either
+    expect(briefs.noteWrite(A, B, 520, ttl)).toBe(false);
   });
 });
 

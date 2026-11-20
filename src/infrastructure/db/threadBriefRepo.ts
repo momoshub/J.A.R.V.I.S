@@ -59,8 +59,11 @@ export type ThreadBriefRepo = {
    * already relays to `source` within `ttlMs` (never both ways: that would carry the source's own people's words into the target).
    */
   noteWrite: (source: ThreadRef, target: ThreadRef, now: number, ttlMs: number) => boolean;
-  /** Renew an existing relay link (a `brief` is also a write into the target); never creates one. */
-  touchWrite: (source: ThreadRef, target: ThreadRef, now: number) => void;
+  /**
+   * Renew a relay link that is still live (a `brief` is also a write into the target). Never creates one and never revives an
+   * expired one, and does nothing while `target` relays to `source`, so it cannot bring both directions back to life.
+   */
+  touchWrite: (source: ThreadRef, target: ThreadRef, now: number, ttlMs: number) => void;
   /** The threads that wrote into this one no earlier than `since`, i.e. where its human messages relay to. */
   relaySources: (channelId: string, threadTs: string, since: number) => ThreadRef[];
   /**
@@ -140,7 +143,12 @@ export const createThreadBriefRepo = (db: DbClient): ThreadBriefRepo => {
   );
   const relayTouch = db.query(
     `UPDATE thread_relays SET last_write_at = $now
-     WHERE source_channel = $sc AND source_thread = $st AND target_channel = $tc AND target_thread = $tt`,
+     WHERE source_channel = $sc AND source_thread = $st AND target_channel = $tc AND target_thread = $tt
+       AND last_write_at >= $since
+       AND NOT EXISTS (
+         SELECT 1 FROM thread_relays r
+         WHERE r.source_channel = $tc AND r.source_thread = $tt AND r.target_channel = $sc AND r.target_thread = $st AND r.last_write_at >= $since
+       )`,
   );
   const relayLive = db.query<{ n: number }, [string, string, string, string, number]>(
     `SELECT COUNT(*) AS n FROM thread_relays
@@ -208,8 +216,8 @@ export const createThreadBriefRepo = (db: DbClient): ThreadBriefRepo => {
       relayUpsert.run({ $sc: source.channelId, $st: source.threadTs, $tc: target.channelId, $tt: target.threadTs, $now: now });
       return true;
     },
-    touchWrite: (source, target, now) => {
-      relayTouch.run({ $sc: source.channelId, $st: source.threadTs, $tc: target.channelId, $tt: target.threadTs, $now: now });
+    touchWrite: (source, target, now, ttlMs) => {
+      relayTouch.run({ $sc: source.channelId, $st: source.threadTs, $tc: target.channelId, $tt: target.threadTs, $now: now, $since: now - ttlMs });
     },
     relaySources: (channelId, threadTs, since) =>
       relaySourcesStmt.all(channelId, threadTs, since).map((r) => ({ channelId: r.source_channel, threadTs: r.source_thread })),

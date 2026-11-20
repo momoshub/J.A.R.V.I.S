@@ -338,8 +338,8 @@ Leaves a short note FOR another thread: what you posted there, why, the facts it
         { fromChannel: channelId, fromThread: threadTs, toChannel: target.channelId, toThread: target.threadTs, author: actor.slackId, text },
         deps.clock(),
       );
-      // A brief is also a write into the target: it keeps a live relay link fresh, but never opens one.
-      deps.briefs.touchWrite({ channelId, threadTs }, { channelId: target.channelId, threadTs: target.threadTs }, deps.clock());
+      // A brief is also a write into the target: it keeps a live relay link fresh, but never opens or revives one.
+      deps.briefs.touchWrite({ channelId, threadTs }, { channelId: target.channelId, threadTs: target.threadTs }, deps.clock(), RELAY_TTL_MS);
       return "filed - that thread reads it the next time anyone speaks there, nothing posted 📝";
     },
   },

@@ -498,6 +498,8 @@ export const createHandler =
           following: msg.following === true,
           ...(msg.mentioned ? { mentioned: true } : {}),
           ...(batched ? { batched: true } : {}),
+          // what people actually typed, for the linked-thread relay: the buffered batch item by item, else this message
+          humanMessages: msg.batch?.length ? msg.batch : [{ userId: msg.userId, text: msg.text, messageTs: msg.messageTs }],
           interrupted: (msg.inbox?.attempt ?? 1) > 1,
           ...(msg.inbox ? { inboxRowId: msg.inbox.rowId } : {}),
         },
