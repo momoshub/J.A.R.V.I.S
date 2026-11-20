@@ -1665,9 +1665,12 @@ describe("createHandler marks what people typed, for the linked-thread relay", (
     const here = { channelId: "C1", threadTs: "111.1" };
     const there = { channelId: "D0DM000001", threadTs: "1.1" };
     briefs!.noteWrite(there, here, 1, 1000);
-    await handle(msg("is it deployed?", "111.1", "111.2"));
+    // a turn the bot builds from a button press or a reaction is not typed, so it is not relayed
+    await handle(msg("Button pressed: approve", "111.1", "111.9"));
+    await handle({ ...msg("is it deployed?", "111.1", "111.2"), typed: true });
     await handle({
       ...msg("joined", "111.1", "111.4"),
+      typed: true,
       following: true,
       batch: [
         { userId: OWNER, text: "one", messageTs: "111.3" },
