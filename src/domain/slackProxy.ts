@@ -14,8 +14,8 @@
  *
  * A write in another channel is not allowed here, except in an owner's turn: every channel-scoped write
  * (`chat.postMessage`, `files.completeUploadExternal`, `reactions.add`, and the owner's own extras,
- * each by its own channel parameter) may name any channel (and thread), since the owner can already
- * have the `post` command write anywhere; the call comes back marked `crossChannel` so the proxy logs
+ * each by its own channel parameter) may name any channel id (`C`/`G`/`D`, the shape `post` accepts, never a `U` user id)
+ * and thread, since the owner can already have the `post` command write anywhere; the call comes back marked `crossChannel` so the proxy logs
  * it. `chat.update` may edit a message the bot itself wrote anywhere (a bad `post` has to be fixable
  * from a DM): this file only lets it through marked `ownMessageIn`; the proxy then reads the message
  * and refuses unless the bot wrote it. `channels` is refused everywhere, and every non-owner turn
@@ -27,6 +27,7 @@
  *
  * Pure: no I/O, so the whole policy is testable without Slack.
  */
+import { isChannelId } from "./slackLinks.ts";
 
 /** Methods that only read. `conversations.join` is here because reading a public channel the bot is not in needs it, and Slack refuses it for private ones. */
 const READ_METHODS: ReadonlySet<string> = new Set([
@@ -142,7 +143,7 @@ export const allowedMethodNames = (extra: ExtraSlackMethods = []): string[] => {
 export type SlackScope = {
   readonly channel?: string;
   readonly threadTs?: string;
-  /** The turn was started by the owner. Nobody else's turn may write outside its channel. */
+  /** The owner started this turn with their own message or command (never merely billed to them). Nobody else's turn may write outside its channel. */
   readonly owner?: boolean;
 };
 
@@ -249,9 +250,9 @@ export const checkSlackCall = (
   let ownMessageIn: { channel: string; ts: string } | undefined;
   let crossChannel = false;
   if (channelParam && target !== scope.channel) {
-    // The owner's turn only, and a channel named. A chat.update also needs a message named (whose message it is gets checked
+    // The owner's turn only, and a channel id named (not a `U...` user id, which would DM anyone; the shape `post` accepts). A chat.update also needs a message named (whose message it is gets checked
     // against Slack by the proxy); every other channel-scoped write (a post, an upload completion, a reaction, an extra) goes through.
-    if (!scope.owner || !target || (method === "chat.update" && !params.ts)) {
+    if (!scope.owner || !target || !isChannelId(target) || (method === "chat.update" && !params.ts)) {
       return refuse(403, `channel_not_allowed: ${method} may only act in the channel this turn runs in (${scope.channel})`);
     }
     if (method === "chat.update") ownMessageIn = { channel: target, ts: params.ts as string };

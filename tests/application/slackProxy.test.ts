@@ -296,12 +296,12 @@ describe("Slack proxy notes what a turn posts into its own thread", () => {
   test("an owner's post into another channel goes through and is not noted as the turn's own thread", async () => {
     const { proxy, tickets, selfPosts } = withLog(() => Response.json({ ok: true, ts: "1.1" }));
     const ticket = tickets.issue({ channel: "C1", threadTs: "1.1", turn: "run-1", owner: true });
-    const answer = await proxy.call({ ticket, method: "chat.postMessage", params: { channel: "C2", thread_ts: "1.1", text: "hi" } });
+    const answer = await proxy.call({ ticket, method: "chat.postMessage", params: { channel: "C0OTHER0002", thread_ts: "1.1", text: "hi" } });
     expect(answer.status).toBe(200);
     expect(answer.body).not.toContain(SELF_POST_NOTE);
     expect(selfPosts.posts("run-1")).toEqual([]);
     const other = tickets.issue({ channel: "C1", threadTs: "1.1", turn: "run-2" });
-    expect((await proxy.call({ ticket: other, method: "chat.postMessage", params: { channel: "C2", text: "hi" } })).status).toBe(403);
+    expect((await proxy.call({ ticket: other, method: "chat.postMessage", params: { channel: "C0OTHER0002", text: "hi" } })).status).toBe(403);
   });
 
   test("two processes of one turn share the record; another turn in the thread does not", async () => {
@@ -329,7 +329,7 @@ describe("Slack proxy notes what a turn posts into its own thread", () => {
     const { proxy, tickets, selfPosts } = withLog(() => Response.json({ ok: true, ts: "5.5" }));
     const ticket = tickets.issue({ channel: "C1", threadTs: "1.1", turn: "run-1" });
     await proxy.call({ ticket, method: "chat.postMessage", params: { channel: "C1", text: "x", thread_ts: "none" } });
-    await proxy.call({ ticket, method: "chat.postMessage", params: { channel: "C2", text: "x" } });
+    await proxy.call({ ticket, method: "chat.postMessage", params: { channel: "C0OTHER0002", text: "x" } });
     expect(selfPosts.posts("run-1")).toEqual([]);
     const failing = withLog(() => Response.json({ ok: false, error: "channel_not_found" }));
     const t2 = failing.tickets.issue({ channel: "C1", threadTs: "1.1", turn: "run-1" });

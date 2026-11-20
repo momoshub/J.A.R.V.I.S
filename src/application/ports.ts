@@ -72,6 +72,12 @@ export type BillingContext = {
   readonly channel?: string;
   /** Thread the run belongs to, so its tool calls land in that thread's log. */
   readonly threadTs?: string;
+  /**
+   * The actor's own message or command started this run, so they wrote its prompt. Absent on anything billed to
+   * them that runs over other people's text (the dashboard draft, a triage, a stale-promise nudge, a follow gate):
+   * only an owner-started turn gets the owner's cross-channel Slack writes.
+   */
+  readonly ownMessage?: true;
 };
 
 /**

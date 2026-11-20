@@ -21,7 +21,7 @@
 # A write only works in the channel this turn runs in (`channel_not_allowed`
 # otherwise). Exceptions, in the owner's turn only: every channel-scoped write
 # (chat.postMessage, reactions.add, files.completeUploadExternal, added writes) works
-# in any channel (and thread; a post there with no thread_ts lands at the top level;
+# in any channel named by its id, never a user id (and thread; a post there with no thread_ts lands at the top level;
 # `channels` is still refused), and chat.update works in any channel on a
 # message the bot itself wrote (checked against Slack first). Values are plain strings; `blocks` and `files` are JSON strings.
 # When the turn runs in a thread, chat.postMessage and

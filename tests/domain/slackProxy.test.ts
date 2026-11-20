@@ -260,6 +260,27 @@ describe("an owner's post and upload outside the turn's channel", () => {
     }
   });
 
+  test("a user id or a channel name is no target, even for the owner", () => {
+    for (const bad of ["U0OWNER0001", "W0OTHER0001", "general", "#general", "C0OTHER", "c0other0001"]) {
+      for (const [method, param] of [
+        ["chat.postMessage", "channel"],
+        ["files.completeUploadExternal", "channel_id"],
+        ["reactions.add", "channel"],
+        ["chat.update", "channel"],
+      ] as const) {
+        const call = checkSlackCall(method, { [param]: bad, ts: "55.5", text: "x" }, owner);
+        expect(call).toMatchObject({ ok: false, status: 403 });
+        expect(!call.ok && call.error).toContain("channel_not_allowed");
+      }
+    }
+  });
+
+  test("a private channel and a DM id are targets, as for post", () => {
+    for (const id of ["G0OTHER0001", "D0OTHER0001"]) {
+      expect(checkSlackCall("chat.postMessage", { channel: id, text: "x" }, owner).ok).toBe(true);
+    }
+  });
+
   test("a read-only ticket stays read-only for the owner too", () => {
     expect(checkSlackCall("chat.postMessage", { channel: elsewhere, text: "x" }, { owner: true }).ok).toBe(false);
   });
@@ -282,6 +303,11 @@ describe("an owner's post and upload outside the turn's channel", () => {
     expect(mark.ok && mark.crossChannel).toBe(true);
     const refused = checkSlackCall("pins.add", { channel: elsewhere, timestamp: "1.1" }, member, undefined, extra);
     expect(!refused.ok && refused.error).toContain("channel_not_allowed");
+  });
+
+  test("an owner's extra write naming a user id is refused too", () => {
+    const extra: ExtraSlackMethods = [{ method: "pins.add", kind: "write", channelParam: "channel" }];
+    expect(checkSlackCall("pins.add", { channel: "U0OWNER0001", timestamp: "1.1" }, owner, undefined, extra).ok).toBe(false);
   });
 
   test("an extra write cannot smuggle a second channel, channels, or a missing channel, even for the owner", () => {

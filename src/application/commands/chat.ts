@@ -160,7 +160,7 @@ export const CHAT_COMMANDS: readonly CommandDef[] = [
         messages: [{ role: "user", content: question }],
         assistantName: ctx.botName,
         policy: deps.toolPolicy?.(actor.role, channelId),
-        bill: { actor: actor.slackId, kind: "ask", channel: channelId, threadTs },
+        bill: { actor: actor.slackId, kind: "ask", channel: channelId, threadTs, ownMessage: true },
       });
       return reply.trim() || "I do not have anything useful to add there.";
     },
@@ -202,7 +202,7 @@ export const CHAT_COMMANDS: readonly CommandDef[] = [
         ],
         assistantName: ctx.botName,
         policy,
-        bill: { actor: actor.slackId, kind: "btw", channel: channelId, threadTs },
+        bill: { actor: actor.slackId, kind: "btw", channel: channelId, threadTs, ownMessage: true },
       });
       // Nothing is appended to `messages` on the way out, so the thread's next
       // real turn never sees this exchange in its unseen turns.

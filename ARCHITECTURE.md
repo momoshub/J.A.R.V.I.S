@@ -88,7 +88,7 @@ no classes.
   turn's Bash is driven by a model that reads untrusted text. What a turn needs
   from Slack goes through `bin/slack-api.sh`: it presents the turn's
   `JARVIS_SLACK_TICKET` (`slackTickets`, minted when the process starts and
-  revoked when it exits, no actor and no role, only an owner bit) to `POST /api/slack/proxy`, where
+  revoked when it exits, no actor and no role, only an owner bit, set when the owner's own message started the turn, never for a run merely billed to them such as the dashboard draft) to `POST /api/slack/proxy`, where
   `slackProxy` checks the ticket, applies the method allowlist
   (`domain/slackProxy.ts`: a fixed set of reads, and writes only into the
   turn's own channel, plus the methods the owner added with `slack-methods`,
@@ -97,8 +97,9 @@ no classes.
   thread, `thread_ts=none` posts at the top level; `chat.update` on a message
   the bot stored as an approval notice is refused, looked up in the database
   with `db/noticeLookup.ts`) and calls Slack with the
-  token it holds. In an owner's turn only, `chat.postMessage` and `files.completeUploadExternal` may name another
-  channel and thread, and `chat.update` may also target a message in
+  token it holds. In an owner's turn only, every channel-scoped write (`chat.postMessage`, `files.completeUploadExternal`,
+  `reactions.add` and the writes the owner added with `slack-methods`) may name another channel (by channel id,
+  never a user id) and thread, and `chat.update` may also target a message in
   another channel, and only when the bot reads it back (`conversations.history`, else
   `conversations.replies`) and finds its own user id as the author; anything else
   there is refused, and the call is logged with the channel and ts. A post or update that lands in the turn's own thread is also
