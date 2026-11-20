@@ -80,6 +80,7 @@ no classes.
   v34, handed to that thread's next turn inside the turn's MESSAGE so it stays
   in the resumed session's transcript, as untrusted background and never as
   instructions; read state is per access tier and set only once the turn ran).
+  Linked threads: an owner's cross-thread write through the Slack proxy (or `post`) files that brief by itself and opens a one-way link in `thread_relays` (migration v44); while it is fresh (7 days since the last write) a human message that reaches the bot in the target thread is filed back to the writing thread as a relay brief (who wrote, a cut quote), with no turn and no Slack post. The target keeps its own session and role; only the brief text crosses, and everything that crosses is untrusted data.
   `runRegistry` holds a handle on each running turn so it can be stopped, by its own actor or an admin/owner (`mayStopRun`), through the `stop` command or Slack's own stop button (`agent_session_stopped`, same rule).
 - **A turn holds no secret.** The CLI is spawned with the bot's environment
   minus every credential-shaped variable (`domain/turnEnv.ts`: by name -
@@ -283,7 +284,7 @@ No I/O, no frameworks. Just data shapes and functions of their inputs.
 - `slackNames.ts` - how a person or conversation is shown: always name and id
 - `personality.ts`, `promptGuides.ts`, `conversation.ts`, `mentions.ts` - the system prompt from generic defaults + injected identity (procedure blocks as on-demand guide files for turns that can read them), context windowing, `<@ID>` annotation
 - `threadSession.ts`, `agentSession.ts` - one CLI session per thread and when it may be resumed; also Slack's own stop button: what a press does, and the notices when it is refused
-- `threadBrief.ts` - briefs between threads: the opaque source reference (an HMAC), the nonce-delimited, escaped block a turn's message carries, its caps, the prompt rule
+- `threadBrief.ts` - briefs between threads: the opaque source reference (an HMAC), the nonce-delimited, escaped block a turn's message carries, its caps, the auto-brief and relay notes and the relay TTL, the prompt rule
 - `internalMessages.ts` - the console's hidden messages: which stored `user` turn is a tell / nudge / watch hand-back / orca question / loop fire (by the prompt's own opening), a brief as one, secrets redacted, oldest first
 - `adapter.ts`, `adapterCheck.ts` - memory as a checked, versioned directory (facts + skills) instead of an ever-growing list; a skill's optional `model:` / `worker:` frontmatter says which model and worker mode runs it (absent = the turn's model; `model` alone runs `foreground`; `orca` needs the turn's Orca grant, else `background`)
 - `ciGate.ts` (domain) - CI verdict of a PR from its check rollup, what a CI-gate poll should do, the spec of a gate's watch row

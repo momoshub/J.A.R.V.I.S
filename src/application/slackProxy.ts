@@ -17,6 +17,8 @@
  */
 import { channelParamOf, checkSlackCall, isAuditedMethod, isSlackFileUrl, type ExtraSlackMethods, type IsNotice } from "../domain/slackProxy.ts";
 import { KEEP_REPLY, stripKeepMarkerFromCall } from "../domain/selfPost.ts";
+import { RELAY_TTL_MS, postedNote, uploadedNote } from "../domain/threadBrief.ts";
+import type { ThreadBriefRepo } from "../infrastructure/db/threadBriefRepo.ts";
 import type { SelfPosts } from "./selfPosts.ts";
 import type { SlackTickets, SlackTicketRefusal } from "./slackTickets.ts";
 
@@ -40,6 +42,14 @@ export type SlackProxyDeps = {
   selfPosts?: SelfPosts;
   /** The methods the owner added beyond the built-in lists (`slack-methods`), read per call so a change applies at once. */
   extraMethods?: () => ExtraSlackMethods;
+  /**
+   * Where an owner's write into another thread files its brief (and opens the relay link back), so that thread's session
+   * knows why the message is there. Without it no brief is filed.
+   */
+  briefs?: ThreadBriefRepo;
+  /** Who the brief says asked: the owner, whose own message started the turn. */
+  ownerSlackId?: string;
+  clock?: () => number;
   fetchFn?: typeof fetch;
   log?: (line: string) => void;
 };
@@ -103,9 +113,87 @@ export const isBotMessage = (message: unknown, botUserId: string | undefined): b
   return (message as { user?: unknown }).user === botUserId;
 };
 
+
+type Landed = { channel: string; thread: string; note: string };
+
+/** `files` is a JSON string of `[{id, title}]`; anything else gives no titles. */
+const uploadTitles = (raw: string | undefined): string[] => {
+  try {
+    const parsed: unknown = JSON.parse(raw ?? "[]");
+    if (!Array.isArray(parsed)) return [];
+    return parsed.flatMap((f) => (f && typeof f === "object" && typeof (f as { title?: unknown }).title === "string" ? [(f as { title: string }).title] : []));
+  } catch {
+    return [];
+  }
+};
+
+/**
+ * Where an accepted post or upload completion landed, and the brief text for it, or undefined when Slack's answer does not
+ * say which thread (an upload with no `thread_ts` whose answer lists no share). A top-level post names its own ts.
+ */
+export const landedWrite = (method: string, params: Record<string, string>, answer: string, actor: string): Landed | undefined => {
+  let body: { ok?: boolean; ts?: string; message?: { ts?: string }; files?: { shares?: Record<string, Record<string, { ts?: string }[]>> }[] };
+  try {
+    body = JSON.parse(answer) as typeof body;
+  } catch {
+    return undefined;
+  }
+  if (body?.ok !== true) return undefined;
+  if (method === "chat.postMessage") {
+    const channel = params.channel;
+    const thread = params.thread_ts?.trim() || body.ts || body.message?.ts;
+    if (!channel || !thread) return undefined;
+    return { channel, thread, note: postedNote(actor, params.text?.trim() || "(no text, a formatted message)") };
+  }
+  if (method === "files.completeUploadExternal") {
+    const channel = params.channel_id;
+    if (!channel) return undefined;
+    let thread = params.thread_ts?.trim();
+    if (!thread) {
+      for (const file of body.files ?? []) {
+        for (const kind of Object.values(file.shares ?? {})) thread ??= kind[channel]?.[0]?.ts;
+      }
+    }
+    if (!thread) return undefined;
+    return { channel, thread, note: uploadedNote(actor, uploadTitles(params.files), params.initial_comment ?? "") };
+  }
+  return undefined;
+};
+
 export const createSlackProxy = (deps: SlackProxyDeps): SlackProxy => {
   const doFetch = deps.fetchFn ?? fetch;
   const log = deps.log ?? (() => {});
+
+  // One brief per turn and target thread: the first write carries the reason, and the rest of that turn's writes there say the same thing.
+  const briefed = new Set<string>();
+
+  /**
+   * An owner's write that lands in a thread other than the turn's own files a brief there, same shape as `post`, and starts or
+   * renews the relay link back. Never throws and never changes what the turn gets back.
+   */
+  const briefWrite = (ctx: { channel?: string; threadTs?: string; turn?: string; owner?: boolean }, ticket: unknown, checked: { method: string }, sent: Record<string, string>, answer: string): void => {
+    if (!deps.briefs || !deps.ownerSlackId || !ctx.owner || !ctx.channel || !ctx.threadTs) return;
+    try {
+      const landed = landedWrite(checked.method, sent, answer, deps.ownerSlackId);
+      if (!landed) return;
+      if (landed.channel === ctx.channel && landed.thread === ctx.threadTs) return;
+      const now = (deps.clock ?? Date.now)();
+      const source = { channelId: ctx.channel, threadTs: ctx.threadTs };
+      const target = { channelId: landed.channel, threadTs: landed.thread };
+      deps.briefs.noteWrite(source, target, now, RELAY_TTL_MS);
+      const key = `${ctx.turn ?? String(ticket)}|${landed.channel}|${landed.thread}`;
+      if (briefed.has(key)) return;
+      if (briefed.size > 2000) briefed.clear();
+      briefed.add(key);
+      deps.briefs.add(
+        { fromChannel: ctx.channel, fromThread: ctx.threadTs, toChannel: landed.channel, toThread: landed.thread, author: deps.ownerSlackId, text: landed.note },
+        now,
+      );
+      log(`slack proxy filed a brief for ${checked.method} channel=${landed.channel}`);
+    } catch (e) {
+      log(`slack proxy could not file a brief for ${checked.method}: ${e instanceof Error ? e.message : String(e)}`);
+    }
+  };
 
   const redeem = (ticket: unknown) =>
     typeof ticket === "string" && ticket ? deps.tickets.redeem(ticket.trim()) : ({ ok: false, reason: "unknown", limit: 0 } as const);
@@ -193,6 +281,7 @@ export const createSlackProxy = (deps: SlackProxyDeps): SlackProxy => {
             body: JSON.stringify({ ok: false, error: "ratelimited", ...(Number.isFinite(retryAfter) ? { retry_after: retryAfter } : {}) }),
           };
         }
+        if (res.ok && !checked.ownMessageIn) briefWrite(resolved.ctx, ticket, checked, sendParams, text);
         // noted per turn, only what Slack accepted, and only into the turn's own thread (an owner's post in another channel is not)
         if (res.ok && checked.method.startsWith("chat.") && resolved.ctx.turn && !checked.ownMessageIn && !checked.crossChannel) {
           const landed = deps.selfPosts?.record(resolved.ctx.turn, resolved.ctx.threadTs, { method: checked.method, params: sendParams, answer: text });

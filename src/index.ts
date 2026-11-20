@@ -337,6 +337,8 @@ const main = async () => {
   const slackProxy = createSlackProxy({
     tickets: slackTickets,
     selfPosts,
+    briefs,
+    ownerSlackId: config.ownerSlackId,
     botToken: config.slackBotToken,
     // A turn may not rewrite an approval notice: its buttons decide things.
     isNotice: createNoticeLookup(db),

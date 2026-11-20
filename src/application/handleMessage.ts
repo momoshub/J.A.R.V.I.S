@@ -67,7 +67,7 @@ import { isMissingSession, threadSessionName, tierOf, unseenTurns } from "../dom
 import { promptFingerprint } from "../domain/promptFingerprint.ts";
 import type { ThreadSessionRepo } from "../infrastructure/db/threadSessionRepo.ts";
 import type { ThreadBriefRepo } from "../infrastructure/db/threadBriefRepo.ts";
-import { BRIEF_RECENT_LOOKBACK, pickBriefs, renderBriefs } from "../domain/threadBrief.ts";
+import { BRIEF_RECENT_LOOKBACK, RELAY_MAX_PER_WINDOW, RELAY_TTL_MS, RELAY_WINDOW_MS, pickBriefs, relayNote, renderBriefs } from "../domain/threadBrief.ts";
 import type { SlackAdminPort, SlackMessage } from "./slackAdmin.ts";
 import type { GitHubPort } from "./github.ts";
 import type { ReviewApp } from "./commands/shared.ts";
@@ -366,6 +366,38 @@ export type HandleResult =
   | { kind: "denied"; text: string }
   | { kind: "ignored" };
 
+/**
+ * A human message that reached the bot in a thread another thread wrote into (a cross-thread post or upload, `post`) is told
+ * back to that thread as a brief: who wrote and a cut quote, as data for its next turn. Nothing is posted and no turn starts,
+ * exactly like `brief`. Only what reached the bot counts (a tag, a DM, or a thread it follows, which includes the ones it
+ * opened), never the bot's own words nor a turn the bot started itself, and only while the link is fresh (`RELAY_TTL_MS`).
+ */
+const relayToLinkedThreads = (deps: HandleMessageDeps, inbound: InboundMessage, text: string, botUserId: string | undefined): void => {
+  if (!deps.briefs || !inbound.threadTs || !inbound.messageTs) return;
+  if (inbound.trigger || inbound.unprompted || inbound.autoContinue || inbound.slackUserId === botUserId) return;
+  try {
+    const now = deps.clock();
+    const here = { channelId: inbound.channelId, threadTs: inbound.threadTs };
+    for (const source of deps.briefs.relaySources(here.channelId, here.threadTs, now - RELAY_TTL_MS)) {
+      deps.briefs.addRelay(
+        {
+          fromChannel: here.channelId,
+          fromThread: here.threadTs,
+          toChannel: source.channelId,
+          toThread: source.threadTs,
+          author: inbound.slackUserId,
+          text: relayNote(inbound.slackUserId, text),
+          sourceTs: inbound.messageTs,
+        },
+        now,
+        { windowMs: RELAY_WINDOW_MS, maxPerWindow: RELAY_MAX_PER_WINDOW },
+      );
+    }
+  } catch (e) {
+    console.error(`[relay] could not relay a message to its linked threads: ${e instanceof Error ? e.message : String(e)}`);
+  }
+};
+
 export const handleMessage = async (
   deps: HandleMessageDeps,
   inbound: InboundMessage,
@@ -419,6 +451,7 @@ export const handleMessage = async (
 
   // Its own id, so a mention of itself is recognised as itself.
   const botUserId = await deps.slack?.botUserId().catch(logAndIgnore("bot user id lookup"));
+  relayToLinkedThreads(deps, inbound, text, botUserId);
   // Minted once for this turn. It reaches the CLI through its environment, not
   // its prompt: a thread's session remembers every prompt it was ever handed,
   // and a remembered ticket is both dead and somebody else's.
