@@ -124,7 +124,7 @@ no classes.
   mode (`quiet` comes back to the brain, the rest is posted to the thread). A
   handed-off command that later fails says so in the thread, not only in the log.
 - **Timers.** `watcher` polls each due watch's predicate and hands the thread a
-  fresh turn when it is ready (`watch worker <dispatchId>` polls an Orca worker
+  fresh turn when it is ready (a watch lasts up to 30 days: the 10s tick compares the clock to the stored `deadline_at`, never a `setTimeout`, so a long deadline cannot overflow; one that runs its full 30 days is expired with one last line and not re-armed; `watch worker <dispatchId>` polls an Orca worker
   through `bin/orca-worker-wait.ts` and says whether it finished, died - also
   when it stopped without reporting - or waits for input, or sits idle at its prompt for 15 minutes with no report - a finished or dead worker's hand-back also names the tokens
   and list-price cost its Claude transcript used, stored in

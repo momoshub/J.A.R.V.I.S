@@ -22,8 +22,14 @@ import { parseWorkerUsageLine, usageSummary } from "./workerUsage.ts";
 
 /** How often a watch may poll at the fastest. Anything tighter is a spin. */
 export const MIN_EVERY_MS = 15_000;
-/** The longest a watch may live. A watch nobody ends is a leak with a timer. */
-export const MAX_DEADLINE_MS = 6 * 60 * 60_000;
+const DAY_MS = 24 * 3_600_000;
+/**
+ * The longest a watch may live: a month (Kai, 2026-11-20), because 6h made
+ * a reply watch get re-armed over and over, each expiry posting a line. The
+ * deadline is only ever compared with the clock on the watcher's tick, never
+ * handed to `setTimeout` (which overflows past ~24.8 days).
+ */
+export const MAX_DEADLINE_MS = 30 * DAY_MS;
 export const DEFAULT_EVERY_MS = 60_000;
 export const DEFAULT_DEADLINE_MS = 45 * 60_000;
 /**
@@ -42,21 +48,26 @@ export const MAX_CONSECUTIVE_ERRORS = 10;
 
 export type WatchState = "waiting" | "fired" | "expired" | "cancelled" | "failed";
 
-/** `90s`, `5m`, `2h`. A bare number is minutes, which is what people mean. */
+/** `90s`, `5m`, `2h`, `30d`. A bare number is minutes, which is what people mean. */
 export const parseDuration = (token: string): number | undefined => {
   const t = token.trim().toLowerCase();
-  const m = t.match(/^(\d+(?:\.\d+)?)\s*(s|sec|secs|m|min|mins|h|hr|hrs)?$/);
+  const m = t.match(/^(\d+(?:\.\d+)?)\s*(s|sec|secs|m|min|mins|h|hr|hrs|d|day|days)?$/);
   if (!m) return undefined;
   const n = Number(m[1]);
   if (!Number.isFinite(n) || n <= 0) return undefined;
   const unit = (m[2] ?? "m")[0];
-  return n * (unit === "s" ? 1_000 : unit === "h" ? 3_600_000 : 60_000);
+  return n * (unit === "s" ? 1_000 : unit === "h" ? 3_600_000 : unit === "d" ? DAY_MS : 60_000);
 };
 
-/** `4m` from 240000, for reading back. */
+/** `4m` from 240000, `30d` or `1d02h` from a day up, for reading back. */
 export const humanDuration = (ms: number): string => {
   if (ms < 60_000) return `${Math.round(ms / 1000)}s`;
   const mins = Math.round(ms / 60_000);
+  if (mins >= 1440) {
+    const hours = Math.round(mins / 60);
+    const days = Math.floor(hours / 24);
+    return hours % 24 === 0 ? `${days}d` : `${days}d${String(hours % 24).padStart(2, "0")}h`;
+  }
   return mins < 60 ? `${mins}m` : `${Math.floor(mins / 60)}h${String(mins % 60).padStart(2, "0")}m`;
 };
 
@@ -255,7 +266,7 @@ export const parseWatchArgs = (rest: string): WatchArgs => {
     }
     if (w === "--until" || w === "--for" || w === "--timeout") {
       const d = parseDuration(words[++i] ?? "");
-      if (d === undefined) return { ok: false, error: "`--until` needs a duration like `45m` or `2h`" };
+      if (d === undefined) return { ok: false, error: "`--until` needs a duration like `45m`, `2h` or `30d`" };
       deadlineMs = d;
       continue;
     }
@@ -559,6 +570,21 @@ export const readyMessage = (note: string, waited: number, output?: string): str
   ]
     .join("\n")
     .trim();
+};
+
+/** Whether a watch was set for the longest a watch may last, so its expiry is the end of the line. */
+export const hitMaxCap = (w: { readonly createdAt: number; readonly deadlineAt: number }): boolean =>
+  w.deadlineAt - w.createdAt >= MAX_DEADLINE_MS;
+
+/**
+ * The line the thread gets when a watch ran its whole maximum. It keeps the
+ * `I stopped waiting after ` opening (the console classifies hand-backs by it),
+ * and tells the turn to say goodbye once and NOT re-arm: re-arming 6h watches
+ * on every expiry is what this cap was raised to stop.
+ */
+export const capReachedMessage = (id: number, note: string, waited: number): string => {
+  const days = Math.round(MAX_DEADLINE_MS / DAY_MS);
+  return `I stopped waiting after ${humanDuration(waited)} - watch #${id} used the longest a watch may last (${days} days) and nothing happened. It is closed. Post ONE last message in this thread, in your own words, saying: watch #${id} ran its full ${days} days with nothing happening, closed. Do NOT set a new watch (or a remind or loop) for it, and do not start the work. What I was waiting to do: ${note}. I have not done it.`;
 };
 
 /** The line the thread gets when it never came good. */

@@ -18,7 +18,9 @@
  * the worker it watched) decided the wait was over, so nothing is owed.
  */
 import {
+  capReachedMessage,
   gaveUpMessage,
+  hitMaxCap,
   MAX_CONSECUTIVE_ERRORS,
   readyMessage,
   stoppedDispatchIds,
@@ -273,7 +275,13 @@ export const createWatcher = (deps: WatcherDeps): Watcher => {
     }
 
     if (now >= w.deadlineAt) {
-      finish(w, "expired", gaveUpMessage(w.note, waited, "it never became ready"));
+      // A watch that ran its full maximum is closed with one last line and is
+      // NOT re-armed: the message says so, and nothing here sets another.
+      finish(
+        w,
+        "expired",
+        hitMaxCap(w) ? capReachedMessage(w.id, w.note, waited) : gaveUpMessage(w.note, waited, "it never became ready"),
+      );
       return;
     }
     // Not ready, not out of time: ask again later. A non-zero exit is the

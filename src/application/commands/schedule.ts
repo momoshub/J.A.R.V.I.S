@@ -84,8 +84,8 @@ export const SCHEDULE_COMMANDS: readonly CommandDef[] = [
     // The confirmation is for the brain, not the thread: it already says what
     // it is waiting for in its own words, and a second notice is just noise.
     quiet: true,
-    usage: "pr|checks|reply|url|worker <target> [--past-wait] <what to do> | <what to do> -- <shell check> | list | cancel [<id>]",
-    summary: "wait for a PR, CI, a reply, a url or an Orca worker, then carry on in this thread by itself",
+    usage: "pr|checks|reply|url|worker <target> [--every 1m] [--until 45m|2h|30d] [--past-wait] <what to do> | <what to do> -- <shell check> | list | cancel [<id>]",
+    summary: "wait for a PR, CI, a reply, a url or an Orca worker (up to 30 days with --until), then carry on in this thread by itself",
     run: async ({ can, roles, deps, actor, args, rest, prefix, threadTs, channelId }) => {
       if (!deps.watches) return "I have nowhere to keep a watch right now.";
       const sub = (args[0] ?? "").toLowerCase();
