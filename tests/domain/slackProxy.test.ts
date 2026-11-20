@@ -208,15 +208,12 @@ describe("chat.update outside the turn's channel", () => {
     expect(call.ok && call.ownMessageIn).toBeUndefined();
   });
 
-  test("an owner's other writes keep the turn-channel rule", () => {
-    for (const [method, param] of [
-      ["chat.postMessage", "channel"],
-      ["reactions.add", "channel"],
-      ["files.completeUploadExternal", "channel_id"],
-    ] as const) {
-      const call = checkSlackCall(method, { [param]: "C0OTHER0001", text: "hi", ts: "77.7" }, owner);
-      expect(call.ok).toBe(false);
-    }
+  test("an owner's reaction elsewhere passes, marked cross-channel; a non-owner's is refused", () => {
+    const params = { channel: "C0OTHER0001", name: "eyes", timestamp: "77.7" };
+    const call = checkSlackCall("reactions.add", params, owner);
+    expect(call.ok && call.params).toEqual(params);
+    expect(call.ok && call.crossChannel).toBe(true);
+    expect(checkSlackCall("reactions.add", params, member).ok).toBe(false);
   });
 
   test("it needs a message to point at, and a stored notice elsewhere stays untouchable", () => {
@@ -224,6 +221,79 @@ describe("chat.update outside the turn's channel", () => {
     const isNotice = (channel: string, ts: string) => channel === "C0OTHER0001" && ts === "77.7";
     const call = checkSlackCall("chat.update", away, owner, isNotice);
     expect(!call.ok && call.error).toContain("message_not_allowed");
+  });
+});
+
+describe("an owner's post and upload outside the turn's channel", () => {
+  const owner = { channel: "C0TEST00001", threadTs: "1700000000.000100", owner: true };
+  const member = { channel: "C0TEST00001", threadTs: "1700000000.000100" };
+  const elsewhere = "C0OTHER0001";
+
+  test("chat.postMessage may name another channel and thread", () => {
+    const params = { channel: elsewhere, thread_ts: "55.5", text: "hi" };
+    const call = checkSlackCall("chat.postMessage", params, owner);
+    expect(call.ok && call.params).toEqual(params);
+    expect(call.ok && call.ownMessageIn).toBeUndefined();
+  });
+
+  test("files.completeUploadExternal may name another channel and thread", () => {
+    const params = { channel_id: elsewhere, thread_ts: "55.5", files: "[]" };
+    const call = checkSlackCall("files.completeUploadExternal", params, owner);
+    expect(call.ok && call.params).toEqual(params);
+  });
+
+  test("the turn's own thread is not filled in for another channel, thread_ts=none is still stripped", () => {
+    const top = checkSlackCall("chat.postMessage", { channel: elsewhere, text: "hi" }, owner);
+    expect(top.ok && top.params.thread_ts).toBeUndefined();
+    const none = checkSlackCall("files.completeUploadExternal", { channel_id: elsewhere, thread_ts: TOP_LEVEL_THREAD, files: "[]" }, owner);
+    expect(none.ok && none.params.thread_ts).toBeUndefined();
+  });
+
+  test("a turn that is not the owner's is refused", () => {
+    for (const [method, param] of [
+      ["chat.postMessage", "channel"],
+      ["files.completeUploadExternal", "channel_id"],
+    ] as const) {
+      const call = checkSlackCall(method, { [param]: elsewhere, thread_ts: "55.5" }, member);
+      expect(call).toMatchObject({ ok: false, status: 403 });
+      expect(!call.ok && call.error).toContain("channel_not_allowed");
+    }
+  });
+
+  test("a read-only ticket stays read-only for the owner too", () => {
+    expect(checkSlackCall("chat.postMessage", { channel: elsewhere, text: "x" }, { owner: true }).ok).toBe(false);
+  });
+
+  test("channels is refused for the owner, and a post naming no channel is still refused", () => {
+    const fan = checkSlackCall("files.completeUploadExternal", { channel_id: elsewhere, channels: "C0OTHER0002", files: "[]" }, owner);
+    expect(!fan.ok && fan.error).toContain("param_not_allowed");
+    expect(checkSlackCall("files.completeUploadExternal", { channels: elsewhere, files: "[]" }, owner).ok).toBe(false);
+    expect(checkSlackCall("chat.postMessage", { text: "x" }, owner).ok).toBe(false);
+  });
+
+  test("an owner's extra write passes elsewhere by its own channel param, a non-owner's is refused", () => {
+    const extra: ExtraSlackMethods = [
+      { method: "pins.add", kind: "write", channelParam: "channel" },
+      { method: "bookmarks.add", kind: "write", channelParam: "channel_id" },
+    ];
+    const pin = checkSlackCall("pins.add", { channel: elsewhere, timestamp: "1.1" }, owner, undefined, extra);
+    expect(pin.ok && pin.crossChannel).toBe(true);
+    const mark = checkSlackCall("bookmarks.add", { channel_id: elsewhere, title: "t" }, owner, undefined, extra);
+    expect(mark.ok && mark.crossChannel).toBe(true);
+    const refused = checkSlackCall("pins.add", { channel: elsewhere, timestamp: "1.1" }, member, undefined, extra);
+    expect(!refused.ok && refused.error).toContain("channel_not_allowed");
+  });
+
+  test("an extra write cannot smuggle a second channel, channels, or a missing channel, even for the owner", () => {
+    const extra: ExtraSlackMethods = [{ method: "bookmarks.add", kind: "write", channelParam: "channel_id" }];
+    expect(checkSlackCall("bookmarks.add", { channel_id: elsewhere, channel: "C0OTHER0002" }, owner, undefined, extra).ok).toBe(false);
+    expect(checkSlackCall("bookmarks.add", { channel_id: elsewhere, channels: elsewhere }, owner, undefined, extra).ok).toBe(false);
+    expect(checkSlackCall("bookmarks.add", { title: "t" }, owner, undefined, extra).ok).toBe(false);
+  });
+
+  test("a write in the turn's own channel is not marked cross-channel", () => {
+    const call = checkSlackCall("chat.postMessage", { channel: owner.channel, text: "x" }, owner);
+    expect(call.ok && call.crossChannel).toBeUndefined();
   });
 });
 
@@ -249,11 +319,10 @@ describe("methods the owner added", () => {
     expect(checkSlackCall("conversations.setTopic", { topic: "x" }, own, undefined, extra).ok).toBe(false);
   });
 
-  test("an extra write needs a ticket with a channel, and the owner's edit exception does not extend to it", () => {
+  test("an extra write needs a ticket with a channel, even for the owner", () => {
     const readOnly = checkSlackCall("conversations.setTopic", { channel: "C0TEST00001" }, {}, undefined, extra);
     expect(!readOnly.ok && readOnly.error).toContain("read_only_ticket");
-    const owner = { ...own, owner: true };
-    expect(checkSlackCall("conversations.setTopic", { channel: "C0OTHER0001", ts: "1.1" }, owner, undefined, extra).ok).toBe(false);
+    expect(checkSlackCall("conversations.setTopic", { channel: "C0OTHER0001" }, { owner: true }, undefined, extra).ok).toBe(false);
   });
 
   test("the channel parameter is the one the entry names", () => {

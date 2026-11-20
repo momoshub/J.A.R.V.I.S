@@ -97,7 +97,8 @@ no classes.
   thread, `thread_ts=none` posts at the top level; `chat.update` on a message
   the bot stored as an approval notice is refused, looked up in the database
   with `db/noticeLookup.ts`) and calls Slack with the
-  token it holds. In an owner's turn only, `chat.update` may also target a message in
+  token it holds. In an owner's turn only, `chat.postMessage` and `files.completeUploadExternal` may name another
+  channel and thread, and `chat.update` may also target a message in
   another channel, and only when the bot reads it back (`conversations.history`, else
   `conversations.replies`) and finds its own user id as the author; anything else
   there is refused, and the call is logged with the channel and ts. A post or update that lands in the turn's own thread is also

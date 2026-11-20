@@ -12,11 +12,14 @@
  * are, because a prompt-injected turn that could post anywhere would be an
  * exfiltration channel of its own.
  *
- * A new message in another channel is deliberately not allowed here, owner or not: the owner's
- * route is the `post` command (role gate + audit log), which the bot runs itself. The one
- * exception is `chat.update` in an owner's turn: it may edit a message the bot itself wrote
- * anywhere (a bad `post` has to be fixable from a DM). This file only lets the call through
- * marked `ownMessageIn`; the proxy then reads the message and refuses unless the bot wrote it.
+ * A write in another channel is not allowed here, except in an owner's turn: every channel-scoped write
+ * (`chat.postMessage`, `files.completeUploadExternal`, `reactions.add`, and the owner's own extras,
+ * each by its own channel parameter) may name any channel (and thread), since the owner can already
+ * have the `post` command write anywhere; the call comes back marked `crossChannel` so the proxy logs
+ * it. `chat.update` may edit a message the bot itself wrote anywhere (a bad `post` has to be fixable
+ * from a DM): this file only lets it through marked `ownMessageIn`; the proxy then reads the message
+ * and refuses unless the bot wrote it. `channels` is refused everywhere, and every non-owner turn
+ * keeps the turn-channel rule. The turn's own thread ts is never filled in for a cross-channel write.
  *
  * The built-in lists below are the floor: settings cannot remove from them. The owner may add more
  * (`slack-methods`), each a read or a channel-scoped write, and they reach this file as an argument
@@ -139,7 +142,7 @@ export const allowedMethodNames = (extra: ExtraSlackMethods = []): string[] => {
 export type SlackScope = {
   readonly channel?: string;
   readonly threadTs?: string;
-  /** The turn was started by the owner. Nobody else's turn may `chat.update` outside its channel. */
+  /** The turn was started by the owner. Nobody else's turn may write outside its channel. */
   readonly owner?: boolean;
 };
 
@@ -162,6 +165,8 @@ export type SlackCallCheck =
       readonly params: Readonly<Record<string, string>>;
       /** Set on an owner's `chat.update` outside the turn's channel: the proxy must first confirm the bot wrote this message. */
       readonly ownMessageIn?: { readonly channel: string; readonly ts: string };
+      /** Set on an owner's channel-scoped write (not `chat.update`) outside the turn's channel: the proxy logs it, method and target channel. */
+      readonly crossChannel?: true;
     }
   | { readonly ok: false; readonly status: 400 | 403; readonly error: string };
 
@@ -230,22 +235,27 @@ export const checkSlackCall = (
   const target = channelParam ? params[channelParam] : undefined;
   if (added) {
     // An owner's entry can name the wrong parameter (`channel_id` for a method that takes `channel`), and then the lock below
-    // would check nothing. So an extra write also may not carry any other channel-ish parameter that points elsewhere, and
-    // `channels` (a list) is refused outright, as for the built-in upload completion.
+    // would check nothing. So an extra write also may not carry any other channel-ish parameter that points elsewhere than the
+    // one it is locked on (the turn's channel; in an owner's turn the channel that parameter names), and `channels` (a list)
+    // is refused outright, as for the built-in upload completion.
     if (params.channels !== undefined) return refuse(403, `param_not_allowed: ${method} may not take channels`);
+    const allowed = scope.owner && target ? target : scope.channel;
     for (const name of ["channel", "channel_id"]) {
-      if (params[name] !== undefined && params[name] !== scope.channel) {
+      if (params[name] !== undefined && params[name] !== allowed) {
         return refuse(403, `channel_not_allowed: ${method} may only act in the channel this turn runs in (${scope.channel})`);
       }
     }
   }
   let ownMessageIn: { channel: string; ts: string } | undefined;
+  let crossChannel = false;
   if (channelParam && target !== scope.channel) {
-    // Only the owner's chat.update, and only with a message named; whose message it is gets checked against Slack by the proxy.
-    if (method !== "chat.update" || !scope.owner || !target || !params.ts) {
+    // The owner's turn only, and a channel named. A chat.update also needs a message named (whose message it is gets checked
+    // against Slack by the proxy); every other channel-scoped write (a post, an upload completion, a reaction, an extra) goes through.
+    if (!scope.owner || !target || (method === "chat.update" && !params.ts)) {
       return refuse(403, `channel_not_allowed: ${method} may only act in the channel this turn runs in (${scope.channel})`);
     }
-    ownMessageIn = { channel: target, ts: params.ts };
+    if (method === "chat.update") ownMessageIn = { channel: target, ts: params.ts as string };
+    else crossChannel = true;
   }
   // A notice's buttons decide things, and a notice can sit in a thread the turn runs in: a turn that could rewrite one
   // could relabel a button so the owner's click means something else. The turn's own messages stay editable.
@@ -262,12 +272,13 @@ export const checkSlackCall = (
     if (given === TOP_LEVEL_THREAD) {
       const rest = { ...params };
       delete rest[threadParam];
-      return { ok: true, method, params: rest };
+      return { ok: true, method, params: rest, ...(crossChannel ? { crossChannel } : {}) };
     }
     // Not given (or blank) and the turn runs in a thread: the reply belongs there. An explicit thread_ts is kept as is.
-    if (!given && scope.threadTs) return { ok: true, method, params: { ...params, [threadParam]: scope.threadTs } };
+    // Not for a post elsewhere (owner's turn): the turn's thread ts means nothing in another channel, so it lands at the top level.
+    if (!given && scope.threadTs && !crossChannel) return { ok: true, method, params: { ...params, [threadParam]: scope.threadTs } };
   }
-  return { ok: true, method, params, ...(ownMessageIn ? { ownMessageIn } : {}) };
+  return { ok: true, method, params, ...(ownMessageIn ? { ownMessageIn } : {}), ...(crossChannel ? { crossChannel } : {}) };
 };
 
 /** Calls worth a log line: everything that writes (extra writes too), and a join (visible to the whole channel). */

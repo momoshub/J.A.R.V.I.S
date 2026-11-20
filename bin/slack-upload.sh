@@ -5,7 +5,7 @@
 #
 # A sandboxed session has no general `curl`, and no Slack token either: the two
 # Slack calls go through slack-api.sh (the bot makes them, and only for the
-# channel this turn runs in), and the bytes go straight to the pre-signed upload
+# channel this turn runs in; in the owner's turn, any channel and thread), and the bytes go straight to the pre-signed upload
 # url Slack hands back, which needs no credential. The thread is required: a
 # file without one lands in the channel root, where the person asking cannot
 # see it.
